@@ -212,6 +212,9 @@ impl<E: SqlEngine> Serving<E> {
 enum State<E: SqlEngine> {
     Vacant,
     Serving(Box<Serving<E>>),
+    /// A provisioned cell this host cannot open, and why: served as refusals
+    /// (never a retried open on every request) until an operator restores it.
+    Unopenable(String),
 }
 
 /// The cell of one scope: vacant, or provisioned and served.
@@ -247,7 +250,10 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
-        let state = reopen(engine, &scope, table, &caller)?;
+        // A stored cell that does not open is kept as a refusal state: every
+        // request answers at once instead of retrying the open (and queueing).
+        let state = reopen(engine, &scope, table, &caller)
+            .unwrap_or_else(|error| State::Unopenable(error.0));
         let derived = handle_key
             .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
             .map(|questions| questions.with_label("tenant"));
@@ -324,7 +330,7 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn serving_host(&self) -> Option<&DevHost<E>> {
         match &self.state {
             State::Serving(serving) => Some(&serving.host),
-            State::Vacant => None,
+            State::Vacant | State::Unopenable(_) => None,
         }
     }
 
@@ -335,7 +341,16 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn action_policy_error(&self) -> Option<&str> {
         match &self.state {
             State::Serving(serving) => serving.policy_error.as_deref(),
-            State::Vacant => None,
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// Why the scope's stored cell does not open, for the operator's log.
+    #[must_use]
+    pub fn open_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Unopenable(reason) => Some(reason),
+            State::Vacant | State::Serving(_) => None,
         }
     }
 
@@ -385,7 +400,7 @@ impl<E: SqlEngine> Tenant<E> {
             (State::Serving(serving), Some(engine)) => {
                 server::analytics(&serving.host, principals, engine, uploads, request)
             }
-            (State::Serving(_) | State::Vacant, _) => None,
+            (State::Serving(_) | State::Vacant | State::Unopenable(_), _) => None,
         }
     }
 
@@ -453,26 +468,42 @@ impl<E: SqlEngine> Tenant<E> {
                     .or(questions);
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
-            State::Vacant => self.vacant(principals, request),
+            State::Vacant => self.vacant(principals, request, None),
+            State::Unopenable(reason) => self.vacant(principals, request, Some(reason)),
         }
     }
 
-    /// A request to a scope with no cell.
-    fn vacant(&self, principals: &dyn PrincipalResolver, request: &Request<'_>) -> Response {
-        let member = {
+    /// A request to a scope with no cell, or with one this host cannot open
+    /// (`unopenable`). Only a verified member of the organization learns
+    /// which: anyone else is answered exactly as for a scope with no cell.
+    fn vacant(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        unopenable: Option<&str>,
+    ) -> Response {
+        let caller = {
             // The verified principal lives exactly as long as this decision.
             let _request = RequestScope::new(principals);
             principals
                 .resolve(request.authorization, request.now)
-                .is_some_and(|subject| {
+                .and_then(|subject| {
                     self.caller
                         .current()
                         .filter(|caller| caller.subject_id == subject)
-                        .is_some_and(|caller| !self.table.capabilities(&caller.roles).is_empty())
+                        .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
                 })
         };
-        if member && self.names_this_scope(request.query) {
-            server::respond(Err(provision::not_provisioned()))
+        if let Some(caller) = caller.filter(|_| self.names_this_scope(request.query)) {
+            let refusal = match unopenable {
+                None => provision::not_provisioned(),
+                Some(reason) => provision::unopenable(
+                    self.table
+                        .writes_definitions(&caller.roles)
+                        .then_some(reason),
+                ),
+            };
+            server::respond(Err(refusal))
         } else if request.path == "/v1/access" {
             server::access_outside::<E>(principals, request)
         } else {
@@ -542,6 +573,16 @@ impl<E: SqlEngine> Tenant<E> {
                 &scope,
                 actor,
             )?,
+            // Its owner is told; provisioning never overwrites a stored cell.
+            State::Unopenable(reason) => {
+                provision::authorize(
+                    &Provisioners::new(self.table, Arc::clone(&self.caller)),
+                    &self.scope,
+                    &scope,
+                    actor,
+                )?;
+                return Err(provision::unopenable(Some(reason)));
+            }
         }
         let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
         if matches!(self.state, State::Vacant) {

@@ -35,7 +35,7 @@ use norn_api::scope::CellScope;
 use norn_cell::StoreOptions;
 use norn_cell::engine::{
     DoEngine, DoStorageEmulator, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch,
-    NativeEngine, SqlEngine,
+    NativeEngine, SqlEngine, SqlValue,
 };
 use norn_cell_do::policy::DEMO_GRANTS;
 use norn_cell_do::principal::TokenPrincipals;
@@ -1478,4 +1478,89 @@ fn a_runtime_defined_type_survives_a_restart() {
         row.get("region").and_then(norn_ir::RuntimeValue::as_str),
         Some("south")
     );
+}
+
+/// A stored cell whose layout is not the one its definitions rebuild (the
+/// alpha incident of 2026-11-12) opens into a refusal state, never a retried
+/// open on every request. A verified member is told `cell.unopenable` (503),
+/// with the reason only for a definition writer; provisioning never overwrites
+/// it; anyone else is answered exactly as for a scope with no cell.
+#[test]
+fn a_cell_that_does_not_open_is_refused_never_retried_or_exposed() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let path = file(&directory, "broken");
+    drop(provisioned(&path, &scope, &full()));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+    engine
+        .execute(
+            "UPDATE _norn_meta SET value = ? WHERE key = 'ddl_hash'",
+            &[SqlValue::Text("0".repeat(64))],
+        )
+        .unwrap();
+    drop(engine);
+    let mut broken = open(&path, &scope);
+    let reason = broken.tenant.open_error().map(str::to_owned).unwrap();
+    assert!(reason.contains("schema mismatch"), "{reason}");
+    let mut vacant = open(&file(&directory, "vacant"), &scope);
+    let outsiders = [
+        None,
+        Some(user("org_b", "owner")),
+        Some(user("org_a", "analyst")),
+        Some("Bearer nonsense".to_owned()),
+    ];
+    for (method, path, query, body) in outsider_requests(&scope) {
+        for outsider in &outsiders {
+            assert_eq!(
+                call(
+                    &mut broken,
+                    method,
+                    &path,
+                    &query,
+                    outsider.as_deref(),
+                    body
+                ),
+                call(
+                    &mut vacant,
+                    method,
+                    &path,
+                    &query,
+                    outsider.as_deref(),
+                    body
+                ),
+                "{method} {path}?{query} as {outsider:?}"
+            );
+        }
+    }
+    for (role, told) in [
+        ("member", false),
+        ("viewer", false),
+        ("admin", true),
+        ("owner", true),
+    ] {
+        let response = definitions(&mut broken, Some(&user("org_a", role)));
+        let document = json_of(&response);
+        assert_eq!(
+            (response.status, document["code"].as_str()),
+            (503, Some(provision::codes::UNOPENABLE)),
+            "{role}"
+        );
+        assert_eq!(
+            document["explanation"]
+                .as_str()
+                .is_some_and(|text| text.contains("schema mismatch")),
+            told,
+            "{role}: {document}"
+        );
+    }
+    let again = provision(
+        &mut broken,
+        Some(&user("org_a", "owner")),
+        &submission(&full()),
+    );
+    assert_eq!(
+        (again.status, code(&again).as_str()),
+        (503, provision::codes::UNOPENABLE)
+    );
+    assert!(!broken.tenant.is_provisioned());
 }

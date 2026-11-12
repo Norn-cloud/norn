@@ -51,6 +51,10 @@ pub mod codes {
     /// The scope has no cell yet; told only to a verified member of its
     /// organization.
     pub const NOT_PROVISIONED: &str = "cell.not_provisioned";
+    /// The scope has a cell this host cannot open (its stored layout is not
+    /// the one its definitions rebuild); told only to a verified member of
+    /// its organization, with the reason only to a definition writer.
+    pub const UNOPENABLE: &str = "cell.unopenable";
     /// The cell was provisioned from a different submission.
     pub const PROVISION_CONFLICT: &str = "cell.provision_conflict";
     /// The submitted definitions are not admissible.
@@ -216,6 +220,19 @@ pub fn not_provisioned() -> Refusal {
         codes::NOT_PROVISIONED,
         "no cell is provisioned for this scope",
         "provision the cell with POST /v1/cell:provision before using it",
+    )
+}
+
+/// The refusal for a scope whose stored cell this host cannot open: an
+/// operator must restore or repair it. `reason` (the open failure, naming the
+/// layout found and the one expected) goes only to a definition writer.
+#[must_use]
+pub fn unopenable(reason: Option<&str>) -> Refusal {
+    Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        codes::UNOPENABLE,
+        "the cell cannot be opened; an operator must restore it",
+        reason.unwrap_or("the cell's stored layout is not the one its definitions rebuild"),
     )
 }
 
