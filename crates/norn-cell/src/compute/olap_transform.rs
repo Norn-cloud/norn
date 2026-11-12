@@ -409,14 +409,13 @@ fn lower_node(plan: &TransformPlan, id: &str, step: &Step) -> Result<String, Cel
             let mut items = Vec::new();
             let mut groups = Vec::new();
             for (name, grain, _) in group_by {
-                let expression = match grain {
-                    Some(grain) => grain_expression(name, *grain, source)?,
-                    None => {
-                        if kind(&column(source, name)?.ty)? == Kind::Timestamp {
-                            return unsupported();
-                        }
-                        quote(name)
+                let expression = if let Some(grain) = grain {
+                    grain_expression(name, *grain, source)?
+                } else {
+                    if kind(&column(source, name)?.ty)? == Kind::Timestamp {
+                        return unsupported();
                     }
+                    quote(name)
                 };
                 items.push(format!("{expression} AS {}", quote(name)));
                 groups.push(expression);
