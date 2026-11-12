@@ -409,7 +409,7 @@
   },
   {
     "code": "consistency.path_mapping.preserved",
-    "no_fix": "This records bounded-no-counterexample evidence for the exact inputs; it is not a defect and has no repair."
+    "no_fix": "This records that the path mapping is admitted as preserving and names the class of its evidence; it is not a defect and has no repair."
   },
   {
     "code": "consistency.schema.incompatible",

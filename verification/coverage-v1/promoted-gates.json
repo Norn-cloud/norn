@@ -1281,6 +1281,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "preservation-correspondence",
+      "profile": "full",
+      "command": "scripts/verify-preservation-aeneas.sh",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "kernel-commit-order-correspondence",
       "profile": "full",
       "command": "scripts/verify-kernel-commit-aeneas.sh",

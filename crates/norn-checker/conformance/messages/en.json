@@ -309,7 +309,7 @@
       "message": "Mapped target declares or inherits path equations without a covering preservation binding"
     },
     "consistency.path_mapping.preserved": {
-      "message": "Required path mapping has bounded-no-counterexample evidence bound to its exact inputs"
+      "message": "Required path mapping is admitted as preserving, with evidence bound to its exact inputs; the message states the evidence class: certified (every target dependency has a chase certificate the proved check accepted), bounded-no-counterexample (the bounded search found no counterexample) or no target dependencies"
     },
     "consistency.schema.incompatible": {
       "message": "no {$relation} tuple can be mapped: {$detail}"

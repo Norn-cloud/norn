@@ -284,7 +284,8 @@ fn path_findings(
                 "consistency.path_mapping.preserved",
                 crate::DiagnosticSeverity::Info,
                 format!(
-                    "bounded-no-counterexample; obligations={}; inputs={pins:?}",
+                    "{}; obligations={}; inputs={pins:?}",
+                    evidence.evidence.as_str(),
                     evidence.obligations
                 ),
                 None,

@@ -230,6 +230,7 @@ unit establishes structural evidence only: mapping preservation requires the
 exchange admission bridge and its separately qualified source/mapping lowering.
 No successful declaration is a preservation proof. The existing exchange search
 is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
+Only a checked chase certificate (PATH-MAP-1) is a proof.
 
 Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
 
@@ -237,12 +238,21 @@ PATH-MAP-1: a `PathMapping` `F: target -> source` names a source concept per
 target concept and a functional source path per mapped target link; data moves
 by pullback. `admit_path_mapping` lowers both catalogs' PATH-EQ-1 equations,
 functional EGDs for every reachable to-one link, source totality TGDs for
-required links, and one TGD per object and link image into an `Exchange`, then
-runs the existing schema-compatibility search. Ill-typed images and overlapping
+required links, and one TGD per object and link image into an `Exchange`. It
+first looks for a chase certificate for every target dependency and accepts it
+only through the proved check (#718 U7); otherwise it runs the existing
+schema-compatibility search. A certified return validates the exchange but
+skips the search's compatibility chase, so its facts budget does not apply to
+it. Both are charged to one admission work
+allowance, and exhausting it refuses (`consistency.chase.refused`). Ill-typed images and overlapping
 catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
 refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
 substitutes images and refuses components with two images of one link.
-Admission is bounded-no-counterexample, never exhaustive. A witness is
+An admitted mapping reports `consistency.path_mapping.preserved` with its
+evidence class: `certified` (every target dependency is proved preserved on
+every source instance satisfying the source theory, given the lowering),
+`bounded-no-counterexample` (search only, never exhaustive) or
+`no target dependencies`. A witness is
 attributed to the first EGD its mapped image breaks, so equations sharing a
 witness are named once; the mapping still refuses. Target totality and
 source endpoint typing are not lowered: the first leaves existence unchecked,

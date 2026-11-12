@@ -67,6 +67,19 @@
     "#737",
     "#1235"
    ]
+  },
+  {
+   "id": "INV-CERT-PATH-MAPPING-PRESERVATION",
+   "priority": "P0",
+   "statement": "A chase certificate that the check accepts (one trace per way the target body can be produced, each merging the target EGD's two variables) implies that the path mapping preserves the target EGD: every source instance satisfying the source theory pulls back to a target instance satisfying it, over every domain.",
+   "assumptions": [
+    "The mapping lowers to full TGDs with one head atom, and both catalogs lower to the TGDs and EGDs the exchange uses (consistency/theory.rs, path_mapping.rs).",
+    "The production check in crates/norn-checker/src/consistency/preservation/check.rs is extracted by Charon/Aeneas and proved to accept only what NornSem.Exchange.check accepts (#718 U7b); the integer lowering of the string-keyed theories stays trusted (TRUST-PRESERVATION-CHECK-MIRROR)."
+   ],
+   "sourceIssues": [
+    "#718",
+    "#712"
+   ]
   }
  ]
 }
