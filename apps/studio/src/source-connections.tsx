@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { systemName } from "./lib/catalog.ts"
+import { UploadCsv } from "./upload-csv.tsx"
 
 /** The platform sources pack's connection type: one record per connected system or upload. */
 const CONNECTION_TYPE = "source.Connection"
@@ -16,9 +17,10 @@ interface Connection {
   readonly id: string
   readonly values: {
     readonly system?: string; readonly label?: string; readonly target?: string; readonly status?: string
-    readonly lastSyncStartedAt?: string | null; readonly lastSyncEndedAt?: string | null; readonly watermark?: string | null
-    readonly rowsRead?: number | null; readonly rowsLanded?: number | null; readonly rowsQuarantined?: number | null
-    readonly lastErrorCode?: string | null; readonly lastErrorMessage?: string | null
+    readonly last_sync_started_at?: string | null; readonly last_sync_ended_at?: string | null; readonly watermark?: string | null
+    readonly rows_read?: number | null; readonly rows_landed?: number | null; readonly rows_quarantined?: number | null
+    readonly last_error_code?: string | null; readonly last_error_message?: string | null
+    readonly quarantine_reasons?: string | null
   }
 }
 
@@ -27,6 +29,7 @@ interface Page { readonly records: readonly Connection[] }
 const STATUS: Record<string, { readonly label: string; readonly variant: "secondary" | "outline" | "destructive" }> = {
   ok: { label: "Synced", variant: "secondary" },
   syncing: { label: "Syncing", variant: "outline" },
+  partial: { label: "Partly synced", variant: "outline" },
   failed: { label: "Failed", variant: "destructive" },
   never: { label: "Not synced yet", variant: "outline" },
 }
@@ -64,7 +67,7 @@ export function SourceConnections() {
   })
   const notInstalled = connections.error instanceof CellRefusal && connections.error.status === 404
   return (
-    <Panel icon={Cable} label="Connections">
+    <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {connections.isPending && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well><EmptyState icon={Cable} title="No connections">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</EmptyState></Well>
@@ -85,13 +88,13 @@ export function SourceConnections() {
                   <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
-                    {values.lastErrorCode && <div className="max-w-56 pt-1 text-xs text-destructive" title={values.lastErrorMessage ?? undefined}><span className="font-mono">{values.lastErrorCode}</span>{values.lastErrorMessage ? `: ${values.lastErrorMessage}` : ""}</div>}
+                    {values.last_error_code && <div className="max-w-56 pt-1 text-xs text-destructive" title={values.last_error_message ?? undefined}><span className="font-mono">{values.last_error_code}</span>{values.last_error_message ? `: ${values.last_error_message}` : ""}</div>}
                   </TableCell>
-                  <TableCell className="text-sm">{values.status === "syncing" ? <>started {values.lastSyncStartedAt}</> : values.lastSyncEndedAt ?? "—"}</TableCell>
-                  <TableCell className="font-mono text-xs" title="The source's own modified-since mark after the last sync">{values.watermark ?? "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{count(read, index, "rowsRead", values.rowsRead)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{count(read, index, "rowsLanded", values.rowsLanded)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{count(read, index, "rowsQuarantined", values.rowsQuarantined)}</TableCell>
+                  <TableCell className="text-sm">{values.status === "syncing" ? <>started {values.last_sync_started_at}</> : values.last_sync_ended_at ?? "—"}</TableCell>
+                  <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{values.watermark ?? "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
+                  <TableCell className="text-right tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-xs text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>
                   <TableCell>{values.system !== "upload" && <SyncNow id={id} />}</TableCell>
                 </TableRow>
               )

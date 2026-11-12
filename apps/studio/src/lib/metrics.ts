@@ -26,16 +26,15 @@ const dayOf = (text: string): number | undefined => {
 const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z")
 
 /**
- * The window that covers every value the profile saw of `property`: from its first day to the day
- * after its last, by day up to 62 days and by ISO week (Monday to Monday) beyond. `undefined` when
- * the profile has no range for it.
+ * The window that covers every value the profile saw of `property`, by ISO week: from the Monday
+ * of its first value to the Monday after its last. `undefined` when the profile has no range for it.
  */
 export function windowOf(profile: ObjectProfile, property: string): Window | undefined {
   const profiled = profile.properties.find((candidate) => candidate.property === property)
   const first = typeof profiled?.min === "string" ? dayOf(profiled.min) : undefined
   const last = typeof profiled?.max === "string" ? dayOf(profiled.max) : undefined
   if (first === undefined || last === undefined) return undefined
-  if (last - first < 62 * DAY) return { start: iso(first), end: iso(last + DAY), grain: "day" }
+  // The bounded engine groups dates by ISO week today; day grain follows (L-port), and then short spans go by day.
   // 1970-01-01 was a Thursday: days since the epoch plus 3, mod 7, counts days since Monday.
   const monday = (at: number) => at - (((at / DAY + 3) % 7) * DAY)
   return { start: iso(monday(first)), end: iso(monday(last) + 7 * DAY), grain: "week" }

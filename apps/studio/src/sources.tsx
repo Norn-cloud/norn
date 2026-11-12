@@ -13,6 +13,8 @@ import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from
 import { transport } from "./lib/transport.ts"
 import { LawsPanel } from "./laws.tsx"
 import { SourceConnections } from "./source-connections.tsx"
+import { ModelGraph } from "./model-graph.tsx"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
@@ -279,6 +281,10 @@ export function SourcesPage() {
         {read.data?.origin === "live" && <SourceConnections />}
         <Systems catalog={catalog} />
         <Panel icon={Shapes} label="The business model">
+          <Tabs defaultValue="cards" className="p-1">
+          <TabsList className="mx-3 mt-2"><TabsTrigger value="cards">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
+          <TabsContent value="graph" className="p-3"><ModelGraph catalog={catalog} /></TabsContent>
+          <TabsContent value="cards">
           <Well className="space-y-6 p-4">
             <label className="relative block w-full max-w-sm">
               <span className="sr-only">Find an object type</span>
@@ -299,6 +305,8 @@ export function SourcesPage() {
               </div>
             ))}
           </Well>
+          </TabsContent>
+          </Tabs>
         </Panel>
       </>}
     </section>
