@@ -15,6 +15,7 @@ use std::process::ExitCode;
 use norn_formats::SchemaImporter as _;
 use norn_formats::contract::Disposition;
 use norn_importers::ofbiz::{OfbizConfig, OfbizFile, OfbizReader, Role, refused};
+use norn_ir::JsonValue;
 use serde_json::json;
 
 /// Largest file read, and largest total.
@@ -173,10 +174,26 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<St
             .extensions
             .as_ref()
             .and_then(|extensions| extensions.get(norn_importers::ofbiz::EXTENSION));
-        let length = |member: &str| {
-            extension
-                .and_then(|value| value.get(member))
-                .map_or(0, |value| value.as_array().map_or_else(|| value.as_object().map_or(0, serde_json::Map::len), Vec::len))
+        let length = |member: &str| match extension {
+            Some(JsonValue::Object(object)) => match object.get(member) {
+                Some(JsonValue::Array(items)) => items.len(),
+                Some(JsonValue::Object(map)) => map.len(),
+                Some(
+                    JsonValue::Null
+                    | JsonValue::Bool(_)
+                    | JsonValue::Number(_)
+                    | JsonValue::String(_),
+                )
+                | None => 0,
+            },
+            Some(
+                JsonValue::Null
+                | JsonValue::Bool(_)
+                | JsonValue::Number(_)
+                | JsonValue::String(_)
+                | JsonValue::Array(_),
+            )
+            | None => 0,
         };
         json!({
             "tables": count("table"), "views": count("view"), "fields": schema.fields.len(),
