@@ -1,0 +1,4 @@
+{
+  "order": 75,
+  "value": "apps/studio/worker/migrations/0007_oauth_provider.sql"
+}

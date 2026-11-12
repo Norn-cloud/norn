@@ -144,7 +144,7 @@ test("a granted assistant reaches the cell as that person, in the workspace they
 
   const response = await mcp(env, accessToken, INIT)
   expect(response.status).toBe(200)
-  expect(await response.json()).toEqual({ jsonrpc: "2.0", id: 1, result: { served: true } })
+  expect((await response.json()) as Record<string, unknown>).toEqual({ jsonrpc: "2.0", id: 1, result: { served: true } })
   const [sent] = env.forwarded
   expect(new URL(sent?.url ?? "").pathname).toBe("/v1/mcp")
   expect(Object.fromEntries(new URL(sent?.url ?? "").searchParams)).toEqual({ orgId: org, environmentId: "analytics" })
