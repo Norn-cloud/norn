@@ -89,11 +89,6 @@ fn valid_id(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Positive canonical u64 decimal text, as `LawTiming::Within` millis.
-pub(crate) fn valid_millis(text: &str) -> bool {
-    !text.starts_with('0') && text.parse::<u64>().is_ok_and(|millis| millis > 0)
-}
-
 /// Shape of a declaration's soundness members, over its own enum `states`.
 #[allow(
     clippy::too_many_lines,
@@ -172,7 +167,7 @@ pub(crate) fn check_declaration(lifecycle: &Lifecycle, states: &[&str]) -> Vec<F
         let id = transition.id.as_str();
         let at = |member: &'static str| vec!["transitions", index.as_str(), member];
         match &transition.trigger {
-            Some(TransitionTrigger::Timer { millis }) if !valid_millis(millis) => {
+            Some(TransitionTrigger::Timer { millis }) if crate::deontic::canonical_positive_millis(millis).is_none() => {
                 out.push(finding(
                     codes::INVALID_TRIGGER,
                     format!("transition {id:?} has timer delay {millis:?}; use positive canonical milliseconds"),
