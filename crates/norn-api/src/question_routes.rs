@@ -551,6 +551,12 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
         admit(self.definitions(), question, self.catalog(), max_rows)
     }
+    /// The property paths a question over `metric` must group by or fix
+    /// with an `eq` filter (its unit sources, such as `unit` and `currency`),
+    /// dotted from the measured object; none by default.
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.
@@ -842,6 +848,10 @@ pub struct NornMetricSummary {
     /// The denominator metric, for a ratio.
     #[schema(required = true, nullable = true)]
     pub denominator: Option<String>,
+    /// Properties a question over this metric must group by or fix with an
+    /// `eq` filter (`eq null` included): its unit sources, such as `unit` and
+    /// `currency`. Empty when its values share one unit.
+    pub unit_partition: Vec<String>,
 }
 
 /// The metrics ad-hoc questions may name, among those the caller may read.
@@ -895,6 +905,7 @@ pub fn list_metrics<E: SqlEngine>(
                 time_property: aggregation.map(|params| params.agg_time_dimension.clone()),
                 numerator: definition.type_params.numerator.clone(),
                 denominator: definition.type_params.denominator.clone(),
+                unit_partition: runtime.unit_partition(&definition.name),
             }
         })
         .collect();

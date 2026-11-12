@@ -27,6 +27,10 @@ export interface CelldStudio {
   readonly toolGateway?: { readonly url: string; readonly clientId: string; readonly clientSecret: string }
   /** Serve /mcp to assistants people connect (STUDIO_MCP=on); the stage's D1 needs migration 0007. */
   readonly mcp?: true
+  /** Invite-only sign-up (STUDIO_SIGNUP_EMAILS, comma-separated); absent leaves sign-up open. */
+  readonly signUpEmails?: string
+  /** The cell environment a new workspace is provisioned for (STUDIO_DEFAULT_ENVIRONMENT_ID). */
+  readonly defaultEnvironmentId?: string
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -65,6 +69,8 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
     ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
+    ...env.STUDIO_SIGNUP_EMAILS === undefined ? {} : { signUpEmails: env.STUDIO_SIGNUP_EMAILS },
+    ...env.STUDIO_DEFAULT_ENVIRONMENT_ID === undefined ? {} : { defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
     ...!toolDeclared || toolUrl === undefined || toolClient === undefined || toolSecret === undefined ? {} : { toolGateway: { url: toolUrl, clientId: toolClient, clientSecret: toolSecret } },
@@ -79,6 +85,8 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
   if (studio.mcp === true) vars.STUDIO_MCP = "on"
+  if (studio.signUpEmails !== undefined) vars.STUDIO_SIGNUP_EMAILS = studio.signUpEmails
+  if (studio.defaultEnvironmentId !== undefined) vars.STUDIO_DEFAULT_ENVIRONMENT_ID = studio.defaultEnvironmentId
   return {
     name: `norn-studio-${studio.stage}`,
     main: "worker/index.ts",
