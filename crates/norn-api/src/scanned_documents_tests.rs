@@ -325,6 +325,8 @@ fn correct(
     )
 }
 
+/// A stored value as text. Decimals are stored by value (`72.00` is `72`);
+/// the property's declared scale formats them for display.
 fn text(record: &ObjectRecord, property: &str) -> String {
     match record.values.get(property) {
         Some(RuntimeValue::String(text)) => text.clone(),
@@ -343,15 +345,15 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
         .expect("read")
         .expect("a consistent invoice is admitted");
-    assert_eq!(text(&clean, "total"), "30.50");
-    assert_eq!(text(&clean, "lines_total"), "30.50");
+    assert_eq!(text(&clean, "total"), "30.5");
+    assert_eq!(text(&clean, "lines_total"), "30.5");
 
     let caught = reader
         .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("read")
         .expect("raw reads keep the source truth");
     assert_eq!(text(&caught, "total"), "720");
-    assert_eq!(text(&caught, "lines_total"), "72.00");
+    assert_eq!(text(&caught, "lines_total"), "72");
     assert!(
         reader
             .observation_is_quarantined(MAIN_WORLD, &caught)
@@ -385,7 +387,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     assert!(text(&evidence, "document_uri").starts_with("s3://"));
 
     // The lines are mapped objects of their own.
-    for (line, amount) in [("1", "30.00"), ("2", "40.00"), ("3", "2.00")] {
+    for (line, amount) in [("1", "30"), ("2", "40"), ("3", "2")] {
         let row = reader
             .object(
                 MAIN_WORLD,
@@ -465,7 +467,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117")
         .expect("read")
         .expect("corrected");
-    assert_eq!(text(&corrected, "total"), "72.00");
+    assert_eq!(text(&corrected, "total"), "72");
     assert_eq!(text(&corrected, "corrected_by"), STEWARD);
     assert_eq!(
         text(&corrected, "correction_evidence"),
@@ -525,7 +527,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
         .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("read")
         .expect("released from quarantine");
-    assert_eq!(text(&released, "total"), "72.00");
+    assert_eq!(text(&released, "total"), "72");
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
