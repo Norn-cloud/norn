@@ -49,6 +49,29 @@ import tempfile
 import time
 from pathlib import Path
 
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
 HERE = Path(__file__).resolve().parent
 SCHEMA_PATH = HERE / "record.schema.json"
 BRANCH = "metrics"
@@ -571,8 +594,7 @@ def read_jsonl(path: str) -> list[dict]:
 def views_or_none(enabled: bool):
     if not enabled:
         return None
-    sys.path.insert(0, str(HERE))
-    import report  # noqa: PLC0415 - sibling module, imported only when rendering
+    report = _sibling("report")
     return report.render_files
 
 
