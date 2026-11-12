@@ -137,7 +137,10 @@ impl<E: SqlEngine> CellStore<E> {
                 let Step::Scan { alias } = step else {
                     continue;
                 };
-                let scan = &plan.inputs[alias];
+                let scan = plan
+                    .inputs
+                    .get(alias)
+                    .ok_or_else(|| refused("core.compute.stale_input"))?;
                 self.model()
                     .query_contract(&scan.object_type)
                     .map_err(|_unknown| refused("core.compute.stale_input"))?;
@@ -171,7 +174,8 @@ impl<E: SqlEngine> CellStore<E> {
                     match access(&record)? {
                         RowAccess::None => continue,
                         RowAccess::Count => {
-                            *withheld.entry(alias.clone()).or_insert(0_u64) += 1;
+                            let count = withheld.entry(alias.clone()).or_insert(0_u64);
+                            *count = count.saturating_add(1);
                             continue;
                         }
                         RowAccess::Read => {}
@@ -189,7 +193,10 @@ impl<E: SqlEngine> CellStore<E> {
                 input.rows.insert(alias.clone(), rows);
             }
             for (alias, link) in &plan.links {
-                let scan = &plan.inputs[alias];
+                let scan = plan
+                    .inputs
+                    .get(alias)
+                    .ok_or_else(|| refused("core.compute.stale_input"))?;
                 let mut edges = BTreeMap::new();
                 for row in input.rows.get(alias).into_iter().flatten() {
                     match reader.link_targets_with_budget(

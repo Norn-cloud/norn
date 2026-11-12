@@ -1,4 +1,4 @@
-//! ViewIR v1 typed transforms (VIEW-TYPE-1 … VIEW-ORDER-1, Core 03).
+//! `ViewIR` v1 typed transforms (VIEW-TYPE-1 … VIEW-ORDER-1, Core 03).
 //!
 //! A `derived` artifact whose `calc` is `relational` is a closed operator
 //! plan over declared inputs. Admission types every node against the
@@ -27,7 +27,7 @@ use norn_ir::metric::TimeGrain;
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
-/// Stable codes of ViewIR v1 admission. The metric layer's additivity codes
+/// Stable codes of `ViewIR` v1 admission. The metric layer's additivity codes
 /// are reused verbatim where the law is the same (VIEW-AGG-1).
 pub mod codes {
     /// A reference, name, cycle or declaration the plan grammar does not admit.
@@ -58,7 +58,7 @@ use crate::metric::codes as metric_codes;
 pub const ROW_ROOT: &str = "input";
 
 /// Rows any node of the exact engine may hold (VIEW-ENGINE-1: the exact
-/// engine is the small-data reference; bulk work lowers to DuckDB).
+/// engine is the small-data reference; bulk work lowers to `DuckDB`).
 pub const MAX_ROWS: usize = 100_000;
 
 /// One stored property of one input: a column's origin.
@@ -298,7 +298,7 @@ pub struct AdmittedNode {
     pub schema: NodeSchema,
 }
 
-/// A checked ViewIR v1 plan (VIEW-TYPE-1). Construction is through [`admit`];
+/// A checked `ViewIR` v1 plan (VIEW-TYPE-1). Construction is through [`admit`];
 /// it is not execution evidence or a read grant.
 #[derive(Debug, Clone)]
 pub struct TransformPlan {
@@ -320,16 +320,15 @@ pub struct TransformPlan {
     pub links: BTreeSet<(String, String)>,
     /// Fuel for one expression evaluation (its static cost fits it).
     pub fuel_units: u64,
+    /// The output node's schema.
+    schema: NodeSchema,
 }
 
 impl TransformPlan {
     /// The schema of the view's rows.
-    ///
-    /// # Panics
-    /// Never: admission guarantees the output node exists.
     #[must_use]
-    pub fn output_schema(&self) -> &NodeSchema {
-        &self.nodes[&self.output].schema
+    pub const fn output_schema(&self) -> &NodeSchema {
+        &self.schema
     }
 }
 
@@ -344,7 +343,7 @@ fn finding(code: &str, message: impl Into<String>, pointer: impl Into<String>) -
     }
 }
 
-/// Decode the strict ViewIR root of a `derived` artifact.
+/// Decode the strict `ViewIR` root of a `derived` artifact.
 fn view_root(artifact: &ArtifactEnvelope) -> Option<ViewIrPayload> {
     let ArtifactPayload::Derived(payload) = &artifact.payload else {
         return None;
@@ -354,7 +353,7 @@ fn view_root(artifact: &ArtifactEnvelope) -> Option<ViewIrPayload> {
         .ok()
 }
 
-/// Whether the artifact is a ViewIR v1 relational view.
+/// Whether the artifact is a `ViewIR` v1 relational view.
 #[must_use]
 pub fn is_relational(artifact: &ArtifactEnvelope) -> bool {
     view_root(artifact).is_some_and(|root| matches!(root.calc, CalcExpr::Relational(_)))
@@ -474,7 +473,9 @@ impl<'a> Context<'a> {
             out: Vec::new(),
         };
         for id in &order {
-            let node = &plan.nodes[id];
+            let Some(node) = plan.nodes.get(id) else {
+                continue;
+            };
             let pointer = format!("/payload/calc/nodes/{}", pointer_token(id));
             if let Some(admitted) = builder.node(node, &pointer) {
                 builder.nodes.insert(id.clone(), admitted);
@@ -490,7 +491,10 @@ impl<'a> Context<'a> {
         let nodes = std::mem::take(&mut builder.nodes);
         let links = std::mem::take(&mut builder.links);
         out.append(&mut builder.out);
-        if !out.is_empty() || !nodes.contains_key(&plan.output) {
+        let Some(schema) = nodes.get(&plan.output).map(|node| node.schema.clone()) else {
+            return Err(out);
+        };
+        if !out.is_empty() {
             return Err(out);
         }
         Ok(TransformPlan {
@@ -503,6 +507,7 @@ impl<'a> Context<'a> {
             output: plan.output.clone(),
             links,
             fuel_units: self.limits.decide.fuel_units,
+            schema,
         })
     }
 
@@ -662,7 +667,8 @@ fn topological(plan: &norn_ir::RelationalPlan, out: &mut Vec<Diagnostic>) -> Opt
         }
         state.insert(id, false);
         stack.push((id, true));
-        for input in node_inputs(&plan.nodes[id]).into_iter().rev() {
+        let inputs = plan.nodes.get(id).map(node_inputs).unwrap_or_default();
+        for input in inputs.into_iter().rev() {
             match state.get(input) {
                 Some(true) => {}
                 Some(false) => {
@@ -699,9 +705,10 @@ struct Builder<'c, 'a> {
 }
 
 fn strip(ty: &Type) -> &Type {
-    match ty {
-        Type::Optional(inner) => strip(inner),
-        other => other,
+    if let Type::Optional(inner) = ty {
+        strip(inner)
+    } else {
+        ty
     }
 }
 
@@ -843,18 +850,20 @@ impl Builder<'_, '_> {
                     PropertyAdditivity::Undeclared {}
                 }
             };
-            let currency = match strip(&field.ty) {
-                Type::Decimal {
-                    currency_source: Some(path),
-                    ..
-                } => Some(if path.links.is_empty() {
+            let currency = if let Type::Decimal {
+                currency_source: Some(path),
+                ..
+            } = strip(&field.ty)
+            {
+                Some(if path.links.is_empty() {
                     Origin::new(alias, path.property.as_str())
                 } else {
                     // A currency read through a link cannot be grouped by a
                     // column of this row: every sum of it refuses.
                     Origin::new(alias, "")
-                }),
-                _ => None,
+                })
+            } else {
+                None
             };
             let mut markings: BTreeSet<String> = object
                 .markings
@@ -1322,7 +1331,7 @@ impl Builder<'_, '_> {
             renames.push((column.name.clone(), name));
             columns.push(right_column);
         }
-        let mut grain = left.grain.clone();
+        let mut grain = left.grain;
         if left_fans {
             grain.push(format!("{}{}", join.prefix, right_id));
         }
@@ -1813,7 +1822,8 @@ impl Builder<'_, '_> {
             .filter_map(|id| self.schema(id).cloned())
             .collect();
         let first = schemas.first()?.clone();
-        for (index, schema) in schemas.iter().enumerate().skip(1) {
+        let first_id = union.inputs.first().cloned().unwrap_or_default();
+        for (index, (schema, id)) in schemas.iter().zip(&union.inputs).enumerate().skip(1) {
             let same = schema.grain == first.grain
                 && schema.columns.len() == first.columns.len()
                 && schema.columns.iter().zip(&first.columns).all(|(a, b)| {
@@ -1827,8 +1837,7 @@ impl Builder<'_, '_> {
                 self.fail(
                     codes::UNION_SHAPE,
                     format!(
-                        "input {:?} differs from {:?} in its columns, types, contracts or grain",
-                        union.inputs[index], union.inputs[0]
+                        "input {id:?} differs from {first_id:?} in its columns, types, contracts or grain"
                     ),
                     format!("{at}/inputs/{index}"),
                 );
@@ -1842,8 +1851,11 @@ impl Builder<'_, '_> {
         )];
         for (index, column) in first.columns.iter().enumerate() {
             let mut merged = column.clone();
-            for schema in &schemas[1..] {
-                let other = &schema.columns[index];
+            for other in schemas
+                .iter()
+                .skip(1)
+                .filter_map(|schema| schema.columns.get(index))
+            {
                 if merged.exact != other.exact {
                     merged.exact = None;
                 }
@@ -1947,17 +1959,26 @@ fn passthrough(source: &str) -> Option<&str> {
 
 /// The column type of a computed scalar.
 fn column_type(inferred: &InferredType) -> Option<Type> {
-    Some(match inferred {
-        InferredType::Bool => Type::Bool,
-        InferredType::String | InferredType::Const(_) => Type::text(),
-        InferredType::Enum(values) => Type::enumeration(values.iter().cloned()),
-        InferredType::Date => Type::Date,
-        InferredType::Timestamp => Type::Timestamp {
+    if let InferredType::Optional(inner) = inferred {
+        return Some(Type::Optional(Box::new(column_type(inner)?)));
+    }
+    if let InferredType::Enum(values) = inferred {
+        return Some(Type::enumeration(values.iter().cloned()));
+    }
+    if matches!(inferred, InferredType::Bool) {
+        Some(Type::Bool)
+    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
+        Some(Type::text())
+    } else if matches!(inferred, InferredType::Date) {
+        Some(Type::Date)
+    } else if matches!(inferred, InferredType::Timestamp) {
+        Some(Type::Timestamp {
             timezone: norn_ir::TimezonePolicy::Utc,
-        },
-        InferredType::Number => Type::Number,
-        InferredType::Optional(inner) => Type::Optional(Box::new(column_type(inner)?)),
-        InferredType::Null | InferredType::List(_) | InferredType::Record(_) => return None,
-        _ => return None,
-    })
+        })
+    } else if matches!(inferred, InferredType::Number) {
+        Some(Type::Number)
+    } else {
+        // Null, lists and records are not column values.
+        None
+    }
 }

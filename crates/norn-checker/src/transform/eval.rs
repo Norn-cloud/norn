@@ -106,14 +106,12 @@ fn key(value: &Value, ty: &Type) -> Result<Key, EvalError> {
         Value::Number(number) => Key::Number(
             Decimal::parse(number.as_str()).map_err(|error| EvalError::Input(error.to_string()))?,
         ),
-        Value::String(text) => match strip(ty) {
-            Type::Timestamp { .. } => {
-                let (seconds, nanos) = norn_expr::temporal::timestamp_ordering_key(text)
-                    .map_err(|error| EvalError::Input(error.to_string()))?;
-                Key::Instant(seconds, nanos)
-            }
-            _ => Key::Text(text.clone()),
-        },
+        Value::String(text) if matches!(strip(ty), Type::Timestamp { .. }) => {
+            let (seconds, nanos) = norn_expr::temporal::timestamp_ordering_key(text)
+                .map_err(|error| EvalError::Input(error.to_string()))?;
+            Key::Instant(seconds, nanos)
+        }
+        Value::String(text) => Key::Text(text.clone()),
         Value::Array(_) | Value::Object(_) => Key::Other(
             norn_canonical::canonical_json_of(&to_runtime(value)?)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
@@ -123,9 +121,10 @@ fn key(value: &Value, ty: &Type) -> Result<Key, EvalError> {
 }
 
 fn strip(ty: &Type) -> &Type {
-    match ty {
-        Type::Optional(inner) => strip(inner),
-        other => other,
+    if let Type::Optional(inner) = ty {
+        strip(inner)
+    } else {
+        ty
     }
 }
 
@@ -163,7 +162,9 @@ fn decimal(value: &Value) -> Result<Option<Decimal>, EvalError> {
         Value::Number(number) => Decimal::parse(number.as_str())
             .map(Some)
             .map_err(|error| EvalError::Input(error.to_string())),
-        other => Err(EvalError::Input(format!("{other:?} is not a number"))),
+        Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+            Err(EvalError::Input(format!("{value:?} is not a number")))
+        }
     }
 }
 
@@ -189,79 +190,103 @@ pub fn evaluate(
 ) -> Result<TransformOutput, EvalError> {
     let mut results: BTreeMap<&str, Vec<Row>> = BTreeMap::new();
     for id in &plan.order {
-        let node = &plan.nodes[id];
-        let rows = match &node.step {
-            Step::Scan { alias } => scan(plan, input, alias)?,
-            Step::Filter {
-                input: from,
-                predicate,
-            } => filter(&results[from.as_str()], predicate, plan.fuel_units)?,
-            Step::Project {
-                input: from,
-                columns,
-            } => project(&results[from.as_str()], columns, plan.fuel_units)?,
-            Step::Join {
-                left,
-                right,
-                on,
-                kind,
-                renames,
-            } => join(
-                &results[left.as_str()],
-                &results[right.as_str()],
-                on,
-                *kind,
-                renames,
-                input,
-            )?,
-            Step::Aggregate {
-                input: from,
-                group_by,
-                measures,
-            } => aggregate(&results[from.as_str()], group_by, measures)?,
-            Step::Window {
-                input: from,
-                partition_by,
-                order_by,
-                columns,
-            } => window(
-                &results[from.as_str()],
-                plan,
-                from,
-                partition_by,
-                order_by,
-                columns,
-            )?,
-            Step::Union { inputs, branch } => {
-                let mut rows = Vec::new();
-                for from in inputs {
-                    for row in &results[from.as_str()] {
-                        let mut row = row.clone();
-                        row.values
-                            .insert(branch.clone(), Value::String(from.clone()));
-                        rows.push(row);
-                    }
-                }
-                bounded(rows)?
-            }
-            Step::Dedupe {
-                input: from,
-                key: columns,
-                order_by,
-                keep,
-            } => dedupe(
-                &results[from.as_str()],
-                plan,
-                from,
-                columns,
-                order_by,
-                *keep,
-            )?,
-        };
+        let node = plan
+            .nodes
+            .get(id)
+            .ok_or_else(|| EvalError::Input(format!("node {id:?} is not admitted")))?;
+        let rows = run(plan, input, &results, &node.step)?;
         results.insert(id.as_str(), rows);
     }
-    let schema = plan.output_schema();
     let rows = results.remove(plan.output.as_str()).unwrap_or_default();
+    finish(plan, rows)
+}
+
+fn rows_of<'r>(results: &'r BTreeMap<&str, Vec<Row>>, id: &str) -> Result<&'r [Row], EvalError> {
+    results
+        .get(id)
+        .map(Vec::as_slice)
+        .ok_or_else(|| EvalError::Input(format!("node {id:?} ran before its input")))
+}
+
+fn run(
+    plan: &TransformPlan,
+    input: &TransformInput,
+    results: &BTreeMap<&str, Vec<Row>>,
+    step: &Step,
+) -> Result<Vec<Row>, EvalError> {
+    match step {
+        Step::Scan { alias } => scan(plan, input, alias),
+        Step::Filter {
+            input: from,
+            predicate,
+        } => filter(rows_of(results, from)?, predicate, plan.fuel_units),
+        Step::Project {
+            input: from,
+            columns,
+        } => project(rows_of(results, from)?, columns, plan.fuel_units),
+        Step::Join {
+            left,
+            right,
+            on,
+            kind,
+            renames,
+        } => join(
+            rows_of(results, left)?,
+            rows_of(results, right)?,
+            on,
+            *kind,
+            renames,
+            input,
+        ),
+        Step::Aggregate {
+            input: from,
+            group_by,
+            measures,
+        } => aggregate(rows_of(results, from)?, group_by, measures),
+        Step::Window {
+            input: from,
+            partition_by,
+            order_by,
+            columns,
+        } => window(
+            rows_of(results, from)?,
+            plan,
+            from,
+            partition_by,
+            order_by,
+            columns,
+        ),
+        Step::Union { inputs, branch } => {
+            let mut rows = Vec::new();
+            for from in inputs {
+                for row in rows_of(results, from)? {
+                    let mut row = row.clone();
+                    row.values
+                        .insert(branch.clone(), Value::String(from.clone()));
+                    rows.push(row);
+                }
+            }
+            bounded(rows)
+        }
+        Step::Dedupe {
+            input: from,
+            key: columns,
+            order_by,
+            keep,
+        } => dedupe(
+            rows_of(results, from)?,
+            plan,
+            from,
+            columns,
+            order_by,
+            *keep,
+        ),
+    }
+}
+
+/// VIEW-GRAIN-1: order the output by grain (nulls last); no two rows share one.
+fn finish(plan: &TransformPlan, rows: Vec<Row>) -> Result<TransformOutput, EvalError> {
+    let schema = plan.output_schema();
     let types: Vec<&Type> = schema
         .grain
         .iter()
@@ -279,7 +304,10 @@ pub fn evaluate(
         keyed.push((sort, row));
     }
     keyed.sort_by(|a, b| a.0.cmp(&b.0));
-    if keyed.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+    if keyed
+        .windows(2)
+        .any(|pair| matches!(pair, [a, b] if a.0 == b.0))
+    {
         return Err(EvalError::Input(
             "two output rows share one identity".into(),
         ));
@@ -317,7 +345,10 @@ pub fn evaluate(
 }
 
 fn scan(plan: &TransformPlan, input: &TransformInput, alias: &str) -> Result<Vec<Row>, EvalError> {
-    let scanned = &plan.inputs[alias];
+    let scanned = plan
+        .inputs
+        .get(alias)
+        .ok_or_else(|| EvalError::Input(format!("input {alias:?} is not declared")))?;
     let source = input
         .rows
         .get(alias)
@@ -376,7 +407,11 @@ fn filter(rows: &[Row], predicate: &TypedExpression, fuel: u64) -> Result<Vec<Ro
         match evaluate_expression(predicate, row, fuel)? {
             Value::Bool(true) => kept.push(row.clone()),
             Value::Bool(false) => {}
-            other => {
+            other @ (Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)
+            | Value::Object(_)) => {
                 return Err(EvalError::Expression(format!(
                     "a predicate returned {other:?}"
                 )));
@@ -438,7 +473,11 @@ fn normalized(value: &Value, steps: &[norn_ir::Normalization]) -> Result<Key, Ev
         Value::String(text) => Ok(Key::Text(crate::entity_instance::normalize_text(
             text, steps,
         ))),
-        other => key(other, &Type::Json),
+        other @ (Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::Array(_)
+        | Value::Object(_)) => key(other, &Type::Json),
     }
 }
 
@@ -528,29 +567,81 @@ fn join(
     Ok(out)
 }
 
-/// Days since 1970-01-01 of a proleptic Gregorian date.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
+/// Days since 1970-01-01 of a proleptic Gregorian date (years 0–9999).
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    let year = if month <= 2 {
+        year.checked_sub(1)?
+    } else {
+        year
+    };
     let era = year.div_euclid(400);
-    let yoe = year - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+    let yoe = year.checked_sub(era.checked_mul(400)?)?;
+    let mp = month.checked_add(9)?.checked_rem(12)?;
+    let doy = mp
+        .checked_mul(153)?
+        .checked_add(2)?
+        .checked_div(5)?
+        .checked_add(day)?
+        .checked_sub(1)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe.checked_div(4)?)?
+        .checked_sub(yoe.checked_div(100)?)?
+        .checked_add(doy)?;
+    era.checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)
 }
 
 /// The proleptic Gregorian date of a day count since 1970-01-01.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
+fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
+    let z = days.checked_add(719_468)?;
     let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+    let doe = z.checked_sub(era.checked_mul(146_097)?)?;
+    let yoe = doe
+        .checked_sub(doe.checked_div(1460)?)?
+        .checked_add(doe.checked_div(36_524)?)?
+        .checked_sub(doe.checked_div(146_096)?)?
+        .checked_div(365)?;
+    let doy = doe.checked_sub(
+        yoe.checked_mul(365)?
+            .checked_add(yoe.checked_div(4)?)?
+            .checked_sub(yoe.checked_div(100)?)?,
+    )?;
+    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
+    let day = doy
+        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
+        .checked_add(1)?;
+    let month = if mp < 10 {
+        mp.checked_add(3)?
+    } else {
+        mp.checked_sub(9)?
+    };
+    let year = yoe
+        .checked_add(era.checked_mul(400)?)?
+        .checked_add(i64::from(month <= 2))?;
+    Some((year, month, day))
+}
+
+/// The first day of `days`'s bucket.
+fn bucket_start(days: i64, grain: TimeGrain) -> Option<(i64, i64, i64)> {
+    let (year, month, day) = civil_from_days(days)?;
+    Some(match grain {
+        TimeGrain::Day => (year, month, day),
+        // 1970-01-01 is a Thursday: Monday is three days earlier.
+        TimeGrain::Week => civil_from_days(days.checked_sub(days.checked_add(3)?.rem_euclid(7))?)?,
+        TimeGrain::Month => (year, month, 1),
+        TimeGrain::Quarter => (
+            year,
+            month
+                .checked_sub(1)?
+                .checked_div(3)?
+                .checked_mul(3)?
+                .checked_add(1)?,
+            1,
+        ),
+        TimeGrain::Year => (year, 1, 1),
+    })
 }
 
 /// ISO/UTC calendar bucket start of a date or timestamp, as a date
@@ -559,38 +650,29 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 /// # Errors
 /// A value that is not a valid date or timestamp, or a year outside 0–9999.
 pub fn bucket(value: &Value, ty: &Type, grain: TimeGrain) -> Result<Value, EvalError> {
-    let Value::String(text) = value else {
-        return match value {
-            Value::Null => Ok(Value::Null),
-            other => Err(EvalError::Input(format!("{other:?} is not temporal"))),
-        };
+    let text = match value {
+        Value::String(text) => text,
+        Value::Null => return Ok(Value::Null),
+        Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
+            return Err(EvalError::Input(format!("{value:?} is not temporal")));
+        }
     };
     let invalid = || EvalError::Input(format!("{text:?} is not a valid date or timestamp"));
-    let days = match strip(ty) {
-        Type::Timestamp { .. } => {
-            let (seconds, _) =
-                norn_expr::temporal::timestamp_ordering_key(text).map_err(|_error| invalid())?;
-            seconds.div_euclid(86_400)
-        }
-        _ => {
-            norn_expr::temporal::validate_date(text).map_err(|_error| invalid())?;
-            let mut parts = text.splitn(3, '-').map(str::parse::<i64>);
-            let (Some(Ok(year)), Some(Ok(month)), Some(Ok(day))) =
-                (parts.next(), parts.next(), parts.next())
-            else {
-                return Err(invalid());
-            };
-            days_from_civil(year, month, day)
-        }
+    let days = if matches!(strip(ty), Type::Timestamp { .. }) {
+        let (seconds, _) =
+            norn_expr::temporal::timestamp_ordering_key(text).map_err(|_error| invalid())?;
+        seconds.div_euclid(86_400)
+    } else {
+        norn_expr::temporal::validate_date(text).map_err(|_error| invalid())?;
+        let mut parts = text.splitn(3, '-').map(str::parse::<i64>);
+        let (Some(Ok(year)), Some(Ok(month)), Some(Ok(day))) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(invalid());
+        };
+        days_from_civil(year, month, day).ok_or_else(invalid)?
     };
-    let (year, month, day) = civil_from_days(days);
-    let (year, month, day) = match grain {
-        TimeGrain::Day => (year, month, day),
-        TimeGrain::Week => civil_from_days(days - (days + 3).rem_euclid(7)),
-        TimeGrain::Month => (year, month, 1),
-        TimeGrain::Quarter => (year, (month - 1) / 3 * 3 + 1, 1),
-        TimeGrain::Year => (year, 1, 1),
-    };
+    let (year, month, day) = bucket_start(days, grain).ok_or_else(invalid)?;
     if !(0..=9999).contains(&year) {
         return Err(invalid());
     }
@@ -733,10 +815,14 @@ fn compare(a: &[(Key, SortDirection)], b: &[(Key, SortDirection)]) -> Ordering {
 }
 
 fn column_types<'p>(plan: &'p TransformPlan, node: &str, columns: &[String]) -> Vec<&'p Type> {
-    let schema = &plan.nodes[node].schema;
+    let schema = plan.nodes.get(node).map(|admitted| &admitted.schema);
     columns
         .iter()
-        .map(|name| schema.column(name).map_or(&Type::Json, |column| &column.ty))
+        .map(|name| {
+            schema
+                .and_then(|schema| schema.column(name))
+                .map_or(&Type::Json, |column| &column.ty)
+        })
         .collect()
 }
 
@@ -757,10 +843,13 @@ fn partitions<'r>(
     Ok(out)
 }
 
+/// Rows in one partition with their order keys, sorted.
+type Ordered<'r> = Vec<(Vec<(Key, SortDirection)>, &'r Row)>;
+
 fn sorted<'r>(
     rows: Vec<&'r Row>,
     order_by: &[(String, SortDirection, Type)],
-) -> Result<Vec<(Vec<(Key, SortDirection)>, &'r Row)>, EvalError> {
+) -> Result<Ordered<'r>, EvalError> {
     let mut keyed = rows
         .into_iter()
         .map(|row| Ok((order_keys(row, order_by)?, row)))
@@ -788,10 +877,13 @@ fn window(
             let mut dense = 0usize;
             let mut total: Option<Decimal> = None;
             for (index, (keys, row)) in ordered.iter().enumerate() {
-                let tied = index > 0 && compare(&ordered[index - 1].0, keys) == Ordering::Equal;
+                let tied = index
+                    .checked_sub(1)
+                    .and_then(|previous| ordered.get(previous))
+                    .is_some_and(|(previous, _)| compare(previous, keys) == Ordering::Equal);
                 if !tied {
-                    rank = index + 1;
-                    dense += 1;
+                    rank = index.saturating_add(1);
+                    dense = dense.saturating_add(1);
                 }
                 let read = |at: Option<usize>| {
                     at.and_then(|at| ordered.get(at))
@@ -800,7 +892,7 @@ fn window(
                         .unwrap_or(Value::Null)
                 };
                 let value = match function {
-                    WindowFn::RowNumber => count(index + 1),
+                    WindowFn::RowNumber => count(index.saturating_add(1)),
                     WindowFn::Rank => count(rank),
                     WindowFn::DenseRank => count(dense),
                     WindowFn::Lag => read(index.checked_sub(offset)),
@@ -824,7 +916,9 @@ fn window(
                         }
                     }
                 };
-                computed[index].values.insert(name.clone(), value);
+                if let Some(slot) = computed.get_mut(index) {
+                    slot.values.insert(name.clone(), value);
+                }
             }
         }
         out.extend(computed);

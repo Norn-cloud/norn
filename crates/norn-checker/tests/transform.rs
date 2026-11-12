@@ -1,7 +1,10 @@
 #![allow(
+    clippy::arithmetic_side_effects,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
+    clippy::panic,
+    clippy::string_slice,
     missing_docs,
     reason = "integration-test crate"
 )]
@@ -747,7 +750,7 @@ proptest! {
         let forward = evaluate(&plan, &build(&rows)).expect("forward");
         let mut shuffled = rows.clone();
         let len = shuffled.len().max(1);
-        shuffled.rotate_left(usize::try_from(seed % (len as u64)).unwrap_or(0));
+        shuffled.rotate_left(usize::try_from(seed % u64::try_from(len).expect("len")).expect("rotation"));
         shuffled.reverse();
         let backward = evaluate(&plan, &build(&shuffled)).expect("backward");
         prop_assert_eq!(&forward, &backward);
@@ -790,7 +793,8 @@ fn add_days(start: &str, days: u32) -> String {
     let mut month: u32 = start[5..7].parse().expect("m");
     let mut day: u32 = start[8..].parse().expect("d");
     for _ in 0..days {
-        let length = MONTH_DAYS[(month - 1) as usize] + u32::from(month == 2 && leap(year));
+        let length = MONTH_DAYS[usize::try_from(month - 1).expect("month")]
+            + u32::from(month == 2 && leap(year));
         day += 1;
         if day > length {
             day = 1;
