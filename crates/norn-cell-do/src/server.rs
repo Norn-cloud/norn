@@ -639,7 +639,7 @@ fn profiled<E: SqlEngine>(
 
 /// HOST-READ-6: `GET /v1/objects/{type}:quarantined`, scoped by the query string.
 fn quarantined<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     object_type: &str,
     query: &str,
@@ -650,7 +650,7 @@ fn quarantined<E: SqlEngine>(
         environment_id: fields.get("environmentId").cloned(),
     };
     document_json(&get_quarantined_objects(
-        host,
+        cell(host)?,
         &scope,
         actor,
         object_type,
@@ -662,7 +662,7 @@ fn quarantined<E: SqlEngine>(
 /// `:quarantined` ids, or an object's `/lineage` (optionally `?version=`),
 /// `/findings` and `/history`.
 fn review<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
     query: &str,
@@ -681,7 +681,7 @@ fn review<E: SqlEngine>(
 
 /// One object's review read, scoped by the query string.
 fn reviewed<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, &str, &str),
     query: &str,
@@ -698,7 +698,7 @@ fn reviewed<E: SqlEngine>(
     };
     match (leaf, fields.get("version")) {
         ("findings", _) => document_json(&get_object_findings(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -706,7 +706,7 @@ fn reviewed<E: SqlEngine>(
             &CellObjectAccess,
         )?),
         ("history", _) => document_json(&get_object_history(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -718,7 +718,7 @@ fn reviewed<E: SqlEngine>(
                 .parse::<u64>()
                 .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
             document_json(&get_object_lineage_at(
-                host,
+                cell(host)?,
                 &scope,
                 actor,
                 (object_type, id, version),
@@ -726,7 +726,7 @@ fn reviewed<E: SqlEngine>(
             )?)
         }
         (_, None) => document_json(&get_object_lineage(
-            host,
+            cell(host)?,
             &scope,
             actor,
             object_type,
@@ -791,9 +791,7 @@ fn objects<E: SqlEngine>(
             &CellObjectAccess,
         )?);
     }
-    if let Some(reviewed) =
-        host.and_then(|host| review(host, actor, (&object_type, id, leaf), query))
-    {
+    if let Some(reviewed) = review(host, actor, (&object_type, id, leaf), query) {
         return reviewed;
     }
     if let Some(id) = id {
