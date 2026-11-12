@@ -335,7 +335,7 @@ mod tests {
     fn an_ad_hoc_question_is_answered_and_traced_over_the_derived_metrics() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let amount = metric(&metrics, &host, "amount", false);
         // The metrics a question may name are listed for the reader.
         let (status, listed) = get(&host, &metrics, "/v1/questions:metrics");
@@ -401,7 +401,7 @@ mod tests {
     fn a_ratio_is_governed_by_both_operands_types_or_by_none() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let (amount, quantity) = (
             metric(&metrics, &host, "amount", false),
             metric(&metrics, &host, "quantity", false),
@@ -463,7 +463,7 @@ mod tests {
         let loaded = std::time::Instant::now();
         let host = host_with(dir.path(), rows.saturating_sub(3));
         let load = loaded.elapsed();
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let amount = metric(&metrics, &host, "amount", false);
         let body = json!({"question": question(&amount)});
         let before = status("VmRSS:");
@@ -497,7 +497,7 @@ mod tests {
     fn every_derived_sum_is_answered_on_whichever_engine_lowers_it() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let questions = metrics.questions(&host).expect("runtime");
         assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
         // Every derived sum answers, on whichever engine lowered it.
@@ -520,7 +520,7 @@ mod tests {
     fn a_new_revision_is_derived_again_and_an_undeclared_measure_is_no_metric() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let amount = metric(&metrics, &host, "amount", false);
         let active = host.active_definitions().ok().flatten().expect("active");
         let admitted = super::super::admit::admit(&artifacts(false), 3_000)
@@ -547,7 +547,7 @@ mod tests {
     fn a_profile_counts_the_visible_rows_exactly() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let metrics = DevMetrics::new([7_u8; 32], scope());
         let (status, profile) = get(&host, &metrics, &format!("/v1/objects/{TYPE}:profile"));
         assert_eq!(status, 200, "{profile}");
         assert_eq!(profile["rows"], 3);

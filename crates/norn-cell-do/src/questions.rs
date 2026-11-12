@@ -51,21 +51,18 @@ struct Derived {
 pub struct DerivedQuestions {
     handle_key: [u8; 32],
     scope: CellScope,
-    now: fn() -> u64,
     label: String,
     cache: Mutex<Option<Arc<Derived>>>,
 }
 
 impl DerivedQuestions {
     /// A runtime for the cell at `scope`, keyed by the host's lineage secret
-    /// (at least 32 bytes, held by the host, never derived from cell data),
-    /// reading the host's clock (milliseconds since the Unix epoch).
+    /// (at least 32 bytes, held by the host, never derived from cell data).
     #[must_use]
-    pub fn new(handle_key: [u8; 32], scope: CellScope, now: fn() -> u64) -> Self {
+    pub fn new(handle_key: [u8; 32], scope: CellScope) -> Self {
         Self {
             handle_key,
             scope,
-            now,
             label: "dev".into(),
             cache: Mutex::new(None),
         }
@@ -203,11 +200,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         ))
     }
     /// The cell's own frontier: its main world, the caller as the population,
-    /// the active revision as the mapping pin, and the host clock. It tracks
-    /// no external source, so there is no source frontier.
+    /// the active revision as the mapping pin, and the cell's own persisted
+    /// clock. It tracks no external source, so there is no source frontier.
+    /// The clock is the store's, not the host's wall clock: the frontier is
+    /// part of the answer's lineage pin, so a trace of the same answer must
+    /// rebuild the same frontier until the cell commits again.
     fn snapshot(
         &self,
-        _store: &CellStore<E>,
+        store: &CellStore<E>,
         _plan: &QuestionPlan,
         actor: &str,
     ) -> Result<QuestionSnapshot, Refusal> {
@@ -218,7 +218,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
                 population_pin: format!("{}:{actor}", self.metrics.label),
                 authorization_epoch: 1,
                 mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
-                now_ms: (self.metrics.now)(),
+                now_ms: store.read().clock_floor().map_err(Refusal::from_compute)?,
                 source_cursors: BTreeMap::new(),
                 watermarks: BTreeMap::new(),
             },

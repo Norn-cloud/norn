@@ -256,7 +256,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         bearer: token.bearer.clone(),
         actor: manifest.dev.actor.clone(),
     };
-    let questions = DevMetrics::new(token.handle_key, scope.clone(), now_ms);
+    let questions = DevMetrics::new(token.handle_key, scope.clone());
     {
         let serving = Arc::clone(&serving);
         std::thread::spawn(move || http::serve(&listener, &serving, &principals, &questions));
