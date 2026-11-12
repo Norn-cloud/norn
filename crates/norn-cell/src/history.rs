@@ -1941,6 +1941,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             finding.status,
         )?
         .with_evidence_digest(digest.clone())?;
+        // LAW-LINK-1: the pinned targets are proven by the replay against
+        // exactly those versions, which the caller has just performed.
+        let canonical = if finding.links.is_empty() {
+            canonical
+        } else {
+            canonical.with_links(finding.links.clone())?
+        };
         if canonical.id != finding.id || canonical.dedupe_key != finding.dedupe_key {
             return Ok(None);
         }
