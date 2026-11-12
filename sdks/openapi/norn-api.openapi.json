@@ -29828,9 +29828,13 @@
           "timeProperty",
           "numerator",
           "denominator",
-          "unitPartition"
+          "unitPartition",
+          "additivity"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrMetricAdditivity"
+          },
           "denominator": {
             "type": [
               "string",

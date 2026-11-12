@@ -3196,7 +3196,7 @@
       "code": "metric.validation.mixed_currency",
       "tier": "T3",
       "severity": "error",
-      "message": "Summing multiple currencies requires an explicit conversion.",
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },

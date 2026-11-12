@@ -10667,6 +10667,7 @@ export interface components {
         };
         /** @description One metric an ad-hoc question may name. */
         NornMetricSummary: {
+            additivity: components["schemas"]["NornIrMetricAdditivity"];
             /** @description The denominator metric, for a ratio. */
             denominator: string | null;
             /** @description The aggregated expression (a property), for a simple metric. */
