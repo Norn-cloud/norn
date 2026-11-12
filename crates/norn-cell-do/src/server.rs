@@ -24,7 +24,7 @@ use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, question_catalog, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -121,12 +121,14 @@ pub fn handle_all<E: SqlEngine>(
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let catalog = path == "/v1/questions:catalog";
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
     let known = path == "/v1/definitions"
         || ad_hoc
+        || catalog
         || action.is_some()
         || object.is_some()
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
@@ -143,6 +145,8 @@ pub fn handle_all<E: SqlEngine>(
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
+    } else if catalog {
+        ad_hoc_catalog(host, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -241,6 +245,35 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// `GET /v1/questions:catalog`, scoped by the query string: what this caller
+/// may build an ad-hoc question from. A cell without a question runtime
+/// answers the one denial.
+fn ad_hoc_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the question catalog is read with GET",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let Some(runtime) = questions else {
+        return Err(norn_api::authz::read_denied());
+    };
+    document_json(&question_catalog(host, &scope, actor, runtime)?)
 }
 
 /// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string

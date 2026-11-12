@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { ChartLine, Copy, LayoutDashboard, Pencil, Plus, Table2, Trash2 } from "lucide-react"
+import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
@@ -11,12 +11,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { list, type Issue } from "@/lib/editor"
 import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
-import { RunQuestion } from "./run.tsx"
+import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
-const VIEWS = [["chart:line", "Line chart"], ["chart:area", "Area chart"], ["chart:bar", "Bar chart"], ["table", "Table"]] as const
-const viewKey = ({ kind, chart }: Tile["view"]) => kind === "table" ? "table" : `chart:${chart ?? "line"}`
-const viewOf = (key: string): Tile["view"] => key === "table" ? { kind: "table" } : { kind: "chart", chart: key.slice("chart:".length) as "line" | "bar" | "area" }
 const questionTitle = (tile: Tile) => tile.title || "Untitled question"
 
 /** Tiles laid out in reading order, two columns: a tile is one or two columns wide. */
@@ -79,7 +76,8 @@ export function DashboardsPage() {
       {rows?.map((stored) => (
         <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
           <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id" params={{ id: stored.id }}><Pencil />Open</Link></Button>
+            <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
+            <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
             <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
             <Button variant="ghost" size="sm" onClick={() => { if (globalThis.confirm(`Delete "${stored.title}"? Its history stays in the cell.`)) remove.mutate(stored) }}><Trash2 />Delete</Button>
           </div>
@@ -99,7 +97,7 @@ function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMo
   return (
     <div data-field={`tile.${index}`} data-invalid={invalid || undefined} className={`space-y-3 rounded-xl border bg-card p-3 ${tile.layout.w === 2 ? "lg:col-span-2" : ""} ${invalid ? "border-destructive" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 font-medium">{tile.view.kind === "table" ? <Table2 className="size-4" /> : <ChartLine className="size-4" />}{questionTitle(tile)}</div>
+        <div className="flex items-center gap-2 font-medium"><ViewIcon view={tile.view} />{questionTitle(tile)}</div>
         <RowActions index={index} count={count} label={`tile ${index + 1}`} onDuplicate={onDuplicate} onMove={onMove} onRemove={onRemove} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -112,7 +110,7 @@ function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMo
         </select>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}><Pencil />Edit question</Button>
       </div>
-      <RunQuestion key={JSON.stringify(tile.question)} question={tile.question} catalog={catalog} compact />
+      <TileAnswer tile={tile} catalog={catalog} />
     </div>
   )
 }
@@ -131,7 +129,8 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
   const save = useMutation({
     mutationFn: async ({ dashboard, overwrite }: { readonly dashboard: Dashboard; readonly overwrite?: boolean }) => {
       const id = at?.id ?? dashboardId(dashboard.title)
-      return { dashboard, result: await saveDashboard(store, id, dashboard, overwrite ? undefined : at?.version) }
+      // A version saved here is authored in Studio, whoever proposed the one before it.
+      return { dashboard, result: await saveDashboard(store, id, { ...dashboard, origin: { by: "studio" } }, overwrite ? undefined : at?.version) }
     },
     onSuccess: ({ dashboard, result }) => {
       setConflict("conflict" in result)
@@ -164,7 +163,10 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
   const issues = issuesOfFindings(findings)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const use = (question: Tile["question"], title: string) => {
-    if (editing === "new") tiles([...dashboard.tiles, { id: crypto.randomUUID(), title, question, view: { kind: "chart", chart: "line" }, layout: { x: 0, y: 0, w: 2, h: 1 } }])
+    if (editing === "new") {
+      const view = defaultView(question as { readonly groupBy?: readonly { readonly grain?: string }[] })
+      tiles([...dashboard.tiles, { id: crypto.randomUUID(), title, question, view, layout: { x: 0, y: 0, w: view.kind === "number" ? 1 : 2, h: 1 } }])
+    }
     else if (editing !== undefined) tiles(dashboard.tiles.map((tile, index) => index === editing ? { ...tile, title, question } : tile))
     setEditing(undefined)
   }
@@ -230,7 +232,10 @@ export function DashboardEditorPage() {
   useEffect(() => { if (stored.data) setTitle(stored.data.dashboard.title || "Untitled dashboard") }, [stored.data])
   return (
     <section className="space-y-6">
-      <h1 className="text-title font-medium">{title}</h1>
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-title font-medium">{title}</h1>
+        {id !== undefined && <Button asChild variant="outline" size="sm" className="ms-auto"><Link to="/dashboards/$id" params={{ id }}><Eye />View</Link></Button>}
+      </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
       {(scope.isPending || (cellAvailable && (catalog.isPending || (!fresh && stored.isPending)))) && <p className="text-muted-foreground">Reading the dashboard…</p>}
@@ -242,8 +247,74 @@ export function DashboardEditorPage() {
         <DashboardEditor key={`${scope.data?.orgId ?? "none"}:${scope.data?.environmentId ?? "none"}:${stored.data?.id ?? "new"}:${opened}`} cellAvailable={cellAvailable} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
           // Start again from theirs only once it has been read; a failed or empty read keeps this draft and its conflict banner.
           onReload={() => void stored.refetch().then((read) => { if (read.isSuccess && read.data) setOpened((n) => n + 1) })}
-          onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id", params: { id: saved.id }, replace: true })) }} />
+          onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id/edit", params: { id: saved.id }, replace: true })) }} />
       )}
+    </section>
+  )
+}
+
+/** A saved dashboard as its readers see it: every tile answered live from the cell and drawn as its view. */
+export function DashboardBoard({ dashboard, catalog }: { readonly dashboard: Dashboard; readonly catalog: QuestionCatalog }) {
+  const tiles = layoutTiles(dashboard.tiles)
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard}>No questions on this dashboard yet.</EmptyState></div>}
+      {tiles.map((tile) => (
+        <Panel key={tile.id} icon={viewIcon(tile.view)} label={questionTitle(tile)} className={tile.layout.w === 2 ? "lg:col-span-2" : ""}>
+          <TileAnswer tile={tile} catalog={catalog} />
+        </Panel>
+      ))}
+    </div>
+  )
+}
+
+/** One saved dashboard: its tiles drawn, with edit, duplicate and delete. */
+export function DashboardBoardPage() {
+  const scope = useStudioScope()
+  const cellAvailable = scope.isSuccess && scope.data !== null
+  const { id } = useParams({ strict: false }) as { id: string }
+  const store = useDefinitions()
+  const navigate = useNavigate()
+  const client = useQueryClient()
+  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
+  const stored = useQuery({ queryKey: ["dashboard-board", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (await store.get(id)) ?? null, enabled: cellAvailable, retry: false })
+  const duplicate = useMutation({
+    mutationFn: async (from: StoredDashboard) => {
+      const copy = duplicateDashboard(from.dashboard)
+      const id = dashboardId(copy.title)
+      settled(await store.install(id, copy))
+      return id
+    },
+    onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
+  })
+  const remove = useMutation({
+    mutationFn: async (from: StoredDashboard) => settled(await store.retire(from.id, from.version)),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards" }) },
+  })
+  const board = stored.data
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-title font-medium">{board?.dashboard.title || "Dashboard"}</h1>
+        {board && <Badge variant="outline">Version {board.version}</Badge>}
+        {board?.dashboard.origin?.by === "assistant" && <Badge variant="secondary" title={board.dashboard.origin.request ? `Asked: ${board.dashboard.origin.request}` : undefined}><Sparkles />Proposed by the assistant</Badge>}
+        {board && (
+          <div className="ms-auto flex items-center gap-1">
+            <Button asChild size="sm"><Link to="/dashboards/$id/edit" params={{ id }}><Pencil />Edit</Link></Button>
+            <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(board)}><Copy />Duplicate</Button>
+            <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => { if (globalThis.confirm(`Delete "${board.dashboard.title}"? Its history stays in the cell.`)) remove.mutate(board) }}><Trash2 />Delete</Button>
+          </div>
+        )}
+      </div>
+      {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
+      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
+      {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
+      {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && <p className="text-muted-foreground">Reading the dashboard…</p>}
+      {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
+      {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
+      {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
+      {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} />}
     </section>
   )
 }

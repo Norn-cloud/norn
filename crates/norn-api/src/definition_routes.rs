@@ -23,6 +23,7 @@ use norn_cell::retained::{
     RetainedSignoff, payload_sha256,
 };
 use norn_cell::{CellError, InstalledDefinitionInput};
+use norn_ir::metric::{MetricAdditivity, MetricType};
 use norn_ir::{MetricDefinition, QuestionIR, ResourceLimitProfile, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -846,10 +847,13 @@ fn dashboard<E: SqlEngine>(
     value: &Value,
     findings: &mut Vec<RefusalDiagnostic>,
 ) -> Result<(), Refusal> {
-    let Some(object) = members(value, "", &["title", "tiles"], findings) else {
+    let Some(object) = members(value, "", &["title", "tiles", "origin"], findings) else {
         return Ok(());
     };
     title(object.get("title"), "/title", findings);
+    if let Some(origin_value) = object.get("origin") {
+        origin(origin_value, findings);
+    }
     let Some(tiles) = object.get("tiles").and_then(Value::as_array) else {
         findings.push(RefusalDiagnostic::error(
             codes::INVALID_PAYLOAD,
@@ -886,7 +890,13 @@ fn dashboard<E: SqlEngine>(
             ));
         }
         title(tile.get("title"), &format!("{at}/title"), findings);
-        view(tile.get("view"), &format!("{at}/view"), findings);
+        view(
+            tile.get("view"),
+            tile.get("question"),
+            questions.map_or(&[][..], |runtime| runtime.definitions()),
+            &format!("{at}/view"),
+            findings,
+        );
         layout(tile.get("layout"), &format!("{at}/layout"), findings);
         question_findings(
             host,
@@ -947,7 +957,72 @@ fn question_findings<E: SqlEngine>(
     Ok(())
 }
 
-fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+/// The longest assistant request an origin keeps, in characters.
+pub const MAX_REQUEST_CHARS: usize = 2000;
+
+/// A dashboard's lineage: who authored this version (`studio`, `code` or
+/// `assistant`), and for an assistant's proposal its id, the model and the
+/// person's request, which the restatement quotes and the sign-off covers.
+fn origin(value: &Value, findings: &mut Vec<RefusalDiagnostic>) {
+    let Some(object) = members(
+        value,
+        "/origin",
+        &["by", "proposal", "model", "request"],
+        findings,
+    ) else {
+        return;
+    };
+    let by = object.get("by").and_then(Value::as_str);
+    if !matches!(by, Some("studio" | "code" | "assistant")) {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "an origin's by is studio, code or assistant",
+            "/origin/by",
+        ));
+    }
+    for (key, limit) in [
+        ("proposal", 128),
+        ("model", 128),
+        ("request", MAX_REQUEST_CHARS),
+    ] {
+        let Some(text) = object.get(key) else {
+            continue;
+        };
+        let ok = text.as_str().is_some_and(|text| {
+            !text.trim().is_empty()
+                && text.chars().count() <= limit
+                && !text.chars().any(|c| c.is_control() && c != '\n')
+        });
+        if !ok || by != Some("assistant") {
+            findings.push(RefusalDiagnostic::error(
+                codes::INVALID_PAYLOAD,
+                format!("an assistant's origin may name its {key}: non-blank text of at most {limit} characters"),
+                format!("/origin/{key}"),
+            ));
+        }
+    }
+}
+
+/// What a view can draw: any answer, one value per measure, or the parts of one whole.
+#[derive(Clone, Copy)]
+enum Drawn {
+    Any,
+    Number,
+    Pie,
+}
+
+/// A tile's view, and whether it can honestly draw its question's answer: a
+/// number shows one value per measure, so its question has no group-by; a pie
+/// shows the parts of one whole, so its question sums one additive, non-ratio
+/// measure over one category (no time grain). A question that does not decode
+/// is the question check's finding, not the view's.
+fn view(
+    value: Option<&Value>,
+    question: Option<&Value>,
+    metrics: &[MetricDefinition],
+    at: &str,
+    findings: &mut Vec<RefusalDiagnostic>,
+) {
     let Some(view) = value else {
         findings.push(RefusalDiagnostic::error(
             codes::VIEW_INVALID,
@@ -961,20 +1036,56 @@ fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) 
     };
     let kind = object.get("kind").and_then(Value::as_str);
     let chart = object.get("chart");
-    let ok = match (kind, chart) {
-        (Some("table" | "chart"), None) => true,
-        (Some("chart"), Some(chart)) => {
-            matches!(chart.as_str(), Some("line" | "bar" | "area"))
-        }
-        _ => false,
+    let drawn = match (kind, chart) {
+        (Some("table" | "chart"), None) => Some(Drawn::Any),
+        (Some("number"), None) => Some(Drawn::Number),
+        (Some("chart"), Some(chart)) => match chart.as_str() {
+            Some("line" | "bar" | "area") => Some(Drawn::Any),
+            Some("pie") => Some(Drawn::Pie),
+            _ => None,
+        },
+        _ => None,
     };
-    if !ok {
+    let Some(drawn) = drawn else {
         findings.push(RefusalDiagnostic::error(
             codes::VIEW_INVALID,
-            "a view is {kind: table} or {kind: chart, chart?: line | bar | area}",
+            "a view is {kind: table}, {kind: number} or {kind: chart, chart?: line | bar | area | pie}",
             at,
         ));
+        return;
+    };
+    let Some(question) =
+        question.and_then(|question| serde_json::from_value::<QuestionIR>(question.clone()).ok())
+    else {
+        return;
+    };
+    let unfit = match drawn {
+        Drawn::Any => None,
+        Drawn::Number => (!question.dimensions.is_empty())
+            .then_some("a number shows one value per measure, so its question has no group-by"),
+        Drawn::Pie => (!pie_fits(&question, metrics)).then_some(
+            "a pie shows the parts of one whole, so its question sums one additive, non-ratio measure over one category without a time grain",
+        ),
+    };
+    if let Some(message) = unfit {
+        findings.push(RefusalDiagnostic::error(codes::VIEW_INVALID, message, at));
     }
+}
+
+/// Whether `question`'s buckets are the parts of one whole: one declared,
+/// summable, non-ratio measure, grouped by one category without a grain.
+fn pie_fits(question: &QuestionIR, metrics: &[MetricDefinition]) -> bool {
+    let ([measure], [dimension]) = (question.metrics.as_slice(), question.dimensions.as_slice())
+    else {
+        return false;
+    };
+    dimension.grain.is_none()
+        && measure.inline.is_none()
+        && metrics.iter().any(|metric| {
+            metric.name == measure.metric
+                && metric.metric_type != MetricType::Ratio
+                && !matches!(metric.norn.additivity, MetricAdditivity::NonAdditive)
+        })
 }
 
 fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {

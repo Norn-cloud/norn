@@ -188,6 +188,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+         *     an ad-hoc question is built from, for this caller (D67: only what the
+         *     caller may read the population of).
+         *     # Errors
+         *     No actor or a scope that is not this cell's (one opaque 403), or a host
+         *     failure reading the model.
+         */
+        get: operations["question_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions:evaluate": {
         parameters: {
             query?: never;
@@ -317,6 +341,23 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /**
+         * @description One object type an ad-hoc question may range over, with every effective
+         *     property and its resolved type (`null` for a registry or unresolved type).
+         */
+        CatalogObjectType: {
+            /** @description The object type's name: a question's `objectSet`. */
+            name: string;
+            /** @description Its effective properties, in declaration order. */
+            properties: components["schemas"]["CatalogProperty"][];
+        };
+        /** @description One effective property: its id and its resolved type, as declared. */
+        CatalogProperty: {
+            /** @description The property id: what a group-by or filter path names. */
+            id: string;
+            /** @description The resolved type (kind, unit, scale, additivity), or `null`. */
+            type?: Record<string, never> | null;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -9166,6 +9207,30 @@ export interface components {
                 commit: string;
             };
         };
+        /**
+         * @description `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+         *     from, and what this cell's engine admits. Every metric and object type
+         *     listed is one the caller may read the population of (D67): a ratio only
+         *     when both its operands are, a type only when it is a readable metric's
+         *     population. Nothing listed is a promise: `:evaluate` still admits.
+         */
+        QuestionCatalog: {
+            /**
+             * @description Calendar grains a group-by may bucket a time property by; a group-by
+             *     without a grain groups by the property's values.
+             */
+            grains: string[];
+            /** @description Most buckets one answer may have (above it, 413). */
+            maxBuckets: number;
+            /** @description Most group-bys one question may have. */
+            maxGroupBy: number;
+            /** @description The listed metrics, as declared, in name order. */
+            metrics: Record<string, never>[];
+            /** @description The object types the listed metrics range over. */
+            objectTypes: components["schemas"]["CatalogObjectType"][];
+            /** @description Filter operators the engine admits. */
+            operators: string[];
+        };
         /** @description A refused request. */
         Refusal: ({
             /**
@@ -9889,6 +9954,58 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    question_catalog: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The question catalog for this caller. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
