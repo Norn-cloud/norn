@@ -63,8 +63,11 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
         )}
       </Panel>
       <ArrowRight aria-hidden className="mx-auto size-5 self-center text-muted-foreground max-md:rotate-90" />
-      <KpiTile icon={Shapes} label="One business model" value={concepts.length}
-        sub={`object types, ${relationships} links between them, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
+      {/* Its own height, not the systems list's: one figure needs no tall box. */}
+      <div>
+        <KpiTile icon={Shapes} label="One business model" value={concepts.length}
+          sub={`object types, ${relationships} links between them, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
+      </div>
     </div>
   )
 }

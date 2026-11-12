@@ -23,7 +23,7 @@ const Names = createContext<(name: string) => string>(words)
 const useNames = () => use(Names)
 
 type Pick = (id: string | undefined) => void
-type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
+type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
 type StepData = { pinned: string | undefined; order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
 type MoreData = { count: number; onExpand: () => void }
 
@@ -58,7 +58,6 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
           {dot(data.start, data.terminal)}
           <div className="min-w-0">
             <div className={cn("font-medium leading-snug", data.start ? "text-panel" : "text-sm")}>{data.label}</div>
-            {data.start && data.description && <div className="line-clamp-2 text-meta text-muted-foreground">{data.description}</div>}
           </div>
         </div>
       </button>
@@ -111,7 +110,7 @@ function moveFrom(tree: Tree, at: string, key: string): string | undefined {
 }
 
 /** The lifecycle as a left-to-right decision tree: hover or pin an element to light its path from the start and its next options. */
-function Chart({ workflow, about, pinned, onPin }: { readonly workflow: Workflow; readonly about: string | undefined; readonly pinned: string | undefined; readonly onPin: Pick }) {
+function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; readonly pinned: string | undefined; readonly onPin: Pick }) {
   const state = useNames()
   const { lifecycle } = workflow
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
@@ -140,7 +139,7 @@ function Chart({ workflow, about, pinned, onPin }: { readonly workflow: Workflow
     const position = { x: ((node.column >> 1) * 500 + (node.column % 2) * 272) * SCALE, y: node.row * 136 * SCALE }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
-      return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, description: about, laws: workflow.laws.length,
+      return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, laws: workflow.laws.length,
         backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
     }
     const guards = node.transition.guards ?? []
@@ -169,10 +168,22 @@ function Chart({ workflow, about, pinned, onPin }: { readonly workflow: Workflow
   }
   // The tree at one readable zoom, as wide as it needs: the page scrolls it sideways instead of cutting it off or shrinking it.
   const width = Math.max(...nodes.map(({ position }) => position.x)) + (300 + 2 * PAD) * SCALE
+  // When the chart runs past the panel, its right edge fades, so it reads as scrolling, not cut off.
+  const [more, setMore] = useState(false)
+  useEffect(() => {
+    const element = frame.current
+    if (!element) return
+    const check = () => setMore(element.scrollLeft + element.clientWidth < element.scrollWidth - 4)
+    check()
+    element.addEventListener("scroll", check, { passive: true })
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(check)
+    observer?.observe(element)
+    return () => { element.removeEventListener("scroll", check); observer?.disconnect() }
+  }, [width])
   // As tall as the lowest card (a start state with its badges is the tallest), no taller.
   const height = Math.max(...nodes.map(({ position }) => position.y)) + (130 + 2 * PAD) * SCALE
   return (
-    <div ref={frame} role="group" className="w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+    <div ref={frame} role="group" className={cn("w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30", more && "[mask-image:linear-gradient(to_right,black_calc(100%-64px),transparent)]")} tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       <div style={{ width: width * ZOOM, height: height * ZOOM, minWidth: "100%" }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
           // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
@@ -289,7 +300,7 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
       <div className={cn("grid gap-3", pinned !== undefined && "xl:grid-cols-[minmax(0,1fr)_20rem]")}>
         <Panel label="Steps" action="Select a state or step to see its condition, action and laws; arrow keys move, Esc clears">
           {pinned && <Breadcrumb tree={tree} pinned={pinned} />}
-          <Well className="bg-canvas-surface"><Chart workflow={workflow} about={about} pinned={pinned} onPin={setPinned} /></Well>
+          <Well className="bg-canvas-surface"><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
         </Panel>
         {pinned !== undefined && (
           <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"} action={<Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPinned(undefined)}>Clear</Button>}>
