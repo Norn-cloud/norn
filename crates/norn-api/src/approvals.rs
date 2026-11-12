@@ -3,7 +3,7 @@
 //! While an active `approval` definition gates an action, the shared action
 //! dispatch runs the kernel's action pipeline for the call (the caller's
 //! authorization, input admission, target visibility, preconditions) against
-//! [`WouldCommit`], a host that serves every read but stops at the commit
+//! `WouldCommit`, a host that serves every read but stops at the commit
 //! point. Only a call that reaches it parks: one `norn.decision@1` command
 //! carrying the admitted call and the requester's verified principal,
 //! committed alone. A caller who could not commit the call gets exactly the
