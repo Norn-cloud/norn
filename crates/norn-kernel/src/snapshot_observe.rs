@@ -1550,6 +1550,15 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
+    if let Some(first) = lifecycles
+        .first()
+        .filter(|_| catalog.effective_view_refused(&key.object_type))
+    {
+        return Err(invalid(
+            &first.property,
+            "the effective type view is refused, so protected lifecycle properties cannot be checked",
+        ));
+    }
     for snapshot in lifecycles {
         if catalog
             .effective_type(&key.object_type)
@@ -1956,6 +1965,15 @@ fn reject_protected_observed_delete(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
 ) -> Result<(), ObservationRefusal> {
+    if catalog.effective_view_refused(&key.object_type) {
+        return Err(ObservationRefusal::Properties(Box::new(
+            DecisionRefusal::InvalidOutput {
+                reason: format!(
+                    "{key} has no effective type view, so its protected properties cannot be checked"
+                ),
+            },
+        )));
+    }
     if let Some(property) = catalog
         .effective_type(&key.object_type)
         .and_then(|effective| {
@@ -2350,4 +2368,34 @@ where
         authorization,
     )
     .map_err(ObservationCommitRefusal::Commit)
+}
+
+#[cfg(test)]
+mod refused_view_tests {
+    use super::reject_protected_observed_delete;
+    use crate::FactKey;
+    use crate::decision_commit::TypeCatalog;
+    use norn_ir::ObjectTypeDef;
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn observed_delete_is_refused_when_the_effective_view_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let key = FactKey::new("test.Counter", "one");
+        let resolved = TypeCatalog::new([&object]);
+        assert!(reject_protected_observed_delete(&resolved, &key).is_err());
+        let plain: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" } }]
+        }))
+        .unwrap();
+        assert!(reject_protected_observed_delete(&TypeCatalog::new([&plain]), &key).is_ok());
+        let refused = TypeCatalog::new([&plain]);
+        assert!(refused.refuse_effective_view_for_test());
+        assert!(reject_protected_observed_delete(&refused, &key).is_err());
+    }
 }

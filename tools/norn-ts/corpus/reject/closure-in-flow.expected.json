@@ -1,0 +1,11 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-EXPRESSION",
+      "start": "12:19",
+      "end": "12:28",
+      "construct": "tags.some"
+    }
+  ]
+}

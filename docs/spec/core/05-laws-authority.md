@@ -258,6 +258,30 @@ the second can only add spurious witnesses. Named scenarios reproduce #574:
 swapped roles, dropped join, non-functional image and bad composite refuse;
 identity, equivalent path and identity composites admit.
 
+### Translation preservation (TRANSLATION-PRESERVES-1, #565)
+
+A law with response `translation_preserves` states that a translation between
+two declared object types keeps one named observation:
+
+`Valid_S(x) and Admit(x) => Valid_T(f(x)) and O_T(f(x)) = O_S(x)`
+
+The law's subject is the source contract S and `targetType` is the target
+contract T. The law's condition is `Admit`. `assignments` is the executable map
+`f`: one ZEN expression over the source for every stored target property.
+`observation` names `O` and gives its source and target expressions. `Valid`
+means the type's integrity invariants. Quality invariants don't refuse writes,
+so they are never premises.
+
+Admission requires an untimed `always` law, a resolved target, a map over exactly
+the target's stored properties, and compiling expressions. The challenge adds one
+`translation_preserves` goal per law, Unknown until a backend lowers it.
+
+Status is `proved_under_assumptions` only with `unsat` plus a non-vacuity
+witness. It is `refuted` with a counterexample model, `bounded` for a finite
+profile, and otherwise `unsupported`, which stays Unknown. A proof carries its
+modelling assumptions: values are exact and unbounded, and text has no structure.
+The law isn't enforced at commit: the kernel refuses it as unsupported.
+
 ### Declared-only normative resolution (D1, #767)
 
 LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `check_norm_precedence` requires exact source,

@@ -93,6 +93,16 @@ pub(super) fn build(
                 .push(json!({"law":law_index,"goal":{"kind":kind},
                 "statement":{"rule":kind,"law":law_index},"assessment":"unknown"}));
         }
+        // The statement travels with the goal, so challenges without one keep their bytes.
+        if let LawResponse::TranslationPreserves { observation, .. } = &law.response {
+            result.goals.push(json!({"law":law_index,
+                "goal":{"kind":"translation_preserves","observation":observation.id},
+                "statement":{"rule":"translation_preserves","law":law_index,
+                    "premise":"valid(subject,source) and condition(law,source)",
+                    "conclusion":"valid(target,f(source)) and observe(target,f(source)) = observe(subject,source)",
+                    "nonVacuity":"premise is satisfiable"},
+                "assessment":"unknown"}));
+        }
         let reads: Option<Vec<String>> =
             frame_reads(&law, &catalog).map(|fields| fields.into_iter().collect());
         for (writer_index, writer) in writers.iter().enumerate() {

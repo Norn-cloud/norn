@@ -1,0 +1,405 @@
+{
+  "schemaVersion": "norn.verification.cell-protocol-v1.results/1",
+  "date": "2026-11-11",
+  "host": "Boat default VMs (4 vCPU, 8 GB), deleted afterwards",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "jdk": "17",
+  "models": {
+    "cell-lifecycle": {
+      "modelSha256": "f12c45b62da89fd74f49e60269401a0030a570f3eae89dbdbd509b93a3124064",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariantWithProgress",
+          "maxSteps": 8,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 477
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariantWithProgress",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessReissuedConsumed": 6,
+        "witnessFencedUncommitted": 62512,
+        "witnessRefused": 33241,
+        "witnessStaleRefused": 17998,
+        "witnessRescheduledFired": 6712,
+        "witnessRecordedAfterReopen": 905
+      },
+      "variants": [
+        {
+          "step": "stepUnfenced",
+          "invariant": "refusedNeverExecutes",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 24,
+          "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json"
+        },
+        {
+          "step": "stepNoTimerFence",
+          "invariant": "noStaleTimer",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 14,
+          "trace": "traces/cell-lifecycle-stepNoTimerFence-noStaleTimer.cex.json"
+        },
+        {
+          "step": "stepDoubleDispatch",
+          "invariant": "dispatchOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 24,
+          "trace": "traces/cell-lifecycle-stepDoubleDispatch-dispatchOnce.cex.json"
+        },
+        {
+          "step": "stepNoConsumeMark",
+          "invariant": "exactlyOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 25,
+          "trace": "traces/cell-lifecycle-stepNoConsumeMark-exactlyOnce.cex.json"
+        },
+        {
+          "step": "stepNoConsumeMark",
+          "invariant": "atomicity",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 23,
+          "trace": "traces/cell-lifecycle-stepNoConsumeMark-atomicity.cex.json"
+        },
+        {
+          "step": "stepNoResultFence",
+          "invariant": "noStaleGeneration",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 18,
+          "trace": "traces/cell-lifecycle-stepNoResultFence-noStaleGeneration.cex.json"
+        },
+        {
+          "step": "stepNoProviderDedupe",
+          "invariant": "execOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 7,
+          "counterexampleSteps": 22,
+          "trace": "traces/cell-lifecycle-stepNoProviderDedupe-execOnce.cex.json"
+        },
+        {
+          "step": "stepNoProviderDedupe",
+          "invariant": "resultFidelity",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "seed": 13,
+          "counterexampleSteps": 20,
+          "trace": "traces/cell-lifecycle-stepNoProviderDedupe-resultFidelity.cex.json",
+          "samples": 3000000,
+          "note": "needs a stale request to re-execute the key before the other execution's result is recorded and consumed; not found in 300k samples at seed 7, found at seed 13 with a 3M-sample budget"
+        }
+      ],
+      "liveness": {
+        "harness": "liveness/cell-lifecycle-live.qnt",
+        "properties": [
+          "claimedResolves",
+          "timerFires"
+        ],
+        "engine": "TLC",
+        "verdict": "unknown",
+        "note": "TLC on the previous model and harness revision (before reconcileF gained providerFence) stopped after 840 s at 956,289 distinct states (618,890 queued) with no violation; not re-run on this revision"
+      },
+      "inductive": {
+        "verdict": "not attempted",
+        "note": "the ledger is a set of records with unbounded sequence numbers"
+      }
+    },
+    "fork-merge-gc": {
+      "modelSha256": "171a6034a84ee0607890049f7c258073b9c6a7099c86be6527fbff064dc2441c",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 6,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 838
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessPromoted": 5310,
+        "witnessMergeRefused": 517,
+        "witnessGcFreed": 38144,
+        "witnessForkExport": 20995,
+        "witnessForkOfForkCommit": 1783,
+        "witnessRefusedPerform": 20636
+      },
+      "variants": [
+        {
+          "step": "stepByLabel",
+          "invariant": "noEscape",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 13,
+          "trace": "traces/fork-merge-gc-stepByLabel-noEscape.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepNoDedupeBarrier",
+          "invariant": "gcSafe",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 13,
+          "trace": "traces/fork-merge-gc-stepNoDedupeBarrier-gcSafe.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepCursorReset",
+          "invariant": "mergeOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 23,
+          "trace": "traces/fork-merge-gc-stepCursorReset-mergeOnce.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepOwnBaseFence",
+          "invariant": "evidenceIsMain",
+          "verdict": "refuted",
+          "engine": "apalache-0.56.1",
+          "counterexampleSteps": 4,
+          "trace": "traces/fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json",
+          "maxSteps": 5
+        }
+      ],
+      "inductive": {
+        "verdict": "not attempted"
+      }
+    },
+    "offline-leases": {
+      "modelSha256": "196cd918443a5d1e50dadfd46dc449b9239dd3c5f85443d38201785c3b6684e3",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 5,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 295,
+          "note": "previous revision (comments-only changes since). Depth 5 cannot reach the lease hazards: each needs 7 or more steps (e.g. grant, deliverGrant, returnLease, sell, send, applyFact, landReturn). For withinLeaseNeverShort and onHandNonNegative the evidence is the samples only; depth 6 did not finish in 25 min."
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessResolved": 14481,
+        "witnessEscalated": 36549,
+        "witnessDuplicate": 68382,
+        "witnessGap": 190250,
+        "witnessWithinLeaseApplied": 5886,
+        "witnessSequencedReturn": 8617
+      },
+      "variants": [
+        {
+          "step": "stepClampDeficit",
+          "invariant": "withinLeaseNeverShort",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 24,
+          "trace": "traces/offline-leases-stepClampDeficit-withinLeaseNeverShort.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepReclaimOffline",
+          "invariant": "withinLeaseNeverShort",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 19,
+          "trace": "traces/offline-leases-stepReclaimOffline-withinLeaseNeverShort.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepUnsequencedReturn",
+          "invariant": "onHandNonNegative",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 23,
+          "trace": "traces/offline-leases-stepUnsequencedReturn-onHandNonNegative.cex.json",
+          "seed": 7
+        }
+      ],
+      "liveness": {
+        "harness": "liveness/offline-leases-live.qnt",
+        "properties": [
+          "shortfallResolves",
+          "factApplied"
+        ],
+        "engine": "TLC",
+        "verdict": "unknown",
+        "note": "TLC stopped after 600 s at 643,748 distinct states (406,714 queued) with no violation on the reduced instance"
+      },
+      "inductive": {
+        "verdict": "not attempted"
+      },
+      "modelShaNote": "comment-only edits since the recorded checks; checks not re-run"
+    },
+    "cross-cell-commitment": {
+      "modelSha256": "97cf71c980fe6c8ea1c3fb1f4a390049563ec062002dad58f6968e3e58cf6fd0",
+      "bmc": [
+        {
+          "step": "step",
+          "invariant": "invariant",
+          "maxSteps": 6,
+          "verdict": "bounded-no-counterexample",
+          "seconds": 65
+        }
+      ],
+      "simulation": {
+        "step": "step",
+        "invariant": "invariant",
+        "samples": 200000,
+        "maxSteps": 30,
+        "seed": 42,
+        "verdict": "sampled, no violation"
+      },
+      "witnesses": {
+        "witnessSettled": 22713,
+        "witnessRefused": 39786,
+        "witnessFencedThenRefused": 45057,
+        "witnessUnknownThenSettled": 12204,
+        "witnessCompensated": 913,
+        "witnessCompensationFailed": 14169,
+        "witnessForeignIgnored": 5581,
+        "witnessLawRefused": 21348
+      },
+      "variants": [
+        {
+          "step": "stepNoIssuerCheck",
+          "invariant": "agreement",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 12,
+          "trace": "traces/cross-cell-commitment-stepNoIssuerCheck-agreement.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepNoFence",
+          "invariant": "conservation",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 14,
+          "trace": "traces/cross-cell-commitment-stepNoFence-conservation.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepNoDedupe",
+          "invariant": "acceptOnce",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 13,
+          "trace": "traces/cross-cell-commitment-stepNoDedupe-acceptOnce.cex.json",
+          "seed": 7
+        },
+        {
+          "step": "stepNoCapCheck",
+          "invariant": "capacityLaw",
+          "verdict": "refuted",
+          "engine": "quint-rust-simulator",
+          "counterexampleSteps": 8,
+          "trace": "traces/cross-cell-commitment-stepNoCapCheck-capacityLaw.cex.json",
+          "seed": 7
+        }
+      ],
+      "liveness": {
+        "harness": "liveness/cross-cell-commitment-live.qnt",
+        "properties": [
+          "commitmentResolves",
+          "compensationEnds"
+        ],
+        "engine": "TLC",
+        "verdict": "exhaustive-finite",
+        "note": "complete state graph of the 2-fault harness instance: 150,699 distinct states, 8,960,657 generated; no invariant or temporal violation (CAP = 2)"
+      },
+      "inductive": {
+        "verdict": "not attempted"
+      }
+    }
+  },
+  "findings": [
+    {
+      "model": "fork-merge-gc",
+      "kind": "code",
+      "target": "#1226 export_record fence",
+      "trace": "traces/fork-merge-gc-stepOwnBaseFence-evidenceIsMain.cex.json",
+      "note": "about #1226's head; export_record on main has no fork fence"
+    },
+    {
+      "model": "offline-leases",
+      "kind": "design",
+      "target": "#1225",
+      "traces": [
+        "traces/offline-leases-stepUnsequencedReturn-onHandNonNegative.cex.json",
+        "traces/offline-leases-stepClampDeficit-withinLeaseNeverShort.cex.json",
+        "traces/offline-leases-stepReclaimOffline-withinLeaseNeverShort.cex.json"
+      ]
+    },
+    {
+      "model": "cell-lifecycle",
+      "kind": "assumption",
+      "target": "#621 EFFECT-IDENTITY-1",
+      "trace": "traces/cell-lifecycle-stepUnfenced-refusedNeverExecutes.cex.json"
+    },
+    {
+      "model": "cross-cell-commitment",
+      "kind": "design",
+      "target": "#493",
+      "note": "receipts must be bound to the issuing cell; an unseen-id query must fence the id; acceptance must deduplicate by commitment id",
+      "traces": [
+        "traces/cross-cell-commitment-stepNoIssuerCheck-agreement.cex.json",
+        "traces/cross-cell-commitment-stepNoFence-conservation.cex.json",
+        "traces/cross-cell-commitment-stepNoDedupe-acceptOnce.cex.json"
+      ]
+    }
+  ],
+  "tlc": "1.8.0",
+  "toolingNotes": [
+    "quint 0.32.0 `compile --target tlaplus` prints `x = LET .. IN ApaFoldSet(..) /\\ Q`, so the LET swallows Q; a lambda fold must end its conjunction. Apalache 0.56.1 rejects a named fold function from an imported module (`Expected F to be a binary operator passed by name`)."
+  ],
+  "fairnessHonoured": {
+    "cell-lifecycle": {
+      "reconcileF": "not honoured on main: perform() returns PerformOutcomeUnknown and claim_reconciled_perform needs a caller-ledgered authorization, so reconciliation is a manual policy step; the provider lookup-and-fence (A2) does not exist",
+      "reopenF": "needs something to wake an evicted cell while a claim is pending",
+      "timeoutF": "needs a per-call timeout",
+      "execF": "environment assumption"
+    },
+    "offline-leases": {
+      "healF": "environmental: a partitioned device is assumed to return; factApplied rests on it",
+      "tickF/escalateF": "shortfallResolves needs only these, so it states that the deadline fires, not that a shortfall is resolved"
+    },
+    "cross-cell-commitment": {
+      "all": "honourable if the source re-sends its query until answered; the model gets that because delivery never removes a message; no cell crash is modelled"
+    }
+  }
+}
