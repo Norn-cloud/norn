@@ -9,12 +9,15 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 /// The only repository whose own branches may change workflows or gate files.
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
-/// Gate files pinned to the trusted base, besides every workflow. This module and its YAML
-/// reader are gated too: they hold the Rust half of the workflow rules (`concurrency_error`)
-/// and its parity tests against `validate.py`, so editing them needs `/approve-gates`.
-const GATE_FILES: [&str; 17] = [
-    "crates/norn-skeleton-guard/src/ci/mod.rs",
-    "crates/norn-skeleton-guard/src/ci/yaml.rs",
+/// Directories pinned to the trusted base, besides every workflow: the set of tracked files
+/// under each, and every such file's bytes. The guard crate is one: it is the trusted lane's
+/// own source (rule, wiring, manifest, tests), so no file in it, present or added, changes
+/// without `/approve-gates`. [`gate_source_errors`] keeps its sources from reaching outside.
+const GATE_DIRECTORIES: [&str; 1] = ["crates/norn-skeleton-guard/"];
+
+/// Gate files pinned to the trusted base, besides every workflow and [`GATE_DIRECTORIES`].
+const GATE_FILES: [&str; 16] = [
+    "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
@@ -222,6 +225,167 @@ fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
 const MAX_MERGE_GROUP: usize = 64;
 
 /// Validate every workflow using only candidate data, plus exact provenance.
+/// Each [`GATE_DIRECTORIES`] entry whose tracked-file set, or any file's bytes, differs from
+/// the trusted base.
+fn gate_directory_contract(
+    root: &Path,
+    base: &Path,
+    previous: &[String],
+    current: &[String],
+) -> Vec<String> {
+    let mut contract = Vec::new();
+    for directory in GATE_DIRECTORIES {
+        let inside = |path: &&String| path.starts_with(directory);
+        let old: BTreeSet<_> = previous.iter().filter(inside).collect();
+        let new: BTreeSet<_> = current.iter().filter(inside).collect();
+        if old != new {
+            contract.push(format!(
+                "{directory}: gate inventory differs from the trusted base"
+            ));
+        }
+        for path in old.intersection(&new) {
+            match (
+                std::fs::read(base.join(path)),
+                std::fs::read(root.join(path)),
+            ) {
+                (Ok(before), Ok(after)) if before == after => {}
+                _ => contract.push(format!(
+                    "{path}: gate contract differs from the trusted base"
+                )),
+            }
+        }
+    }
+    contract
+}
+
+/// A gated Rust source reaches outside its gate directory only through a direct `include!`,
+/// `include_str!` or `include_bytes!` of one string literal naming a file in a gate directory
+/// or [`GATE_FILES`]. Any `path` attribute (`#[path]`, also inside `cfg_attr`), any other use of
+/// an include macro (a `use` rename, a macro-built argument) and a file that does not tokenize
+/// are refused, so no ungated file can stand in for gated code.
+fn gate_source_errors(root: &Path, files: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in files.iter().filter(|path| {
+        Path::new(path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+            && GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory))
+    }) {
+        match std::fs::read_to_string(root.join(path))
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                text.parse::<proc_macro2::TokenStream>()
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(tokens) => scan_gate_tokens(path, tokens, false, &mut errors),
+            Err(error) => errors.push(format!("{path}: gated source does not tokenize: {error}")),
+        }
+    }
+    errors
+}
+
+fn scan_gate_tokens(
+    path: &str,
+    tokens: proc_macro2::TokenStream,
+    in_attribute: bool,
+    errors: &mut Vec<String>,
+) {
+    use proc_macro2::{Delimiter, TokenTree};
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    for (index, token) in tokens.iter().enumerate() {
+        let next = tokens.get(index.saturating_add(1));
+        match token {
+            TokenTree::Ident(ident) if in_attribute && ident == "path" => {
+                if matches!(next, Some(TokenTree::Punct(punct)) if punct.as_char() == '=') {
+                    errors.push(format!(
+                        "{path}: a `path` attribute is refused in a gated source"
+                    ));
+                }
+            }
+            TokenTree::Ident(ident)
+                if ["include", "include_str", "include_bytes"]
+                    .iter()
+                    .any(|name| ident == name) =>
+            {
+                let argument = match (next, tokens.get(index.saturating_add(2))) {
+                    (Some(TokenTree::Punct(bang)), Some(TokenTree::Group(group)))
+                        if bang.as_char() == '!' =>
+                    {
+                        let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+                        match inner.as_slice() {
+                            [TokenTree::Literal(literal)] => {
+                                syn::parse_str::<syn::LitStr>(&literal.to_string())
+                                    .ok()
+                                    .map(|literal| literal.value())
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                match argument.map(|target| included_path(path, &target)) {
+                    Some(Some(target)) if is_gated(&target) => {}
+                    Some(Some(target)) => errors.push(format!(
+                        "{path}: `{ident}!` of {target}, outside every gate, is refused"
+                    )),
+                    _ => errors.push(format!(
+                        "{path}: `{ident}` is used other than as a direct `{ident}!(\"<gated file>\")`"
+                    )),
+                }
+            }
+            TokenTree::Group(group) => {
+                // `#[...]`, or `#![...]`: the bracket group right after `#` or `#!`.
+                let punct = |offset: usize, wanted: char| {
+                    index
+                        .checked_sub(offset)
+                        .and_then(|at| tokens.get(at))
+                        .is_some_and(|token| {
+                            matches!(token, TokenTree::Punct(punct) if punct.as_char() == wanted)
+                        })
+                };
+                let attribute = matches!(group.delimiter(), Delimiter::Bracket)
+                    && (punct(1, '#') || (punct(1, '!') && punct(2, '#')));
+                scan_gate_tokens(path, group.stream(), in_attribute || attribute, errors);
+            }
+            TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+        }
+    }
+}
+
+/// `target`, as `include*!` in `source` resolves it, relative to the repository root; `None`
+/// for an absolute path or one that climbs above the root.
+fn included_path(source: &str, target: &str) -> Option<String> {
+    use std::path::Component;
+    if Path::new(target).is_absolute() {
+        return None;
+    }
+    let mut parts: Vec<String> = Path::new(source)
+        .parent()?
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    for component in Path::new(target).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+fn is_gated(path: &str) -> bool {
+    GATE_FILES.contains(&path)
+        || GATE_DIRECTORIES
+            .iter()
+            .any(|directory| path.starts_with(directory))
+}
+
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
 pub fn run(root: &Path, base: &Path) -> Vec<String> {
@@ -282,6 +446,8 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             )),
         }
     }
+    contract.extend(gate_directory_contract(root, base, &previous, &current));
+    errors.extend(gate_source_errors(root, &current));
     let approval = evidence
         .filter(|_| !contract.is_empty())
         .map(|path| approval_of(path, root));
@@ -404,6 +570,7 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         .ok_or("merge group evidence has no pull requests")?;
     let gates: Vec<&str> = [".github/workflows"]
         .into_iter()
+        .chain(GATE_DIRECTORIES)
         .chain(GATE_FILES)
         .collect();
     let mut approvers = Vec::new();
@@ -833,8 +1000,8 @@ mod tests {
     /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
     /// gate file, so it may gain cases anywhere in its list; `validate.py`'s gate-pinned
     /// `PULL_REQUEST_CONCURRENCY_CASES` stops it losing a case, flipping a verdict or
-    /// changing a case's input, and changing that list needs `/approve-gates`. This file is a
-    /// gate file, and `core.sh`'s cheap phase requires both parity tests to run and pass.
+    /// changing a case's input, and changing that list needs `/approve-gates`. This file is in
+    /// a gate directory, and `core.sh`'s cheap phase requires both parity tests to run and pass.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
     const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");

@@ -625,7 +625,7 @@ def rust_parity_evidence_canaries() -> None:
     first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
     second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
     call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
-    run = f"      \"${{nextest[@]}}\" run -p norn-skeleton-guard --lib -E 'test(={first}) | test(={second})'\n"
+    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(={first}) | test(={second})'\n"
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
@@ -633,15 +633,18 @@ def rust_parity_evidence_canaries() -> None:
                 ("their run is not required", call, ""),
                 ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
                 ("only one parity test required", call, call.replace(f" {second}", "")),
-                ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", ')):
+                ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
+                ("the default filter decides", "run --locked --ignore-default-filter -p", "run --locked -p")):
             if core.count(before) != 1:
                 raise AssertionError(f"Rust parity evidence canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")
             validator.CORE_RUNNER = mutated
             try:
                 validator.validate_workflow_integrity([])
-            except validator.InvalidCoverage:
-                continue
+            except validator.InvalidCoverage as error:
+                if "cheap phase must require the two Rust concurrency parity tests" in str(error):
+                    continue
+                raise AssertionError(f"Rust parity evidence mutation ({label}) refused for another reason: {error}")
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"Rust parity evidence mutation passed: {label}")
@@ -658,8 +661,13 @@ def rust_parity_evidence_canaries() -> None:
                 ("one skipped", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><skipped/></testcase></testsuite>', 1),
                 ("one failed", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><failure message="x"/></testcase></testsuite>', 1),
                 ("another binary's tests", f'<testsuite name="norn-skeleton-guard::provenance">{passed}{other}</testsuite>', 1),
-                ("an unreadable report", "not junit", 1)):
-            report.write_text(f"<testsuites>{body}</testsuites>" if body.startswith("<") else body, encoding="utf-8")
+                ("one flaky", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><flakyFailure message="x"/></testcase></testsuite>', 1),
+                ("one passed on a rerun", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><rerunFailure message="x"/></testcase></testsuite>', 1),
+                ("an unreadable report", "not junit", 1),
+                ("no report file", None, 1)):
+            report.unlink(missing_ok=True)
+            if body is not None:
+                report.write_text(f"<testsuites>{body}</testsuites>" if body.startswith("<") else body, encoding="utf-8")
             result = subprocess.run(["bash", "-c", helper + f'\nrequire_passed "$1" norn-skeleton-guard {first} {second}', "-", str(report)],
                                     capture_output=True, text=True, timeout=30)
             if (result.returncode == 0) != (expected == 0):
@@ -688,8 +696,10 @@ def studio_browser_pin_canaries() -> None:
             validator.CORE_RUNNER = mutated
             try:
                 validator.validate_workflow_integrity([])
-            except validator.InvalidCoverage:
-                continue
+            except validator.InvalidCoverage as error:
+                if "browser phase must run the Studio Playwright rows" in str(error):
+                    continue
+                raise AssertionError(f"browser phase mutation ({label}) refused for another reason: {error}")
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"browser phase mutation passed: {label}")

@@ -500,6 +500,7 @@ fn policy_fixture() -> Fixture {
     for path in [
         "crates/norn-skeleton-guard/src/ci/mod.rs",
         "crates/norn-skeleton-guard/src/ci/yaml.rs",
+        "verification/coverage-v1/fixtures/pull-request-concurrency.json",
         "scripts/ci/core.sh",
         "scripts/ci/contract_diff.py",
         "scripts/ci/test_contract_diff.py",
@@ -568,6 +569,121 @@ fn index_fixture(fixture: &Fixture) {
                 .success()
         );
     }
+}
+
+/// The whole guard crate is the gate: a file added under it or changed in it is a gate change.
+#[test]
+fn trusted_policy_gates_every_file_of_the_guard_crate() {
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // An unlisted file added under the crate (say a module copy to redirect to).
+    let mut candidate = policy_fixture();
+    candidate.add(
+        "crates/norn-skeleton-guard/src/ci_alt/mod.rs",
+        b"pub fn rule() {}\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+    // A changed file under the crate, with its provenance hash updated.
+    let path = "crates/norn-skeleton-guard/src/ci/mod.rs";
+    let mut candidate = policy_fixture();
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.write(path, b"pub fn rule() {}\n");
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error.contains(&format!(
+            "{path}: gate contract differs from the trusted base"
+        ))),
+        "{errors:?}"
+    );
+}
+
+/// Gated sources cannot stand an ungated file in for gated code: refused even with no gate
+/// change (a tree checked against itself), so a merged one could never be the base.
+#[test]
+fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    for (label, source, refusal) in [
+        (
+            "#[path] to a module outside the crate",
+            "#[path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#[path] inside cfg_attr",
+            "#[cfg_attr(test, path = \"ci_alt/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#![path] as an inner attribute",
+            "mod ci {\n    #![path = \"x\"]\n}\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "include! of an ungated file",
+            "include!(\"../../../README.md\");\n",
+            "`include!` of README.md, outside every gate, is refused",
+        ),
+        (
+            "include_str! climbing above the repository",
+            "const X: &str = include_str!(\"../../../../outside.json\");\n",
+            "is used other than as a direct",
+        ),
+        (
+            "include! of a macro-built path",
+            "include!(concat!(\"../\", \"x.rs\"));\n",
+            "`include` is used other than as a direct",
+        ),
+        (
+            "an include inside another macro's arguments",
+            "fn f() {\n    assert!(include_str!(\"../../../README.md\").is_empty());\n}\n",
+            "`include_str!` of README.md, outside every gate, is refused",
+        ),
+        (
+            "a renamed include macro",
+            "use std::include_str as read;\n",
+            "`include_str` is used other than as a direct",
+        ),
+        (
+            "an absolute include path",
+            "const X: usize = core::convert::identity(include_bytes!(\"/etc/hostname\").len());\n",
+            "`include_bytes` is used other than as a direct",
+        ),
+    ] {
+        let mut tree = policy_fixture();
+        tree.add(lib, source.as_bytes(), "code");
+        tree.save();
+        index_fixture(&tree);
+        let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+        assert!(
+            errors.iter().any(|error| error.contains(refusal)),
+            "{label}: {errors:?}"
+        );
+    }
+    // A direct include of a gate file (or of a file inside the crate) is admitted.
+    let mut tree = policy_fixture();
+    tree.add(
+        lib,
+        b"pub const RULE: &str = include_str!(\"../../../verification/coverage-v1/validate.py\");\npub const SELF: &str = include_str!(\"ci/yaml.rs\");\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(errors.is_empty(), "{errors:?}");
 }
 
 #[test]

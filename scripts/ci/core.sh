@@ -113,7 +113,7 @@ run_phase() {
       ensure_nextest
       parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/nextest/ci/junit.xml"
       rm -f "$parity_report"
-      "${nextest[@]}" run -p norn-skeleton-guard --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
+      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
       require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
       ;;
     test)
