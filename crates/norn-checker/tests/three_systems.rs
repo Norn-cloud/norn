@@ -506,8 +506,8 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
 }
 
 /// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
-/// their own time property; stocks (Holding) derive nothing, and the amounts
-/// without a time grain of their own (Posting, SettlementObservation) derive nothing.
+/// their own time property; stocks (`Holding`) derive nothing, and the amounts
+/// without a time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
 #[test]
 fn three_systems_derive_exactly_the_canon_flow_sums() {
     let space = norn_checker::metric::derive::derive_metric_space(
