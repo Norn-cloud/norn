@@ -167,7 +167,7 @@ type Period = (Option<String>, Instant);
 ///
 /// # Errors
 /// Refuses a plan that is not one snapshot sum, values outside the profile,
-/// or more than [`MAX_AS_OF_BUCKETS`] periods.
+/// or more than 1024 periods.
 pub fn as_of(
     plan: &QuestionPlan,
     versions: &[(u64, RuntimeObject)],
