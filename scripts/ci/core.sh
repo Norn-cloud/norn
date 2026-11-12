@@ -429,7 +429,7 @@ gate_source = (root / "crates/norn-skeleton-guard/src/ci/mod.rs").read_text()
 gate_block = gate_source.split("const GATE_FILES:", 1)[1].split("];", 1)[0]
 gates = set(re.findall(r'"([^"]+)"', gate_block))
 for path in changed:
-    if (path in gates or path.startswith((".github/workflows/", "crates/norn-skeleton-guard/"))
+    if (path in gates or path.startswith((".github/workflows/", ".cargo/", "crates/norn-skeleton-guard/"))
             or Path(path).name in {"Cargo.lock", "Cargo.toml", "rust-toolchain", "rust-toolchain.toml", "lean-toolchain"}):
         full(f"gate, dependency or toolchain changed: {path}")
 try:

@@ -478,9 +478,9 @@ PR_CONCURRENCY = (
 
 # Every case the pull_request concurrency parity fixture
 # (fixtures/pull-request-concurrency.json) must keep: its verdict and the sha256 of its input
-# (`concurrency_case_digest`: `on`, `concurrency` and `source`). The fixture is not a gate
-# file, so it may gain cases anywhere in its list; this list stops it losing a case, flipping
-# a verdict or changing what a case tests. negative_canaries.py and the Rust parity tests in
+# (`concurrency_case_digest`: `on`, `concurrency` and `source`). The fixture is a gate file, so
+# any edit to it needs `/approve-gates`; this list also stops an approved edit losing a case,
+# flipping a verdict or changing what a case tests without this list changing too. negative_canaries.py and the Rust parity tests in
 # crates/norn-skeleton-guard/src/ci/mod.rs (inside the gated guard-crate directory) both read this block, one
 # `"name": ["verdict", "sha256"],` per line; core.sh's cheap phase requires those two Rust
 # tests to have run and passed.

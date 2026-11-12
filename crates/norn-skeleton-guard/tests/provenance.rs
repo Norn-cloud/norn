@@ -611,8 +611,135 @@ fn trusted_policy_gates_every_file_of_the_guard_crate() {
     );
 }
 
+/// What the trusted build reads besides the guard crate is a gate (#1258 round 4): `.cargo/`
+/// (Cargo config applies whatever `--manifest-path` says) and the toolchain files, which
+/// must stay absent while the base has none. A gate file's mode is part of its contract.
+#[test]
+fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
+    let refused = |candidate: &Fixture, base: &Fixture, wanted: &str| {
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+        assert!(
+            errors.iter().any(|error| error.contains(wanted)),
+            "{wanted}: {errors:?}"
+        );
+    };
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // Adding a toolchain file where the base has none.
+    for path in ["rust-toolchain.toml", "rust-toolchain"] {
+        let mut candidate = policy_fixture();
+        candidate.add(path, b"[toolchain]\npath = \"/tmp/evil\"\n", "code");
+        candidate.save();
+        index_fixture(&candidate);
+        refused(
+            &candidate,
+            &base,
+            &format!("{path}: gate contract differs from the trusted base"),
+        );
+    }
+    // Adding `.cargo/config.toml` with a rustc wrapper where the base has none.
+    let mut candidate = policy_fixture();
+    candidate.add(
+        ".cargo/config.toml",
+        b"[build]\nrustc-wrapper = \"/tmp/wrap\"\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    refused(
+        &candidate,
+        &base,
+        ".cargo/: gate inventory differs from the trusted base",
+    );
+    // Changing `[env]` in an existing `.cargo/config.toml`.
+    let config = |env: &[u8]| {
+        let mut fixture = policy_fixture();
+        let record = fixture.add(".cargo/config.toml", env, "code");
+        fixture.save();
+        index_fixture(&fixture);
+        (fixture, record)
+    };
+    let (cargo_base, _) = config(b"[alias]\nxtask = \"run\"\n");
+    assert!(norn_skeleton_guard::ci::run(cargo_base.root(), cargo_base.root()).is_empty());
+    let (mut cargo_candidate, record) = config(b"[alias]\nxtask = \"run\"\n");
+    cargo_candidate.write(
+        ".cargo/config.toml",
+        b"[alias]\nxtask = \"run\"\n[env]\nPATH = \"/tmp/bin\"\n",
+    );
+    cargo_candidate.records[record]["sha256"] =
+        cargo_candidate.reference(".cargo/config.toml")["sha256"].clone();
+    cargo_candidate.save();
+    refused(
+        &cargo_candidate,
+        &cargo_base,
+        ".cargo/config.toml: gate contract differs from the trusted base",
+    );
+    // An exec-bit flip on a gate file with identical bytes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [
+            "scripts/ci/core.sh",
+            "crates/norn-skeleton-guard/baseline.json",
+        ] {
+            let candidate = policy_fixture();
+            std::fs::set_permissions(
+                candidate.root().join(path),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod");
+            refused(
+                &candidate,
+                &base,
+                &format!("{path}: gate contract differs from the trusted base"),
+            );
+        }
+    }
+}
+
 /// Gated sources cannot stand an ungated file in for gated code: refused even with no gate
 /// change (a tree checked against itself), so a merged one could never be the base.
+/// Every `include!` target is scanned as Rust whatever its extension, and must be tracked.
+#[test]
+fn trusted_policy_scans_include_targets_and_requires_them_tracked() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    // An `include!` target compiles as Rust whatever its extension, so it is scanned too.
+    let data = "crates/norn-skeleton-guard/src/ci/extra.txt";
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/extra.txt\");\n", "code");
+    tree.add(
+        data,
+        b"#[path = \"../../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors
+            .iter()
+            .any(|error| error
+                == &format!("{data}: a `path` attribute is refused in a gated source")),
+        "non-.rs include: {errors:?}"
+    );
+    // An include target must be tracked: an untracked file under the crate is refused.
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/untracked.rs\");\n", "code");
+    tree.save();
+    index_fixture(&tree);
+    tree.write(
+        "crates/norn-skeleton-guard/src/ci/untracked.rs",
+        b"pub fn f() {}\n",
+    );
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors.iter().any(|error| error.contains(
+            "`include!` of crates/norn-skeleton-guard/src/ci/untracked.rs, untracked or outside every gate, is refused"
+        )),
+        "untracked include: {errors:?}"
+    );
+}
+
 #[test]
 fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
     let lib = "crates/norn-skeleton-guard/src/lib.rs";
@@ -635,7 +762,7 @@ fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
         (
             "include! of an ungated file",
             "include!(\"../../../README.md\");\n",
-            "`include!` of README.md, outside every gate, is refused",
+            "`include!` of README.md, untracked or outside every gate, is refused",
         ),
         (
             "include_str! climbing above the repository",
@@ -650,7 +777,7 @@ fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
         (
             "an include inside another macro's arguments",
             "fn f() {\n    assert!(include_str!(\"../../../README.md\").is_empty());\n}\n",
-            "`include_str!` of README.md, outside every gate, is refused",
+            "`include_str!` of README.md, untracked or outside every gate, is refused",
         ),
         (
             "a renamed include macro",
@@ -661,6 +788,21 @@ fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
             "an absolute include path",
             "const X: usize = core::convert::identity(include_bytes!(\"/etc/hostname\").len());\n",
             "`include_bytes` is used other than as a direct",
+        ),
+        (
+            "a raw-identifier include macro",
+            "r#include!(\"../../../README.md\");\n",
+            "`include!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "a raw-identifier path attribute",
+            "#[r#path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "a raw-identifier path attribute inside cfg_attr",
+            "#[cfg_attr(all(), r#path = \"../../../elsewhere/ci/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
         ),
     ] {
         let mut tree = policy_fixture();
