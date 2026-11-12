@@ -1263,3 +1263,267 @@ mod scales {
         }
     }
 }
+
+/// METRIC-GRAIN-LINK-1 on the engine: an entry's time is its event's,
+/// through the to-one link the mirror keeps; an entry without an event is
+/// skipped and counted (`unlinked`); a corrected event time moves its
+/// entries; an unlinked or retargeted entry moves too. Every answer equals
+/// the exact engine's (`linked_time_question.rs` is the oracle scenario).
+mod linked_time {
+    use super::{compare, engine};
+    use norn_cell::compute::QueryContext;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
+    use norn_checker::metric::compute::QuestionPlan;
+    use norn_checker::metric::derive::derive_metric_space;
+    use norn_ir::{
+        ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
+    };
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const WORLD: &str = "synthetic-ledger";
+    const CLOCK: u64 = 1_792_972_800_000;
+
+    fn types() -> [ObjectTypeDef; 2] {
+        [
+            serde_json::from_value(json!({"name": "demo.Event", "properties": [
+                {"id": "occurred_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+            ]}))
+            .expect("event type"),
+            serde_json::from_value(json!({"name": "demo.Entry", "properties": [
+                {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"}}},
+                {"id": "side", "type": {"kind": "text"}},
+            ], "links": [
+                {"id": "event", "target": "demo.Event", "cardinality": {"to": "one", "from": "many"}},
+            ]}))
+            .expect("entry type"),
+        ]
+    }
+
+    fn envelope(object: &ObjectTypeDef) -> ArtifactEnvelope {
+        let name = object.name.as_str();
+        serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
+            "namespace": "demo", "name": name, "version": "0.1.0", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {"entityVersion": "2.0", "objectType": object},
+        }))
+        .expect("artifact")
+    }
+
+    /// "amount by `event.occurred_at`", grouped as `group_by`, optionally
+    /// only the `debit` side.
+    fn fixture(group_by: &serde_json::Value, debit_only: bool) -> (CellStore, QuestionPlan) {
+        let [event, entry] = types();
+        let space = derive_metric_space(
+            &[envelope(&event), envelope(&entry)],
+            &BTreeSet::new(),
+            &LawRoot::Entity("demo.Entry".to_owned()),
+        )
+        .expect("derived space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate.definition.type_params.expr.as_deref() == Some("amount")
+                    && candidate
+                        .definition
+                        .norn
+                        .time_dimension
+                        .as_ref()
+                        .is_some_and(|time| time.links.len() == 1)
+            })
+            .expect("the entry's linked-time sum");
+        let filter = if debit_only {
+            json!([{"path": {"property": "side"}, "operator": "eq", "value": "debit"}])
+        } else {
+            json!([])
+        };
+        let question: QuestionIR = serde_json::from_value(json!({
+            "irVersion": "0.1", "name": "demo.entries", "objectSet": "demo.Entry",
+            "aggregate": [{"metric": metric.definition.name}],
+            "groupBy": group_by,
+            "filter": filter,
+            "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+            "freshness": {"kind": "live", "maxAgeMs": 5000},
+        }))
+        .expect("question");
+        let plan = space
+            .admit(&question, 100)
+            .expect("admitted linked question");
+        assert!(plan.time_link().is_some());
+        let model = Model::from_definitions(&types(), &[]).expect("model");
+        (CellStore::open_in_memory(model).expect("cell"), plan)
+    }
+
+    fn weekly() -> serde_json::Value {
+        json!([{"path": {"links": ["event"], "property": "occurred_at"}, "grain": "week"}])
+    }
+
+    fn context() -> QueryContext {
+        QueryContext {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            population_pin: "all-entries".into(),
+            authorization_epoch: 1,
+            mapping_pin: "fixture:ledger".into(),
+            now_ms: CLOCK.checked_add(1_000_000).expect("clock"),
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
+        }
+    }
+
+    fn event(key: &str, at: &str) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: "demo.Event".into(),
+            key: key.into(),
+            values: BTreeMap::from([("occurred_at".into(), V::from(at))]),
+        }
+    }
+
+    fn entry(key: &str, amount: i64, side: &str) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: "demo.Entry".into(),
+            key: key.into(),
+            values: BTreeMap::from([
+                (
+                    "amount".into(),
+                    V::from(Decimal::parse(&amount.to_string()).expect("exact amount")),
+                ),
+                ("side".into(), V::from(side)),
+            ]),
+        }
+    }
+
+    fn link(entry: &str, event: &str, add: bool) -> LinkChange {
+        if add {
+            LinkChange::Add {
+                object_type: "demo.Entry".into(),
+                link: "event".into(),
+                source: entry.into(),
+                target: event.into(),
+                values: BTreeMap::new(),
+                target_type: None,
+            }
+        } else {
+            LinkChange::Remove {
+                object_type: "demo.Entry".into(),
+                link: "event".into(),
+                source: entry.into(),
+                target: event.into(),
+                target_type: None,
+            }
+        }
+    }
+
+    fn commit(
+        store: &mut CellStore,
+        tick: u64,
+        writes: Vec<FactWriteRow>,
+        links: Vec<LinkChange>,
+    ) -> bool {
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK.checked_add(tick).expect("clock"),
+                writes,
+                links,
+                ..CommitBatch::default()
+            })
+            .is_ok()
+    }
+
+    #[test]
+    fn an_entry_takes_its_events_time_and_one_without_an_event_is_counted_never_bucketed() {
+        for (group_by, debit_only) in [
+            (weekly(), false),
+            (weekly(), true),
+            (json!([{"path": {"property": "side"}}]), false),
+            (json!([]), false),
+        ] {
+            let (_dir, engine) = engine();
+            let (mut store, plan) = fixture(&group_by, debit_only);
+            assert!(commit(
+                &mut store,
+                1,
+                vec![
+                    event("e1", "2026-07-07T10:00:00Z"),
+                    event("e2", "2026-07-15T09:00:00Z"),
+                    event("e3", "2026-07-22T00:00:00Z"),
+                    entry("x1", 10, "debit"),
+                    entry("x2", 20, "credit"),
+                    entry("x3", 5, "debit"),
+                    entry("x4", 7, "debit"),
+                    entry("x5", 3, "credit"),
+                ],
+                vec![
+                    link("x1", "e1", true),
+                    link("x2", "e1", true),
+                    link("x3", "e2", true),
+                    link("x5", "e3", true),
+                ],
+            ));
+            let answered = compare(&store, &engine, &plan, &context()).expect("answered");
+            assert_eq!(answered.unlinked, 1, "{group_by}");
+            // A corrected event time moves its entries; an unlinked entry is
+            // counted again; a linked one joins a bucket.
+            for (tick, writes, links) in [
+                (2, vec![event("e2", "2026-07-08T00:00:00Z")], Vec::new()),
+                (
+                    3,
+                    Vec::new(),
+                    vec![link("x3", "e2", false), link("x4", "e3", true)],
+                ),
+                (4, vec![event("e3", "2026-09-01T00:00:00Z")], Vec::new()),
+            ] {
+                assert!(commit(&mut store, tick, writes, links));
+                compare(&store, &engine, &plan, &context());
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+        /// Generated ledgers: events and entries written, linked, unlinked
+        /// and relinked over several commits; after every commit the engine
+        /// answers exactly as the cell.
+        #[test]
+        fn generated_ledgers_match_exact_envelopes(
+            steps in proptest::collection::vec(
+                (0u8..4, 0u8..5, 0u8..3, 0usize..6, -500i64..500, proptest::bool::ANY),
+                1..12,
+            ),
+            shape in 0u8..3,
+        ) {
+            const TIMES: [&str; 6] = [
+                "2026-07-01T00:00:00Z",
+                "2026-07-06T00:00:00Z",
+                "2026-07-12T23:59:59.999Z",
+                "2026-07-20T08:00:00+02:00",
+                "2026-08-09T23:59:59Z",
+                "2026-08-10T00:00:00Z",
+            ];
+            let (_dir, engine) = engine();
+            let group_by = match shape {
+                0 => weekly(),
+                1 => json!([{"path": {"property": "side"}}, {"path": {"links": ["event"], "property": "occurred_at"}, "grain": "month"}]),
+                _ => json!([]),
+            };
+            let (mut store, plan) = fixture(&group_by, shape == 2);
+            for (tick, (kind, entry_key, event_key, at, amount, debit)) in (1u64..).zip(steps) {
+                let (x, e) = (format!("x{entry_key}"), format!("e{event_key}"));
+                let side = if debit { "debit" } else { "credit" };
+                let (writes, links) = match kind {
+                    0 => (vec![event(&e, TIMES[at])], Vec::new()),
+                    1 => (vec![entry(&x, amount, side)], Vec::new()),
+                    2 => (vec![entry(&x, amount, side), event(&e, TIMES[at])], vec![link(&x, &e, true)]),
+                    _ => (Vec::new(), vec![link(&x, &e, false)]),
+                };
+                if commit(&mut store, tick, writes, links) {
+                    compare(&store, &engine, &plan, &context());
+                }
+            }
+        }
+    }
+}

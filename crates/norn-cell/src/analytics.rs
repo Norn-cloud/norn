@@ -217,6 +217,10 @@ pub struct FrontierRequest {
     /// The current schemas of every mirrored root type; any changed pin
     /// clears the world's mirror, so it is synced again from the start.
     pub tables: Vec<TableSchema>,
+    /// Every link table the mirror keeps edges of; a changed set clears the
+    /// mirror as a changed pin does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 /// The last commit the mirror applied for the world.
@@ -241,6 +245,29 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
+    /// Every link edge those commits changed, in commit order, as it stands
+    /// after its last change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkEdge>,
+}
+
+/// One link edge a commit changed (METRIC-GRAIN-LINK-1): whether it is
+/// live after its last change, and the commit of that change. The mirror
+/// keeps each edge's latest state, so an answer through a link is exact
+/// only at a frontier no edge of that link changed after.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkEdge {
+    /// The link table.
+    pub table: String,
+    /// The source object id.
+    pub source: String,
+    /// The target object id.
+    pub target: String,
+    /// The edge is live after its last change.
+    pub live: bool,
+    /// The commit of its last change.
+    pub commit_seq: u64,
 }
 
 /// Where an analytical question reads.
@@ -401,6 +428,25 @@ pub struct Lowered {
     /// A snapshot sum's periods; its time grouping is the period's label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<AsOf>,
+    /// METRIC-GRAIN-LINK-1: the time is the linked object's; the window and
+    /// a time grouping on [`TIME_LINK_COLUMN`] read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_link: Option<TimeLink>,
+}
+
+/// The column a linked time is read as.
+pub const TIME_LINK_COLUMN: &str = ":link";
+
+/// METRIC-GRAIN-LINK-1: the to-one link a sum's time is read through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeLink {
+    /// The link table the source rows' edges are in.
+    pub link: String,
+    /// The target's mirrored root table.
+    pub target: String,
+    /// The target's time column.
+    pub column: String,
 }
 
 /// Evaluate a lowered question.
@@ -485,6 +531,10 @@ pub struct EvaluateResponse {
     pub excluded: Vec<String>,
     /// Buckets in group order.
     pub buckets: Vec<BucketTotals>,
+    /// METRIC-GRAIN-LINK-1: rows that would count but have no linked
+    /// object, so no time: skipped and counted.
+    #[serde(default)]
+    pub unlinked: u64,
 }
 
 /// Page one bucket's members in identity order.

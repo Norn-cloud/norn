@@ -23,7 +23,7 @@ use super::{
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
     MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse, Source,
-    SyncRequest, TableSchema, TenantId, Test, Value, hex,
+    SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink, Value, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -75,6 +75,11 @@ fn mirror_table(name: &str) -> String {
 
 fn dataset_table(name: &str) -> String {
     ident(&format!("d:{name}"))
+}
+
+/// The mirrored edges of one link table (METRIC-GRAIN-LINK-1).
+fn link_table(name: &str) -> String {
+    ident(&format!("k:{name}"))
 }
 
 fn quarantine_table(name: &str) -> String {
@@ -187,12 +192,12 @@ impl Engine {
     /// An engine failure.
     pub fn frontier(&self, request: &FrontierRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
-            let mut stale = false;
+            let mut stale = meta(conn, "links")?.unwrap_or_default() != request.links.join("\n");
             for table in &request.tables {
                 stale |= meta(conn, &format!("pin:{}", table.name))?.as_deref() != Some(&table.pin);
             }
             if stale {
-                reset_mirror(conn, &request.tables)?;
+                reset_mirror(conn, &request.tables, &request.links)?;
             }
             let frontier = meta(conn, &format!("frontier:{}", request.world))?
                 .and_then(|v| v.parse().ok())
@@ -266,6 +271,9 @@ impl Engine {
                 return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
             }
             let excluded = scope.excluded_present(conn)?;
+            if let Some(link) = &request.query.time_link {
+                check_link(conn, &scope, link)?;
+            }
             let projection = Projection::build(&request.query, &scope)?;
             if let Some(untimed) = &projection.untimed
                 && query_u64(conn, untimed)? > 0
@@ -276,13 +284,19 @@ impl Engine {
                 if query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE refuse"))? > 0 {
                     return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));
                 }
-                projection.buckets(conn, population <= request.inline_members)
+                let unlinked = query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE ul"))?;
+                Ok((
+                    projection.buckets(conn, population <= request.inline_members)?,
+                    unlinked,
+                ))
             });
             let _dropped = conn.execute_batch("DROP TABLE IF EXISTS \":p\"");
+            let (buckets, unlinked) = answered?;
             Ok(EvaluateResponse {
                 population,
                 excluded,
-                buckets: answered?,
+                buckets,
+                unlinked,
             })
         })
     }
@@ -452,11 +466,11 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
-fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
+fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> Outcome<()> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
     let reset = (|| {
         let mut statement = db(conn.prepare(
-            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%'",
+            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%' OR table_name LIKE 'k:%'",
         ))?;
         let names: Vec<String> =
             db(db(statement.query_map([], |row| row.get(0)))?.collect::<Result<_, _>>())?;
@@ -498,6 +512,13 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
                 &schema_text(table)?,
             )?;
         }
+        for link in links {
+            db(conn.execute_batch(&format!(
+                "CREATE TABLE {} (\":w\" VARCHAR, \":s\" VARCHAR, \":t\" VARCHAR, \":live\" BOOLEAN, \":c\" UBIGINT, PRIMARY KEY (\":w\", \":s\", \":t\"))",
+                link_table(link)
+            )))?;
+        }
+        set_meta(conn, "links", &links.join("\n"))?;
         Ok(())
     })();
     match reset {
@@ -518,6 +539,46 @@ fn schema_of(conn: &Connection, key: &str) -> Outcome<TableSchema> {
     serde_json::from_str(&text).map_err(|e| refusal("analytics.engine", e.to_string()))
 }
 
+/// METRIC-GRAIN-LINK-1: each changed edge's state after its last change, in
+/// commit order.
+fn apply_links(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
+    if request.links.is_empty() {
+        return Ok(());
+    }
+    let known = meta(conn, "links")?.unwrap_or_default();
+    let known: std::collections::BTreeSet<&str> = known.split('\n').collect();
+    for edge in &request.links {
+        if !known.contains(edge.table.as_str()) {
+            return Err(refusal(
+                UNSUPPORTED,
+                format!("no link table {}", edge.table),
+            ));
+        }
+        // An edge changed again since carries the cell's head, past the batch;
+        // none is older than the batch.
+        if edge.commit_seq <= request.after {
+            return Err(refusal(
+                "analytics.frontier_moved",
+                "an edge outside the batch",
+            ));
+        }
+        db(conn.execute(
+            &format!(
+                "INSERT OR REPLACE INTO {} VALUES (?, ?, ?, ?, ?)",
+                link_table(&edge.table)
+            ),
+            duckdb::params![
+                request.world,
+                edge.source,
+                edge.target,
+                edge.live,
+                edge.commit_seq
+            ],
+        ))?;
+    }
+    Ok(())
+}
+
 /// Encode one stored value for the all-text staging table.
 fn stage(value: &Value) -> (Sql, Sql, Sql) {
     match value {
@@ -535,6 +596,7 @@ fn stage(value: &Value) -> (Sql, Sql, Sql) {
 }
 
 fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
+    apply_links(conn, request)?;
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {
         if row.commit_seq <= request.after || row.commit_seq > request.through {
@@ -698,6 +760,8 @@ struct Scope {
     /// Every version known at the frontier, superseded ones included (mirror only).
     versions: Option<Frag>,
     excluded: Vec<String>,
+    /// The mirror's world and the frontier read (mirror only).
+    at: Option<(String, u64)>,
 }
 
 impl Scope {
@@ -741,6 +805,7 @@ impl Scope {
                     population,
                     versions: Some(versions),
                     excluded: excluded.clone(),
+                    at: Some((world.clone(), *frontier)),
                 })
             }
             Source::Dataset { table, load } => {
@@ -755,6 +820,7 @@ impl Scope {
                     population: Frag::raw("TRUE"),
                     versions: None,
                     excluded: Vec::new(),
+                    at: None,
                 })
             }
         }
@@ -992,6 +1058,68 @@ fn filters_sql(scope: &Scope, filters: &[Filter]) -> Outcome<Condition> {
     Ok(Condition { holds, refuse })
 }
 
+/// METRIC-GRAIN-LINK-1: a linked time reads a mirrored link and an instant of
+/// its target, at a frontier no edge of the link changed after (the mirror
+/// keeps each edge's latest state).
+fn check_link(conn: &Connection, scope: &Scope, link: &TimeLink) -> Outcome<()> {
+    let Some((world, frontier)) = &scope.at else {
+        return Err(refusal(UNSUPPORTED, "a linked time over a dataset"));
+    };
+    let known = meta(conn, "links")?.unwrap_or_default();
+    if !known.split('\n').any(|name| name == link.link) {
+        return Err(refusal(UNSUPPORTED, format!("no link table {}", link.link)));
+    }
+    let target = schema_of(conn, &format!("schema:{}", link.target))?;
+    if !target.columns.iter().any(|column| {
+        column.id == link.column && matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date)
+    }) {
+        return Err(refusal(UNSUPPORTED, "a linked time that is not an instant"));
+    }
+    let later = query_u64(
+        conn,
+        &Frag::fmt(
+            &format!(
+                "SELECT count(*) FROM {} WHERE \":w\" = {{}} AND \":c\" > {{}}",
+                link_table(&link.link)
+            ),
+            &[
+                &Frag::bind("?", Sql::Text(world.clone())),
+                &Frag::bind("?", Sql::UBigInt(*frontier)),
+            ],
+        ),
+    )?;
+    if later > 0 {
+        return Err(refusal(STALE, "a link changed after the answer's frontier"));
+    }
+    Ok(())
+}
+
+/// METRIC-GRAIN-LINK-1: the question's rows with their linked object's time
+/// as of the frontier: `":lk"` when exactly one live edge reaches an object
+/// current then, `":lm"` when more than one edge does, and the time as
+/// `":link"` with its ordering key.
+fn linked_rows(scope: &Scope, link: &TimeLink, rows: &Frag) -> Outcome<Frag> {
+    let Some((world, frontier)) = &scope.at else {
+        return Err(refusal(UNSUPPORTED, "a linked time over a dataset"));
+    };
+    let c = ident(&link.column);
+    let (t, n) = (derived(&link.column, "t"), derived(&link.column, "n"));
+    let world = Frag::bind("?", Sql::Text(world.clone()));
+    let at = Frag::bind("?", Sql::UBigInt(*frontier));
+    Ok(Frag::fmt(
+        &format!(
+            "SELECT b.*, (e.\":n\" = 1 AND tg.\":id\" IS NOT NULL) AS \":lk\", coalesce(e.\":n\", 0) > 1 AS \":lm\", \
+             tg.{c} AS \":link\", tg.{t} AS \":link:t\", tg.{n} AS \":link:n\" \
+             FROM ({{}}) AS b \
+             LEFT JOIN (SELECT \":s\", count(*) AS \":n\", min(\":t\") AS \":tg\" FROM {} WHERE \":w\" = {{}} AND \":live\" GROUP BY \":s\") AS e ON e.\":s\" = b.\":id\" \
+             LEFT JOIN (SELECT \":id\", {c}, {t}, {n} FROM {} WHERE \":w\" = {{}} AND \":from\" <= {{}} AND (\":to\" IS NULL OR \":to\" > {{}})) AS tg ON tg.\":id\" = e.\":tg\"",
+            link_table(&link.link),
+            mirror_table(&link.target),
+        ),
+        &[rows, &world, &world, &at, &at],
+    ))
+}
+
 fn instant_bound(column: &str, (secs, nanos): (i64, u32), op: &str) -> Frag {
     let t = derived(column, "t");
     let n = derived(column, "n");
@@ -1011,10 +1139,13 @@ impl Projection {
     )]
     fn build(query: &Lowered, scope: &Scope) -> Outcome<Self> {
         let window = &query.window;
-        if !matches!(
-            scope.column(&window.column)?.kind,
-            ColumnKind::Timestamp | ColumnKind::Date
-        ) {
+        let linked = query.time_link.is_some();
+        if !(linked && window.column == TIME_LINK_COLUMN
+            || matches!(
+                scope.column(&window.column)?.kind,
+                ColumnKind::Timestamp | ColumnKind::Date
+            ))
+        {
             return Err(refusal(UNSUPPORTED, "the window is not on an instant"));
         }
         let time = Frag::raw(ident(&window.column));
@@ -1030,13 +1161,17 @@ impl Projection {
             (base, q, vec![Frag::raw("\":qr\"")], Some(untimed))
         } else {
             // The base layer evaluates the question's filters once per row.
-            let base = Frag::fmt(
+            let rows = Frag::fmt(
                 &format!(
                     "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
                     scope.table
                 ),
                 &[&question.holds, &question.refuse, &scope.population],
             );
+            let base = match &query.time_link {
+                Some(link) => linked_rows(scope, link, &rows)?,
+                None => rows,
+            };
             let reach = Frag::fmt(
                 "({} AND {} IS NOT NULL AND {} AND {})",
                 &[
@@ -1046,10 +1181,20 @@ impl Projection {
                     &instant_bound(&window.column, window.end, "<"),
                 ],
             );
-            let refusals = vec![
-                Frag::raw("\":qr\""),
-                Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
-            ];
+            let refusals = if linked {
+                // A linked object without its time, or more than one, refuses
+                // as the exact engine does; no link is no time (`unlinked`).
+                vec![
+                    Frag::raw("\":qr\""),
+                    Frag::fmt("({} AND \":lk\" AND {} IS NULL)", &[&q, &time]),
+                    Frag::raw("\":lm\""),
+                ]
+            } else {
+                vec![
+                    Frag::raw("\":qr\""),
+                    Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
+                ]
+            };
             (base, reach, refusals, None)
         };
         let mut select = vec![
@@ -1066,10 +1211,12 @@ impl Projection {
                     GroupKind::Text,
                 ),
                 super::Dimension::Period { column, grain } => {
-                    if !matches!(
-                        scope.column(column)?.kind,
-                        ColumnKind::Timestamp | ColumnKind::Date
-                    ) {
+                    if !(linked && column == TIME_LINK_COLUMN
+                        || matches!(
+                            scope.column(column)?.kind,
+                            ColumnKind::Timestamp | ColumnKind::Date
+                        ))
+                    {
                         return Err(refusal(
                             UNSUPPORTED,
                             "a period of a value that is not an instant",
@@ -1103,10 +1250,18 @@ impl Projection {
             select.push(Frag::raw(format!("{representative} AS r{i}")));
             groups.push(kind);
         }
+        let mut counted = Vec::new();
         for (k, operand) in query.operands.iter().enumerate() {
             let column = scope.column(&operand.column)?;
             let c = ident(&operand.column);
             let own = filters_sql(scope, &operand.filters)?;
+            if linked {
+                // A row with no linked object counts as unlinked when some
+                // operand's own filters hold; one that refuses refuses.
+                let none = Frag::fmt("({} AND NOT \":lk\" AND NOT \":lm\")", &[&q]);
+                refusals.push(Frag::fmt("({} AND {})", &[&none, &own.refuse]));
+                counted.push(Frag::fmt("({} AND {})", &[&none, &own.holds]));
+            }
             let (coefficient, valid) = match column.kind {
                 ColumnKind::Integer => (
                     format!("CAST({c} * 1000000 AS HUGEINT)"),
@@ -1148,6 +1303,12 @@ impl Projection {
                 &[&pass],
             ));
         }
+        // METRIC-GRAIN-LINK-1: skipped and counted, never bucketed.
+        select.push(if counted.is_empty() {
+            Frag::raw("FALSE AS ul")
+        } else {
+            Frag::fmt("({}) AS ul", &[&Frag::join(&counted, " OR ")])
+        });
         let arity = query.operands.len();
         let contributes = (0..arity)
             .map(|k| format!("a{k} IS NOT NULL OR n{k} = 1"))

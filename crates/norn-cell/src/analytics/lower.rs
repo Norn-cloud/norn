@@ -9,7 +9,7 @@ use norn_ir::{PropertyType, RuntimeValue};
 
 use super::{
     AsOf, Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, PointLaw,
-    TableSchema, Test, Window,
+    TIME_LINK_COLUMN, TableSchema, Test, TimeLink, Window,
 };
 use crate::CellError;
 
@@ -205,6 +205,16 @@ fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
     })
 }
 
+const fn grain_of(grain: TimeGrain) -> Grain {
+    match grain {
+        TimeGrain::Day => Grain::Day,
+        TimeGrain::Week => Grain::Week,
+        TimeGrain::Month => Grain::Month,
+        TimeGrain::Quarter => Grain::Quarter,
+        TimeGrain::Year => Grain::Year,
+    }
+}
+
 /// QUERY-ENGINE-1: the plan as the engine's typed question. Anything outside
 /// the lowered profile refuses with `core.compute.unsupported_engine`; it is
 /// never approximated.
@@ -212,16 +222,32 @@ fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
 /// # Errors
 /// Unsupported semantics, or a window that is not a pair of timestamps.
 pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
-    // METRIC-GRAIN-LINK-1 reads each row's time through its to-one link; that
-    // join is not in this profile yet, so it refuses rather than misread a time.
-    if plan.time_link().is_some() {
-        return Err(refused());
-    }
     let question = plan.question();
     let first = plan.sums().first().ok_or_else(refused)?;
-    let time = first.time_property.as_str();
+    // METRIC-GRAIN-LINK-1: the time is the linked object's, read as one column.
+    let time_link = plan
+        .time_link()
+        .map(|link| {
+            if plan.as_of()
+                || !matches!(
+                    column_kind(&link.property),
+                    Some(ColumnKind::Timestamp | ColumnKind::Date)
+                )
+            {
+                return Err(refused());
+            }
+            Ok(TimeLink {
+                link: link.link.as_str().to_owned(),
+                target: link.target_type.as_str().to_owned(),
+                column: link.property.id.as_str().to_owned(),
+            })
+        })
+        .transpose()?;
     let window = Window {
-        column: instant_column(plan, time)?,
+        column: match &time_link {
+            Some(_) => TIME_LINK_COLUMN.to_owned(),
+            None => instant_column(plan, first.time_property.as_str())?,
+        },
         start: instant_key(question.time_window.start.as_str(), false).ok_or_else(refused)?,
         end: instant_key(question.time_window.end.as_str(), false).ok_or_else(refused)?,
     };
@@ -230,7 +256,18 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
         .iter()
         .map(|dimension| {
             if !dimension.path.links.is_empty() {
-                return Err(refused());
+                // Admission keeps a linked path for the linked time alone.
+                let linked = plan.time_link().is_some_and(|link| {
+                    dimension.path.links.as_slice() == std::slice::from_ref(&link.link)
+                        && dimension.path.property == link.property.id
+                });
+                return match (linked, dimension.grain) {
+                    (true, Some(grain)) => Ok(Dimension::Period {
+                        column: TIME_LINK_COLUMN.to_owned(),
+                        grain: grain_of(grain),
+                    }),
+                    _ => Err(refused()),
+                };
             }
             let column = dimension.path.property.as_str();
             Ok(match dimension.grain {
@@ -242,13 +279,7 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
                 }
                 Some(grain) => Dimension::Period {
                     column: instant_column(plan, column)?,
-                    grain: match grain {
-                        TimeGrain::Day => Grain::Day,
-                        TimeGrain::Week => Grain::Week,
-                        TimeGrain::Month => Grain::Month,
-                        TimeGrain::Quarter => Grain::Quarter,
-                        TimeGrain::Year => Grain::Year,
-                    },
+                    grain: grain_of(grain),
                 },
             })
         })
@@ -285,6 +316,7 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
     };
     Ok(Lowered {
         as_of,
+        time_link,
         filters: question
             .filters
             .iter()

@@ -268,6 +268,14 @@ property tests run both at the same frontier.
   refusals apply. Past the bound the engine answers where the exact engine
   refuses: each bucket carries `memberCount` and `membershipDigest` instead
   of listing members, and the trace pages them.
+- **METRIC-GRAIN-LINK-1 (engine):** the mirror keeps every link edge's
+  state after its last change, with that change's commit. A linked-time
+  answer joins each row to its one live edge and to the target's version
+  current at the frontier: a row with no edge or no current target is
+  skipped and counted (`unlinked`) when the question's filters and some
+  operand's filters hold; a row with more than one edge refuses; and an
+  answer at a frontier an edge changed after refuses as stale (named
+  scenarios in `linked_time`).
 - **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
   identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
   then `,<coefficient>` per operand (empty when absent), then `;`.

@@ -295,6 +295,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
                 population: 0,
                 excluded: Vec::new(),
                 buckets: Vec::new(),
+                unlinked: 0,
             }
         };
         let result = store.analytics_answer(prepared, response)?;
