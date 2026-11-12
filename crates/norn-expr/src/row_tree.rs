@@ -92,7 +92,7 @@ pub fn row_expression(source: &str, root: &str) -> Result<Option<RowExpr>, ExprE
     )?;
     IntelliSense::new()
         .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| Some(project(ast, root)))
+        .with_ast(source, false, |ast, _metadata| project(ast, root))
         .ok_or_else(|| ExprError::Compile {
             message: "expression does not parse".to_owned(),
         })
