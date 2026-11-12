@@ -18,6 +18,7 @@ import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from 
 import type { Read } from "./lib/exact.ts"
 import type { QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
+import { systemName } from "./lib/catalog.ts"
 
 /**
  * The answer view: how one answer reads, whether the question is published or
@@ -39,21 +40,38 @@ function amounts(read: Read<Trace>, index: number) {
 /** How a bucket's records are read: the published question's trace by name, or a built question's own (POST :trace). */
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
-export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace }) {
+/** Refusals that mean the cell committed since this answer: its trace handle no longer names this number. */
+const MOVED = new Set(["core.projection.answer_moved", "core.projection.lineage_incomplete"])
+
+export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
   if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
   if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
+  if (data.kind === "refused" && MOVED.has(data.refusal.code)) return (
+    <div role="status" className="space-y-2 rounded-md border p-3 text-sm">
+      <p><span className="font-medium">The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
+      {onStale ? <button type="button" className="font-medium underline underline-offset-4" onClick={onStale}>Ask again for the current number</button> : <p className="text-muted-foreground">Run the question again to trace the current number.</p>}
+    </div>
+  )
   if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
   const read = data.read
   return (
     <TableCard><Table>
-      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
       <TableBody>
         {read.document.contributions.map((contribution, index) => (
           <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
-            <TableCell className="font-mono">{contribution.fact.key}{contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}</TableCell>
+            <TableCell className="font-mono">
+              <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
+              {contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}
+            </TableCell>
             <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
+            <TableCell>{contribution.source.status === "resolved"
+              ? contribution.source.provenance?.sourceRecordRef
+                ? <><div className="font-medium">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-xs text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+                : <span className="text-muted-foreground">Resolved</span>
+              : <span className="text-muted-foreground" title={contribution.source.status === "restricted" ? "Your role may not see where this record came from." : "The cell retains no source record for it."}>{contribution.source.status === "restricted" ? "Withheld" : "None retained"}</span>}</TableCell>
             <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>
         ))}
@@ -72,7 +90,7 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
   )
 }
 
-function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace } }) {
+function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void } }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
       <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
@@ -83,7 +101,7 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
           </SheetHeader>
           <div className="px-4">
             <p className="pb-3 text-sm text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
-            {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} fetchTrace={live.fetchTrace} /> : <>
+            {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} fetchTrace={live.fetchTrace} onStale={live.onStale} /> : <>
             <TableCard><Table>
               <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
@@ -93,7 +111,7 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
               </TableBody>
               <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
             </Table></TableCard>
-            <p className="pt-4 text-xs text-muted-foreground">The source rows behind each record are not available yet.</p>
+            <p className="pt-4 text-xs text-muted-foreground">The cell traces a number only when it answers it live; open a record for where it came from.</p>
             </>}
           </div>
         </>}
@@ -109,13 +127,15 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace }: {
+export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale }: {
   readonly read: QuestionAnswer
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
   /** The server's refusal of the live read, shown over the recording. */
   readonly refusal?: Refusal
+  /** Ask the question again, when a drill-down finds the cell has committed since this answer. */
+  readonly onStale?: () => void
   /** How a bucket's records are read for a question that is not published. */
   readonly fetchTrace?: FetchTrace
 }) {
@@ -191,7 +211,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           </TableBody>
         </Table></TableCard>
       </Panel>
-      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace } : undefined} />
+      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>
   )
 }

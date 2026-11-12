@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
-import { Braces, Database, GitBranch, History, KeyRound, Link2, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { Braces, Database, GitBranch, History as HistoryIcon, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,15 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
+import { useMode } from "./lib/live-transport.ts"
+import { LinkedRecords } from "./linked-records.tsx"
+import { RecordActions } from "./actions/record-actions.tsx"
+import { QuarantinedRecord } from "./quarantined-record.tsx"
+import { EvidenceList } from "./evidence/evidence-crop.tsx"
+import { Findings } from "./evidence/findings.tsx"
+import { History } from "./evidence/history.tsx"
+import { readFindings, type Evidence, type EvidenceRef } from "./evidence/review.ts"
+import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -39,7 +48,13 @@ export function ObjectPage() {
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
-  const [tab, setTab] = useState("overview")
+  const live = useMode().data?.kind === "live"
+  // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
+  const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
+  const evidence = review.data?.document.evidence ?? []
+  const corrections = useEvidenceActions(name, id)
+  // `#lineage` (a traced number's record) opens on where it came from.
+  const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
   const data = reads.data
   const lineage = data?.source?.document
@@ -58,7 +73,11 @@ export function ObjectPage() {
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <CopyId value={id} />
             <span className="text-meta">version {data.object.document.version}</span>
+            {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={() => void reads.refetch()} title="Read this record from the cell again">
+              <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
+            </Button>}
           </div>}
+          {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={() => void reads.refetch()} /></div>}
           {data && concept && <div className="flex flex-wrap gap-1.5 pt-1">
             {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}
             {/* Personal data is marked by the server in the documents it sends; these mark none. */}
@@ -69,7 +88,9 @@ export function ObjectPage() {
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
-      {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
+      {reads.isSuccess && data === null && (live
+        ? <QuarantinedRecord objectType={name} id={id} onDone={() => void reads.refetch()} />
+        : <p className="text-muted-foreground">This record is not available yet.</p>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
@@ -83,11 +104,12 @@ export function ObjectPage() {
             ))}
             <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
             <Facts concept={concept} reads={data} />
+            {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
             <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} /></TabsContent>
-          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} /></TabsContent>
+          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} /></TabsContent>
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
               {concept.rules.length === 0
@@ -96,17 +118,20 @@ export function ObjectPage() {
             </Well></Panel>
           </TabsContent>
           <TabsContent value="ledger" className="pt-4">
-            <Panel icon={History} label="Ledger"><Well>
-              <Empty icon={History} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>The server does not publish this record's change history yet. Version {data.object.document.version} is the one stored.</Empty>
-            </Well></Panel>
+            {live ? <History objectType={name} id={id} /> : <Panel icon={HistoryIcon} label="Ledger"><Well>
+              <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>The server does not publish this record's change history yet. Version {data.object.document.version} is the one stored.</Empty>
+            </Well></Panel>}
           </TabsContent>
           <TabsContent value="access" className="pt-4">
             <Panel icon={KeyRound} label="Access"><Well>
-              <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>
+              {data.object.origin === "live"
+                ? <Empty icon={KeyRound} action={null}>The cell decided this read for your account; it does not publish the decision and its policy for one record yet.</Empty>
+                : <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
             </Well></Panel>
           </TabsContent>
         </Tabs>
       )}
+      {corrections.sheet(() => { void reads.refetch(); void review.refetch() })}
     </section>
   )
 }
@@ -125,6 +150,8 @@ function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; re
 }
 
 function Relations({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
+  // A connected cell's linking records are read in full, fact by fact.
+  const live = useMode().data?.kind === "live"
   return (
     <Panel icon={Link2} label="Related records"><Well className="p-3">
       {concept.relationships.length === 0 && incomingOf(concept, concepts).length === 0 && links.items.length === 0
@@ -148,7 +175,9 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
                 <span className="text-muted-foreground">{from.title} records ({relationship.id.replaceAll("_", " ")}) ← </span>
                 {edges.length === 0
                   ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
-                  : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
+                  : live
+                    ? <div className="pt-2"><LinkedRecords from={from} ids={edges.map(({ source }) => source)} parent={id} /></div>
+                    : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
               </li>
             )
           })}
@@ -158,7 +187,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
   )
 }
 
-function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
+function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: SourceLineage | undefined; readonly evidence?: readonly EvidenceRef[]; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const { inspect } = useInspector()
   useEffect(() => () => inspect(), [lineage, inspect])
   return (
@@ -179,6 +208,16 @@ function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
             </TableRow>
           ))}
         </DenseTable>
+        {evidence.length > 0 && Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => {
+          const fields = provenance.sourceFields ?? []
+          return (
+            <div key={`evidence-${fact}`} className="space-y-2 pt-2">
+              <div className="text-sm font-medium">{fact.replaceAll("_", " ")}, as read from the scan</div>
+              <EvidenceList refs={evidence} {...actionFor ? { actionFor } : {}} filter={(item) => fields.includes(item.subjectProperty) || fields.some((field) => item.subjectProperty.startsWith(`${field}.`))} />
+            </div>
+          )
+        })}
+        <p className="text-meta text-muted-foreground">The source record's own field values are not served yet.{lineage.documentDigest ? <> The cell keeps its digest, <CopyId value={lineage.documentDigest} short={16} />, so a copy of the row can be checked against it.</> : null}</p>
       </>}
     </Well></Panel>
   )

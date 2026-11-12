@@ -45,7 +45,7 @@ export function RunQuestion({ question, catalog, label = "Run", compact = false 
     <div className="space-y-3">
       <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result ? "Run again" : label}</Button>
       {run.isError && <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
-      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}
+      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} onStale={() => run.mutate()} />}
       {result?.kind === "not-a-question" && <ValidationPanel title="The cell refused this question" issues={result.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer) }))} />}
       {result?.kind === "refused" && <RefusedNote refusal={result.refusal} />}
       {result && result.kind !== "answer" && result.kind !== "refused" && result.kind !== "not-a-question" && <p role="status" className="text-sm text-muted-foreground">{notRun(result)}</p>}

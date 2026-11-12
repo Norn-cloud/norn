@@ -34,6 +34,7 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod decision_ledger;
 pub mod engine;
 pub mod error;
 pub mod export;
@@ -47,6 +48,8 @@ pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_links;
+#[doc(hidden)]
+pub use mapping_links::check_link_plans_against_wide_scope;
 mod mapping_process;
 mod migration;
 pub mod mining;
@@ -70,6 +73,14 @@ pub mod transparency;
 mod write;
 
 pub use error::CellError;
+
+/// Whether `function_id@version` is a compiled-in built-in
+/// (`norn_builtins::resolve`); a host registers it so a flow step may
+/// perform only built-ins (#1252).
+#[must_use]
+pub fn builtin_registered(function_id: &str, version: u32) -> bool {
+    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
+}
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};

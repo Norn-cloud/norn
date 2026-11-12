@@ -1,0 +1,132 @@
+[
+  {
+    "title": "Refinery weekly",
+    "tiles": [
+      {
+        "id": "t1",
+        "title": "Recovered in total",
+        "question": {
+          "irVersion": "0.1",
+          "name": "demo.recovered_total",
+          "objectSet": "demo.Conversion",
+          "aggregate": [
+            {
+              "metric": "demo.recovered"
+            }
+          ],
+          "window": {
+            "start": "2026-07-06T00:00:00Z",
+            "end": "2026-10-26T00:00:00Z"
+          },
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 5000
+          }
+        },
+        "view": {
+          "kind": "number"
+        },
+        "layout": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "id": "t2",
+        "title": "Recovered by metal",
+        "question": {
+          "irVersion": "0.1",
+          "name": "demo.recovered_by_metal",
+          "objectSet": "demo.Conversion",
+          "aggregate": [
+            {
+              "metric": "demo.recovered"
+            }
+          ],
+          "groupBy": [
+            {
+              "path": {
+                "property": "metal"
+              }
+            }
+          ],
+          "window": {
+            "start": "2026-07-06T00:00:00Z",
+            "end": "2026-10-26T00:00:00Z"
+          },
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 5000
+          }
+        },
+        "view": {
+          "kind": "chart",
+          "chart": "pie"
+        },
+        "layout": {
+          "x": 1,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        }
+      },
+      {
+        "id": "t3",
+        "title": "Gold yield, weekly",
+        "question": {
+          "irVersion": "0.1",
+          "name": "demo.gold_yield_weekly",
+          "objectSet": "demo.Conversion",
+          "aggregate": [
+            {
+              "metric": "demo.yield"
+            }
+          ],
+          "filter": [
+            {
+              "path": {
+                "property": "metal"
+              },
+              "operator": "eq",
+              "value": "gold"
+            }
+          ],
+          "groupBy": [
+            {
+              "path": {
+                "property": "occurred_at"
+              },
+              "grain": "week"
+            }
+          ],
+          "window": {
+            "start": "2026-07-06T00:00:00Z",
+            "end": "2026-10-26T00:00:00Z"
+          },
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 5000
+          }
+        },
+        "view": {
+          "kind": "chart",
+          "chart": "line"
+        },
+        "layout": {
+          "x": 0,
+          "y": 1,
+          "w": 2,
+          "h": 1
+        }
+      }
+    ],
+    "origin": {
+      "by": "code"
+    }
+  }
+]

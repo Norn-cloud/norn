@@ -9,13 +9,14 @@
 //! Spans are JSON pointers into the checked definition array
 //! (`/0/constraints/min`).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 use norn_ir::{
     DECIMAL_LITERAL_PATTERN, DecimalLiteral, DiagnosticSeverity, MarkingId,
-    PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyKind, PropertyType, PropertyTypeDef,
-    PropertyTypeName,
+    PROPERTY_TYPE_NAME_PATTERN, PropertyAdditivity, PropertyConstraints, PropertyId, PropertyKind,
+    PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, Span};
@@ -61,6 +62,17 @@ pub mod codes {
     pub const INVERTED_RANGE: &str = "property_type.validation.inverted_range";
     /// `pattern` is not a valid `regex-lite` expression.
     pub const INVALID_PATTERN: &str = "property_type.validation.invalid_pattern";
+    /// METRIC-ADDITIVITY-REF-1: use-site additivity on a `ref` that resolves
+    /// to a local type other than `integer` or `decimal`.
+    pub const REF_ADDITIVITY_NOT_NUMERIC: &str =
+        "property_type.validation.ref_additivity_not_numeric";
+    /// METRIC-ADDITIVITY-REF-1: use-site additivity differs from the
+    /// additivity the referenced type already declares.
+    pub const REF_ADDITIVITY_CONFLICT: &str = "property_type.validation.ref_additivity_conflict";
+    /// METRIC-UNIT-PARTITION-1: a unit source that is not a set of distinct
+    /// member ids on a decimal with no static unit, currency or rate, or that
+    /// contradicts the one the referenced type declares.
+    pub const INVALID_UNIT_SOURCE: &str = "property_type.validation.invalid_unit_source";
 }
 
 /// Largest admitted `decimal` scale: the exact range of ZEN Expression's
@@ -137,11 +149,12 @@ pub fn check_property_type_defs(
         }
         check_type_members(&base, &def.property_type, &mut diagnostics);
         check_record_refs(&base, &def.property_type, defs, registry, &mut diagnostics);
+        check_ref_additivity(&base, &def.property_type, defs, registry, &mut diagnostics);
         let resolved = match resolve(defs, &local, registry, index) {
             Resolution::Base(base) => Some(base),
             Resolution::Registry => None,
             Resolution::Unknown(name) => {
-                if matches!(&def.property_type, PropertyType::Ref { name: direct } if direct == name)
+                if matches!(&def.property_type, PropertyType::Ref { name: direct, .. } if direct == name)
                 {
                     diagnostics.push(error(
                         codes::UNKNOWN_REF,
@@ -198,7 +211,7 @@ pub(crate) fn check_record_refs(
                 return;
             }
             match ty {
-                PropertyType::Ref { name } => {
+                PropertyType::Ref { name, .. } => {
                     if !self.path.insert(name.clone()) {
                         self.out.push(error(
                             codes::REF_CYCLE,
@@ -230,6 +243,13 @@ pub(crate) fn check_record_refs(
                         if let TypeResolution::Base(base) = resolved.resolution {
                             check_constraints(&pointer, &member.constraints, Some(base), self.out);
                         }
+                        check_ref_additivity(
+                            &pointer,
+                            &member.property_type,
+                            self.catalog,
+                            self.registry,
+                            self.out,
+                        );
                         self.visit(&pointer, &member.property_type, depth.saturating_add(1));
                     }
                 }
@@ -269,7 +289,7 @@ pub(crate) fn structured_metadata(
     let mut pending = vec![ty];
     while let Some(ty) = pending.pop() {
         match ty {
-            PropertyType::Ref { name } => {
+            PropertyType::Ref { name, .. } => {
                 if names.insert(name.clone())
                     && let Some(def) = catalog.iter().find(|def| def.name == *name)
                 {
@@ -308,6 +328,73 @@ pub(crate) struct ResolvedType<'a> {
     /// Every name the chain follows, in order (a registry or unresolved
     /// name last).
     pub(crate) names: Vec<&'a PropertyTypeName>,
+    /// The first additivity a `ref` on the chain declares, the use site
+    /// first (METRIC-ADDITIVITY-REF-1).
+    pub(crate) declared_additivity: Option<&'a PropertyAdditivity>,
+    /// The first unit source a `ref` on the chain declares, the use site
+    /// first (METRIC-UNIT-PARTITION-1).
+    pub(crate) declared_unit_source: Option<&'a [PropertyId]>,
+}
+
+impl<'a> ResolvedType<'a> {
+    /// METRIC-ADDITIVITY-REF-1: the effective aggregation contract: the first
+    /// one a `ref` on the chain declares, else the base type's own.
+    pub(crate) fn additivity(&self) -> &'a PropertyAdditivity {
+        const UNDECLARED: &PropertyAdditivity = &PropertyAdditivity::Undeclared {};
+        match (self.declared_additivity, self.resolution) {
+            (Some(declared), _) => declared,
+            (None, TypeResolution::Base(base)) => base.additivity(),
+            (None, TypeResolution::Registry | TypeResolution::Unresolved { .. }) => UNDECLARED,
+        }
+    }
+
+    /// METRIC-UNIT-PARTITION-1: the effective unit source: the first one a
+    /// `ref` on the chain declares, else the base decimal's own.
+    pub(crate) fn unit_source(&self) -> &'a [PropertyId] {
+        if let Some(declared) = self.declared_unit_source {
+            return declared;
+        }
+        if let TypeResolution::Base(PropertyType::Decimal { unit_source, .. }) = self.resolution {
+            return unit_source;
+        }
+        &[]
+    }
+}
+
+/// `base` carrying `additivity` (a numeric kind) and `unit_source` (a
+/// decimal); any other kind, or one already carrying both, is unchanged.
+pub(crate) fn with_contract<'a>(
+    base: &'a PropertyType,
+    additivity: &PropertyAdditivity,
+    unit_source: &[PropertyId],
+) -> Cow<'a, PropertyType> {
+    if let PropertyType::Integer { additivity: own } = base
+        && own != additivity
+    {
+        return Cow::Owned(PropertyType::Integer {
+            additivity: additivity.clone(),
+        });
+    }
+    if let PropertyType::Decimal {
+        additivity: own,
+        unit_source: source,
+        ..
+    } = base
+        && (own != additivity || source.as_slice() != unit_source)
+    {
+        let mut owned = base.clone();
+        if let PropertyType::Decimal {
+            additivity: slot,
+            unit_source: source,
+            ..
+        } = &mut owned
+        {
+            slot.clone_from(additivity);
+            unit_source.clone_into(source);
+        }
+        return Cow::Owned(owned);
+    }
+    Cow::Borrowed(base)
 }
 
 /// The end of a `ref` chain.
@@ -332,17 +419,32 @@ pub(crate) fn resolve_type<'a>(
     let mut chain = Vec::new();
     let mut markings = Vec::new();
     let mut names = Vec::new();
+    let mut declared_additivity = None;
+    let mut declared_unit_source = None;
     let mut visited = BTreeSet::new();
     let mut current = property_type;
     loop {
-        let PropertyType::Ref { name } = current else {
+        let PropertyType::Ref {
+            name,
+            additivity,
+            unit_source,
+        } = current
+        else {
             return ResolvedType {
                 resolution: TypeResolution::Base(current),
                 chain,
                 markings,
                 names,
+                declared_additivity,
+                declared_unit_source,
             };
         };
+        if declared_additivity.is_none() && !additivity.is_undeclared() {
+            declared_additivity = Some(additivity);
+        }
+        if declared_unit_source.is_none() && !unit_source.is_empty() {
+            declared_unit_source = Some(unit_source.as_slice());
+        }
         names.push(name);
         let resolution = match catalog.iter().position(|def| &def.name == name) {
             Some(index) if visited.insert(index) => {
@@ -365,7 +467,149 @@ pub(crate) fn resolve_type<'a>(
             chain,
             markings,
             names,
+            declared_additivity,
+            declared_unit_source,
         };
+    }
+}
+
+/// METRIC-ADDITIVITY-REF-1 at one use site (`pointer` is the JSON pointer of
+/// the object holding `type`): additivity on a `ref` requires a local
+/// `integer` or `decimal`, and refines a referenced type that declares none.
+/// A registry or unresolved chain is reported elsewhere; its use-site
+/// additivity authorizes nothing, because only a local base aggregates.
+pub(crate) fn check_ref_additivity(
+    pointer: &[&str],
+    property_type: &PropertyType,
+    catalog: &[PropertyTypeDef],
+    registry: &BTreeSet<PropertyTypeName>,
+    out: &mut Vec<Diagnostic>,
+) {
+    check_ref_unit_source(pointer, property_type, catalog, registry, out);
+    let PropertyType::Ref {
+        name, additivity, ..
+    } = property_type
+    else {
+        return;
+    };
+    if additivity.is_undeclared() {
+        return;
+    }
+    let at = span_at(pointer, &["type", "additivity"]);
+    match resolve_type(property_type, catalog, registry).resolution {
+        TypeResolution::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }) => {}
+        TypeResolution::Base(base) => {
+            out.push(error(
+                codes::REF_ADDITIVITY_NOT_NUMERIC,
+                format!(
+                    "ref {:?} resolves to a {} type; only an integer or decimal declares additivity",
+                    name.as_str(),
+                    base.kind().as_str()
+                ),
+                at,
+            ));
+            return;
+        }
+        TypeResolution::Registry | TypeResolution::Unresolved { .. } => return,
+    }
+    let Some(def) = catalog.iter().find(|def| def.name == *name) else {
+        return;
+    };
+    let referenced = resolve_type(&def.property_type, catalog, registry).additivity();
+    if !referenced.is_undeclared() && referenced != additivity {
+        out.push(error(
+            codes::REF_ADDITIVITY_CONFLICT,
+            format!(
+                "ref {:?} declares {} additivity, but the type it references declares {}; a use site may only add additivity to a type that declares none",
+                name.as_str(),
+                additivity_name(additivity),
+                additivity_name(referenced)
+            ),
+            at,
+        ));
+    }
+}
+
+/// METRIC-UNIT-PARTITION-1 at one `ref` use site: a unit source needs a
+/// local decimal with no static unit, currency or rate, and never contradicts
+/// the unit source the referenced type declares.
+fn check_ref_unit_source(
+    pointer: &[&str],
+    property_type: &PropertyType,
+    catalog: &[PropertyTypeDef],
+    registry: &BTreeSet<PropertyTypeName>,
+    out: &mut Vec<Diagnostic>,
+) {
+    let PropertyType::Ref {
+        name, unit_source, ..
+    } = property_type
+    else {
+        return;
+    };
+    if unit_source.is_empty() {
+        return;
+    }
+    let at = span_at(pointer, &["type", "unitSource"]);
+    match resolve_type(property_type, catalog, registry).resolution {
+        TypeResolution::Base(PropertyType::Decimal {
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+            ..
+        }) => {}
+        TypeResolution::Base(base) => {
+            out.push(error(
+                codes::INVALID_UNIT_SOURCE,
+                format!(
+                    "ref {:?} resolves to a {} type with a static unit, currency or rate, or no decimal at all; only such a decimal without one takes a unit source",
+                    name.as_str(),
+                    base.kind().as_str()
+                ),
+                at,
+            ));
+            return;
+        }
+        TypeResolution::Registry | TypeResolution::Unresolved { .. } => return,
+    }
+    check_unit_source_ids(unit_source, &at, out);
+    let Some(def) = catalog.iter().find(|def| def.name == *name) else {
+        return;
+    };
+    let referenced = resolve_type(&def.property_type, catalog, registry).unit_source();
+    if !referenced.is_empty() && referenced != unit_source.as_slice() {
+        out.push(error(
+            codes::INVALID_UNIT_SOURCE,
+            format!(
+                "ref {:?} declares a unit source other than the one the type it references declares; a use site may only add one to a type that declares none",
+                name.as_str()
+            ),
+            at,
+        ));
+    }
+}
+
+/// A unit source names distinct member ids.
+fn check_unit_source_ids(unit_source: &[PropertyId], at: &Span, out: &mut Vec<Diagnostic>) {
+    let mut seen = BTreeSet::new();
+    if unit_source.iter().any(|id| {
+        !seen.insert(id) || !matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, id.as_str())
+    }) {
+        out.push(error(
+            codes::INVALID_UNIT_SOURCE,
+            "a unit source names distinct member ids matching [a-z][a-z0-9_]*".to_owned(),
+            at.clone(),
+        ));
+    }
+}
+
+/// The wire `kind` of an additivity class.
+pub(crate) const fn additivity_name(additivity: &PropertyAdditivity) -> &'static str {
+    match additivity {
+        PropertyAdditivity::Undeclared {} => "undeclared",
+        PropertyAdditivity::Additive {} => "additive",
+        PropertyAdditivity::SemiAdditive {} => "semi_additive",
+        PropertyAdditivity::NonAdditive {} => "non_additive",
+        PropertyAdditivity::Ratio { .. } => "ratio",
     }
 }
 
@@ -411,7 +655,7 @@ fn resolve<'a>(
         let Some(def) = defs.get(current) else {
             return Resolution::Registry;
         };
-        let PropertyType::Ref { name } = &def.property_type else {
+        let PropertyType::Ref { name, .. } = &def.property_type else {
             return Resolution::Base(&def.property_type);
         };
         match local.get(name) {
@@ -457,11 +701,23 @@ fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut 
         rounding,
         per_unit,
         currency_source,
+        unit_source,
         ..
     } = property_type
     else {
         return;
     };
+    if !unit_source.is_empty() {
+        let at = span_at(base, &["type", "unitSource"]);
+        if unit.is_some() || currency_source.is_some() || per_unit.is_some() {
+            out.push(error(
+                codes::INVALID_UNIT_SOURCE,
+                "a decimal with a static unit, a currencySource or a perUnit declares no unit source".to_owned(),
+                at.clone(),
+            ));
+        }
+        check_unit_source_ids(unit_source, &at, out);
+    }
     check_rate_site(
         base,
         scale.0,

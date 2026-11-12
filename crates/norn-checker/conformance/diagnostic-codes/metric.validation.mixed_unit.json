@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.mixed_unit",
+  "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

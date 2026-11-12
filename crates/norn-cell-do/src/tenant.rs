@@ -47,6 +47,8 @@ pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
         .with_restater(definition_routes::checker_restatement)
         // A binding runs as a role of the cell's declared grant table.
         .with_roles(table.entries.iter().map(|(role, _)| *role))
+        // A flow's performs may name a registered built-in.
+        .with_builtins(norn_cell::builtin_registered)
 }
 
 /// One opened cell and what its requests are served with.

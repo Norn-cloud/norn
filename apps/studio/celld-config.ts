@@ -25,6 +25,8 @@ export interface CelldStudio {
   readonly agent?: { readonly gatewayUrl: string; readonly gatewayToken: string }
   /** The tool gateway Connections uses (#772) and Studio's OAuth client there; without it Connections says none is configured. */
   readonly toolGateway?: { readonly url: string; readonly clientId: string; readonly clientSecret: string }
+  /** Serve /mcp to assistants people connect (STUDIO_MCP=on); the stage's D1 needs migration 0007. */
+  readonly mcp?: true
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -58,7 +60,9 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const toolDeclared = [toolUrl, toolClient, toolSecret].some((value) => value !== undefined)
   if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
   if (toolUrl !== undefined && !isHttpsOrigin(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
+  if (env.STUDIO_MCP !== undefined && env.STUDIO_MCP !== "on") throw new Error(`STUDIO_MCP is "on" or unset, got ${JSON.stringify(env.STUDIO_MCP)}`)
   return {
+    ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
     ...host === undefined ? {} : { host },
@@ -74,18 +78,16 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
+  if (studio.mcp === true) vars.STUDIO_MCP = "on"
   return {
     name: `norn-studio-${studio.stage}`,
     main: "worker/index.ts",
     compatibility_date: "2026-11-01",
     compatibility_flags: ["nodejs_compat"],
-    assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: ["/api/*"] },
+    // The MCP endpoint and OAuth discovery are answered by the Worker, not the single-page app.
+    assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: studio.mcp === true ? ["/api/*", "/mcp", "/.well-known/*"] : ["/api/*"] },
     d1_databases: [{ binding: "AUTH_DB", database_name: `norn-studio-auth-${studio.stage}`, migrations_dir: "worker/migrations" }],
     ...studio.host === undefined ? {} : { services: [{ binding: "NORN_HOST", service: studio.host }] },
-    ...studio.agent === undefined ? {} : {
-      durable_objects: { bindings: [{ name: "AGENT_BUDGET", class_name: "AgentBudget" }] },
-      migrations: [{ tag: "v1", new_sqlite_classes: ["AgentBudget"] }],
-    },
     vars,
   }
 }

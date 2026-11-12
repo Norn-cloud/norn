@@ -36,6 +36,8 @@ struct Bounded {
     rows: u32,
     buckets: usize,
     ungranted: Option<&'static str>,
+    /// The metric space in place of the analytics cell's own, when set.
+    definitions: Option<Vec<MetricDefinition>>,
 }
 
 impl QuestionRuntime<NativeEngine> for Bounded {
@@ -82,7 +84,9 @@ impl QuestionRuntime<NativeEngine> for Bounded {
 
 impl AdHocQuestions<NativeEngine> for Bounded {
     fn definitions(&self) -> &[MetricDefinition] {
-        AdHocQuestions::<NativeEngine>::definitions(&self.inner)
+        self.definitions
+            .as_deref()
+            .unwrap_or_else(|| AdHocQuestions::<NativeEngine>::definitions(&self.inner))
     }
     fn catalog(&self) -> &EffectiveCatalog {
         AdHocQuestions::<NativeEngine>::catalog(&self.inner)
@@ -122,6 +126,7 @@ fn cell() -> Cell {
             rows: analytics::AD_HOC_MAX_ROWS,
             buckets: analytics::AD_HOC_MAX_BUCKETS,
             ungranted: None,
+            definitions: None,
         },
         principals,
     }
@@ -331,6 +336,50 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     );
 }
 
+/// A ratio reads both of its operands: a caller who may read the numerator's
+/// type but not the denominator's gets the opaque denial, decided before
+/// admission, never an aggregate over the type they cannot read.
+#[test]
+fn a_ratio_is_refused_unless_the_denominators_type_is_readable_too() {
+    let mut cell = cell();
+    let granted = evaluate(&cell, ADMIN, &question("gold"));
+    assert_eq!(granted.status, 200, "{}", granted.body);
+    let baseline = evaluate(&cell, None, &question("gold"));
+    assert_eq!(baseline.status, 403);
+    let mut definitions = AdHocQuestions::<NativeEngine>::definitions(&cell.runtime.inner).to_vec();
+    let ratio = definitions
+        .iter()
+        .find(|definition| definition.name == "demo.yield")
+        .unwrap();
+    let (numerator, denominator) = (
+        ratio.type_params.numerator.clone().unwrap(),
+        ratio.type_params.denominator.clone().unwrap(),
+    );
+    let operand = definitions
+        .iter_mut()
+        .find(|definition| definition.name == denominator)
+        .unwrap();
+    operand
+        .type_params
+        .metric_aggregation_params
+        .as_mut()
+        .unwrap()
+        .semantic_model = norn_ir::ObjectTypeName("demo.Unreadable".into());
+    // The numerator still sums the type the caller reads.
+    assert!(definitions.iter().any(|definition| {
+        definition.name == numerator
+            && definition
+                .type_params
+                .metric_aggregation_params
+                .as_ref()
+                .is_some_and(|params| params.semantic_model.0 == analytics::TYPE)
+    }));
+    cell.runtime.definitions = Some(definitions);
+    let refused = evaluate(&cell, ADMIN, &question("gold"));
+    assert_eq!(refused.status, 403, "{}", refused.body);
+    assert_eq!(refused.body, baseline.body);
+}
+
 #[test]
 fn bounds_on_rows_read_and_output_buckets_refuse_rather_than_truncate() {
     let mut cell = cell();
@@ -427,4 +476,58 @@ fn an_undeclared_metric_is_a_diagnostic_only_for_a_caller_who_reads_every_metric
     let mut recovered = question("gold");
     recovered["aggregate"] = json!([{"metric": "demo.recovered"}]);
     assert_eq!(evaluate(&cell, ADMIN, &recovered).status, 200);
+}
+
+/// D67: the question catalog lists only what the caller may read the
+/// population of, and a ratio only with both its operands; the engine's
+/// grains and operators are the ones `:evaluate` admits. Anonymous is the
+/// one denial; the catalog is read with GET.
+#[test]
+fn the_question_catalog_lists_only_what_the_caller_may_read() {
+    let mut cell = cell();
+    let names = |document: &Value| {
+        document["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|metric| metric["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let read = call(&cell, "GET", "/v1/questions:catalog", ADMIN, "");
+    assert_eq!(read.status, 200, "{}", read.body);
+    let catalog = json_of(&read);
+    assert_eq!(
+        names(&catalog),
+        ["demo.input", "demo.recovered", "demo.yield"]
+    );
+    assert_eq!(catalog["objectTypes"][0]["name"], analytics::TYPE);
+    let properties = catalog["objectTypes"][0]["properties"].as_array().unwrap();
+    assert!(
+        properties.iter().any(|p| p["id"] == "metal"),
+        "{properties:?}"
+    );
+    assert!(
+        properties
+            .iter()
+            .any(|p| p["id"] == "recovered" && p["type"]["unit"]["code"] == "g"),
+        "{properties:?}"
+    );
+    assert_eq!(catalog["grains"], json!(["week"]));
+    assert_eq!(catalog["operators"], json!(["eq", "ne"]));
+    assert_eq!(catalog["maxGroupBy"], json!(1));
+    assert_eq!(catalog["maxBuckets"], json!(analytics::AD_HOC_MAX_BUCKETS));
+    // An ungranted operand is not listed, nor is any ratio over it.
+    cell.runtime.ungranted = Some("demo.recovered");
+    let narrowed = call(&cell, "GET", "/v1/questions:catalog", ADMIN, "");
+    assert_eq!(names(&json_of(&narrowed)), ["demo.input"]);
+    let anonymous = call(&cell, "GET", "/v1/questions:catalog", None, "");
+    assert_eq!(anonymous.status, 403);
+    assert_eq!(
+        anonymous.body,
+        evaluate(&cell, None, &question("gold")).body
+    );
+    assert_eq!(
+        call(&cell, "POST", "/v1/questions:catalog", ADMIN, "").status,
+        405
+    );
 }

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
 import { amountTexts, hostRead, isTrace, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
@@ -89,6 +90,13 @@ test("a contribution the server withholds (amounts: null) has no amount; none is
   }
 })
 
+/** A node rendered inside a router: each traced record links to its own page. */
+async function routed(node: ReactNode) {
+  const router = createRouter({ routeTree: createRootRoute({ component: () => node }), history: createMemoryHistory({ initialEntries: ["/questions"] }) })
+  await router.load()
+  return renderToStaticMarkup(<RouterProvider router={router} />)
+}
+
 test("a withheld receipt hash (null) is a trace; any other non-string is not", () => {
   const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
   expect(isTrace(trace)).toBe(true)
@@ -96,11 +104,11 @@ test("a withheld receipt hash (null) is a trace; any other non-string is not", (
   expect(isTrace(trace)).toBe(false)
 })
 
-test("the drawer shows Withheld for that row, its receipt hash withheld, and keeps its record and commit", () => {
+test("the drawer shows Withheld for that row, its receipt hash withheld, and keeps its record and commit", async () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
   client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"amounts":null,'), "live") })
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const html = await routed(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
   const rows = html.split("<tr").slice(2)
   expect(rows[0]).toContain("SYN-MELT-00-0")
   expect(rows[0]).toContain(">Withheld<")
@@ -114,14 +122,14 @@ test("the drawer shows Withheld for that row, its receipt hash withheld, and kee
   expect(rows[1]).not.toContain("Copy ")
 })
 
-test("a disclosed receipt hash can be copied", () => {
+test("a disclosed receipt hash can be copied", async () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
   const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
   trace.contributions = trace.contributions.slice(1)
   trace.contributions[0]!.receiptHash = "d5d7"
   client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(JSON.stringify(trace), "live") })
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const html = await routed(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
   const [row] = html.split("<tr").slice(2)
   expect(row).toContain("SYN-MELT-00-1")
   expect(row).toContain("Copy d5d7")

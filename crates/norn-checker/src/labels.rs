@@ -275,7 +275,7 @@ fn entity_targets(entity_roots: &[EntityRoot]) -> BTreeSet<LabelTarget> {
         }
     };
     let values_of = |property_type: &PropertyType| -> Vec<String> {
-        let values = if let PropertyType::Ref { name } = property_type {
+        let values = if let PropertyType::Ref { name, .. } = property_type {
             shared_enums
                 .get(name.0.as_str())
                 .cloned()

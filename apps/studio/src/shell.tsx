@@ -14,11 +14,13 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS, type Kind } from "@/lib/kinds"
-import type { Account } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
 import { LocaleProvider, LocaleToggle, directionOf, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
+import { useMode } from "@/lib/live-transport"
+import { useStudioScope } from "@/lib/definitions"
+import { useAccount, type Account } from "@/lib/session"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
@@ -70,7 +72,15 @@ export const sectionOf = (sections: readonly Section[], pathname: string) =>
 /** The project switcher: the open workspace, and the others with whether Studio has recorded documents for them. */
 function WorkspaceSwitcher() {
   const { isMobile } = useSidebar()
-  const open = WORKSPACES.find(({ recorded }) => recorded)
+  const mode = useMode()
+  const scope = useStudioScope()
+  const account = useAccount()
+  const live = mode.data?.kind === "live"
+  const recorded = WORKSPACES.find(({ recorded }) => recorded)
+  // A connected cell is the open workspace: its scope, as the server reported it.
+  const open = live
+    ? { name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell · ${scope.data ? `${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
+    : recorded
   return (
     <SidebarMenu><SidebarMenuItem>
       <DropdownMenu>
@@ -93,7 +103,7 @@ function WorkspaceSwitcher() {
                   </DropdownMenuItem>
                 )
                 : (
-                  <DropdownMenuCheckboxItem key={workspace.id} checked={workspace === open} disabled={!workspace.recorded} className="flex-col items-start gap-0">
+                  <DropdownMenuCheckboxItem key={workspace.id} checked={!live && workspace === open} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
                   </DropdownMenuCheckboxItem>
                 ))}

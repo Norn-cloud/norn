@@ -63,7 +63,7 @@ export const Holding = Norn.type({
 })
 ```
 
-Use `Norn.decimal(scale, { unit })` for exact quantities and `{ currency: "currencyProperty" }` for money bound to a sibling currency property. Specify scale, rounding, overflow and zero-division behavior for computations. `Norn.ref` names a shared **value type**, not an object reference. Object references belong in `links`; do not store `Customer.ref` or `Scrap.many` as scalar props.
+Use `Norn.decimal(scale, { unit })` for exact quantities and `{ currency: "currencyProperty" }` for money bound to a sibling currency property. Specify scale, rounding, overflow and zero-division behavior for computations. `Norn.ref` names a shared **value type**, not an object reference. Object references belong in `links`; do not store `Customer.ref` or `Scrap.many` as scalar props. When a value type is shared by a flow and a stock, declare additivity where it is used: `Norn.ref("core.quantity", { additivity: { kind: "additive" } })` on an event's quantity and `{ kind: "semi_additive" }` on a holding's (METRIC-ADDITIVITY-REF-1). A use site may only add additivity to an integer or decimal type that declares none. When a quantity's unit is stored beside it rather than fixed, declare where: `{ unitSource: ["unit", "currency"] }` (METRIC-UNIT-PARTITION-1). Questions that aggregate it must then group by or `eq`-filter each of those properties.
 
 ### Labels in any language (CURRENT)
 

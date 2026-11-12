@@ -3,7 +3,7 @@ import { QuestionBuilderPage } from "./builder.tsx"
 import { CanvasPage } from "./canvas.tsx"
 import { ConnectionsPage } from "./connections.tsx"
 import { QuestionTreePage } from "./question-tree.tsx"
-import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
+import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
 import { RecordsPage } from "./grid/records-page.tsx"
@@ -34,7 +34,8 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/questions/$name": QuestionPage,
   "/dashboards": DashboardsPage,
   "/dashboards/new": DashboardEditorPage,
-  "/dashboards/$id": DashboardEditorPage,
+  "/dashboards/$id": DashboardBoardPage,
+  "/dashboards/$id/edit": DashboardEditorPage,
   "/workflows": WorkflowsPage,
   "/canvas": CanvasPage,
   "/guarantees": GuaranteesPage,

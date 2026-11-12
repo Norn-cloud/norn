@@ -388,6 +388,22 @@
         "live_footprint_target_bytes"
       ]
     },
+    "QuestionLimits": {
+      "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
+      "type": "object",
+      "properties": {
+        "max_scanned_records": {
+          "description": "Maximum source records one evaluation of a question may scan.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_scanned_records"
+      ]
+    },
     "ResourceLimitProfile": {
       "description": "A versioned resource-limit profile (ruling 2026-09-27 §1).\n\nAll values are v1 qualification targets pending measurement.",
       "type": "object",
@@ -411,6 +427,17 @@
         "memory": {
           "description": "Working memory.",
           "$ref": "#/$defs/MemoryLimits"
+        },
+        "question": {
+          "description": "Bounds on an analytical question. Absent from `norn.limits/1`, whose\nbytes and hash are unchanged; a profile without them bounds questions\nby [`QuestionLimits::DEFAULT`] (see\n[`ResourceLimitProfile::question_limits`]).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "slice": {
           "description": "The declared input slice.",

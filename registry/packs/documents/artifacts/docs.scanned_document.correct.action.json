@@ -1,0 +1,143 @@
+{
+  "artifactId": "docs.scanned_document.correct.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Correct an extracted total",
+  "namespace": "docs",
+  "payload": {
+    "access": {
+      "artifactId": "docs.scanned_document.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "docs.scanned_document.correct",
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "corrected_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "docs.ScannedDocument.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "docs.ScannedDocument",
+      "writeMode": {
+        "kind": "upsert"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "corrected_by": {
+          "type": "string"
+        },
+        "correction_evidence": {
+          "description": "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value.",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "correction_reason": {
+          "description": "Why the imported value is wrong, kept with the correction.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "USD"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "The scanned document to correct.",
+          "title": "Document",
+          "type": "string"
+        },
+        "total": {
+          "description": "The total as printed on the scanned page. It must still equal the sum of the printed lines.",
+          "nornType": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          },
+          "title": "Corrected total",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "currency",
+        "total",
+        "correction_reason",
+        "correction_evidence"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(input.correction_reason != '') and (input.correction_evidence != '')"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "id"
+          }
+        },
+        "name": "document",
+        "objectType": "docs.ScannedDocument"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "correction_evidence"
+          }
+        },
+        "name": "evidence",
+        "objectType": "docs.FieldEvidence"
+      }
+    ],
+    "title": "Correct an extracted total",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "docs.ScannedDocument"
+      },
+      {
+        "change": "created",
+        "entityKind": "docs.ScannedDocument"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.scanned_document.correct.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

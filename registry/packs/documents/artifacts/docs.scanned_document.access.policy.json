@@ -1,0 +1,46 @@
+{
+  "artifactId": "docs.scanned_document.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Scanned document steward",
+  "namespace": "docs",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "docs.scanned_document.access",
+    "rules": [
+      {
+        "actions": [
+          "docs.scanned_document.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.ScannedDocument",
+        "ruleId": "steward",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.scanned_document.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

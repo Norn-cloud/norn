@@ -63,7 +63,7 @@ use crate::object_types::{
     check_property_default, check_property_shape, codes, unsatisfiable, valid_date,
 };
 use crate::property_types::{
-    ResolvedType, TypeResolution, error, matches_grammar, resolve_type, span_at,
+    ResolvedType, TypeResolution, error, matches_grammar, resolve_type, span_at, with_contract,
 };
 use crate::{Diagnostic, interfaces};
 
@@ -1263,7 +1263,9 @@ impl<'a> Checker<'a, '_> {
                         parent.interface != &def.name
                             && matches!(
                                 narrowing(&child.shape(), &parent.shape()),
-                                Narrowing::TypeMismatch | Narrowing::WidensNullability
+                                Narrowing::TypeMismatch
+                                    | Narrowing::AdditivityNotRefined
+                                    | Narrowing::WidensNullability
                             )
                     })
             });
@@ -1377,6 +1379,7 @@ impl<'a> Checker<'a, '_> {
         let conflicted = self.check_implements(&base, def, &ancestors, &table, &inherited);
 
         self.check_declared_members(&base, def, &table, &conflicted);
+        self.check_unit_sources(&base, def, &table);
 
         self.check_type_links(&base, def, registered, parent);
         self.check_owned_collections(&base, def, parent);
@@ -1715,6 +1718,46 @@ impl<'a> Checker<'a, '_> {
 
     /// Id grammar, duplicates, types, overrides, and member namespaces of the
     /// properties a type declares.
+    /// METRIC-UNIT-PARTITION-1: each unit source names another stored
+    /// property of this type whose values are unit or currency codes. A
+    /// source whose kind is not known here (a registry type, or a ref
+    /// resolved by another layer) is judged where its type is declared.
+    fn check_unit_sources(&mut self, base: &[&str], def: &'a ObjectTypeDef, table: &Table<'a>) {
+        for (position, property) in def.properties.iter().enumerate() {
+            let Some(member) = table.get(&property.id) else {
+                continue;
+            };
+            let sources = member.ty.unit_source();
+            let invalid = sources.iter().find(|id| {
+                **id == property.id
+                    || table.get(id).is_none_or(|source| {
+                        source.property.is_read_only()
+                            || !matches!(
+                                source.ty.resolution,
+                                TypeResolution::Registry
+                                    | TypeResolution::Unresolved { .. }
+                                    | TypeResolution::Base(
+                                        PropertyType::Text { .. } | PropertyType::Enum { .. }
+                                    )
+                            )
+                    })
+            });
+            if let Some(id) = invalid {
+                let position = position.to_string();
+                self.out.push(error(
+                    crate::property_types::codes::INVALID_UNIT_SOURCE,
+                    format!(
+                        "property {:?} takes its unit from {:?}, which is not another stored code property (text, enum or a code type) of {:?}",
+                        property.id.as_str(),
+                        id.as_str(),
+                        def.name.as_str()
+                    ),
+                    span_at(base, &["properties", position.as_str(), "type", "unitSource"]),
+                ));
+            }
+        }
+    }
+
     fn check_own_properties(
         &mut self,
         base: &[&str],
@@ -1768,6 +1811,13 @@ impl<'a> Checker<'a, '_> {
                     "property {id:?} overrides the one {owner} declares with a type that is not the same or narrower; an override may only narrow"
                 ),
                 span_at(at, &["type"]),
+            )),
+            Narrowing::AdditivityNotRefined => self.out.push(error(
+                codes::ADDITIVITY_NOT_REFINED,
+                format!(
+                    "property {id:?} declares an additivity other than the one {owner} requires; a member may add additivity where the referenced type declares none, never change a declared one"
+                ),
+                span_at(at, &["type", "additivity"]),
             )),
             Narrowing::WidensNullability => self.out.push(error(
                 codes::OVERRIDE_WIDENS_NULLABILITY,
@@ -1904,6 +1954,14 @@ impl<'a> Checker<'a, '_> {
                     codes::INTERFACE_PROPERTY_TYPE_MISMATCH,
                     format!(
                         "property {:?} does not have the type interface {interface:?} requires, or a narrowing of it",
+                        id.as_str()
+                    ),
+                    at,
+                )),
+                Narrowing::AdditivityNotRefined => self.out.push(error(
+                    codes::ADDITIVITY_NOT_REFINED,
+                    format!(
+                        "property {:?} declares an additivity other than the one interface {interface:?} requires; a member may add additivity where the referenced type declares none, never change a declared one",
                         id.as_str()
                     ),
                     at,
@@ -2362,6 +2420,9 @@ impl<'a> Resolved<'a> {
 enum Narrowing {
     Narrows,
     TypeMismatch,
+    /// METRIC-ADDITIVITY-REF-1: the member changes a `ref` requirement's
+    /// declared additivity.
+    AdditivityNotRefined,
     WidensNullability,
     /// A type does not resolve; that is reported where it is declared.
     Unknown,
@@ -2374,9 +2435,22 @@ fn narrowing(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Narrowing {
     match type_narrows(sub, sup) {
         None => Narrowing::Unknown,
         Some(false) => Narrowing::TypeMismatch,
+        Some(true) if !additivity_refines(sub, sup) => Narrowing::AdditivityNotRefined,
         Some(true) if sub.nullable && !sup.nullable => Narrowing::WidensNullability,
         Some(true) => Narrowing::Narrows,
     }
+}
+
+/// METRIC-ADDITIVITY-REF-1: against a requirement declared as a `ref`, a
+/// member keeps a declared additivity exactly and may declare one where the
+/// requirement declares none. An inline requirement's additivity is matched
+/// exactly by [`base_narrows`] (METRIC-ADDITIVITY-1).
+fn additivity_refines(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> bool {
+    if !matches!(sup.declared, PropertyType::Ref { .. }) {
+        return true;
+    }
+    let required = sup.resolved.additivity();
+    required.is_undeclared() || sub.resolved.additivity() == required
 }
 
 /// The type relation of [`narrowing`]:
@@ -2395,13 +2469,24 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
     if unresolved(sub) || unresolved(sup) {
         return None;
     }
-    if let PropertyType::Ref { name } = sup.declared {
-        return Some(sub.resolved.names.contains(&name));
+    if let PropertyType::Ref { name, .. } = sup.declared {
+        // METRIC-UNIT-PARTITION-1: a member may add a unit source, never drop
+        // or change the one the requirement declares.
+        let required = sup.resolved.unit_source();
+        return Some(
+            sub.resolved.names.contains(&name)
+                && (required.is_empty() || sub.resolved.unit_source() == required),
+        );
     }
     match (sub.resolved.resolution, sup.resolved.resolution) {
-        (TypeResolution::Base(narrow), TypeResolution::Base(wide)) => {
-            Some(base_narrows(narrow, wide))
-        }
+        (TypeResolution::Base(narrow), TypeResolution::Base(wide)) => Some(base_narrows(
+            &with_contract(
+                narrow,
+                sub.resolved.additivity(),
+                sub.resolved.unit_source(),
+            ),
+            &with_contract(wide, sup.resolved.additivity(), sup.resolved.unit_source()),
+        )),
         _ => Some(false),
     }
 }
@@ -2432,9 +2517,14 @@ fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
     }
 }
 
-/// Whether one property could narrow both requirements: one narrows the
-/// other, or both are inline `enum`s with a common value.
+/// Whether one property could narrow both requirements: they declare no
+/// conflicting additivity, and one narrows the other, or both are inline
+/// `enum`s with a common value.
 fn jointly_satisfiable(first: &Shape<'_, '_>, second: &Shape<'_, '_>) -> bool {
+    let (left, right) = (first.resolved.additivity(), second.resolved.additivity());
+    if !left.is_undeclared() && !right.is_undeclared() && left != right {
+        return false;
+    }
     match (type_narrows(first, second), type_narrows(second, first)) {
         (None | Some(true), _) | (_, None | Some(true)) => true,
         (Some(false), Some(false)) => match (

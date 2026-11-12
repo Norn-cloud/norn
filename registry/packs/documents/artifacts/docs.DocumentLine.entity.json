@@ -1,0 +1,86 @@
+{
+  "artifactId": "docs.DocumentLine.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Scanned document line",
+  "namespace": "docs",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "docs.SourceDocumentLine"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "document",
+          "target": "docs.ScannedDocument"
+        }
+      ],
+      "name": "docs.DocumentLine",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "line_no",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "description",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "USD"
+              }
+            ]
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.DocumentLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

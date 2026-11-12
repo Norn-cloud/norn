@@ -69,7 +69,7 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string } | { readonly unitSource: ReadonlyArray<string> }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
     function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
@@ -77,9 +77,14 @@ declare module "@norn/authoring" {
     /**
      * A shared property type by name (EntityIR `ref`): a Norn Core registry
      * value type such as `iso4217.currency_code` or `iso3166.alpha2`, or a
-     * local shared type. The checker resolves the name.
+     * local shared type. The checker resolves the name. `additivity` declares
+     * the aggregation contract at this use site (METRIC-ADDITIVITY-REF-1): it
+     * applies only to an integer or decimal type that declares none itself,
+     * so a flow and a stock can share one value type. `unitSource` names the
+     * sibling properties holding a decimal's unit (METRIC-UNIT-PARTITION-1):
+     * a question aggregating it groups by or fixes each of them.
      */
-    function ref<S extends Schema.Top = Schema.String>(name: string): S
+    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): S
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String
@@ -152,6 +157,24 @@ declare module "@norn/authoring" {
     }
     /** Syntax only: authored modules and callbacks never execute. */
     function question(meta: QuestionMeta): QuestionDefinition
+
+    /** Candidate dashboard definition; the cell's checker admits each tile's question and view. */
+    interface DashboardDefinition { readonly _tag: "NornDashboard" }
+    interface DashboardTile {
+      readonly title: string
+      /** A Norn.question declared in the same module. */
+      readonly question: QuestionDefinition
+      /** number: one value (no group-by); pie: parts of one whole (one summable measure by a category). */
+      readonly view: "number" | "line" | "area" | "bar" | "pie" | "table"
+      /** Half or full width; numbers and pies default to half, the rest to full. */
+      readonly width?: "half" | "full"
+    }
+    interface DashboardMeta {
+      readonly title: string
+      readonly tiles: ReadonlyArray<DashboardTile>
+    }
+    /** Syntax only: lowers to the cell's `dashboard` definition, admitted like one built in Studio. */
+    function dashboard(meta: DashboardMeta): DashboardDefinition
 
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
@@ -364,6 +387,12 @@ declare module "@norn/authoring" {
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
+      /**
+       * The access policy that authorizes calls (ActionIR `access`). A policy whose
+       * rules name this action cannot be referenced here (the definitions would be
+       * circular): give its artifact id, `<policy id>.policy`.
+       */
+      readonly access?: AccessDefinition | { readonly artifactId: string; readonly version?: string }
     }
 
     /** An ActionIR action. */

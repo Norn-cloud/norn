@@ -42,3 +42,22 @@ export function chartFrame(rows: readonly ChartRow[]): ChartFrame | undefined {
   const pad = ratio ? 1 : 0
   return { points, scale: [Math.floor(Math.min(...positions)) - pad, Math.ceil(Math.max(...positions)) + pad], unit: ratio ? "%" : "" }
 }
+
+/** One slice of a pie: the bucket's label, its plot value, the server's exact text, and its share of the whole. */
+export interface PieSlice { readonly label: string; readonly value: number; readonly exact: string; readonly share: string }
+
+/**
+ * A pie's slices, or why the answer cannot honestly be drawn as one. The cell
+ * admits a pie only for one summable measure over one category; the answer
+ * must still be a whole: no suppressed part (the whole would be unknown), no
+ * negative part (it is not a share) and a total above zero.
+ */
+export function pieSlices(rows: readonly ChartRow[]): readonly PieSlice[] | string {
+  if (rows.length === 0) return "The server returned no answers for this window."
+  if (rows.some(({ suppressed }) => suppressed)) return "A part is suppressed, so the whole is not known; the table lists each part."
+  const values = rows.map(({ value }) => Number(value))
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) return "A part is negative or has no value, so it is not a share of a whole; the table lists each part."
+  const total = values.reduce((sum, value) => sum + value, 0)
+  if (total <= 0) return "The parts sum to zero, so there are no shares to draw."
+  return rows.map(({ label, value: exact }, index) => ({ label, value: values[index] ?? 0, exact, share: `${(((values[index] ?? 0) / total) * 100).toFixed(1)}%` }))
+}

@@ -28,6 +28,7 @@ import * as LB from "../builder/labels.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
 import * as Q from "../builder/question.ts"
+import * as DB from "../builder/dashboard.ts"
 import * as S from "../builder/schema.ts"
 import type { EnvelopeOptions } from "../builder/envelope.ts"
 import type { SourceLocation } from "../builder/diagnostics.ts"
@@ -119,6 +120,7 @@ const LAW = "@norn/authoring#Norn.law"
 const LABELS = "@norn/authoring#Norn.labels"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
+const DASHBOARD = "@norn/authoring#Norn.dashboard"
 const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
@@ -249,6 +251,14 @@ export function compileQuestions(file: string, limits: Partial<CompilerLimits> =
   return result.ok ? { ok: true, questions: result.value } : result
 }
 
+/** Compile dashboards: the cell's `dashboard` definitions, each admitted by the cell like one saved from Studio. */
+export function compileDashboards(file: string, limits: Partial<CompilerLimits> = {}):
+  | { readonly ok: true; readonly dashboards: ReadonlyArray<Json> }
+  | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> } {
+  const result = lowerEach<ReadonlyArray<Json>>([file], limits, (compiler, source) => ({ ok: true, value: compiler.dashboards(source) }))[0]!
+  return result.ok ? { ok: true, dashboards: result.value } : result
+}
+
 export type ValueSchemasResult =
   | { readonly ok: true; readonly schemas: Readonly<Record<string, S.ValueSchema>> }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
@@ -327,6 +337,7 @@ class DefinitionCompiler {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
         if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
+        if (ts.isCallExpression(e) && this.id(e) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings and the dashboard compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }
@@ -339,6 +350,7 @@ class DefinitionCompiler {
         const init = d.initializer && this.unwrap(d.initializer)
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
         if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
+        if (init && id === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards use the dashboard compiler; the cell admits them as definitions, not artifacts", init)
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
@@ -363,7 +375,14 @@ class DefinitionCompiler {
   }
 
   questions(source: ts.SourceFile): Json[] {
-    const questions: Json[] = []
+    const questions = [...this.questionBindings(source).values()]
+    if (questions.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.question", source)
+    return questions
+  }
+
+  /** Each named Norn.question in the module, lowered, by its binding name. */
+  private questionBindings(source: ts.SourceFile): Map<string, Json> {
+    const questions = new Map<string, Json>()
     const names = new Set<string>()
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
@@ -419,11 +438,43 @@ class DefinitionCompiler {
           population: { kind: "authorized_objects" },
         })
         this.expansion.assert(question)
-        questions.push(question)
+        questions.set(declaration.name.getText(source), question)
       }
     }
-    if (questions.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.question", source)
     return questions
+  }
+
+  /** DASHBOARD-LOWER-1: each named Norn.dashboard, its tiles' questions resolved from the module's own Norn.question bindings. */
+  dashboards(source: ts.SourceFile): Json[] {
+    const questions = this.questionBindings(source)
+    const dashboards: Json[] = []
+    for (const statement of source.statements) {
+      if (ts.isExportAssignment(statement)) {
+        const call = this.unwrap(statement.expression)
+        if (ts.isCallExpression(call) && this.id(call) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings", call)
+      }
+      if (!ts.isVariableStatement(statement)) continue
+      for (const declaration of statement.declarationList.declarations) {
+        const call = declaration.initializer && this.unwrap(declaration.initializer)
+        if (!call || !ts.isCallExpression(call) || this.id(call) !== DASHBOARD) continue
+        const input = this.meta(call, ["title", "tiles"])
+        const tiles = this.list(this.member(input, "tiles", call)).map(node => {
+          const tile = this.closedRecord(node, ["title", "question", "view", "width"], ["title", "question", "view"])
+          const ref = tile.get("question")!
+          const question = ts.isIdentifier(ref) ? questions.get(ref.text) : undefined
+          if (question === undefined) throw new CompileError("NORN-FLOW-LITERAL", "a tile's question names a Norn.question declared in this module", ref)
+          const view = this.string(tile.get("view")!)
+          if (!["number", "line", "area", "bar", "pie", "table"].includes(view)) throw new CompileError("NORN-FLOW-LITERAL", "a view is number, line, area, bar, pie or table", tile.get("view")!)
+          const widthNode = tile.get("width")
+          const width = widthNode === undefined ? undefined : this.string(widthNode)
+          if (width !== undefined && width !== "half" && width !== "full") throw new CompileError("NORN-FLOW-LITERAL", "a width is half or full", widthNode!)
+          return { title: this.string(tile.get("title")!), question, view: view as DB.DashboardView, ...width === undefined ? {} : { width } } satisfies DB.DashboardTileSpec
+        })
+        dashboards.push(DB.lowerDashboard({ title: this.string(this.member(input, "title", call)), tiles }))
+      }
+    }
+    if (dashboards.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.dashboard", source)
+    return dashboards
   }
 
   valueSchemas(source: ts.SourceFile): Record<string, S.ValueSchema> {
@@ -768,11 +819,12 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
-      const closed = this.schemas.closed(this.schemas.read(node))
+      // An absent member is a nullable plain scalar (Schema.NullOr), as ActionIR admits.
+      const closed = this.schemas.closed(this.schemas.read(node), "scalar")
       if (closed.type !== "object") throw new CompileError("NORN-FLOW-SCHEMA-PROJECTION", `action ${key} is a Schema.Struct`, node)
       return closed
     }
@@ -828,8 +880,23 @@ class DefinitionCompiler {
       ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
+      ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       at: this.at(call),
     })
+  }
+
+  /** ActionIR `access`: a Norn.access reference, or `{ artifactId, version? }`. */
+  private accessRef(input: ts.Expression): NonNullable<A.ActionDef["access"]> {
+    const e = this.deref(input)
+    if (ts.isCallExpression(e)) {
+      const { call, members } = this.referenced(input, new Set([ACCESS]), "a Norn.access definition (or { artifactId, version? })")
+      return { artifactId: `${this.string(this.member(members, "id", call))}.policy`, version: this.string(this.member(members, "version", call)) }
+    }
+    const m = this.closedRecord(input, ["artifactId", "version"], ["artifactId"])
+    const artifactId = this.string(m.get("artifactId")!)
+    if (!artifactId.endsWith(".policy")) throw new CompileError("NORN-FLOW-LITERAL", "access names a policy artifact: <policy id>.policy", m.get("artifactId")!)
+    const version = m.get("version")
+    return { artifactId, ...(version ? { version: this.string(version) } : {}) }
   }
 
   private zenAt(input: ts.Expression, artifactId: string, pointer: string, root = "input"): string {

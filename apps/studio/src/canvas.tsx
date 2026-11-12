@@ -28,8 +28,8 @@ export const SAVE_BLOCKED = "Saving to the server needs its admission and govern
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
 
-/** The recorded definitions, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
-const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
+/** The definitions, from the connected cell or else the recording, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
+const recordedDefinitions = async () => (await import("./lib/transport.ts")).transport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (

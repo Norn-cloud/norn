@@ -14,7 +14,8 @@ export interface NornActor {
   readonly orgId: string
   /** The membership role in that organization (owner/admin/member/viewer). */
   readonly role: string
-  readonly authMethod: "password" | "magic_link" | "api_key"
+  /** `oauth`: an assistant the person connected, acting on their grant (MCP). */
+  readonly authMethod: "password" | "magic_link" | "api_key" | "oauth"
 }
 
 /** Roles an organization API key may act with; approving roles stay with people. */

@@ -1566,6 +1566,10 @@
       "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
       "review": "needs_review"
     },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: وحدة المقياس مخزنة في خصائص مجاورة؛ جمّع حسب كل منها أو ثبّت كلًّا منها بمرشح eq، حتى لا يخلط أي تجميع بين الوحدات.",
+      "review": "needs_review"
+    },
     "metric.validation.ontology_projection": {
       "message": "مجموعات البيانات أو العلاقات الدلالية المُولَّدة تختلف عن الأنطولوجيا.",
       "review": "needs_review"
@@ -1600,6 +1604,10 @@
     },
     "metric.validation.unsupported_semantics": {
       "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
+      "review": "needs_review"
+    },
+    "object_type.validation.additivity_not_refined": {
+      "message": "الخاصية {$property} تعلن جمعية غير التي يتطلبها {$owner}؛ يجوز للعضو أن يضيف الجمعية حيث لا يعلنها النوع المشار إليه، ولا يجوز أن يغيّر جمعية معلنة",
       "review": "needs_review"
     },
     "object_type.validation.computed_key_component": {
@@ -2026,8 +2034,20 @@
       "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
       "review": "needs_review"
     },
+    "property_type.validation.invalid_unit_source": {
+      "message": "مصدر الوحدة {$detail}",
+      "review": "needs_review"
+    },
     "property_type.validation.inverted_range": {
       "message": "{$lower} أكبر من {$upper}",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} يعلن الجمعية {$declared}، لكن النوع الذي يشير إليه يعلن {$referenced}؛ موضع الاستخدام يضيف الجمعية فقط إلى نوع لا يعلن أيًّا منها",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} يُحَل إلى نوع {$kind}؛ تُعلَن الجمعية على عدد صحيح أو عشري فقط",
       "review": "needs_review"
     },
     "property_type.validation.ref_cycle": {

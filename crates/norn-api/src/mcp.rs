@@ -3,6 +3,9 @@ use crate::refusal::Refusal;
 use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use utoipa::ToSchema;
+use utoipa::openapi::Type;
+use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
 
 /// The backend's unchanged payload and failure classification.
 pub struct CallOutput {
@@ -25,11 +28,17 @@ pub trait Backend {
         metadata: RuntimeObject,
     ) -> Result<CallOutput, Refusal>;
 }
+/// MCP revisions this boundary speaks, newest first. `initialize` answers
+/// with the client's revision when it is listed here, else the newest.
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
+
 /// One connection over a fixed, authorized catalog snapshot.
 pub struct Session {
     tools: Vec<McpTool>,
     digest: String,
     initialized: bool,
+    capabilities: RuntimeObject,
+    instructions: Option<String>,
 }
 #[derive(Deserialize)]
 struct Request {
@@ -144,7 +153,31 @@ impl Session {
             tools,
             digest,
             initialized: false,
+            capabilities: RuntimeObject::new(),
+            instructions: None,
         })
+    }
+    /// A stateless Streamable HTTP request: each POST is answered on its own
+    /// over the catalog the server rebuilt for it, so no handshake state is
+    /// carried between requests. The transport checks `MCP-Protocol-Version`.
+    #[must_use]
+    pub fn stateless(mut self) -> Self {
+        self.initialized = true;
+        self
+    }
+    /// Capabilities the server declares beside `tools` (for example
+    /// `resources`, or an `extensions` map); `tools` itself stays the catalog's.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: RuntimeObject) -> Self {
+        self.capabilities = capabilities;
+        self.capabilities.remove("tools");
+        self
+    }
+    /// Plain-language guidance `initialize` returns for the model.
+    #[must_use]
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
     }
     /// Handle one bounded JSON-RPC message without converting exact arguments through floats.
     /// Notifications never execute a tool. No transport-side authorization is inferred.
@@ -264,22 +297,50 @@ impl Session {
         .map(Some)
     }
     fn initialize(&mut self, id: RuntimeValue, protocol: Option<&str>) -> Result<String, Refusal> {
-        if protocol.is_none_or(|version| version.trim().is_empty()) {
+        let Some(requested) = protocol.filter(|version| !version.trim().is_empty()) else {
             return protocol_error(
                 id,
                 -32602,
                 Refusal::invalid("provide an MCP protocolVersion"),
             );
-        }
+        };
         self.initialized = true;
-        response(
-            id,
-            "result",
-            encode(&serde_json::json!({
-                "protocolVersion":"2025-11-25", "capabilities":{"tools":{"listChanged":false}},
-                "serverInfo":{"name":"norn","version":env!("CARGO_PKG_VERSION")}
-            }))?,
-        )
+        let version = PROTOCOL_VERSIONS
+            .iter()
+            .find(|supported| **supported == requested)
+            .unwrap_or(&PROTOCOL_VERSIONS[0]);
+        let mut capabilities = self.capabilities.clone();
+        capabilities.insert(
+            "tools".into(),
+            RuntimeValue::Object(RuntimeObject::from([(
+                "listChanged".into(),
+                RuntimeValue::Bool(false),
+            )])),
+        );
+        let mut result = RuntimeObject::from([
+            (
+                "protocolVersion".into(),
+                RuntimeValue::String((*version).into()),
+            ),
+            ("capabilities".into(), RuntimeValue::Object(capabilities)),
+            (
+                "serverInfo".into(),
+                RuntimeValue::Object(RuntimeObject::from([
+                    ("name".into(), RuntimeValue::String("norn".into())),
+                    (
+                        "version".into(),
+                        RuntimeValue::String(env!("CARGO_PKG_VERSION").into()),
+                    ),
+                ])),
+            ),
+        ]);
+        if let Some(instructions) = &self.instructions {
+            result.insert(
+                "instructions".into(),
+                RuntimeValue::String(instructions.clone()),
+            );
+        }
+        response(id, "result", RuntimeValue::Object(result))
     }
     /// Read the same bounded catalog snapshot used by MCP discovery.
     /// MCP-CATALOG-1: human services and MCP share tool IR, digests and cursors.
@@ -319,4 +380,92 @@ impl Session {
             catalog_digest: &self.digest,
         })
     }
+}
+
+/// `POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,
+/// over its stateless Streamable HTTP transport. The tool catalog is not
+/// listed here: `tools/list` returns it, projected from what the cell declares.
+#[derive(Debug, ToSchema)]
+pub struct McpMessage {
+    /// Always `2.0`.
+    pub jsonrpc: String,
+    /// A string or number; absent for a notification, which is answered 202.
+    #[schema(schema_with = request_id_schema, required = false)]
+    pub id: Option<RuntimeValue>,
+    /// `initialize`, `ping`, `tools/list`, `tools/call` or a notification.
+    pub method: String,
+    /// The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.
+    #[schema(schema_with = params_schema, required = false)]
+    pub params: Option<RuntimeValue>,
+}
+
+// `schema_with` replaces a field's schema, doc comment included, so each
+// helper restates it. Parameters and results are JSON-RPC objects whose
+// members depend on the method, so they say so (`additionalProperties`).
+fn request_id_schema() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Array(vec![Type::String, Type::Number]))
+        .description(Some("A string or number; absent for a notification."))
+        .build()
+}
+
+fn free_form(description: &str) -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Type(Type::Object))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(description))
+        .build()
+}
+
+fn params_schema() -> Object {
+    free_form("The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.")
+}
+
+fn result_schema() -> Object {
+    free_form(
+        "The method's result. A tool's refusal is a result with `isError: true` whose \
+         `structuredContent` is the route's own refusal.",
+    )
+}
+
+/// The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id.
+#[derive(Debug, ToSchema)]
+pub struct McpReply {
+    /// Always `2.0`.
+    pub jsonrpc: String,
+    /// The request's id.
+    #[schema(schema_with = request_id_schema)]
+    pub id: RuntimeValue,
+    /// The method's result. A tool's refusal is a result with `isError: true`
+    /// whose `structuredContent` is the route's own refusal.
+    #[schema(schema_with = result_schema, required = false)]
+    pub result: Option<RuntimeValue>,
+    /// A protocol error: malformed message, unknown method or tool.
+    #[schema(required = false)]
+    pub error: Option<McpError>,
+}
+
+/// A JSON-RPC protocol error, carrying the shared refusal as its data.
+#[derive(Debug, ToSchema)]
+pub struct McpError {
+    /// The JSON-RPC error code.
+    pub code: i32,
+    /// The refusal's message.
+    pub message: String,
+    /// The refusal.
+    pub data: Refusal,
+}
+
+/// `POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over
+/// stateless Streamable HTTP; `tools/list` is the caller's tool catalog.
+///
+/// # Errors
+/// Serialization failure; protocol and backend refusals stay on the wire.
+#[utoipa::path(post, path = "/v1/mcp", params(crate::scope::ScopeQuery), request_body = McpMessage, responses((status = 200, description = "The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal.", body = McpReply), (status = 202, description = "A notification was accepted; there is no body."), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn post_message(
+    session: &mut Session,
+    message: &str,
+    backend: &mut impl Backend,
+) -> Result<Option<String>, Refusal> {
+    session.handle(message, backend)
 }

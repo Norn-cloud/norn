@@ -39,6 +39,66 @@ restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
 provenance use the following checked derivation contract.
 
+**METRIC-ADDITIVITY-REF-1:** a `ref` may declare `additivity` at its use site,
+so a flow and a stock can share one value type (an event quantity is additive;
+a holding of the same quantity type is semi-additive). Omission means
+`undeclared`, and an undeclared `ref` serializes exactly as before. A
+property's effective additivity is the first one declared along its `ref`
+chain, the use site first, else the base numeric type's own. Use-site
+additivity requires a `ref` that resolves to a local `integer` or `decimal`;
+any other resolved kind refuses
+`property_type.validation.ref_additivity_not_numeric`. A registry `ref`'s kind
+belongs to the registry, and its use-site additivity authorizes nothing until it
+resolves to a local base. Where the referenced type already declares additivity,
+the use site must equal it, else
+`property_type.validation.ref_additivity_conflict`. Against an interface
+requirement, overridden property or parent-interface member declared as a `ref`,
+a member's effective additivity refines the requirement's: undeclared may become
+any declared class, and a declared class is kept exactly, else
+`object_type.validation.additivity_not_refined`. A requirement declared inline
+keeps METRIC-ADDITIVITY-1's exact match. Metric admission, action sums, the
+model diff and METRIC-DERIVE-1 read the effective additivity exactly as they
+read an inline one; `semi_additive` never yields a sum over time.
+
+Named scenarios: **METRIC-REF-FLOW-DERIVES** (a flow `ref` declared additive
+derives one sum per direct time property, and a semi-additive stock of the same
+value type derives none), **METRIC-REF-REFINES** (every requirement × member
+class pair is admitted exactly when the requirement is undeclared or equal),
+**METRIC-REF-NUMERIC** and **METRIC-REF-CONFLICT** (use-site additivity on a
+non-numeric type, or against a declared one, refuses), and
+**METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
+
+**METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
+`unitSource`: one or more distinct sibling properties whose values together
+are its unit (canon's quantities take theirs from `unit` or, for money,
+`currency`). It is declared inline or at a `ref` use site, under the same
+chain rule as use-site additivity. A decimal declares at most one of a static
+`unit`, `currencySource`, `perUnit` or `unitSource`. Each source must be
+another stored property of the same object type whose values are codes: text
+or enum, or a type whose kind is judged where it is declared (a registry code
+type). A use site never contradicts the source the
+referenced type declares. Against a requirement or overridden property
+declared as a `ref`, a member keeps the declared source and may add one where
+none is declared. Any violation refuses
+`property_type.validation.invalid_unit_source`. A question that aggregates
+such a measure (sum, average, minimum or maximum; counts are exempt) groups by
+each source property, or fixes it with an `eq` filter of the question or of
+the metric's default filters. `eq null` counts, because question filters
+compare nulls as values. Otherwise the question refuses
+`metric.validation.mixed_unit`. A reaggregation never rolls up across a
+source property, and ratio operands are checked the same way. Derived
+candidates expose their source paths as `unit_partition`. While the exact
+engine admits one grouping dimension, the shape it supports is the time
+dimension plus `eq` filters on each source.
+
+Named scenarios: **METRIC-UNIT-GROUPED** and **METRIC-UNIT-FIXED** (grouping
+by or fixing every source admits), **METRIC-UNIT-MIXED** (leaving any source
+free refuses; `ne` does not fix it), **METRIC-UNIT-ENGINE-SHAPE** (a time
+grouping with `eq` filters on every source lowers to the exact engine), and
+**METRIC-UNIT-DECLARATION** (a source that is the measure itself, missing or
+not a code property, a decimal with a static unit, or a member that drops a
+declared source, refuses).
+
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
 Candidates are uncertified; deriving one does not declare a governed KPI or

@@ -1,5 +1,6 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
+import { currentMode, liveTransport } from "./live-transport.ts"
 import { readsOf } from "./objects.ts"
 
 export type { Schemas }
@@ -100,8 +101,24 @@ export const recordedTransport: Transport = {
   },
 }
 
+const through = (pick: (transport: Transport) => (...args: never[]) => Promise<unknown>) =>
+  async (...args: never[]) => {
+    const active = await currentMode()
+    const chosen = active.kind === "live" ? liveTransport(active.catalog, (input, init) => fetch(input, init)) : recordedTransport
+    return pick(chosen)(...args)
+  }
+
 /**
- * The transport the pages read through. Recorded until the cell's live read
- * host lands; live reads replace it here, behind configuration.
+ * The transport the pages read through: the connected cell's documents, or the
+ * recording when no cell is connected, decided once per page load (live-transport.ts `readMode`).
  */
-export const transport: Transport = recordedTransport
+export const transport: Transport = {
+  questionBoard: through((t) => t.questionBoard) as Transport["questionBoard"],
+  definitions: through((t) => t.definitions) as Transport["definitions"],
+  restatement: through((t) => t.restatement) as Transport["restatement"],
+  catalog: through((t) => t.catalog) as Transport["catalog"],
+  guarantees: through((t) => t.guarantees) as Transport["guarantees"],
+  objectPage: through((t) => t.objectPage) as Transport["objectPage"],
+  object: through((t) => t.object) as Transport["object"],
+}
+

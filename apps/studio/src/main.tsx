@@ -6,6 +6,7 @@ import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
+import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
@@ -68,10 +69,15 @@ const applyScheme = () => document.documentElement.classList.toggle("dark", dark
 applyScheme()
 dark.addEventListener("change", applyScheme)
 
+// An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.
+const OAuthPage = oauthPage(window.location.pathname)
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    {OAuthPage === null ? (
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    ) : <OAuthPage />}
   </StrictMode>,
 )

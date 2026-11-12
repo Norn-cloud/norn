@@ -11,6 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useView, type View } from "@/lib/view"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
+import { LawsPanel } from "./laws.tsx"
+import { SourceConnections } from "./source-connections.tsx"
+import { ModelGraph } from "./model-graph.tsx"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
@@ -31,16 +35,22 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
 export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
 function Systems({ catalog }: { readonly catalog: Catalog }) {
-  const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
+  const concepts = catalog.concepts.filter(({ definition }) => definition === "object type")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
   return (
     <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       <Panel icon={Database} label="Connected systems">
         <Well className="divide-y">
+          {catalog.systems.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
           {catalog.systems.map((system) => (
             <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
-              <span className="font-medium">{system.name}</span>
-              <span className="text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} object types</span>
+              <span className="min-w-0">
+                <span className="font-medium">{system.name}</span>
+                {system.schema && <span className="block truncate text-xs text-muted-foreground">
+                  {[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}
+                </span>}
+              </span>
+              <span className="shrink-0 text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} object types</span>
             </div>
           ))}
         </Well>
@@ -120,6 +130,14 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
         ))}
       </DenseTable>
       {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
+      {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
+        <div className="space-y-1">
+          <h3 className="text-meta font-medium text-muted-foreground">Left out of the mapping, on purpose</h3>
+          {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
+            <p key={`${system}/${dataset}/${field}`} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system} {dataset}, <code className="font-mono text-xs">{field}</code>:</b> {reason}</p>
+          )))}
+        </div>
+      )}
     </div>
   )
 }
@@ -162,7 +180,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
 }
 
 /** One object type as a record page: what it is, its fields, links, rules and where its records come from. */
-function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; readonly concept: Concept }) {
+function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Catalog; readonly concept: Concept; readonly recorded: boolean }) {
   const link = (target: string) => catalog.byName.has(target)
     ? <Link to="/sources/$concept" params={{ concept: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
     : <span>{conceptTitle(target)}</span>
@@ -175,7 +193,7 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
         <h1 lang={concept.titleLang} className="text-title font-medium">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
-          <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
+          {recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
           {view === "technical" && <Iso className="font-mono">{concept.name}</Iso>}
         </div>
         {text !== undefined && <p lang={text.lang} className="max-w-2xl text-muted-foreground">{text.text}</p>}
@@ -196,13 +214,7 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
           </Well>
         </Panel>
       )}
-      <Panel icon={Shapes} label="Rules it must keep">
-        <Well className="px-4 py-3 text-sm">
-          {concept.rules.length > 0
-            ? <ul className="list-disc space-y-1 ps-5">{concept.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-            : <p className="text-muted-foreground">No rule is declared on this object type itself.</p>}
-        </Well>
-      </Panel>
+      <LawsPanel concept={concept} />
       <Panel icon={Database} label="Where its records come from">
         <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-sm text-muted-foreground">No connected system maps records into it directly.</p>}</div>
       </Panel>
@@ -219,7 +231,7 @@ export function ObjectTypePage() {
     <div className="space-y-6">
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
-      {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
+      {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} recorded={read.data?.origin === "recorded"} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
       {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
     </div>
   )
@@ -266,8 +278,13 @@ export function SourcesPage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
+        {read.data?.origin === "live" && <SourceConnections />}
         <Systems catalog={catalog} />
         <Panel icon={Shapes} label="The business model">
+          <Tabs defaultValue="cards" className="p-1">
+          <TabsList className="mx-3 mt-2"><TabsTrigger value="cards">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
+          <TabsContent value="graph" className="p-3"><ModelGraph catalog={catalog} /></TabsContent>
+          <TabsContent value="cards">
           <Well className="space-y-6 p-4">
             <label className="relative block w-full max-w-sm">
               <span className="sr-only">Find an object type</span>
@@ -275,7 +292,7 @@ export function SourcesPage() {
               <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
                 className="border-border bg-background ps-9 dark:bg-background" />
             </label>
-            {OVERVIEW_GROUPS.map(({ label, has }) => (
+            {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || catalog.concepts.some(has)).map(({ label, has }) => (
               <div key={label} className="space-y-3">
                 <h3 className="text-meta font-medium text-muted-foreground">{label}</h3>
                 {catalog.concepts.some((concept) => has(concept) && matches(concept))
@@ -288,6 +305,8 @@ export function SourcesPage() {
               </div>
             ))}
           </Well>
+          </TabsContent>
+          </Tabs>
         </Panel>
       </>}
     </section>

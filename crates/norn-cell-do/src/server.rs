@@ -1,8 +1,11 @@
 //! Fetch dispatch over `norn_api`'s shared, authorized services: the read
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
-//! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `/v1/definitions/{id}:retire`), the one governed action route,
+//! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`), the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
+//! these same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -13,6 +16,7 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
+use norn_api::action_catalog::{ActionCatalogQuery, list_actions};
 use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
@@ -20,11 +24,15 @@ use norn_api::definition_routes::{
 };
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
+use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
+use norn_api::object_review::{
+    get_object_findings, get_object_history, get_object_lineage_at, get_quarantined_objects,
+};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, list_metrics, question_catalog, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -102,6 +110,8 @@ macro_rules! routes {
 routes! {
     /// `GET /v1/access`, dispatched by the published host's entry point.
     Access => ("GET", "/v1/access"),
+    /// `GET /v1/actions`.
+    ActionCatalog => ("GET", "/v1/actions"),
     /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
     /// route (HOST-PROVISION-1).
     Provision => ("POST", "/v1/cell:provision"),
@@ -121,12 +131,20 @@ routes! {
     DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
     /// `GET /v1/objects/{type}`.
     Objects => ("GET", "/v1/objects/{type}"),
+    /// `GET /v1/objects/{type}:profile`.
+    ObjectProfile => ("GET", "/v1/objects/{type}:profile"),
     /// `GET /v1/objects/{type}/{id}`.
     Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
     ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
     /// `GET /v1/objects/{type}/{id}/lineage`.
     ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
+    /// `GET /v1/objects/{type}/{id}/findings`.
+    ObjectFindings => ("GET", "/v1/objects/{type}/{id}/findings"),
+    /// `GET /v1/objects/{type}/{id}/history`.
+    ObjectHistory => ("GET", "/v1/objects/{type}/{id}/history"),
+    /// `GET /v1/objects/{type}:quarantined`.
+    ObjectsQuarantined => ("GET", "/v1/objects/{type}:quarantined"),
     /// `GET /v1/questions/{question}/answer`.
     QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
     /// `GET /v1/questions/{question}/trace`.
@@ -146,6 +164,20 @@ routes! {
     UploadComplete => ("POST", "/v1/uploads/{id}:complete"),
     /// `POST /v1/uploads/{id}:load`, dispatched by the entry point (`connect`).
     UploadLoad => ("POST", "/v1/uploads/{id}:load"),
+    /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
+    Mcp => ("POST", "/v1/mcp"),
+    /// `GET /v1/questions:metrics`.
+    QuestionsMetrics => ("GET", "/v1/questions:metrics"),
+    /// `POST /v1/runs` (RUN-ROUTES-1).
+    RunStart => ("POST", "/v1/runs"),
+    /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
+    Run => ("GET", "/v1/runs/{id}"),
+    /// `GET /v1/questions:catalog`.
+    QuestionsCatalog => ("GET", "/v1/questions:catalog"),
+    /// `GET /v1/decisions` (DECISIONS-1).
+    Decisions => ("GET", "/v1/decisions"),
+    /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
+    Decide => ("POST", "/v1/decisions/{id}:decide"),
 }
 
 impl Route {
@@ -172,11 +204,30 @@ impl Route {
             "/v1/access" => return Some(Self::Access),
             "/v1/uploads:begin" => return Some(Self::UploadBegin),
             "/v1/uploads:read" => return Some(Self::UploadRead),
+            "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            crate::mcp::MCP_PATH => return Some(Self::Mcp),
+            "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
+            "/v1/runs" => return Some(Self::RunStart),
+            "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
+            "/v1/decisions" => return Some(Self::Decisions),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/decisions/")
+            .and_then(|rest| rest.strip_suffix(":decide"))
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Decide);
+        }
+        if path
+            .strip_prefix("/v1/runs/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Run);
         }
         if let Some(route) = definitions_route(path) {
             return Some(match route {
@@ -194,12 +245,16 @@ impl Route {
                 _ => None,
             };
         }
-        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+        if let Some((kind, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
             return Some(match (id, leaf) {
+                (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
+                (None, _) if kind.ends_with(":quarantined") => Self::ObjectsQuarantined,
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
                 (Some(_), Some("lineage")) => Self::ObjectLineage,
+                (Some(_), Some("findings")) => Self::ObjectFindings,
+                (Some(_), Some("history")) => Self::ObjectHistory,
                 (Some(_), Some(_)) => return None,
             });
         }
@@ -267,9 +322,16 @@ pub fn handle_all<E: SqlEngine>(
     kinds: &DefinitionKinds,
     request: &Request<'_>,
 ) -> Response {
+    // MCP resolves its caller per tool call, through these same routes.
+    if request.path == crate::mcp::MCP_PATH {
+        return crate::mcp::serve(host, principals, questions, kinds, request);
+    }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
+    if let Some(response) = crate::runs::dispatch(host, questions, actor.as_deref(), request) {
+        return response;
+    }
     respond(route(
         Some(host),
         questions,
@@ -327,7 +389,10 @@ fn route<E: SqlEngine>(
         ..
     } = *request;
     let question = question_path(path);
-    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let ad_hoc = matches!(
+        path,
+        "/v1/questions:evaluate" | "/v1/questions:trace" | "/v1/questions:metrics"
+    );
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
@@ -348,10 +413,14 @@ fn route<E: SqlEngine>(
         provisioned(host, actor, request)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
+    } else if path == "/v1/actions" {
+        action_catalog(host.ok_or_else(action_denied)?, actor, method, query)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
+    } else if path == "/v1/questions:catalog" {
+        ad_hoc_catalog(cell(host)?, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -444,12 +513,13 @@ fn ad_hoc_question<E: SqlEngine>(
     query: &str,
     body: &str,
 ) -> Result<String, Refusal> {
-    if method != "POST" {
+    let listing = path == "/v1/questions:metrics";
+    if method != if listing { "GET" } else { "POST" } {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "ad-hoc questions are submitted with POST",
+            "ad-hoc questions are submitted with POST; their metrics are listed with GET",
         ));
     }
     let fields = parse(query, &["orgId", "environmentId"])?;
@@ -462,6 +532,9 @@ fn ad_hoc_question<E: SqlEngine>(
         return Err(norn_api::authz::read_denied());
     };
     let host = cell(host)?;
+    if listing {
+        return document_json(&list_metrics(host, &scope, actor, runtime)?);
+    }
     let malformed = |error: serde_json::Error| {
         Refusal::invalid(format!(
             "the request body is not a valid submission: {error}"
@@ -476,11 +549,64 @@ fn ad_hoc_question<E: SqlEngine>(
     }
 }
 
+/// `GET /v1/questions:catalog`, scoped by the query string: what this caller
+/// may build an ad-hoc question from. A cell without a question runtime
+/// answers the one denial.
+fn ad_hoc_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the question catalog is read with GET",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let Some(runtime) = questions else {
+        return Err(norn_api::authz::read_denied());
+    };
+    document_json(&question_catalog(host, &scope, actor, runtime)?)
+}
+
 /// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
 /// (`orgId`, `environmentId`, optional `version` pin) with the call in a JSON
 /// body. The shared service authorizes, admits and commits; the cell's
 /// question runtime is its receipt-disclosure authority (D53), so a cell
 /// without one serves no action.
+/// `GET /v1/actions`: the actions the caller may call, by the call's own gate.
+fn action_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the action catalog is read with GET",
+        ));
+    }
+    let mut fields = parse(query, &["orgId", "environmentId", "objectKind"])?;
+    let query = ActionCatalogQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        object_kind: fields.remove("objectKind"),
+    };
+    document_json(&list_actions(host, &query, actor)?)
+}
+
 fn governed_action<E: SqlEngine>(
     host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
@@ -532,7 +658,8 @@ fn governed_action<E: SqlEngine>(
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
-/// id, and for an id an optional `links` or `lineage` leaf. No segment is empty.
+/// id, and for an id an optional `links`, `lineage`, `findings` or `history`
+/// leaf. No segment is empty.
 fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     let mut segments = rest.split('/');
     let kind = segments.next().filter(|kind| !kind.is_empty())?;
@@ -540,11 +667,131 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     let leaf = segments.next();
     if segments.next().is_some()
         || id.is_some_and(str::is_empty)
-        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage"))
+        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage" | "findings" | "history"))
     {
         return None;
     }
     Some((kind, id, leaf))
+}
+
+/// HOST-READ-5: `GET /v1/objects/{type}:profile`, scoped by the query string.
+fn profiled<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&get_object_profile(
+        host,
+        &scope,
+        actor,
+        object_type,
+        &CellObjectAccess,
+    )?)
+}
+
+/// HOST-READ-6: `GET /v1/objects/{type}:quarantined`, scoped by the query string.
+fn quarantined<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&get_quarantined_objects(
+        cell(host)?,
+        &scope,
+        actor,
+        object_type,
+        &CellObjectAccess,
+    )?)
+}
+
+/// HOST-READ-4/6: the review reads, when the path names one: a type's
+/// `:quarantined` ids, or an object's `/lineage` (optionally `?version=`),
+/// `/findings` and `/history`.
+fn review<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
+    query: &str,
+) -> Option<Result<String, Refusal>> {
+    match (object_type.strip_suffix(":quarantined"), id, leaf) {
+        (Some(kind), None, _) => Some(quarantined(host, actor, kind, query)),
+        (None, Some(id), Some(leaf @ ("findings" | "history" | "lineage"))) => Some(
+            percent_encoding::percent_decode_str(id)
+                .decode_utf8()
+                .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
+                .and_then(|id| reviewed(host, actor, (object_type, &id, leaf), query)),
+        ),
+        _ => None,
+    }
+}
+
+/// One object's review read, scoped by the query string.
+fn reviewed<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    (object_type, id, leaf): (&str, &str, &str),
+    query: &str,
+) -> Result<String, Refusal> {
+    let allowed: &[&str] = if leaf == "lineage" {
+        &["orgId", "environmentId", "version"]
+    } else {
+        &["orgId", "environmentId"]
+    };
+    let fields = parse(query, allowed)?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    match (leaf, fields.get("version")) {
+        ("findings", _) => document_json(&get_object_findings(
+            cell(host)?,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+        ("history", _) => document_json(&get_object_history(
+            cell(host)?,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+        (_, Some(version)) => {
+            let version = version
+                .parse::<u64>()
+                .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
+            document_json(&get_object_lineage_at(
+                cell(host)?,
+                &scope,
+                actor,
+                (object_type, id, version),
+                &CellObjectAccess,
+            )?)
+        }
+        (_, None) => document_json(&get_object_lineage(
+            cell(host)?,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+    }
 }
 
 /// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
@@ -566,6 +813,9 @@ fn objects<E: SqlEngine>(
             .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
     let object_type = decoded(object_type)?;
+    if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
+        return profiled(cell(host)?, actor, kind, query);
+    }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
             query,
@@ -599,21 +849,8 @@ fn objects<E: SqlEngine>(
             &CellObjectAccess,
         )?);
     }
-    if let (Some(id), Some(_lineage)) = (id, leaf) {
-        let fields = parse(query, &["orgId", "environmentId"])?;
-        let scope = ScopeQuery {
-            org_id: fields.get("orgId").cloned(),
-            environment_id: fields.get("environmentId").cloned(),
-        };
-        let id = decoded(id)?;
-        return document_json(&get_object_lineage(
-            cell(host)?,
-            &scope,
-            actor,
-            &object_type,
-            &id,
-            &CellObjectAccess,
-        )?);
+    if let Some(reviewed) = review(host, actor, (&object_type, id, leaf), query) {
+        return reviewed;
     }
     if let Some(id) = id {
         let fields = parse(query, &["orgId", "environmentId"])?;

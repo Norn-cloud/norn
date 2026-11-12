@@ -4,6 +4,27 @@
  */
 
 export interface paths {
+    "/v1/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/actions`: the actions the caller may call, each as a form needs it.
+         * @description # Errors
+         *     As [`callable_actions`]; `host.error` when a retained action cannot be projected.
+         */
+        get: operations["list_actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/actions/{actionId}": {
         parameters: {
             query?: never;
@@ -55,6 +76,55 @@ export interface paths {
          *     which leaves the engine as it was.
          */
         post: operations["provision_cell"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions?state=pending`: the open decisions the caller may
+         *     decide, soonest deadline first, ties to the oldest request, then id.
+         * @description # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     state, limit or cursor; a host failure.
+         */
+        get: operations["list_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions/{id}:decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/decisions/{id}:decide`.
+         * @description # Errors
+         *     In this order: 404 `decision.not_found` (also for a caller who may not
+         *     decide it), 409 `decision.resolved`, 410 `decision.expired`, 403
+         *     `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
+         *     `decision.note_too_long` (`/note`) or `request.invalid`, 409
+         *     `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
+         *     run's result turn; a host failure.
+         */
+        post: operations["decide"];
         delete?: never;
         options?: never;
         head?: never;
@@ -196,6 +266,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over
+         *     stateless Streamable HTTP; `tools/list` is the caller's tool catalog.
+         * @description # Errors
+         *     Serialization failure; protocol and backend refusals stay on the wire.
+         */
+        post: operations["post_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}": {
         parameters: {
             query?: never;
@@ -238,6 +330,52 @@ export interface paths {
          *     snapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).
          */
         get: operations["get_object"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: an object's quality findings, including while it is quarantined.
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
+         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
+         *     or a host failure.
+         */
+        get: operations["get_object_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: an object's proven versions, newest first, with what wrote each.
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
+         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
+         *     or a host failure.
+         */
+        get: operations["get_object_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -295,6 +433,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}:profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-5: profile the caller's authorized snapshot of `object_type`.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), an engine that
+         *     cannot prove one snapshot (503), a commit while the snapshot was read
+         *     (409 `object.snapshot_moved`, `retryable`), or a host failure.
+         */
+        get: operations["get_object_profile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}:quarantined": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: the ids of a type's quarantined objects the caller may review,
+         *     so a grid's quarantine count can lead to them.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), a commit while
+         *     the rows were read (409 `object.snapshot_moved`), or a host failure.
+         */
+        get: operations["get_quarantined_objects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions/{question}/answer": {
         parameters: {
             query?: never;
@@ -337,6 +521,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+         *     an ad-hoc question is built from, for this caller (D67: only what the
+         *     caller may read the population of).
+         *     # Errors
+         *     No actor or a scope that is not this cell's (one opaque 403), or a host
+         *     failure reading the model.
+         */
+        get: operations["question_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions:evaluate": {
         parameters: {
             query?: never;
@@ -364,6 +572,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * F2b: list the metrics an ad-hoc question may name. A metric is listed
+         *     only when the caller may read its concept's population (HOST-READ-1), so
+         *     the list never names a concept the caller cannot read.
+         *     # Errors
+         *     No actor, or a host failure.
+         */
+        get: operations["list_metrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions:trace": {
         parameters: {
             query?: never;
@@ -380,6 +611,52 @@ export interface paths {
          *     As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
          */
         post: operations["trace_ad_hoc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/runs`: start a run of an installed flow.
+         * @description # Errors
+         *     Missing or foreign scope or a denied caller (one opaque 403), an invalid
+         *     body, an unknown or retired flow (`run.flow_not_found`), a run id already
+         *     started for another flow (`run.exists`), a refused start turn
+         *     (`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),
+         *     a concurrent change (`run.start_conflict`), or a host failure.
+         */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs/{id}`.
+         * @description # Errors
+         *     Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+         */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -470,6 +747,227 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /**
+         * @description One object type an ad-hoc question may range over, with every effective
+         *     property and its resolved type (`null` for a registry or unresolved type).
+         */
+        CatalogObjectType: {
+            /** @description The object type's name: a question's `objectSet`. */
+            name: string;
+            /** @description Its effective properties, in declaration order. */
+            properties: components["schemas"]["CatalogProperty"][];
+        };
+        /** @description One effective property: its id and its resolved type, as declared. */
+        CatalogProperty: {
+            /** @description The property id: what a group-by or filter path names. */
+            id: string;
+            /** @description The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type. */
+            type?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * @description Whether this call decided, or replayed an identical earlier call.
+         * @enum {string}
+         */
+        DecideOutcome: "decided" | "replayed";
+        /**
+         * @description A refused decide call: the shared refusal, and on `decision.resolved` who
+         *     resolved the decision first.
+         */
+        DecideRefusal: components["schemas"]["Refusal"] & {
+            resolution?: components["schemas"]["DecisionResolution"] | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` body. */
+        DecideRequest: {
+            /** @description One of the decision's option ids. */
+            choice: string;
+            /** @description The caller's retry key: the same key and body replays the decision. */
+            idempotencyKey: string;
+            /** @description A note, at most 500 characters. */
+            note?: string | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` response. */
+        Decided: {
+            /** @description The decision. */
+            decision: components["schemas"]["DecidedDecision"];
+            /** @description Decided now, or replayed. */
+            outcome: components["schemas"]["DecideOutcome"];
+            /** @description Its commit. */
+            receipt: components["schemas"]["DecidedReceipt"];
+            /** @description The run. */
+            run: components["schemas"]["DecidedRun"];
+        };
+        /** @description The decision as decided. */
+        DecidedDecision: {
+            /** @description The chosen option id. */
+            choice: string;
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            decidedAtMs: number;
+            /** @description Who decided, in display words, never an id. */
+            decidedBy: string;
+            /** @description The decision id. */
+            id: string;
+            /** @description The note. */
+            note?: string | null;
+        };
+        /** @description The commit that recorded the decision. */
+        DecidedReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /** @description The run after the decision. */
+        DecidedRun: {
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description What the decision is about. Empty in this version. */
+        DecisionContext: {
+            /** @description The objects the decision concerns. */
+            subjects: components["schemas"]["DecisionSubject"][];
+        };
+        /** @description One open decision. */
+        DecisionDocument: {
+            /** @description An agent's recommended option id; a recommendation, never a decision. */
+            agentPick?: string | null;
+            /** @description What it is about. */
+            context: components["schemas"]["DecisionContext"];
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds), at most seven days
+             *     after it was asked.
+             */
+            expiresAtMs: number;
+            /** @description The run's flow. */
+            flow: components["schemas"]["DecisionFlow"];
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description Reserved; always `null` in this version. */
+            inputSchema?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The options. */
+            options: components["schemas"]["DecisionOptionDocument"][];
+            /** @description The question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the run asked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description The run waiting on it. */
+            run: components["schemas"]["DecisionRun"];
+            /** @description The step that asks. */
+            step: components["schemas"]["DecisionStep"];
+        };
+        /** @description The flow a decision belongs to. */
+        DecisionFlow: {
+            /** @description The flow's `decide` rule artifact id. */
+            ruleId: string;
+            /** @description The flow's display title. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One option a decider may choose. */
+        DecisionOptionDocument: {
+            /** @description What it does. */
+            effect: components["schemas"]["DecisionOptionEffect"];
+            /** @description The option id `choice` names. */
+            id: string;
+            /** @description What the decider reads. */
+            label: string;
+            /** @description How far it reaches, in the decider's words. */
+            scope: string;
+        };
+        /** @description What choosing an option does: exactly one of an action or a binding. */
+        DecisionOptionEffect: {
+            /** @description The action the option starts. */
+            action?: string | null;
+            /** @description The binding the option sets. */
+            binding?: string | null;
+        };
+        /** @description Who resolved a decision first (409 `decision.resolved`). */
+        DecisionResolution: {
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            atMs: number;
+            /** @description Who, in display words, never an id. */
+            by?: string | null;
+            /** @description The chosen option, only for a reader who may read the run. */
+            choice?: string | null;
+            /** @description How it was resolved. */
+            resolution: string;
+        };
+        /**
+         * @description How much is at stake.
+         * @enum {string}
+         */
+        DecisionRisk: "low" | "medium" | "high";
+        /** @description The run a decision belongs to. */
+        DecisionRun: {
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description The step that asks. */
+        DecisionStep: {
+            /** @description The step id. */
+            id: string;
+            /** @description Its display label. */
+            label?: string | null;
+        };
+        /** @description One object a decision concerns. */
+        DecisionSubject: {
+            /** @description Its id. */
+            id: string;
+            /** @description Its object type. */
+            objectType: string;
+        };
+        /** @description One page of open decisions. */
+        DecisionsPage: {
+            /** @description The decisions, soonest deadline first, ties to the oldest request. */
+            items: components["schemas"]["DecisionDocument"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last page. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /**
+             * Format: int64
+             * @description How many open decisions the caller may decide.
+             */
+            total: number;
+            /** @description `total` is a lower bound: more were not examined. */
+            totalCapped?: boolean;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -620,6 +1118,47 @@ export interface components {
              */
             layoutVersion: "0.1";
         };
+        /** @description A JSON-RPC protocol error, carrying the shared refusal as its data. */
+        McpError: {
+            /**
+             * Format: int32
+             * @description The JSON-RPC error code.
+             */
+            code: number;
+            /** @description The refusal. */
+            data: components["schemas"]["Refusal"];
+            /** @description The refusal's message. */
+            message: string;
+        };
+        /**
+         * @description `POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,
+         *     over its stateless Streamable HTTP transport. The tool catalog is not
+         *     listed here: `tools/list` returns it, projected from what the cell declares.
+         */
+        McpMessage: {
+            /** @description A string or number; absent for a notification. */
+            id?: string | number;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /** @description `initialize`, `ping`, `tools/list`, `tools/call` or a notification. */
+            method: string;
+            /** @description The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`. */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id. */
+        McpReply: {
+            error?: components["schemas"]["McpError"] | null;
+            /** @description A string or number; absent for a notification. */
+            id: string | number;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /** @description The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal. */
+            result?: {
+                [key: string]: unknown;
+            };
+        };
         /** @description One field produced by an ordered action input derivation. */
         NornActionActionDerivedValue: {
             /** @description The derived field. */
@@ -694,6 +1233,21 @@ export interface components {
             /** @description The turn the call committed in. */
             turn: string;
         };
+        /** @description `GET /v1/actions`: the callable actions, by action identity. */
+        NornActionCatalog: {
+            /**
+             * Format: int64
+             * @description The definitions version this list was read from.
+             */
+            definitionsVersion: number;
+            /** @description The callable actions an effect program can run, ordered by identity. */
+            items: components["schemas"]["NornActionSummary"][];
+        };
+        /**
+         * @description How an action's admitted effect program changes its target.
+         * @enum {string}
+         */
+        NornActionEffect: "upsert_input_object" | "fire_transition" | "mutate_parent_with_rows";
         /** @description Identity of one ontology object in a cell: its type and identity key. */
         NornActionFactKey: {
             /** @description The object's identity key value. */
@@ -715,6 +1269,36 @@ export interface components {
          *     namespace ([`Self::domain`]).
          */
         NornActionObjectTypeName: string;
+        /** @description One action the actor may call, as a form needs it. */
+        NornActionSummary: {
+            /** @description The admitted action identity, the path segment of its call. */
+            actionId: string;
+            /** @description Its description, when it declares one. */
+            description?: string | null;
+            /** @description How its effect changes that object. */
+            effect: components["schemas"]["NornActionEffect"];
+            /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            /** @description The input field that names the target object. */
+            objectIdField: string;
+            /** @description The object type its effect targets. */
+            objectKind: string;
+            /** @description Its title, or its identity when it declares none. */
+            title: string;
+            /** @description The effects a caller must handle. */
+            uiEffects: components["schemas"]["NornActionUiEffects"];
+        };
+        /** @description The effects a form must handle before it calls, from the action's own definition. */
+        NornActionUiEffects: {
+            /** @description The action may destroy existing data (declared, or a deleting write). */
+            destructive: boolean;
+            /** @description The action declares an effect that cannot be reversed. */
+            irreversible: boolean;
+            /** @description Currency identities its monetary effects use. */
+            money: string[];
+        };
         /** @description The sort and filter a page actually applied. */
         NornAppliedQuery: {
             /** @description The applied filter, normalized (`{"all":[clause, ...]}`); null without one. */
@@ -943,6 +1527,18 @@ export interface components {
              */
             kind: "widget";
         };
+        /** @description One histogram bin. */
+        NornBin: {
+            /**
+             * Format: int64
+             * @description Rows in the bin.
+             */
+            count: number;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            lower: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            upper: unknown;
+        };
         /** @description A current checker admission receipt. */
         NornCheckReceipt: {
             /** @description Whether the candidate set passed admission. */
@@ -1115,6 +1711,13 @@ export interface components {
          * @enum {string}
          */
         NornDiagnosticFormat: "norn/diagnostic@2";
+        /** @description One evidence object linked to the subject: where one of its values was read. */
+        NornEvidenceRef: {
+            /** @description The evidence object's id. */
+            id: string;
+            /** @description The evidence object's type (it implements `norn.SourceEvidence`). */
+            objectType: string;
+        };
         /**
          * @description Explain projection version.
          * @enum {string}
@@ -1377,6 +1980,17 @@ export interface components {
          * @enum {string}
          */
         NornGuaranteesUnitSystem: "ucum" | "qudt";
+        /** @description A histogram. */
+        NornHistogram: {
+            /** @description Bins in ascending order. */
+            bins: components["schemas"]["NornBin"][];
+            /**
+             * @description `equal_population` (numeric: bins of equal row count, bounded by the
+             *     values at their edges, so no bin edge is computed), `day` or `month`
+             *     (temporal: calendar bins in UTC).
+             */
+            kind: string;
+        };
         /** @description An answer read at a knowledge cutoff, beside its historical world. */
         NornHistoricalQuestionResult: {
             /**
@@ -6424,10 +7038,21 @@ export interface components {
         };
         /** @description The shared property type (local or registry) with this name. */
         NornIrPropertyTypeOneOf11: {
+            /**
+             * @description METRIC-ADDITIVITY-REF-1: the aggregation contract at this use
+             *     site. It may only refine a referenced type that declares none, and
+             *     applies only when the ref resolves to an integer or decimal.
+             */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /** @enum {string} */
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
             name: string;
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the unit source at this use site, for a
+             *     ref that resolves to a decimal declaring none of its own.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /**
          * @description An exact decimal with a fixed number of fraction digits, optionally a
@@ -6459,6 +7084,12 @@ export interface components {
              */
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the sibling properties whose values
+             *     together are this quantity's unit, when it has no static `unit`.
+             *     Aggregating questions must group by or fix each of them.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {
@@ -6598,6 +7229,20 @@ export interface components {
             grain?: "day" | "week" | "month" | "quarter" | "year";
             /** @description Link path ending in a scalar property. */
             path: components["schemas"]["NornIrDimensionPath"];
+        };
+        /**
+         * @description Bounds on an analytical question (ruling 2026-11-12). A question returns a
+         *     handful of aggregate rows but scans many source records, so the records it
+         *     scans are bounded apart from [`SliceLimits::max_records`], which bounds the
+         *     records a read returns. Over the bound a question is refused
+         *     (`core.compute.bound_exceeded`), never truncated.
+         */
+        NornIrQuestionLimits: {
+            /**
+             * Format: uint32
+             * @description Maximum source records one evaluation of a question may scan.
+             */
+            max_scanned_records: number;
         };
         /** @description A selected metric, optionally with an explicit re-aggregation request. */
         NornIrQuestionMetric: {
@@ -7132,6 +7777,13 @@ export interface components {
             id: string;
             /** @description Working memory. */
             memory: components["schemas"]["NornIrMemoryLimits"];
+            /**
+             * @description Bounds on an analytical question. Absent from `norn.limits/1`, whose
+             *     bytes and hash are unchanged; a profile without them bounds questions
+             *     by [`QuestionLimits::DEFAULT`] (see
+             *     [`ResourceLimitProfile::question_limits`]).
+             */
+            question?: components["schemas"]["NornIrQuestionLimits"] | null;
             /** @description The declared input slice. */
             slice: components["schemas"]["NornIrSliceLimits"];
             /** @description The whole synchronous cell turn: one aggregate budget. */
@@ -9146,6 +9798,30 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /** @description The metrics ad-hoc questions may name, among those the caller may read. */
+        NornMetricList: {
+            /** @description In name order. */
+            metrics: components["schemas"]["NornMetricSummary"][];
+        };
+        /** @description One metric an ad-hoc question may name. */
+        NornMetricSummary: {
+            /** @description The denominator metric, for a ratio. */
+            denominator: string | null;
+            /** @description The aggregated expression (a property), for a simple metric. */
+            expression: string | null;
+            /** @description `simple`, `ratio`, `cumulative`, `derived` or `conversion`. */
+            kind: string;
+            /** @description Its label. */
+            label: string;
+            /** @description The metric's name, as a question's `aggregate` names it. */
+            name: string;
+            /** @description The numerator metric, for a ratio. */
+            numerator: string | null;
+            /** @description The concept it aggregates, for a simple metric. */
+            objectType: string | null;
+            /** @description The time property its buckets use, for a simple metric. */
+            timeProperty: string | null;
+        };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {
             /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
@@ -9197,6 +9873,35 @@ export interface components {
             /** @description Revalidated exact result at its original frontier. */
             result: components["schemas"]["NornQueryResult"];
         };
+        /** @description An object's quality findings (OBS-EVIDENCE-1), open and resolved. */
+        NornObjectFindings: {
+            /**
+             * @description The evidence objects linked to it that the caller may read (types
+             *     implementing `norn.SourceEvidence`), at most [`MAX_EVIDENCE`]. They are
+             *     read at `/v1/objects/{type}/{id}`; a quarantined subject's evidence is
+             *     not quarantined with it.
+             */
+            evidence: components["schemas"]["NornEvidenceRef"][];
+            /** @description Every finding on the object, each pinned to the rule it records; a correction resolves a finding without rewriting it. */
+            findings: components["schemas"]["NornIrDataQualityFinding"][];
+            /** @description The object id. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description Whether an open finding holds the object out of authoritative reads. */
+            quarantined: boolean;
+        };
+        /** @description An object's versions, newest first. */
+        NornObjectHistory: {
+            /** @description The object id. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]. */
+            truncated: boolean;
+            /** @description The versions listed, newest first. */
+            versions: components["schemas"]["NornObjectVersion"][];
+        };
         /**
          * @description HOST-READ-4: one page of the links touching an object that the caller may
          *     see at both ends (D67); links to rows it cannot see are neither listed nor
@@ -9225,6 +9930,41 @@ export interface components {
             records: components["schemas"]["NornObjectRecord"][];
             /** @description The last scanned identity: the next page starts after it. */
             scannedThrough: string | null;
+        };
+        /** @description The profile of a concept's objects as the caller may see them. */
+        NornObjectProfile: {
+            /**
+             * @description True when the scan bound was reached: the profile covers only the rows
+             *     read, and every count is a lower bound.
+             */
+            approximate: boolean;
+            /** @description The engine that computed the profile: `cell`, the native exact engine. */
+            engine: string;
+            /** @description The concept profiled; rows may be of its subtypes. */
+            objectType: string;
+            /** @description One profile per declared property, in declared order. */
+            properties: components["schemas"]["NornPropertyProfile"][];
+            /**
+             * Format: int64
+             * @description Rows held back by source disputes or open quarantining findings.
+             */
+            quarantinedRows: number;
+            /**
+             * Format: int64
+             * @description Rows whose values were profiled.
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description The visible-row scan bound.
+             */
+            scanLimit: number;
+            /**
+             * Format: int64
+             * @description Rows the caller may know exist but whose values are withheld; none of
+             *     their values is counted.
+             */
+            withheldRows: number;
         };
         /** @description One page of a grid query over a concept's objects. */
         NornObjectQueryPage: {
@@ -9260,6 +10000,134 @@ export interface components {
              * @description The owner version (`+1` per write).
              */
             version: number;
+        };
+        /** @description One proven version of an object. */
+        NornObjectVersion: {
+            /**
+             * Format: int64
+             * @description The commit (ledger receipt sequence) that wrote it.
+             */
+            commit: number;
+            /**
+             * Format: int64
+             * @description The commit's logical time, in milliseconds.
+             */
+            logicalTime: number;
+            /** @description Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens. */
+            values?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Format: int64
+             * @description The version number.
+             */
+            version: number;
+            /** @description What wrote it. */
+            writer: components["schemas"]["NornVersionWriter"];
+        };
+        /** @description One row whose value is outside a fence. */
+        NornOutlier: {
+            /** @description The row's id. */
+            id: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            value: unknown;
+        };
+        /**
+         * @description Tukey's far-out values of one numeric property over the profiled rows:
+         *     those below `q1 − k·(q3 − q1)` or above `q3 + k·(q3 − q1)`. The quartiles
+         *     are the profile's own nearest-rank quantiles (25 and 75), so the fences
+         *     agree with the quantiles shown, and every number is exact (no float).
+         *     Like the rest of the profile, only rows whose values the caller may read
+         *     are counted or named; past the scan bound (`approximate`) the outliers
+         *     cover only the rows read.
+         */
+        NornOutliers: {
+            /**
+             * Format: int64
+             * @description Rows outside a fence.
+             */
+            count: number;
+            /** @description At most 20 of them, furthest from their fence first, then by id. */
+            examples: components["schemas"]["NornOutlier"][];
+            /** @description The multiplier `k`, as an exact decimal (`"3"`). */
+            k: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            lowerFence: unknown;
+            /** @description `tukey_far_out`. */
+            method: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            q1: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            q3: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            upperFence: unknown;
+        };
+        /** @description The profile of one property over the profiled rows. */
+        NornPropertyProfile: {
+            /**
+             * Format: int64
+             * @description Rows with a value.
+             */
+            count: number;
+            /**
+             * Format: int64
+             * @description Distinct values.
+             */
+            distinct: number;
+            histogram: components["schemas"]["NornHistogram"] | null;
+            /** @description `numeric`, `temporal`, `boolean`, `text` or `other`. */
+            kind: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report. */
+            max: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report. */
+            min: unknown;
+            /**
+             * Format: int64
+             * @description Rows without one.
+             */
+            nulls: number;
+            outliers: components["schemas"]["NornOutliers"] | null;
+            /** @description The property id. */
+            property: string;
+            /** @description Quantiles by nearest rank (numeric and temporal properties). */
+            quantiles: components["schemas"]["NornQuantile"][];
+        };
+        /** @description One quantile. */
+        NornQuantile: {
+            /**
+             * Format: int32
+             * @description The percentile, 0 to 100.
+             */
+            percent: number;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            value: unknown;
+        };
+        /** @description One quarantined object the caller may review. */
+        NornQuarantinedObject: {
+            /** @description The object id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Open findings that hold it out of authoritative reads.
+             */
+            openFindings: number;
+        };
+        /** @description A type's quarantined objects, as the caller may see them. */
+        NornQuarantinedPage: {
+            /** @description True when the scan bound was reached: the list covers only the rows read. */
+            approximate: boolean;
+            /**
+             * @description Quarantined rows whose values the caller may read, in id order. A row
+             *     whose values are withheld is never named: quarantine is value-level.
+             */
+            items: components["schemas"]["NornQuarantinedObject"][];
+            /** @description The concept read. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description The row scan bound.
+             */
+            scanLimit: number;
         };
         /**
          * @description One object as a grid query shows it (HOST-READ-3, D67). A row the caller
@@ -9392,6 +10260,12 @@ export interface components {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
             /**
+             * @description Per operand, in `totals` order: how many members' measured value was
+             *     null. A null is skipped by the sum, never read as 0. Absent when no
+             *     value was null, and when the bucket is suppressed.
+             */
+            nullCounts?: number[];
+            /**
              * @description DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
              *     has fewer members than the server's declared minimum, so `totals` is
              *     empty and `value` null; membership stays. Absent when false.
@@ -9438,6 +10312,27 @@ export interface components {
             /** @description The property sorted on. */
             property: string;
         };
+        /** @description What wrote one version. */
+        NornVersionWriter: {
+            /** @enum {string} */
+            kind: "mapping";
+            /** @description The version's source lineage (`/lineage?version=`). */
+            lineage: components["schemas"]["NornInstanceSourceProvenance"];
+        } | {
+            /** @description The action identity. */
+            actionId: string;
+            /** @description The verified caller the server attributed the call to. */
+            actor: string;
+            /** @description The effective input (caller input plus server derivations); decimals are exact JSON number tokens. */
+            input: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            kind: "action";
+        } | {
+            /** @enum {string} */
+            kind: "other";
+        };
         /** @description An execution world. */
         NornWorld: "main" | {
             /** @description A scenario fork. */
@@ -9482,6 +10377,32 @@ export interface components {
              *     authored against; it must be the host's.
              */
             baseSha256: string;
+        };
+        /**
+         * @description `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+         *     from, and what this cell's engine admits. Every metric and object type
+         *     listed is one the caller may read the population of (D67): a ratio only
+         *     when both its operands are, a type only when it is a readable metric's
+         *     population. Nothing listed is a promise: `:evaluate` still admits.
+         */
+        QuestionCatalog: {
+            /**
+             * @description Calendar grains a group-by may bucket a time property by; a group-by
+             *     without a grain groups by the property's values.
+             */
+            grains: string[];
+            /** @description Most buckets one answer may have (above it, 413). */
+            maxBuckets: number;
+            /** @description Most group-bys one question may have. */
+            maxGroupBy: number;
+            /** @description The listed metrics, as declared, in name order. */
+            metrics: {
+                [key: string]: unknown;
+            }[];
+            /** @description The object types the listed metrics range over. */
+            objectTypes: components["schemas"]["CatalogObjectType"][];
+            /** @description Filter operators the engine admits. */
+            operators: string[];
         };
         /** @description A refused request. */
         Refusal: ({
@@ -9561,6 +10482,115 @@ export interface components {
              */
             expectedVersion: number;
         };
+        /** @description The open decision a run waits on. */
+        RunDecision: {
+            /**
+             * Format: int64
+             * @description When it expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
+            id: string;
+        };
+        /** @description One run, as the routes return it. */
+        RunDocument: {
+            /**
+             * Format: int64
+             * @description Start time (logical milliseconds).
+             */
+            createdAtMs: number;
+            /**
+             * Format: int64
+             * @description The starting commit.
+             */
+            createdCommitSeq: number;
+            decision?: components["schemas"]["RunDecision"] | null;
+            /** @description The flow it runs. */
+            flow: components["schemas"]["RunFlow"];
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description The run's object type. */
+            objectType: string;
+            /** @description Its lifecycle state; `null` once the run object is deleted. */
+            state?: string | null;
+            /** @description The steps the run reached, in order. */
+            steps: components["schemas"]["RunStep"][];
+            /** @description The run has ended and will not change. */
+            terminal: boolean;
+            /**
+             * Format: int64
+             * @description Last write time (logical milliseconds).
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description The last commit that wrote the run object.
+             */
+            updatedCommitSeq: number;
+            /**
+             * Format: int64
+             * @description The run object's version.
+             */
+            version: number;
+        };
+        /** @description The flow a run executes. */
+        RunFlow: {
+            /** @description The flow's definition id. */
+            id: string;
+            /** @description The flow's `decide` rule artifact id (`<id>.flow.rule`). */
+            ruleId: string;
+            /** @description The flow's display title, when it has one. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One step of a run's timeline. */
+        RunStep: {
+            /**
+             * Format: int64
+             * @description When the run left it.
+             */
+            endedAtMs?: number | null;
+            error?: components["schemas"]["RunStepError"] | null;
+            /** @description The flow's step id (`succeed` or `fail` for the run's end). */
+            id: string;
+            /** @description What the step is. */
+            kind: components["schemas"]["RunStepKind"];
+            /** @description The step's display label from the flow, when it has one. */
+            label?: string | null;
+            /** @description The step's receipts the caller may see; none are disclosed yet. */
+            receipts: components["schemas"]["StepReceipt"][];
+            /**
+             * Format: int64
+             * @description When the run reached it (logical milliseconds).
+             */
+            startedAtMs?: number | null;
+            /** @description Where it stands. */
+            status: components["schemas"]["RunStepStatus"];
+            waitingOn?: components["schemas"]["StepWait"] | null;
+        };
+        /** @description Why a step or run failed. */
+        RunStepError: {
+            /** @description The failed lifecycle state. */
+            code: string;
+            /** @description Display words. */
+            message: string;
+        };
+        /**
+         * @description What a step is.
+         * @enum {string}
+         */
+        RunStepKind: "perform" | "decide" | "wait" | "succeed" | "fail";
+        /**
+         * @description Where a step stands.
+         * @enum {string}
+         */
+        RunStepStatus: "running" | "waiting" | "done" | "failed";
         /** @description A recorded sign-off: every field set by the host. */
         SignoffDocument: {
             /** @description Lower-case hex SHA-256 of the host-recomputed restatement. */
@@ -9578,6 +10608,48 @@ export interface components {
             /** @description Lower-case hex SHA-256 of the UTF-8 restatement. */
             restatementSha256: string;
         };
+        /** @description `POST /v1/runs` body. */
+        StartRunRequest: {
+            /**
+             * @description The installed flow's definition id (`flow.id`); its rule is
+             *     `<flow>.flow.rule`.
+             */
+            flow: string;
+            /**
+             * @description The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
+             *     with the same id and flow returns the existing run.
+             */
+            runId: string;
+        };
+        /** @description One receipt behind a step, as the caller may see it. */
+        StepReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description Who acted, in display words, never an id. */
+            executor?: string | null;
+            /** @description What it records. */
+            kind: components["schemas"]["StepReceiptKind"];
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /**
+         * @description What a step receipt records.
+         * @enum {string}
+         */
+        StepReceiptKind: "function" | "decision" | "commit";
+        /**
+         * @description What a waiting step waits on.
+         * @enum {string}
+         */
+        StepWait: "decision" | "executor" | "timer";
     };
     responses: never;
     parameters: never;
@@ -9587,6 +10659,60 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_actions: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /** @description Only actions whose effect targets this object type. */
+                objectKind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The actions the caller may call now. Each call is still decided when it is made. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornActionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     call_action: {
         parameters: {
             query: {
@@ -9760,6 +10886,161 @@ export interface operations {
                 };
             };
             /** @description The request was refused: the definitions are not admissible. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description `pending` (required): only open decisions are listed. */
+                state?: string;
+                /** @description Only decisions of runs of this flow (its definition id). */
+                flow?: string;
+                /** @description The previous page's `nextCursor`. */
+                cursor?: string;
+                /** @description Page size, 0 to 200 (default 50); 0 returns only the count. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the open decisions the caller may decide. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionsPage"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    decide: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The decision id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecideRequest"];
+            };
+        };
+        responses: {
+            /** @description Decided, or replayed an identical earlier call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Decided"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied, or the decider law is not satisfied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such open decision waits on the caller. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Someone resolved it first, or the key was used for another answer. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecideRefusal"];
+                };
+            };
+            /** @description The decision expired. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The choice or note was refused. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -10222,6 +11503,78 @@ export interface operations {
             };
         };
     };
+    post_message: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpMessage"];
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpReply"];
+                };
+            };
+            /** @description A notification was accepted; there is no body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     query_objects: {
         parameters: {
             query: {
@@ -10422,6 +11775,174 @@ export interface operations {
             };
         };
     };
+    get_object_findings: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object's quality findings, open and resolved, and whether it is quarantined. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectFindings"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_history: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object's proven versions, newest first, each with its commit and what wrote it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectHistory"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_object_lineage: {
         parameters: {
             query: {
@@ -10429,6 +11950,8 @@ export interface operations {
                 orgId: string;
                 /** @description Environment (required). */
                 environmentId: string;
+                /** @description An earlier version of the object (HOST-READ-6). With it, a quarantined object is served to a caller holding Values and Sources on it, and a version a mapping did not write is the same 404. */
+                version?: number;
             };
             header?: never;
             path: {
@@ -10583,6 +12106,150 @@ export interface operations {
             };
             /** @description The request was refused (`object.scan_bound_exceeded`): more than 10,000 visible links touch the object, more than one scan reads. */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_profile: {
+        parameters: {
+            query: {
+                orgId: string;
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to profile. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profile of the caller's authorized snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectProfile"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The snapshot moved while it was read; retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_quarantined_objects: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The type's quarantined objects whose values the caller may read, with their open finding counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQuarantinedPage"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the type is not declared. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed while the rows were read. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10776,6 +12443,58 @@ export interface operations {
             };
         };
     };
+    question_catalog: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The question catalog for this caller. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     evaluate_question: {
         parameters: {
             query: {
@@ -10850,6 +12569,49 @@ export interface operations {
             };
         };
     };
+    list_metrics: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metrics ad-hoc questions may name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornMetricList"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     trace_ad_hoc: {
         parameters: {
             query: {
@@ -10906,6 +12668,162 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description A retry with the same run id and flow: the existing run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The run started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such installed flow. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The run id is taken, or the cell changed while the run started. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The flow refused to start. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The run id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such run is visible to the caller. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

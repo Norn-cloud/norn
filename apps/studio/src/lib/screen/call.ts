@@ -32,7 +32,7 @@ export type Phase =
   | { readonly kind: "editing" }
   | { readonly kind: "confirm" }
   | { readonly kind: "sending" }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[] }
+  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
   | { readonly kind: "failed"; readonly reason: Unreachable; readonly message: string | null }
   | { readonly kind: "done"; readonly receipt: ActionReceipt; readonly undo: UndoOffer | null }
   | { readonly kind: "undoing"; readonly receipt: ActionReceipt; readonly undo: UndoOffer }
@@ -128,7 +128,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
 function answered(result: CallResult): Phase {
   switch (result.kind) {
     case "receipt": return { kind: "done", receipt: result.receipt, undo: undoOf(result.receipt) }
-    case "refused": return { kind: "refused", status: result.status, code: result.code, message: result.message, diagnostics: result.diagnostics }
+    case "refused": return { kind: "refused", status: result.status, code: result.code, message: result.message, diagnostics: result.diagnostics, ...result.explanation === undefined ? {} : { explanation: result.explanation } }
     case "no-cell": return { kind: "failed", reason: "no-cell", message: null }
     case "unavailable": return { kind: "failed", reason: "unavailable", message: null }
   }

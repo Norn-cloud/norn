@@ -9155,6 +9155,13 @@
             },
             "unit": {
               "$ref": "#/$defs/UnitRef"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the sibling properties whose values\ntogether are this quantity's unit, when it has no static `unit`.\nAggregating questions must group by or fix each of them.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
@@ -9310,6 +9317,10 @@
           "description": "The shared property type (local or registry) with this name.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "METRIC-ADDITIVITY-REF-1: the aggregation contract at this use\nsite. It may only refine a referenced type that declares none, and\napplies only when the ref resolves to an integer or decimal.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "ref"
@@ -9317,6 +9328,13 @@
             "name": {
               "description": "The referenced [`PropertyTypeDef`] name.",
               "$ref": "#/$defs/PropertyTypeName"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the unit source at this use site, for a\nref that resolves to a decimal declaring none of its own.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
@@ -9442,6 +9460,22 @@
         "migration",
         "import",
         "system"
+      ]
+    },
+    "QuestionLimits": {
+      "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
+      "type": "object",
+      "properties": {
+        "max_scanned_records": {
+          "description": "Maximum source records one evaluation of a question may scan.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_scanned_records"
       ]
     },
     "ReceiptAcceptance": {
@@ -9685,6 +9719,17 @@
         "memory": {
           "description": "Working memory.",
           "$ref": "#/$defs/MemoryLimits"
+        },
+        "question": {
+          "description": "Bounds on an analytical question. Absent from `norn.limits/1`, whose\nbytes and hash are unchanged; a profile without them bounds questions\nby [`QuestionLimits::DEFAULT`] (see\n[`ResourceLimitProfile::question_limits`]).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "slice": {
           "description": "The declared input slice.",

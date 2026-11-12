@@ -14,6 +14,13 @@ use crate::{Diagnostic, Span};
 
 /// The selected query cannot determine an unambiguous contribution grain.
 pub const AMBIGUOUS_GRAIN: &str = "core.compute.ambiguous_grain";
+/// Calendar grains this profile buckets a time property by; a group-by
+/// without a grain groups by the property's values.
+pub const GRAINS: &[TimeGrain] = &[TimeGrain::Week];
+/// Filter operators this profile admits.
+pub const OPERATORS: &[FilterOperator] = &[FilterOperator::Eq, FilterOperator::Ne];
+/// Most group-bys one question may have in this profile.
+pub const MAX_GROUP_BY: usize = 1;
 /// The requested semantics have no qualified execution in this profile.
 pub const UNSUPPORTED_ENGINE: &str = "core.compute.unsupported_engine";
 
@@ -126,16 +133,16 @@ pub fn admit(
     if max_items == 0
         || max_items
             > norn_ir::ResourceLimitProfile::norn_limits_v1()
-                .slice
-                .max_records
+                .question_limits()
+                .max_scanned_records
         || !question.search_around.is_empty()
         || question.comparison.is_some()
         || selection.inline.is_some()
         || selection.reaggregate.is_some()
-        || question.dimensions.len() > 1
+        || question.dimensions.len() > MAX_GROUP_BY
         || question.dimensions.iter().any(|dimension| {
             !dimension.path.links.is_empty()
-                || !matches!(dimension.grain, None | Some(TimeGrain::Week))
+                || !dimension.grain.is_none_or(|grain| GRAINS.contains(&grain))
         })
         || question.filters.iter().any(unsupported_filter)
     {
@@ -218,8 +225,8 @@ fn lower_sum(
         .and_then(Result::ok)
         .ok_or_else(refuse)?;
     let property = object.property(property.as_str()).ok_or_else(refuse)?;
+    // A nullable property is summed over its present values; nulls are counted, never read as 0.
     if property.computed
-        || property.nullable
         || !matches!(
             property.kind,
             EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Integer { .. })
@@ -236,8 +243,7 @@ fn lower_sum(
 }
 
 fn unsupported_filter(filter: &MetricFilter) -> bool {
-    !filter.path.links.is_empty()
-        || !matches!(filter.operator, FilterOperator::Eq | FilterOperator::Ne)
+    !filter.path.links.is_empty() || !OPERATORS.contains(&filter.operator)
 }
 
 fn refusal(code: &str) -> Vec<Diagnostic> {

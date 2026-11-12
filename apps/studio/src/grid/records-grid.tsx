@@ -162,7 +162,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   }
 
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
-  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not available yet.</EmptyState></Shell>
+  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
   const refused = data?.kind === "refused" ? data : undefined
   const sortProblems = refused ? diagnosticsAt(refused.diagnostics, "/sort") : []
@@ -237,7 +237,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
-          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review.</p>
+          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
         <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">

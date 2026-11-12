@@ -215,6 +215,11 @@ pub enum PropertyType {
         )]
         #[schemars(with = "UnitRef")]
         per_unit: Option<UnitRef>,
+        /// METRIC-UNIT-PARTITION-1: the sibling properties whose values
+        /// together are this quantity's unit, when it has no static `unit`.
+        /// Aggregating questions must group by or fix each of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unit_source: Vec<super::object::PropertyId>,
     },
     /// VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
     DecimalBinding {
@@ -256,15 +261,28 @@ pub enum PropertyType {
     Ref {
         /// The referenced [`PropertyTypeDef`] name.
         name: PropertyTypeName,
+        /// METRIC-ADDITIVITY-REF-1: the aggregation contract at this use
+        /// site. It may only refine a referenced type that declares none, and
+        /// applies only when the ref resolves to an integer or decimal.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
+        /// METRIC-UNIT-PARTITION-1: the unit source at this use site, for a
+        /// ref that resolves to a decimal declaring none of its own.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unit_source: Vec<super::object::PropertyId>,
     },
 }
 
 impl PropertyType {
     /// METRIC-ADDITIVITY-1: only an explicit numeric contract admits aggregation.
+    /// For a `ref` this is its use-site declaration only; the effective
+    /// contract of a resolved property is the checker's.
     #[must_use]
     pub const fn additivity(&self) -> &PropertyAdditivity {
         match self {
-            Self::Integer { additivity } | Self::Decimal { additivity, .. } => additivity,
+            Self::Integer { additivity }
+            | Self::Decimal { additivity, .. }
+            | Self::Ref { additivity, .. } => additivity,
             Self::Text { .. }
             | Self::DecimalBinding { .. }
             | Self::Boolean { .. }
@@ -273,8 +291,7 @@ impl PropertyType {
             | Self::Duration { .. }
             | Self::Enum { .. }
             | Self::Record { .. }
-            | Self::JsonExt { .. }
-            | Self::Ref { .. } => &PropertyAdditivity::Undeclared {},
+            | Self::JsonExt { .. } => &PropertyAdditivity::Undeclared {},
         }
     }
 
