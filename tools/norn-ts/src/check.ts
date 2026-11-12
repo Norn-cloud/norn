@@ -143,11 +143,21 @@ export function assertPins(profile: Profile): void {
   }
 }
 
+/** The module specifier of the intrinsics, read once from the profile (`intrinsicsModule`). */
+let intrinsicsModule: string | undefined
+
 export function createHost(): ts.CompilerHost {
   const host = ts.createCompilerHost(COMPILER_OPTIONS, true)
+  const intrinsics = (intrinsicsModule ??= loadProfile().intrinsicsModule)
   host.resolveModuleNameLiterals = (literals, containingFile, redirected, options) =>
     literals.map((literal) => {
       const name = literal.text
+      // The intrinsics are pinned to this tool's own declaration, an ambient
+      // `declare module` in INTRINSICS_PATH, which is a root file of every
+      // program. Leaving the specifier unresolved binds it there; a copy a
+      // package manager installed in the project (`@norn/authoring`, for the
+      // editor) is never read by the checker or the compiler.
+      if (name === intrinsics) return { resolvedModule: undefined }
       // Pin `effect` resolution to this tool's lockfile-installed copy.
       const from = name === "effect" || name.startsWith("effect/") ? RESOLVE_ANCHOR : containingFile
       return ts.resolveModuleName(name, from, options, host, undefined, redirected)

@@ -179,3 +179,22 @@ test("a released package knows its version, and a new project depends on that re
     }
   } finally { rmSync(root, { recursive: true }) }
 })
+
+test("an installed @norn/authoring is never what the checker reads: the intrinsics stay pinned", () => {
+  // A project with its own installed `@norn/authoring` (what a package manager
+  // puts there for the editor), and a copy that differs from the CLI's own.
+  const root = scratch()
+  try {
+    const dir = join(root, "shop")
+    const init = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "init", dir, "--no-install"], { encoding: "utf8" })
+    expect(init.status).toBe(0)
+    const installed = join(dir, "node_modules/@norn/authoring")
+    mkdirSync(join(installed, "profile"), { recursive: true })
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: "0.0.0", types: "./profile/norn-authoring.d.ts" }))
+    writeFileSync(join(installed, "profile/norn-authoring.d.ts"), readFileSync(join(TOOL_ROOT, "profile/norn-authoring.d.ts"), "utf8"))
+    const compiled = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "compile", join(dir, "src"), "--org", "local", "--env", "dev"], { cwd: dir, encoding: "utf8" })
+    expect({ status: compiled.status, err: compiled.stderr }).toEqual({ status: 0, err: "" })
+    expect(compiled.stdout).not.toContain("NORN-FLOW-MODULE")
+    expect(JSON.parse(compiled.stdout)).toHaveLength(2)
+  } finally { rmSync(root, { recursive: true }) }
+}, 60_000)
