@@ -53,8 +53,26 @@ import urllib.request
 
 HERE = Path(__file__).resolve()
 TRUSTED = HERE.parents[2]
-sys.path.insert(0, str(TRUSTED / "scripts"))
-import coverage_manifest  # noqa: E402
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+coverage_manifest = _sibling("coverage_manifest", TRUSTED / "scripts")
 
 SCHEMA = "norn.implementation-receipt.v1"
 JOB = "implementation-receipts"

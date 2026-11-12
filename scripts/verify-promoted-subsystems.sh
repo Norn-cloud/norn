@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Python children never see the script directory or cwd on sys.path (#513): older Pythons
+# ignore the variable, so the next line refuses to run where it has no effect.
+export PYTHONSAFEPATH=1
+python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path else 1)' || { echo "PYTHONSAFEPATH not honoured" >&2; exit 1; }
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

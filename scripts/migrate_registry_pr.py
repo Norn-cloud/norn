@@ -9,8 +9,28 @@ import re
 import subprocess
 import tempfile
 
-import coverage_manifest as coverage
-from coverage_manifest import entry_bytes as json_bytes
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+coverage = _sibling("coverage_manifest")
+_coverage_manifest = _sibling("coverage_manifest")
+json_bytes = _coverage_manifest.entry_bytes
 
 COVERAGE = "verification/coverage-v1/manifest"
 DIAGNOSTICS = "crates/norn-checker/conformance/diagnostic-codes"

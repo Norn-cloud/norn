@@ -15,12 +15,30 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
-import collect_ci  # noqa: E402
-import ratchet  # noqa: E402
-import record  # noqa: E402
-import report  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+collect_ci = _sibling("collect_ci")
+ratchet = _sibling("ratchet")
+record = _sibling("record")
+report = _sibling("report")
 
 SHA = "6cbc5766c342dd26744106920bc3a38a3cacfe58"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
@@ -304,8 +322,8 @@ class CollectCi(unittest.TestCase):
 
 class Probes(unittest.TestCase):
     def test_probe_output_becomes_valid_records(self):
-        import boat_nightly
-        import run_probes
+        boat_nightly = _sibling("boat_nightly")
+        run_probes = _sibling("run_probes")
         with tempfile.TemporaryDirectory() as root:
             (Path(root) / "present").write_text("")
             probes = [
@@ -343,7 +361,7 @@ class Probes(unittest.TestCase):
 
 
     def test_prepare_timeout_fails_the_probe(self):
-        import run_probes
+        run_probes = _sibling("run_probes")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ok = run_probes.run_probe({"name": "slow", "prepare": "sleep 5", "run": "true", "timeout_s": 1,

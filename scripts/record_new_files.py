@@ -37,8 +37,29 @@ import json
 import sys
 from pathlib import Path, PurePosixPath
 
-import coverage_manifest
-from proof_enrollment import discover_sources, repository_files
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+coverage_manifest = _sibling("coverage_manifest")
+_proof_enrollment = _sibling("proof_enrollment")
+discover_sources = _proof_enrollment.discover_sources
+repository_files = _proof_enrollment.repository_files
 
 PROVENANCE = Path(".github/ci/provenance/artifacts")
 # Nothing under the provenance directory has a record of its own (AGENTS.md, Provenance).

@@ -89,7 +89,7 @@ jobs:
               pull_requests
             }));
       - name: Validate the group head as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+        run: python3 -I trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
       - name: Report trusted policy on the group head
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

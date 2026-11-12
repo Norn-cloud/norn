@@ -18,11 +18,31 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
-from proof_enrollment import validate as validate_enrollment  # noqa: E402
-import coverage_manifest  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
+selector_is_declared = _verification_attestation.selector_is_declared
+_proof_enrollment = _sibling("proof_enrollment", ROOT / "scripts")
+validate_enrollment = _proof_enrollment.validate
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
 
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"

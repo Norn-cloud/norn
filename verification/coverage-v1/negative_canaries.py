@@ -47,10 +47,28 @@ VERIFICATION_TOOL_ROOT = Path(
     )
 )
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import coverage_manifest  # noqa: E402
-import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
+def _sibling(name, directory=None):
+    """Load sibling module `name` by explicit path, never through sys.path: gated scripts
+    run Python with PYTHONSAFEPATH or -I, so the script directory is not on it."""
+    import importlib.util
+    import pathlib
+    import sys
+
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
+quint_apalache = _sibling("quint_apalache", ROOT / "scripts")
 
 
 CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
@@ -1172,7 +1190,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
             if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        command = 'python3 -I trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
