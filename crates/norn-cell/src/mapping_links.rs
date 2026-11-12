@@ -128,7 +128,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// # Errors
     /// Missing/corrupt pins or an exhausted bounded evidence scan.
     pub fn observed_link_claims(&self) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let entries = self.claim_journal(None, None)?;
+        let entries = self.claim_journal(&[], None)?;
         Ok(Self::distinct(entries.into_iter()))
     }
 
@@ -213,7 +213,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// closes over touching claims' sources, and only their source/role groups return.
     fn claim_journal(
         &self,
-        current: Option<&MappingBundle>,
+        current: &[MappingBundle],
         scope: Option<&ClaimScope>,
     ) -> Result<Vec<Entry>, CellError> {
         let mut cache = BTreeMap::new();
@@ -231,8 +231,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     cache.insert(id, bundle);
                 }
                 for claim in current
+                    .iter()
                     .map(MappingBundle::link_claims)
-                    .transpose()?
+                    .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .flatten()
                 {
@@ -252,7 +253,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let disputed = self.mapping_event_is_disputed(&bundle)?;
             bundles.push((bundle, false, disputed));
         }
-        if let Some(bundle) = current {
+        for bundle in current {
             bundles.push((bundle.clone(), true, false));
         }
         let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
@@ -317,7 +318,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             key.source.key.clone(),
             key.target.key.clone(),
         ]));
-        let entries = self.claim_journal(None, Some(&scope))?;
+        let entries = self.claim_journal(&[], Some(&scope))?;
         Ok(Self::distinct(entries.into_iter().filter(|e| {
             e.claim.target.as_ref().is_some_and(|target| {
                 model.canonical_link(&LinkKey::new(
@@ -332,26 +333,29 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// The exact edge changes the kernel's final claim set will authorize.
     pub(crate) fn mapping_link_plan<E, C, T>(
         &self,
-        bundle: &MappingBundle,
+        bundles: &[MappingBundle],
         commit: &CellCommit<E, C, T>,
     ) -> Result<LinkPlan, CellError> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
         let model = CommitModel::new(&catalog);
-        let plan = self.link_plan_over(bundle, commit, model, &self.plan_scope(bundle, model)?)?;
+        let plan =
+            self.link_plan_over(bundles, commit, model, &self.plan_scope(bundles, model)?)?;
         // Equivalence check for the narrowed scope (tests turn it on): the same
         // plan over the wide scope, every record and claim key at both ends.
         if WIDE_SCOPE_CHECK.load(std::sync::atomic::Ordering::Relaxed) {
             let mut keys = BTreeSet::new();
-            for record in &bundle.records {
-                keys.insert(record.key.clone());
+            for bundle in bundles {
+                for record in &bundle.records {
+                    keys.insert(record.key.clone());
+                }
+                for claim in bundle.link_claims()? {
+                    keys.insert(claim.source_key);
+                    keys.extend(claim.target.map(|t| t.key));
+                }
             }
-            for claim in bundle.link_claims()? {
-                keys.insert(claim.source_key);
-                keys.extend(claim.target.map(|t| t.key));
-            }
-            let wide = self.link_plan_over(bundle, commit, model, &ClaimScope::either(keys))?;
+            let wide = self.link_plan_over(bundles, commit, model, &ClaimScope::either(keys))?;
             if wide != plan {
                 return Err(CellError::Encoding(format!(
                     "the narrowed link plan differs from the wide one: {plan:?} != {wide:?}"
@@ -364,7 +368,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// The journal scope a bundle's plan reads.
     fn plan_scope(
         &self,
-        bundle: &MappingBundle,
+        bundles: &[MappingBundle],
         model: CommitModel<'_, '_>,
     ) -> Result<ClaimScope, CellError> {
         // A plan changes only links touching this commit's objects or this
@@ -381,14 +385,20 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         // writes no link and is never sealed: leaving it out changes no plan,
         // while reading it cost time linear in the target's other claims.
         let mut scope = ClaimScope::default();
-        for record in &bundle.records {
+        for record in bundles.iter().flat_map(|b| &b.records) {
             scope.sources.insert(record.key.clone());
             let key = FactKey::new(record.object_type.as_str(), &record.key);
             if GuardView(self).concrete(&model.canonical(&key))?.is_none() {
                 scope.targets.insert(record.key.clone());
             }
         }
-        for claim in bundle.link_claims()? {
+        for claim in bundles
+            .iter()
+            .map(MappingBundle::link_claims)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+        {
             let exclusive = model
                 .link(&claim.source_type, claim.role.as_str())
                 .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
@@ -403,12 +413,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// The plan over one journal scope.
     fn link_plan_over<E, C, T>(
         &self,
-        bundle: &MappingBundle,
+        bundles: &[MappingBundle],
         commit: &CellCommit<E, C, T>,
         model: CommitModel<'_, '_>,
         scope: &ClaimScope,
     ) -> Result<LinkPlan, CellError> {
-        let entries = self.claim_journal(Some(bundle), Some(scope))?;
+        let entries = self.claim_journal(bundles, Some(scope))?;
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };
@@ -546,13 +556,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// source/role group, so the kernel decides standing over the whole group.
     pub(crate) fn prepare_mapping_links(
         &self,
-        bundle: &MappingBundle,
+        bundles: &[MappingBundle],
         catalog: &TypeCatalog<'_>,
         turn: &norn_kernel::DecisionTurn,
         commit: &mut MappingCommit,
         authority: &mut ObservationAuthorization,
     ) -> Result<(), CellError> {
-        let plan = self.mapping_link_plan(bundle, commit)?;
+        let plan = self.mapping_link_plan(bundles, commit)?;
         for claim in &plan.fresh {
             self.prepare_claim_snapshot(catalog, turn, claim, commit, authority)?;
         }

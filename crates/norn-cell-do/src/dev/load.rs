@@ -1,10 +1,11 @@
 //! `norn dev --load <snapshot>`: recorded source rows through the cell's own
 //! mapping path (#921, the recorded half).
 //!
-//! Each row of a recorded snapshot becomes one raw observation. The cell
-//! captures it as mapping evidence (`inject_mapping_bundle`), recomputes the
-//! admitted mapping over it and commits the canonical objects with their
-//! retained source bundle (`process_mapping_bundle`, OBS-EVIDENCE-1). Nothing
+//! Each row of a recorded snapshot becomes one raw observation, delivered in
+//! pages of consecutive rows of one dataset (OBS-PAGE-1). The cell captures
+//! each row as mapping evidence (`inject_mapping_page`), recomputes the
+//! admitted mapping over it and commits the page's canonical objects with
+//! their retained source bundles (`process_mapping_page`, OBS-EVIDENCE-1). Nothing
 //! here writes an object or a lineage record itself, so `/lineage` of a
 //! loaded object resolves to the exact source row and mapping pin.
 //!
@@ -19,14 +20,17 @@
 //! instance the three-systems source schemas pin). Without the first two, a `synthetic-<system>-three/1`
 //! profile names source `synthetic-<system>` and mapping
 //! `<system>.three.mapping`. Each record's identity is its `id` or `name`.
-//! `incremental` rows are not loaded yet.
+//! A row may carry a `"sourceVersion"` (it orders lexicographically): a
+//! later row with the same identity and a higher version is that record's
+//! next change, committed as its next version (a holding's balance over time).
+//! Without one, a row is the snapshot event at version `1`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
-use norn_cell::{CellStore, SqliteCell};
+use norn_cell::{CellStore, MappingOutcome, SqliteCell};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{LogicalTime, ObservationEvent, ObservationId, Observed, Provenance};
 use serde_json::Value;
@@ -34,6 +38,8 @@ use serde_json::Value;
 /// When the recorded exports were extracted: their fixed observation clock.
 const EXTRACTED_AT_MS: u64 = 1_793_620_800_000;
 const RECORDED_AT: &str = "2026-11-02T12:00:00Z";
+/// Rows per page; the cell's bound is higher (OBS-PAGE-1 hosts default to 500).
+const PAGE_ROWS: usize = 500;
 
 /// What one load did, per snapshot file.
 #[derive(Debug, Default)]
@@ -47,7 +53,8 @@ struct Snapshot {
     source: String,
     mapping: String,
     instance: String,
-    rows: Vec<(String, Value)>,
+    /// Each row's dataset, record and optional source version.
+    rows: Vec<(String, Value, Option<String>)>,
 }
 
 fn snapshot(path: &Path) -> Result<Snapshot, String> {
@@ -91,8 +98,12 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
         .iter()
         .map(|row| {
             let dataset = row.get("dataset").and_then(Value::as_str);
+            let version = row
+                .get("sourceVersion")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             match (dataset, row.get("record")) {
-                (Some(dataset), Some(record)) => Ok((dataset.to_owned(), record.clone())),
+                (Some(dataset), Some(record)) => Ok((dataset.to_owned(), record.clone(), version)),
                 _ => Err(format!(
                     "{}: every snapshot row has a dataset and a record",
                     path.display()
@@ -110,7 +121,12 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
 }
 
 /// The raw observation of one recorded row, as a connector extract writes it.
-fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeValue>, String> {
+fn raw(
+    source: &str,
+    mapping: &str,
+    record: &Value,
+    version: Option<&str>,
+) -> Result<Observed<RuntimeValue>, String> {
     let id = record
         .get("id")
         .or_else(|| record.get("name"))
@@ -134,8 +150,8 @@ fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeVa
             "contract" => "norn.raw_observation/v1",
             "source" => source,
             "source_id" => id,
-            "event_id" => "snapshot",
-            "source_version" => "1",
+            "event_id" => version.unwrap_or("snapshot"),
+            "source_version" => version.unwrap_or("1"),
             "pipeline_version" => mapping,
             "kind" => "upsert",
             "extracted_at" => EXTRACTED_AT_MS,
@@ -159,14 +175,36 @@ pub(crate) fn load(
     let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
         SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
     let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-    // Per file and dataset: rows, capture time and mapping time (µs), slowest mapping.
-    let mut timing: BTreeMap<(String, String), (u64, u128, u128, u128)> = BTreeMap::new();
-    // Each row is captured and mapped before the next is captured: mapping a
-    // bundle looks it up among the pending observations, so keeping that set
-    // at one row keeps a load linear in its rows.
+    // Per file and dataset: rows, capture time and mapping time (µs), slowest
+    // page, pages read, and page rows captured (more than pages read when a
+    // page was split before a canonical object it repeats).
+    let mut timing: BTreeMap<(String, String), [u128; 6]> = BTreeMap::new();
+    // OBS-PAGE-1: consecutive rows of one dataset travel as one page, split
+    // before a repeated record identity and at the page bound.
     for snapshot in &snapshots {
         let file = snapshot.path.display().to_string();
-        for (dataset, record) in &snapshot.rows {
+        let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (dataset, record, version) in &snapshot.rows {
+            let observed = raw(
+                &snapshot.source,
+                &snapshot.mapping,
+                record,
+                version.as_deref(),
+            )?;
+            let identity = observed.provenance.source_id.clone();
+            let split = pages.last().is_none_or(|(current, rows)| {
+                current != dataset || rows.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+            });
+            if split {
+                seen = std::collections::BTreeSet::from([identity]);
+                pages.push((dataset.clone(), Vec::new()));
+            }
+            if let Some((_, rows)) = pages.last_mut() {
+                rows.push(observed);
+            }
+        }
+        for (dataset, rows) in &pages {
             let input = MappingInput {
                 mapping: snapshot.mapping.clone(),
                 dataset: dataset.clone(),
@@ -174,33 +212,42 @@ pub(crate) fn load(
                 partition: "snapshot".into(),
                 recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
             };
-            let label = record
-                .get("id")
-                .or_else(|| record.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
             let started = std::time::Instant::now();
-            let (id, _new) = cell
-                .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
-                .map_err(|error| format!("{file}: {dataset} {label} not captured: {error}"))?;
+            let ids = cell
+                .inject_mapping_page(rows, &input)
+                .map_err(|error| format!("{file}: a {dataset} page was not captured: {error}"))?;
             let captured = started.elapsed().as_micros();
             let started = std::time::Instant::now();
-            let processed = cell.process_mapping_bundle(&id).map_err(|error| {
-                format!("{file}: {dataset} {label} was refused by the mapping: {error}")
-            })?;
+            let entry = mapped.entry(file.clone()).or_default();
+            entry.0 = entry.0.saturating_add(rows.len());
+            for (id, _new) in &ids {
+                for (member, outcome) in cell
+                    .process_mapping_page(id)
+                    .map_err(|error| format!("{file}: a {dataset} page failed: {error}"))?
+                    .unwrap_or_default()
+                {
+                    match outcome {
+                        MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
+                        MappingOutcome::AlreadyLanded => {}
+                        MappingOutcome::Quarantined(reasons) => {
+                            return Err(format!(
+                                "{file}: {dataset} {member} was refused by the mapping: {}",
+                                reasons.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
             let mapping = started.elapsed().as_micros();
             let spent = timing.entry((file.clone(), dataset.clone())).or_default();
-            *spent = (
-                spent.0.saturating_add(1),
-                spent.1.saturating_add(captured),
-                spent.2.saturating_add(mapping),
-                spent.3.max(mapping),
-            );
-            let entry = mapped.entry(file.clone()).or_default();
-            entry.0 = entry.0.saturating_add(1);
-            if processed {
-                entry.1 = entry.1.saturating_add(1);
-            }
+            *spent = [
+                spent[0].saturating_add(u128::try_from(rows.len()).unwrap_or(u128::MAX)),
+                spent[1].saturating_add(captured),
+                spent[2].saturating_add(mapping),
+                spent[3].max(mapping),
+                spent[4].saturating_add(1),
+                spent[5].saturating_add(u128::try_from(ids.len()).unwrap_or(u128::MAX)),
+            ];
         }
     }
     let files = snapshots
@@ -211,9 +258,9 @@ pub(crate) fn load(
             let datasets: serde_json::Map<String, Value> = timing
                 .iter()
                 .filter(|((timed, _), _)| *timed == file)
-                .map(|((_, dataset), (rows, capture, map, slowest))| {
+                .map(|((_, dataset), [rows, capture, map, slowest, pages, committed])| {
                     let ms = |micros: &u128| u64::try_from(micros / 1000).unwrap_or(u64::MAX);
-                    (dataset.clone(), serde_json::json!({ "rows": rows, "captureMs": ms(capture), "mapMs": ms(map), "slowestMapMs": ms(slowest) }))
+                    (dataset.clone(), serde_json::json!({ "rows": rows, "captureMs": ms(capture), "mapMs": ms(map), "slowestPageMs": ms(slowest), "pages": pages, "pageCommits": committed }))
                 })
                 .collect();
             serde_json::json!({ "file": file, "source": snapshot.source, "mapping": snapshot.mapping, "rows": rows, "newlyMapped": newly, "datasets": datasets })

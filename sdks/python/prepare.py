@@ -2,12 +2,14 @@
 
 The frozen document is never edited. This writes a copy that differs only in
 names the generator turns into Python identifiers; every wire shape is kept:
-- operation tags `crate::<module>` become short module names;
+- operation tags `crate::<module>` become short module names: the ones in TAGS by
+  name, any other `crate::<module>` as `<module>` without a `_routes` suffix (so a
+  new route module never stops generation); a tag of any other form fails;
 - an object schema (with properties, a map, or free-form) nested inline in a `oneOf`/`anyOf` variant's property is
   moved to a named component and referenced, because the generator otherwise
   names it twice and drops it.
 """
-import json, sys
+import json, re, sys
 TAGS = {
     "crate::actions": "actions",
     "crate::definition_routes": "definitions",
@@ -25,10 +27,10 @@ doc = json.load(open(src))
 for item in doc["paths"].values():
     for op in item.values():
         if isinstance(op, dict) and "tags" in op:
-            unknown = [t for t in op["tags"] if t not in TAGS]
+            unknown = [t for t in op["tags"] if t not in TAGS and not re.fullmatch(r"crate::[a-z][a-z0-9_]*", t)]
             if unknown:
                 sys.exit(f"unmapped tag {unknown}: add it to TAGS")
-            op["tags"] = sorted({TAGS[t] for t in op["tags"]})
+            op["tags"] = sorted({TAGS.get(t) or re.sub(r"_routes$", "", t.removeprefix("crate::")) for t in op["tags"]})
 schemas = doc["components"]["schemas"]
 hoisted = {}
 def hoist(owner, schema):

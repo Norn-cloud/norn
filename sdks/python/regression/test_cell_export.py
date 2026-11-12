@@ -44,6 +44,10 @@ class Handler(BaseHTTPRequestHandler):
             # A host without the engine reads the path as an object route.
             body = b'{"code":"request.invalid","explanation":"unknown query parameter columns"}'
             self.send_response(400)
+        elif url.path == "/v1/objects/lab.Bad:export":
+            # The engine exists and refuses this request: not a reason to take the slow path.
+            body = b'{"code":"request.invalid","explanation":"column nope is not declared"}'
+            self.send_response(400)
         elif url.path == "/v1/objects/lab.Secret:export":
             body = b'{"code":"scope.denied"}'
             self.send_response(403)
@@ -88,6 +92,11 @@ class Export(unittest.TestCase):
         from norn_regression.cell import Refused
         with self.assertRaisesRegex(Refused, "403"):
             self.cell.export("lab.Secret", ["x"])
+        with self.assertRaisesRegex(Refused, "column nope is not declared"):
+            self.cell.export("lab.Bad", ["nope"])
+
+    def test_the_read_path_is_recorded(self):
+        self.assertEqual(self.cell.export("lab.Sample", ["x"]).attrs["read_path"], "export")
 
 
 if __name__ == "__main__":
