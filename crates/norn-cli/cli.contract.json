@@ -114,6 +114,38 @@
       "args": {},
       "subcommands": {}
     },
+    "port": {
+      "args": {
+        "args": {
+          "long": null,
+          "short": null,
+          "aliases": [],
+          "positional": true,
+          "takes_value": true,
+          "multiple": true,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "tool": {
+          "long": null,
+          "short": null,
+          "aliases": [],
+          "positional": true,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": [
+            "parity",
+            "scoreboard",
+            "code-ontology",
+            "selftest"
+          ]
+        }
+      },
+      "subcommands": {}
+    },
     "remote": {
       "args": {
         "dev_actor": {

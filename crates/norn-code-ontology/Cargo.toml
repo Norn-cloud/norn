@@ -1,0 +1,20 @@
+[package]
+name = "norn-code-ontology"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "norn.code-ontology/1: evidence-bearing code facts as data; no IO (ring 1; see README.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+# Decodes the host tool's golden output in the boundary contract test.
+serde_json = "1.0.150"
+
+[lints]
+workspace = true

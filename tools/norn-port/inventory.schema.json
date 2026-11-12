@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:norn:code-unit-inventory:0.1",
+  "title": "Code unit inventory (draft Phase 0)",
+  "type": "object",
+  "required": [
+    "format",
+    "app",
+    "sourceLoc",
+    "units"
+  ],
+  "properties": {
+    "format": {
+      "const": "norn.code-unit-inventory/0.1"
+    },
+    "app": {
+      "type": "string"
+    },
+    "sourceLoc": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsedMinutes": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "modelTokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "trigger",
+          "reads",
+          "writes",
+          "externalCalls",
+          "loc",
+          "target",
+          "parityRecipe",
+          "status",
+          "nornArtifactIds"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "path",
+              "symbol",
+              "line"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "symbol": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "externalCalls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "loc": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "target": {
+            "enum": [
+              "rule",
+              "transition",
+              "action",
+              "connector-perform",
+              "presentation",
+              "sandboxed-pure-function",
+              "access",
+              "setup-only"
+            ]
+          },
+          "parityRecipe": {
+            "enum": [
+              "P-PURE",
+              "P-TAXONOMY",
+              "P-READ",
+              "P-TRANS",
+              "P-AUTH",
+              "P-ACTION",
+              "P-SETUP",
+              "P-RETIRE",
+              "P-GENERATOR",
+              "P-HINT"
+            ]
+          },
+          "recipeNotes": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "translated",
+              "fallback",
+              "setup-only"
+            ]
+          },
+          "nornArtifactIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "translated"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "nornArtifactIds": {
+                  "minItems": 1
+                }
+              }
+            },
+            "else": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

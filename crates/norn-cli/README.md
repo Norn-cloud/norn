@@ -38,3 +38,10 @@ server. This command does not supply a local server or install definitions.
 
 The client reuses clap, ureq/rustls and the maintained sse-stream decoder;
 MCP event data stays text so business decimals never round through floats.
+
+`norn port parity|scoreboard|code-ontology|selftest [ARGS...]` forwards to the
+porting tools in `tools/norn-port` and exits with the tool's status. The CLI
+links none of that code: it runs the script under `NORN_PORT_HOME` (default
+`tools/norn-port` under the working directory) with `NORN_PORT_PYTHON` (default
+`python3`). What the tools prove, and their limits, are in
+`tools/norn-port/README.md`.

@@ -1,0 +1,1 @@
+{"doctype":"DocType","name":"Invoice","fields":[{"fieldname":"total","fieldtype":"Currency"},{"fieldname":"status","fieldtype":"Data"}]}

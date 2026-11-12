@@ -2351,6 +2351,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-code-ontology"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "norn-datalog"
 version = "0.1.0"
 dependencies = [

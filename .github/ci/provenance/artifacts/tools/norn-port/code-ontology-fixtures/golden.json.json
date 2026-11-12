@@ -1,0 +1,25 @@
+{
+  "sha256": "3bed3436f9e7b4f136f63a2d940b0f19b8d09b50ab1d027b3c940921538b9a02",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-port/code-ontology-fixtures/demo/demo/api.py",
+    "tools/norn-port/code-ontology-fixtures/demo/demo/client.json",
+    "tools/norn-port/code-ontology-fixtures/demo/demo/doctype/invoice/invoice.json",
+    "tools/norn-port/code-ontology-fixtures/demo/demo/doctype/invoice/invoice.py",
+    "tools/norn-port/code-ontology-fixtures/demo/demo/hooks.py",
+    "tools/norn-port/code-ontology-fixtures/demo/demo/invoice.js",
+    "tools/norn-port/code_ontology.py"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

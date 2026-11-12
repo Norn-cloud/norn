@@ -241,6 +241,8 @@ pub const CRATES: &[CrateRule] = &[
         dev_only_norn: &["norn-checker"],
         third_party: &[],
     },
+    // The code-fact contract `norn port` emits and reads: data only, no norn-* edge.
+    rule("norn-code-ontology", Ring::One, &[]),
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
         name: "norn-testkit",

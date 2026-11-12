@@ -4,6 +4,7 @@ use std::io::{BufRead as _, Write as _};
 mod cli_contract;
 mod eval;
 mod mcp;
+mod port;
 mod remote;
 mod source;
 use clap::{Parser, Subcommand};
@@ -23,6 +24,11 @@ enum Command {
     Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
+    /// Run a porting tool: parity, scoreboard, code-ontology or selftest.
+    #[command(
+        long_about = "Run a porting tool from tools/norn-port with the remaining arguments unchanged: parity (an original function against its Norn candidate on generated inputs), scoreboard, code-ontology (norn.code-ontology/1 facts for source directories) or selftest. The tools read source as data. Set NORN_PORT_HOME when the tools are not at tools/norn-port under the working directory, and NORN_PORT_PYTHON to choose the interpreter. The exit status is the tool's."
+    )]
+    Port(port::PortArgs),
     /// Read a configured source and print sealed raw observations.
     Source(source::SourceArgs),
     /// List the available human operations and their input schemas.
@@ -86,6 +92,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
+        Command::Port(args) => port::execute(&args),
         Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
