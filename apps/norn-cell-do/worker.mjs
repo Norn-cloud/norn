@@ -21,9 +21,15 @@ const JWKS_TIMEOUT_MS = 5000;
 const OPEN_RETRY_MS = 60_000;
 /** The largest submission a cell accepts (an ad-hoc QuestionIR), in bytes. */
 const MAX_BODY = 65536;
-/** The largest provisioning submission (a tenant's artifact set), in bytes; the cell checks the same bound. */
 const PROVISION_PATH = "/v1/cell:provision";
+/** The largest provisioning submission (a tenant's artifact set), in bytes; the cell checks the same bound. This is read before the cell authorizes the caller. */
 const MAX_PROVISION_BODY = 1048576;
+// The environments a tenant cell may exist in: pinned configuration (NORN_TENANT_ENVIRONMENTS,
+// comma-separated), never taken from a request. An organization has at most one cell per
+// declared environment; a scope naming any other environment never reaches a cell of its own.
+const DEFAULT_ENVIRONMENTS = "dev,prod";
+const environments = (env) => (env.NORN_TENANT_ENVIRONMENTS ?? DEFAULT_ENVIRONMENTS).split(",").map((e) => e.trim()).filter((e) => ENVIRONMENT.test(e));
+const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics");
 // The last JWKS document this isolate fetched and when. A cold open reuses one younger than
 // OPEN_RETRY_MS, so opening many cells (any caller can name a scope) costs the issuer one fetch a
 // minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
@@ -145,12 +151,14 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     const url = new URL(request.url);
     const orgs = url.searchParams.getAll("orgId");
-    const environments = url.searchParams.getAll("environmentId");
-    // Each well-formed scope has its own cell, named by its key; whether that cell is provisioned
-    // is the cell's to say. A missing, repeated or malformed scope still reaches a cell (the demo
-    // one), whose scope admission returns the same opaque denial as any other failed read.
-    const named = orgs.length === 1 && environments.length === 1 && ORG.test(orgs[0]) && ENVIRONMENT.test(environments[0]);
-    const cell = named ? [orgs[0], environments[0]] : DEMO;
+    const asks = url.searchParams.getAll("environmentId");
+    // Each well-formed scope in a declared environment has its own cell, named by its key; whether
+    // that cell is provisioned is the cell's to say. A missing, repeated, malformed or undeclared
+    // scope still reaches a cell (the demo one), whose scope admission returns the same opaque
+    // denial as any other failed read.
+    const asked = [orgs[0], asks[0]];
+    const named = orgs.length === 1 && asks.length === 1 && ORG.test(asked[0]) && ENVIRONMENT.test(asked[1]) && (isDemo(asked) || environments(env).includes(asked[1]));
+    const cell = named ? asked : DEMO;
     const forwarded = new Request(request);
     forwarded.headers.set(CELL_HEADER, JSON.stringify(cell));
     const response = await env.CELLS.get(env.CELLS.idFromName(key(cell))).fetch(forwarded);

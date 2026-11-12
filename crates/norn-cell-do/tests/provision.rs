@@ -287,7 +287,7 @@ fn the_compiled_in_base_is_the_seeds_reserved_artifacts() {
             .all(|id| norn_api::kernel_set::is_reserved(id))
     );
     // An empty tenant set provisions: the base admits alone.
-    let admitted = provision::admit_submission(&trusted, &submission(&[]));
+    let admitted = provision::admit_submission(&trusted, &scope("org_a", "prod"), &submission(&[]));
     assert!(admitted.is_ok(), "{:?}", admitted.err());
 }
 
@@ -515,6 +515,86 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
     );
 }
 
+/// An artifact scoped outside the cell (another environment of the same
+/// organization, or another organization) is refused before admission, at
+/// its own `scope`, and nothing is written: the cell would otherwise hold a
+/// set every later read refuses, with no way to repair it.
+#[test]
+fn an_artifact_scoped_outside_the_cell_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let mut cell = open(&path, &scope);
+    let owner = user("org_a", "owner");
+    for outside in [
+        json!({ "orgId": "org_a", "environmentId": "dev" }),
+        json!({ "orgId": "org_b" }),
+        json!({ "orgId": "org_b", "environmentId": "prod" }),
+    ] {
+        let mut artifacts = full();
+        let mut last: Value = serde_json::from_str(artifacts.last().unwrap()).unwrap();
+        last["scope"] = outside.clone();
+        let at = artifacts.len() - 1;
+        artifacts[at] = last.to_string();
+        let response = provision(&mut cell, Some(&owner), &submission(&artifacts));
+        assert_eq!(
+            (response.status, code(&response).as_str()),
+            (422, provision::codes::PROVISION_REFUSED),
+            "{outside}"
+        );
+        let diagnostic = &json_of(&response)["diagnostics"][0];
+        assert_eq!(
+            diagnostic["code"],
+            provision::codes::SCOPE_CONFLICT,
+            "{outside}"
+        );
+        assert_eq!(
+            diagnostic["span"]["pointer"],
+            format!("/artifacts/{at}/scope")
+        );
+        assert!(!cell.tenant.is_provisioned());
+    }
+    // The cell's own scope, and no scope at all, are inside it.
+    let mut artifacts = full();
+    let mut last: Value = serde_json::from_str(artifacts.last().unwrap()).unwrap();
+    last["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let at = artifacts.len() - 1;
+    artifacts[at] = last.to_string();
+    let created = provision(&mut cell, Some(&owner), &submission(&artifacts));
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert_eq!(definitions(&mut cell, Some(&owner)).status, 200);
+}
+
+/// A tenant artifact that declares a name the trusted base declares (here
+/// the base property type `core.code`) is refused by admission, so the base
+/// cannot be shadowed by a non-reserved artifact id.
+#[test]
+fn an_artifact_declaring_a_base_name_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = open(&file(&directory, "a"), &scope("org_a", "prod"));
+    let shadow = json!({
+        "irVersion": "0.1", "artifactId": "tenant.value_types.entity", "kind": "entity",
+        "namespace": "tenant", "name": "Shadowing value types", "version": "0.1.0",
+        "lifecycle": "active", "scope": {}, "dependencies": [],
+        "provenance": { "source": "authoring_sdk", "sourcePath": "tests/provision.rs" },
+        "payload": { "entityVersion": "2.0", "propertyTypes": [{
+            "name": "core.code", "description": "A shadow of the base code type.",
+            "type": { "kind": "text" }, "constraints": { "minLength": 1, "maxLength": 9 } }] }
+    });
+    let response = provision(
+        &mut cell,
+        Some(&user("org_a", "owner")),
+        &submission(&[shadow.to_string()]),
+    );
+    assert_eq!(
+        (response.status, code(&response).as_str()),
+        (422, provision::codes::PROVISION_REFUSED),
+        "{}",
+        response.body
+    );
+    assert!(!cell.tenant.is_provisioned());
+}
+
 // ------------------------------------------------------------------- retry
 
 /// An identical retry replays without writing, on the live cell and after a
@@ -577,7 +657,7 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
     // again (another install time, or other definitions) refuses.
     let trusted: TrustedBase = base::trusted_base().unwrap();
     for body in [body.clone(), submission(&plain())] {
-        let admitted = provision::admit_submission(&trusted, &body).unwrap();
+        let admitted = provision::admit_submission(&trusted, &scope, &body).unwrap();
         let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
         let refusal =
             provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
