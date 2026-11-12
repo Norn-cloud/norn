@@ -70,6 +70,26 @@ impl Config {
     }
 }
 
+/// Whether the daemon on this host's `NORN_OLAP_ADDR` port answers
+/// `GET /healthz` with 200, within two seconds (the container health check).
+#[must_use]
+pub fn healthy() -> bool {
+    let addr = std::env::var("NORN_OLAP_ADDR").unwrap_or_else(|_| "0.0.0.0:8790".to_owned());
+    let port = addr.rsplit(':').next().unwrap_or("8790");
+    let Ok(mut stream) = TcpStream::connect(format!("127.0.0.1:{port}")) else {
+        return false;
+    };
+    let _bounded = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    if stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut head = [0_u8; 12];
+    stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.1 200")
+}
+
 /// Serve until the process exits.
 ///
 /// # Errors
