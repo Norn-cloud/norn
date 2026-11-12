@@ -357,6 +357,18 @@ pub fn coefficient(value: &Decimal) -> Option<i64> {
         .then_some(coefficient)
 }
 
+/// The exact UTC ordering key of a stored timestamp (or of a date's UTC
+/// midnight), by the same rules [`project`] reads instants with.
+#[must_use]
+pub fn instant_key(text: &str, date: bool) -> Option<(i64, u32)> {
+    norn_expr::temporal::timestamp_ordering_key(&if date {
+        format!("{text}T00:00:00Z")
+    } else {
+        text.to_owned()
+    })
+    .ok()
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,

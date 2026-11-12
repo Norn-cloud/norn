@@ -144,6 +144,18 @@ pub struct NornQueryRow {
     #[serde(default, rename = "nullCounts")]
     #[schema(required = false)]
     pub null_counts: Vec<u64>,
+    /// D102: contributing members, present when `members` is not listed
+    /// because the population exceeds the question's bound (the analytics
+    /// engine answered); the trace pages them.
+    #[serde(default, rename = "memberCount")]
+    #[schema(required = false)]
+    pub member_count: Option<u64>,
+    /// MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each
+    /// as `<identity bytes>:<identity>,<version>` then `,<coefficient>` per
+    /// operand (empty when absent) and `;`. Present with `memberCount`.
+    #[serde(default, rename = "membershipDigest")]
+    #[schema(required = false)]
+    pub membership_digest: Option<String>,
 }
 
 /// One object version's contribution to a bucket.

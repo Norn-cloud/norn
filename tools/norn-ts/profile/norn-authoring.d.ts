@@ -472,6 +472,54 @@ declare module "@norn/authoring" {
       readonly actions?: { readonly [actionId: string]: Localized }
     }): LabelsDefinition
 
+    /**
+     * VIEW-TRUST-1: how far a definition's output can be trusted without running it,
+     * strongest first. A model is `opaque` or `contract_checked`.
+     */
+    type TrustLevel = "native" | "proven" | "contract_checked" | "opaque"
+    /** A closed check on one model output (no free expressions). */
+    type ModelContractRule =
+      /** Inclusive bounds on a numeric output, as exact decimal text; at least one. */
+      | { readonly kind: "range"; readonly min?: string; readonly max?: string }
+      | { readonly kind: "notNull" }
+      /** A numeric output is never NaN or infinite. */
+      | { readonly kind: "finite" }
+      /** An enum or text output takes one of these values. */
+      | { readonly kind: "oneOf"; readonly values: ReadonlyArray<string> }
+    /** A model's input property ids: the type's properties, or any id for an installed type named by string. */
+    type ModelProperty<T> = [unknown] extends [T] ? string : keyof T & string
+    interface ModelDefinition { readonly _tag: "NornModel" }
+    /**
+     * ModelIR (#1171): a typed predictive model whose internals stay opaque. It
+     * declares what it reads (an object type and the properties it uses as
+     * features, plus an optional supervised target) and the typed prediction
+     * columns it writes, with the contracts each output must meet. The Rust
+     * checker resolves the input and every feature against the set and the
+     * installed base.
+     */
+    function model<T, O extends Schema.Top>(meta: {
+      /** Dotted model id (`sales.churn_model`); the artifact is `<id>.model`. */
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** The input object type, by reference or (for an installed type) by qualified name. */
+      readonly input: TypeDefinition<T, any> | string
+      /** Input properties the model reads: numeric, boolean, enum or text. */
+      readonly features: ReadonlyArray<ModelProperty<T>>
+      /** The supervised target: a numeric, boolean or enum property; omitted for a scoring-only model. */
+      readonly target?: ModelProperty<T>
+      /**
+       * The prediction columns, as an Effect Schema struct: `Norn.decimal(n)`,
+       * `Schema.Int`, `Schema.Boolean`, `Schema.String` or `Schema.Literals`,
+       * each optionally `Schema.NullOr(...)`.
+       */
+      readonly outputs: O
+      readonly trust: TrustLevel
+      readonly contracts?: ReadonlyArray<{ readonly id: string; readonly output: keyof O["Type"] & string; readonly rule: ModelContractRule }>
+      /** How the model was built; display only. */
+      readonly method: { readonly label: string; readonly version?: string }
+    }): ModelDefinition
+
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
     /** What a law lambda reads as `self`: the subject's properties and, one level deep, its links. */
