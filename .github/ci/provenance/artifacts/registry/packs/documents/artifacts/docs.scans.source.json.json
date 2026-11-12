@@ -1,12 +1,14 @@
 {
   "sha256": "62ac7a8b8f1d7480f829c87e248c3f51b8b653ad2886b368395952d1aff186c9",
   "origin": "derived",
-  "category": "generated",
+  "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/documents/documents.ts"
+    "registry/packs/documents/documents.ts",
+    "tools/norn-ts/src/builder/source-schema.ts",
+    "tools/norn-ts/src/compiler/definitions.ts"
   ],
   "rights_evidence": [
     {
