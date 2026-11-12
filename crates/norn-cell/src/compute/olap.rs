@@ -53,8 +53,8 @@ fn scale(sum: &norn_checker::metric::compute::KeyedSum) -> Result<u64, CellError
 }
 
 fn lower(plan: &QuestionPlan) -> Result<(String, String), CellError> {
-    // METRIC-SNAPSHOT-ASOF-1: the snapshot lowering belongs to the analytics engine.
-    if plan.as_of() {
+    // METRIC-SNAPSHOT-ASOF-1 / METRIC-GRAIN-LINK-1: these lowerings belong to the analytics engine.
+    if plan.as_of() || plan.time_link().is_some() {
         return Err(refused(UNSUPPORTED_ENGINE));
     }
     let (a, b, ratio) = match plan.sums() {

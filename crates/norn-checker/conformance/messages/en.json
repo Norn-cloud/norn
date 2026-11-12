@@ -1209,7 +1209,7 @@
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
     "metric.validation.partial_path": {
-      "message": "Mandatory time, currency and rate inputs require total paths."
+      "message": "Currency and rate inputs require total paths."
     },
     "metric.validation.ratio_aggregation": {
       "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."

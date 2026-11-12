@@ -1014,3 +1014,48 @@ fn an_abandoned_run_releases_its_connection_after_the_lease() {
     assert_ne!(first, second);
     assert!(sources.running("odoo.sandbox"));
 }
+
+/// SYNC-PAGE-1: a host's `pageSize` replaces every feed's request size,
+/// within the pull's item bound.
+#[test]
+fn a_host_page_size_sets_every_feeds_page() {
+    let config = |size: u32| {
+        CONFIG.replace(
+            r#""headers": {"X-Frappe-Site-Name": "frontend"}}"#,
+            &format!(r#""headers": {{"X-Frappe-Site-Name": "frontend"}}, "pageSize": {size}}}"#),
+        )
+    };
+    for refused in [0, 1001] {
+        assert!(
+            Sources::new(&config(refused), BTreeMap::new()).is_err(),
+            "{refused}"
+        );
+    }
+    let mut sources = Sources::new(
+        &config(250),
+        BTreeMap::from([(
+            "NORN_SECRET_ERPNEXT_SANDBOX_TOKEN".to_owned(),
+            "key:secret".to_owned(),
+        )]),
+    )
+    .expect("configuration");
+    let host = host();
+    sources
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS,
+        )
+        .expect("claimed");
+    match sources.step(&host, "erpnext.sandbox", None, EXTRACTED_AT_MS) {
+        Step::Request(request) => {
+            assert!(
+                request.url.contains("limit_page_length=250"),
+                "{}",
+                request.url
+            );
+        }
+        other @ (Step::Continue | Step::Done(_)) => panic!("expected a request, got {other:?}"),
+    }
+}
