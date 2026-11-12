@@ -172,37 +172,8 @@ pub fn handle_all<E: SqlEngine>(
                     get_answer(host, &scope, actor, name, named(runtime))
                 })
                 .and_then(|document| document_json(&document)),
-            (Some((name, _)), Some(runtime)) => parse(
-                query,
-                &[
-                    "orgId",
-                    "environmentId",
-                    "lineageRef",
-                    "bucket",
-                    "knownAsOf",
-                    "nowMs",
-                ],
-            )
-            .and_then(|mut fields| {
-                let number = |field: Option<String>, name: &str| {
-                    field
-                        .map(|text| {
-                            text.parse::<u64>().map_err(|_invalid| {
-                                Refusal::invalid(format!("{name} is not a whole number"))
-                            })
-                        })
-                        .transpose()
-                };
-                let query = TraceQuery {
-                    org_id: fields.remove("orgId"),
-                    environment_id: fields.remove("environmentId"),
-                    lineage_ref: fields.remove("lineageRef"),
-                    bucket: fields.remove("bucket"),
-                    known_as_of: number(fields.remove("knownAsOf"), "knownAsOf")?,
-                    now_ms: number(fields.remove("nowMs"), "nowMs")?,
-                };
-                get_numeric_trace(host, &query, actor, name, named(runtime))
-            })
+            (Some((name, _)), Some(runtime)) => trace_query(query)
+            .and_then(|query| get_numeric_trace(host, &query, actor, name, named(runtime)))
             .and_then(|document| document_json(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,
@@ -222,6 +193,42 @@ pub fn handle_all<E: SqlEngine>(
             body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
         },
     }
+}
+
+/// The coordinates of `GET /v1/questions/{question}/trace`: scope, the
+/// answer's handle and bucket, and optionally the answer's `knownAsOf` and
+/// `nowMs` to trace it as it was given.
+fn trace_query(query: &str) -> Result<TraceQuery, Refusal> {
+    let mut fields = parse(
+        query,
+        &[
+            "orgId",
+            "environmentId",
+            "lineageRef",
+            "bucket",
+            "knownAsOf",
+            "nowMs",
+        ],
+    )?;
+    let mut number = |name: &str| {
+        fields
+            .remove(name)
+            .map(|text| {
+                text.parse::<u64>()
+                    .map_err(|_invalid| Refusal::invalid(format!("{name} is not a whole number")))
+            })
+            .transpose()
+    };
+    let known_as_of = number("knownAsOf")?;
+    let now_ms = number("nowMs")?;
+    Ok(TraceQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        lineage_ref: fields.remove("lineageRef"),
+        bucket: fields.remove("bucket"),
+        known_as_of,
+        now_ms,
+    })
 }
 
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
