@@ -19,7 +19,6 @@ members = [
   "crates/norn-ir",
   "crates/norn-kernel",
   "crates/norn-projections",
-  "crates/norn-skeleton-guard",
   "crates/norn-testkit",
   "vendor/zen/core/types",
   "vendor/zen/core/macros",
@@ -47,7 +46,6 @@ default-members = [
   "crates/norn-ir",
   "crates/norn-kernel",
   "crates/norn-projections",
-  "crates/norn-skeleton-guard",
   "crates/norn-testkit",
   "vendor/zen/core/types",
   "vendor/zen/core/macros",
@@ -55,7 +53,9 @@ default-members = [
   "vendor/zen/core/template",
   "vendor/zen/core/expression"
 ]
-exclude = ["third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
+# crates/norn-skeleton-guard is its own workspace (D95): the trusted lane builds it from
+# its own gated manifest and lockfile, never from this one.
+exclude = ["crates/norn-skeleton-guard", "third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
 resolver = "2"
 
 [workspace.package]

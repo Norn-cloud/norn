@@ -64,8 +64,6 @@ pub enum Ring {
     One,
     /// Listed by SKELETON.md as "unchanged until their scoped plan work".
     Unscoped,
-    /// Test/CI-only tooling (this guard).
-    Tooling,
     /// Test-support library (`norn-testkit`): any workspace crate may take it
     /// as a dev-dependency; no crate may take it as a normal or build
     /// dependency, so it never reaches a shipped or `wasm32` build.
@@ -251,7 +249,6 @@ pub const CRATES: &[CrateRule] = &[
         dev_only_norn: &["norn-checker"],
         third_party: &[],
     },
-    rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
         name: "norn-testkit",
         ring: Ring::TestSupport,
@@ -265,6 +262,10 @@ pub const CRATES: &[CrateRule] = &[
     rule("zen-tmpl", Ring::Vendored, &[]),
     rule("zen-types", Ring::Vendored, &[]),
 ];
+
+/// This guard's package. It is its own Cargo workspace (D95), outside the ring model and the
+/// root workspace, and no workspace crate may depend on it in any dependency kind.
+pub const GUARD_CRATE: &str = "norn-skeleton-guard";
 
 /// Optional normal dependencies that belong exclusively to norn-cell's
 /// native host adapters, enabled by its `native` feature.
@@ -987,6 +988,16 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
         }
         for dep in &pkg.dependencies {
             let dep_name = dep.name.as_str();
+            if dep_name == GUARD_CRATE {
+                out.push(violation(
+                    "guard-dependency",
+                    format!(
+                        "`{name}` depends on `{GUARD_CRATE}` ({}); the guard is its own workspace and no Norn crate may take it",
+                        kind_label(dep.kind)
+                    ),
+                ));
+                continue;
+            }
             check_calendar_dependencies(name, dep, &mut out);
             if dep_name == name {
                 // Self dev-dependency used to enable test-only features.

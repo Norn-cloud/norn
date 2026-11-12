@@ -1,0 +1,7 @@
+{
+  "code": "cli.setup.authoring_version_mismatch",
+  "message": "The project's installed @norn/authoring version differs from this CLI's; admission uses the CLI's own authoring types.",
+  "severity": "warning",
+  "since": "0.2.0",
+  "tier": "T0"
+}

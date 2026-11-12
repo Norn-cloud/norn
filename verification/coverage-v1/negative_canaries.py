@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import itertools
@@ -47,10 +48,32 @@ VERIFICATION_TOOL_ROOT = Path(
     )
 )
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import coverage_manifest  # noqa: E402
-import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
+quint_apalache = _sibling("quint_apalache", ROOT / "scripts")
 
 
 CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
@@ -85,6 +108,46 @@ CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
     }
 )
 CENTRAL_CANARY_SUBSTITUTE_ID = "INV-CENTRAL-CANARY-SUBSTITUTE"
+
+
+def condition_value(expression: str, names: dict | None = None):
+    """Evaluate a workflow condition already rewritten to Python syntax, without `eval`
+    (#513): only `and`/`or`/`not`, `==`/`!=`, literals, parentheses and calls to `names`."""
+    names = names or {}
+
+    def value(node):
+        if isinstance(node, ast.Expression):
+            return value(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BoolOp):
+            result = None
+            for operand in node.values:
+                result = value(operand)
+                if isinstance(node.op, ast.And) and not result or isinstance(node.op, ast.Or) and result:
+                    return result
+            return result
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not value(node.operand)
+        if isinstance(node, ast.Compare):
+            left = value(node.left)
+            for operator, right in zip(node.ops, node.comparators):
+                right = value(right)
+                if isinstance(operator, ast.Eq):
+                    ok = left == right
+                elif isinstance(operator, ast.NotEq):
+                    ok = left != right
+                else:
+                    raise AssertionError(f"unsupported comparison in {expression!r}")
+                if not ok:
+                    return False
+                left = right
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names and not node.keywords:
+            return names[node.func.id](*(value(argument) for argument in node.args))
+        raise AssertionError(f"unsupported expression {ast.dump(node)} in {expression!r}")
+
+    return value(ast.parse(expression.strip(), mode="eval"))
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -625,7 +688,7 @@ def rust_parity_evidence_canaries() -> None:
     first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
     second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
     call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
-    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(={first}) | test(={second})'\n"
+    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter \"${{guard[@]}}\" --lib -E 'test(={first}) | test(={second})'\n"
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
@@ -634,7 +697,7 @@ def rust_parity_evidence_canaries() -> None:
                 ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
                 ("only one parity test required", call, call.replace(f" {second}", "")),
                 ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
-                ("the default filter decides", "run --locked --ignore-default-filter -p", "run --locked -p")):
+                ("the default filter decides", 'run --locked --ignore-default-filter "${guard[@]}" --lib', 'run --locked "${guard[@]}" --lib')):
             if core.count(before) != 1:
                 raise AssertionError(f"Rust parity evidence canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")
@@ -1102,7 +1165,7 @@ def workflow_trusted_policy_canaries(source: str) -> None:
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
-            accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
+            accepted = condition_value(condition, {"contains": lambda text, part: part in text})
             if bool(accepted) != (expected and not cancelled):
                 raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
 
@@ -1170,9 +1233,9 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             expression = condition.replace("github.event.workflow_run.event", repr(event)).replace(
                 "github.event.workflow_run.head_repository.full_name", repr("owner/repo" if same_repository else "fork/repo")).replace(
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
-            if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
+            if bool(condition_value(expression)) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        command = 'python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
@@ -1289,7 +1352,7 @@ def workflow_context_canaries(source: str) -> None:
                         candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
                         expected = event not in ("pull_request_target", "issue_comment") and not (
                             name == "plan" and event == "pull_request" and draft)
-                        if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
+                        if bool(condition_value(candidate_expression)) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
             for draft in (False, True):
@@ -1297,7 +1360,7 @@ def workflow_context_canaries(source: str) -> None:
                     "github.event.pull_request.draft", str(draft)).replace(
                     "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
                 expression = re.sub(r"!(?!=)", " not ", expression)
-                if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
+                if bool(condition_value(expression)) != (event != "pull_request" or draft):
                     raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
@@ -1489,7 +1552,7 @@ def workflow_context_canaries(source: str) -> None:
                             or (event == "pull_request" and pr_variable == "boat"
                                 and head_repository == "Norn-cloud/norn"
                                 and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
-                if eval(concrete, {"__builtins__": {}}, {}) != expected:
+                if condition_value(concrete) != expected:
                     raise AssertionError("Boat runner evaluation drift: " + "/".join(
                         (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
         for name in ("core", "plan", "test", "full", "trusted-policy"):

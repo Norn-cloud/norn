@@ -1,5 +1,6 @@
 {
   "name": "@norn/authoring",
+  "version": "0.1.0-alpha.0",
   "types": "./profile/norn-authoring.d.ts",
   "exports": {
     ".": {

@@ -15,6 +15,29 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
 SPARK = "▁▂▃▄▅▆▇█"
 FAMILIES = {
     "fork": "Cell forks", "sim": "Deterministic simulation", "proof": "Proof gates",
@@ -24,8 +47,7 @@ FAMILIES = {
 
 
 def _key(record: dict) -> tuple:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import record as store  # noqa: PLC0415
+    store = _sibling("record")
     return store.series_key(record)
 
 
@@ -38,8 +60,7 @@ def _source_html(url: str) -> str:
 
 
 def series(records: list[dict]) -> dict[str, list[dict]]:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import record as store  # noqa: PLC0415
+    store = _sibling("record")
     out: dict[str, list[dict]] = defaultdict(list)
     for record in store.fold(records):
         out[record["metric"]].append(record)
@@ -194,8 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rev", default="origin/metrics")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import record  # noqa: PLC0415
+    record = _sibling("record")
     records = record.all_records(record.read_store(Path(args.repo), args.rev))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
