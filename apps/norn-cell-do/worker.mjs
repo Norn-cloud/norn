@@ -134,7 +134,13 @@ export class Cell {
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
     let step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
-    while (step.request) {
+    while (step.request || step.continue) {
+      if (step.continue) {
+        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped chunks.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+        continue;
+      }
       const { status, bytes } = await perform(step.request);
       step = JSON.parse(this.cell.syncStep(id, status, bytes, Date.now()));
     }

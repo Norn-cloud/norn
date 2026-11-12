@@ -258,6 +258,7 @@ impl Connect {
         };
         match self.sources.step(host, id, response, now_ms) {
             Step::Request(request) => json!({"request": request}).to_string(),
+            Step::Continue => json!({"continue": true}).to_string(),
             Step::Done(summary) => json!({"done": summary}).to_string(),
         }
     }
