@@ -60,25 +60,37 @@ function answer(msg: Extract<Msg, { kind: "outcome" }>): { status: number; body:
 async function openRefund(page: Page) {
   await session(page)
   await decisionCell(page)
-  const pending: (ReturnType<typeof answer> | undefined)[] = []
+  // Each queued answer is held until the walk reaches its outcome step, so the page is seen in the
+  // pending state first and the answer can never race the assertion.
+  const pending: { answer: ReturnType<typeof answer>; gate: Promise<void>; open: () => void }[] = []
   // Registered after the stand-in, so it answers decide calls first.
   await page.route("**/api/host/v1/decisions/*:decide**", async (route: Route) => {
-    const next = pending.shift()
+    const next = pending[0]
     if (next === undefined) return route.fallback()
-    if (next === null) return
-    await route.fulfill({ status: next.status, contentType: "application/json", body: typeof next.body === "string" ? next.body : JSON.stringify(next.body) })
+    await next.gate
+    pending.shift()
+    if (next.answer === null) return
+    await route.fulfill({ status: next.answer.status, contentType: "application/json", body: typeof next.answer.body === "string" ? next.answer.body : JSON.stringify(next.answer.body) })
   })
   await page.clock.install()
   await page.goto("/decisions")
   await page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Refund 1,240.00 USD" }).click()
   const sheet = page.locator("norn-decision-sheet .norn-sheet")
   await expect(sheet).toHaveAttribute("data-state", machine.initialStateId)
-  return { sheet, queue: (next: ReturnType<typeof answer>) => pending.push(next) }
+  return {
+    sheet,
+    queue: (next: ReturnType<typeof answer>) => {
+      let open = () => {}
+      const gate = new Promise<void>((resolve) => { open = resolve })
+      pending.push({ answer: next, gate, open })
+    },
+    release: () => pending[0]?.open(),
+  }
 }
 
 for (const walk of all) {
   test(`walk: ${walk.transitionId}`, async ({ page }) => {
-    const { sheet, queue } = await openRefund(page)
+    const { sheet, queue, release } = await openRefund(page)
     for (const [index, step] of walk.steps.entries()) {
       const { msg, transition } = step
       const next = walk.steps[index + 1]?.msg
@@ -90,7 +102,8 @@ for (const walk of all) {
         if (node === "option-choice") await sheet.locator(`ui-radio[value="${String(msg.payload?.value)}"]`).click()
         else if (node === "note-input") await sheet.locator("textarea").fill(String(msg.payload?.value ?? ""))
         else await sheet.locator(`button[data-node="${node}"]`).click()
-      } else if (msg.kind === "outcome" && msg.outcome === "timeout") {
+      } else if (msg.kind === "outcome") release()
+      if (msg.kind === "outcome" && msg.outcome === "timeout") {
         await page.clock.runFor(machine.states.find((state) => state.stateId === transition.from)?.deadlineMs ?? 0)
       }
       const where = `${walk.transitionId}: step ${index + 1} (${transition.transitionId})`

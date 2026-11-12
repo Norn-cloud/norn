@@ -22,7 +22,7 @@ export interface Walk {
 }
 
 /** Candidate payloads for firing `transition` on `event`; none means an empty payload. */
-export type PayloadFor = (transition: MachineTransition, event: MachineEvent) => readonly Fields[] | undefined
+export type PayloadFor = (transition: MachineTransition, event: MachineEvent, snapshot: Snapshot) => readonly Fields[] | undefined
 
 function messageFor(event: MachineEvent, entry: number, payload: Fields | undefined): Msg {
   const withPayload = payload ? { payload } : {}
@@ -65,7 +65,7 @@ export function walks(machine: Machine, evaluate: Evaluate, payloadFor?: Payload
         if (transition.from !== snapshot.stateId) continue
         const event = eventOf.get(transition.on)
         if (!event) throw new Error(`transition ${transition.transitionId} names undeclared event ${transition.on}`)
-        for (const payload of payloadFor?.(transition, event) ?? [undefined]) {
+        for (const payload of payloadFor?.(transition, event, snapshot) ?? [undefined]) {
           const msg = messageFor(event, snapshot.entry, payload)
           let step
           try {
