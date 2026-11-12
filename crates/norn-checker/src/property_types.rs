@@ -356,8 +356,10 @@ pub(crate) fn with_additivity<'a>(
         return Cow::Borrowed(base);
     }
     let mut owned = base.clone();
-    if let PropertyType::Integer { additivity: slot } | PropertyType::Decimal { additivity: slot, .. } =
-        &mut owned
+    if let PropertyType::Integer { additivity: slot }
+    | PropertyType::Decimal {
+        additivity: slot, ..
+    } = &mut owned
     {
         slot.clone_from(additivity);
     }
