@@ -1,0 +1,124 @@
+{
+  "artifactId": "tracking.runlog.add.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Log a batch to a run",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.runlog.add",
+    "effectProgram": {
+      "entityArtifactId": "tracking.RunLog.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "log_id",
+      "objectKind": "tracking.RunLog",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "end_time": {
+          "type": "integer"
+        },
+        "log_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "type": "string"
+        },
+        "params": {
+          "type": "string"
+        },
+        "prev_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_name": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "tags": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "seq",
+        "log_id",
+        "digest",
+        "params",
+        "tags",
+        "metrics",
+        "prev_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "log_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "log_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.prev.run_id == input.run_id and slice.prev.seq == input.seq - 1 and startsWith(input.log_id, input.run_id + \"/\")"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "run_id"
+          }
+        },
+        "name": "run",
+        "objectType": "tracking.Run"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "prev_id"
+          }
+        },
+        "name": "prev",
+        "objectType": "tracking.RunLog"
+      }
+    ],
+    "title": "Log a batch to a run",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "tracking.RunLog"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.runlog.add.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
