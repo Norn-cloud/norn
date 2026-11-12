@@ -204,7 +204,11 @@ impl ObjectQuery {
             .iter()
             .map(|key| crate::objects::NornSortKey {
                 property: key.property.clone(),
-                direction: if key.descending { "desc" } else { "asc" }.to_owned(),
+                direction: if key.descending {
+                    crate::objects::NornSortDirection::Desc
+                } else {
+                    crate::objects::NornSortDirection::Asc
+                },
             })
             .collect()
     }
@@ -225,7 +229,7 @@ impl ObjectQuery {
     pub(crate) fn digest(&self, object_type: &str) -> String {
         let normalized = serde_json::json!({
             "type": object_type,
-            "sort": self.sort_document().iter().map(|key| format!("{}:{}", key.property, key.direction)).collect::<Vec<_>>(),
+            "sort": self.sort_document().iter().map(|key| format!("{}:{}", key.property, key.direction.as_str())).collect::<Vec<_>>(),
             "filter": self.filter_document(),
         });
         norn_cell::compute::lineage::keyed_lineage_handle(CURSOR_KEY, &normalized.to_string())
