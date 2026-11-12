@@ -1,0 +1,83 @@
+{
+  "artifactId": "docs.scans.connector",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Scanned-document extractor reads",
+  "namespace": "docs",
+  "payload": {
+    "auth": {
+      "kind": "none"
+    },
+    "connectorVersion": "0.1",
+    "extensions": {
+      "norn.pull/1": {
+        "feeds": [
+          {
+            "dataset": "Scanned Document",
+            "fields": {
+              "currency": "/currency",
+              "doc_number": "/doc_number",
+              "document_digest": "/document_digest",
+              "document_uri": "/document_uri",
+              "evidence": "/evidence",
+              "extractor": "/extractor",
+              "extractor_version": "/extractor_version",
+              "issued_on": "/issued_on",
+              "kind": "/kind",
+              "ledger_ref": "/ledger_ref",
+              "line_count": "/line_count",
+              "lines": "/lines",
+              "media_type": "/media_type",
+              "name": "/name",
+              "total": "/total",
+              "vendor": "/vendor"
+            },
+            "idPath": "/id",
+            "initial": {
+              "id": "",
+              "version": ""
+            },
+            "itemsPath": "/rows",
+            "paging": {
+              "kind": "keyset",
+              "size": 100
+            },
+            "request": {
+              "body": {
+                "after": [
+                  "{{version}}",
+                  "{{id}}"
+                ],
+                "limit": "{{size}}"
+              },
+              "method": "POST",
+              "path": "/extractions"
+            },
+            "versionPath": "/version"
+          }
+        ],
+        "pipeline": "norn-pull/1+docs.scans.connector@0.1.0",
+        "source": "synthetic-scans"
+      }
+    },
+    "mappings": [],
+    "resources": [
+      {
+        "endpoint": "/extractions",
+        "itemsPath": "/rows",
+        "kind": "delta",
+        "resourceId": "extractions",
+        "sinceParam": "after",
+        "updatedAtPath": "/version"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents-pull/artifacts/docs.scans.connector.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
