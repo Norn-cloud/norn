@@ -1644,6 +1644,10 @@
     "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target."
   },
   {
+    "code": "model.admission.prediction_type_mismatch",
+    "fix": "Name an object type that declares text properties subject and model_version and every output as a property of the same type, scale, unit and nullability (an enum with at least the output's values)."
+  },
+  {
     "code": "model.admission.unknown_feature",
     "fix": "Name a property the input object type declares, inherits, implements or gains from an extension."
   },

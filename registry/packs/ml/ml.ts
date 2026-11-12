@@ -103,6 +103,53 @@ export const RetireModelVersion = Norn.action({
   effect: { kind: "fire_transition", type: ModelVersion, objectIdField: "version_id", lifecycle: "status", transition: "retire" },
 })
 
+const Batch = Schema.Struct({
+  batch_id: Schema.String,
+  model_version: Schema.String, // the ml.ModelVersion version_id applied
+  input_type: Schema.String, // the scored object type
+  input_revision: Schema.String, // the snapshot of the input rows the batch scored
+  rows: Schema.Int, // predictions written, one per input row
+  status: Schema.Literals(["recorded"]),
+})
+
+/**
+ * One application of a promoted model version (#1171 M4): which version
+ * scored which input snapshot, and how many predictions it wrote. Each
+ * prediction is an object of the model's `predictions` type carrying `subject`
+ * and `model_version`; the batch is recorded only after every declared output
+ * contract held on every row (`sdks/python/models/norn_models`).
+ */
+export const PredictionBatch = Norn.type({
+  name: "ml.PredictionBatch", title: "Prediction batch", version: "0.1.0",
+  properties: Batch,
+  identity: [{ name: "primary", properties: ["batch_id"] }],
+  defaults: { status: "recorded" },
+  links: [
+    { id: "applied", target: "ml.ModelVersion", cardinality: { to: "one", from: "many" } },
+  ],
+})
+
+/** Create-only, and only for a version in production: a candidate or retired version is never applied. */
+export const RecordPredictionBatch = Norn.action({
+  id: "ml.predictionbatch.record", title: "Record a prediction batch", version: "0.1.0",
+  input: Schema.Struct({
+    batch_id: Schema.String, model_version: Schema.String, input_type: Schema.String,
+    input_revision: Schema.String, rows: Schema.Int,
+  }),
+  output: Schema.Struct({ batch_id: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "ml.access.policy", version: "0.1.0" },
+  slice: [
+    { name: "version", type: "ml.ModelVersion", key: { property: { from: "input", property: "model_version" } } },
+  ],
+  preconditions: [Norn.expression(Schema.Struct({ slice: Schema.Struct({ version: Version }) }), (input) => input.slice.version.status === "production")],
+  createLinks: [
+    { link: "applied", targetType: "ml.ModelVersion", targetIdField: "model_version" },
+  ],
+  writes: [{ type: PredictionBatch, change: "created" }],
+  effect: { kind: "upsert_input_object", type: PredictionBatch, objectIdField: "batch_id", writeMode: { kind: "create_only" } },
+})
+
 export const PromotionPolicy = Norn.law({
   id: "ml.promotion_policy.law", title: "No promotion without an evaluation on the pinned dataset", version: "0.1.0",
   law: { lawVersion: "0.1", id: "ml.promotion_policy", owner: "ml",
@@ -116,14 +163,16 @@ export const PromotionPolicy = Norn.law({
 })
 
 // Who may call the ml actions on a hosted cell: members register, request
-// promotion (decided through the approval gate) and retire, in the org and
-// environment.
+// promotion (decided through the approval gate) and record prediction
+// batches; admins and owners retire, in the org and environment.
 export const MlAccess = Norn.access({
   id: "ml.access", title: "Model versions", version: "0.1.0",
   rules: [
     { ruleId: "register", actions: [RegisterModelVersion], resourceType: ModelVersion,
       scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }] },
     { ruleId: "promote", actions: [PromoteModelVersion], resourceType: ModelVersion,
+      scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }] },
+    { ruleId: "apply", actions: [RecordPredictionBatch], resourceType: PredictionBatch,
       scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }] },
     { ruleId: "retire", actions: [RetireModelVersion], resourceType: ModelVersion,
       scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["admin", "owner"] } }] },

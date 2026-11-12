@@ -516,6 +516,12 @@ declare module "@norn/authoring" {
       readonly outputs: O
       readonly trust: TrustLevel
       readonly contracts?: ReadonlyArray<{ readonly id: string; readonly output: keyof O["Type"] & string; readonly rule: ModelContractRule }>
+      /**
+       * The object type predictions are written to, by reference or by qualified name:
+       * text properties `subject` (the scored object's id) and `model_version` (the
+       * ml.ModelVersion id), and every output as a property of the same type and nullability.
+       */
+      readonly predictions?: TypeDefinition<any, any> | string
       /** How the model was built; display only. */
       readonly method: { readonly label: string; readonly version?: string }
     }): ModelDefinition
