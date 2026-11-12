@@ -123,7 +123,7 @@ export const RunMapping = Norn.mapping({
   id: "norn.connect.mapping",
   title: "Sync reports to connections and runs",
   version: "0.1.0",
-  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "0000000000000000000000000000000000000000000000000000000000000000"},
+  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "bf3e24044948782b5030ea5ed67eb1fcc92c7d7fe9d198678c9b5f5da57cb017"},
   sourceContract: {kind: "generic"},
   interfaces: [Synced],
   maps: [

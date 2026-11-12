@@ -32,13 +32,17 @@ impl<E: SqlEngine> Deref for CellGuard<'_, E> {
     type Target = ActionCell<E>;
     fn deref(&self) -> &ActionCell<E> {
         // `cell()` admits only a present cell, and nothing takes it while the guard lives.
-        self.0.as_ref().unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+        self.0
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
     }
 }
 
 impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
     fn deref_mut(&mut self) -> &mut ActionCell<E> {
-        self.0.as_mut().unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+        self.0
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
     }
 }
 
@@ -151,20 +155,34 @@ impl<E: SqlEngine> DevHost<E> {
     /// failure; rows before it stay captured and processed.
     pub fn ingest(
         &self,
-        rows: &[(Observed<RuntimeValue>, norn_cell::mapping_bundle::MappingInput)],
+        rows: &[(
+            Observed<RuntimeValue>,
+            norn_cell::mapping_bundle::MappingInput,
+        )],
     ) -> Result<Vec<Ingested>, Refusal> {
         let _epoch = self.definition_read()?;
         let mut slot = self.cell.lock().map_err(Refusal::host)?;
-        let cell = slot.take().ok_or_else(|| Refusal::host("the cell is unavailable"))?;
-        let mut observing: norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E> =
-            cell.into_profile();
+        let cell = slot
+            .take()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        let mut observing: norn_cell::SqliteCell<
+            ObservationEvent,
+            RuntimeObject,
+            RuntimeObject,
+            E,
+        > = cell.into_profile();
         let mut out = Vec::with_capacity(rows.len());
         let mut failure = None;
         for (raw, input) in rows {
-            let step = observing.inject_mapping_bundle(raw, input).and_then(|(id, _new)| {
-                let outcome = observing.process_mapping_outcome(&id)?;
-                Ok(Ingested { observation_id: id, outcome })
-            });
+            let step = observing
+                .inject_mapping_bundle(raw, input)
+                .and_then(|(id, _new)| {
+                    let outcome = observing.process_mapping_outcome(&id)?;
+                    Ok(Ingested {
+                        observation_id: id,
+                        outcome,
+                    })
+                });
             match step {
                 Ok(ingested) => out.push(ingested),
                 Err(error) => {
@@ -185,14 +203,20 @@ impl<E: SqlEngine> DevHost<E> {
     /// reaches it.
     /// # Errors
     /// Poisoned synchronization or a store failure refuses closed.
-    pub fn installed_artifact(&self, artifact_id: &str) -> Result<Option<serde_json::Value>, Refusal> {
+    pub fn installed_artifact(
+        &self,
+        artifact_id: &str,
+    ) -> Result<Option<serde_json::Value>, Refusal> {
         let Some(active) = self.active_definitions()? else {
             return Ok(None);
         };
         let set: Vec<serde_json::Value> =
             serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
         Ok(set.into_iter().find(|artifact| {
-            artifact.get("artifactId").and_then(serde_json::Value::as_str) == Some(artifact_id)
+            artifact
+                .get("artifactId")
+                .and_then(serde_json::Value::as_str)
+                == Some(artifact_id)
         }))
     }
 
@@ -201,7 +225,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// reaches it, and it grants no read to anyone.
     /// # Errors
     /// Poisoned synchronization or a store failure refuses closed.
-    pub fn host_object(&self, object_type: &str, key: &str) -> Result<Option<RuntimeObject>, Refusal> {
+    pub fn host_object(
+        &self,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Option<RuntimeObject>, Refusal> {
         let _epoch = self.definition_read()?;
         let cell = self.cell()?;
         cell.store()

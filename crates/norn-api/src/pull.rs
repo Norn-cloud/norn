@@ -256,7 +256,10 @@ impl std::fmt::Display for PullError {
                 write!(f, "the source refused the read of {dataset}: HTTP {status}")
             }
             Self::Shape { dataset, reason } => {
-                write!(f, "the source's {dataset} response is not the declared shape: {reason}")
+                write!(
+                    f,
+                    "the source's {dataset} response is not the declared shape: {reason}"
+                )
             }
             Self::Bound { dataset, reason } => write!(f, "the {dataset} feed stopped: {reason}"),
             Self::NotWaiting => f.write_str("no request is outstanding"),
@@ -303,7 +306,10 @@ impl PullProfile {
                 return bad(format!("dataset {} has two feeds", feed.dataset));
             }
             if !feed.request.path.starts_with('/') || feed.request.path.contains("://") {
-                return bad(format!("{}: the path must be relative and start with '/'", feed.dataset));
+                return bad(format!(
+                    "{}: the path must be relative and start with '/'",
+                    feed.dataset
+                ));
             }
             if feed.paging.size() == 0 {
                 return bad(format!("{}: the page size must be positive", feed.dataset));
@@ -478,12 +484,21 @@ impl Pull {
             let id = item
                 .pointer(&feed.id_path)
                 .ok_or_else(|| shape(format!("an item has no id at {}", feed.id_path)))?;
-            let source_id = scalar_text(id)
-                .ok_or_else(|| shape(format!("the id at {} is not text or a number", feed.id_path)))?;
+            let source_id = scalar_text(id).ok_or_else(|| {
+                shape(format!(
+                    "the id at {} is not text or a number",
+                    feed.id_path
+                ))
+            })?;
             let version = item
                 .pointer(&feed.version_path)
                 .and_then(RuntimeValue::as_str)
-                .ok_or_else(|| shape(format!("an item has no version text at {}", feed.version_path)))?
+                .ok_or_else(|| {
+                    shape(format!(
+                        "an item has no version text at {}",
+                        feed.version_path
+                    ))
+                })?
                 .to_owned();
             let payload = feed
                 .fields
@@ -521,7 +536,10 @@ impl Pull {
                 has_next_path,
                 ..
             } => {
-                let more = matches!(response.pointer(has_next_path), Some(RuntimeValue::Bool(true)));
+                let more = matches!(
+                    response.pointer(has_next_path),
+                    Some(RuntimeValue::Bool(true))
+                );
                 if more {
                     let next = response
                         .pointer(next_cursor_path)
@@ -789,7 +807,8 @@ mod tests {
     /// A source whose rows are `(version, id)` pairs; a keyset read returns
     /// rows after the requested position in order.
     fn serve(rows: &[(String, u64)], request: &Request) -> Vec<u8> {
-        let body: Value = serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
+        let body: Value =
+            serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
         let version = body["after"][0].as_str().expect("version").to_owned();
         let id = body["after"][1].as_u64().expect("id");
         let limit = usize::try_from(body["limit"].as_u64().expect("limit")).expect("limit");
@@ -809,7 +828,8 @@ mod tests {
         let profile = keyset_profile(2);
         let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
-        let body: Value = serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
+        let body: Value =
+            serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["after"], serde_json::json!(["", 0]));
         assert_eq!(body["limit"], serde_json::json!(2));
         assert_eq!(body["q"], serde_json::json!("v>="));
@@ -842,11 +862,17 @@ mod tests {
         let profile = keyset_profile(2);
         let stored = BTreeMap::from([(
             "Item".to_owned(),
-            Watermark { version: "5".into(), id: Value::from(3) },
+            Watermark {
+                version: "5".into(),
+                id: Value::from(3),
+            },
         )]);
         let mut pull = Pull::new(profile.clone(), stored.clone(), Limits::default());
         let _request = pull.next_request().expect("request");
-        assert!(matches!(pull.accept(401, b"{}"), Err(PullError::Status { status: 401, .. })));
+        assert!(matches!(
+            pull.accept(401, b"{}"),
+            Err(PullError::Status { status: 401, .. })
+        ));
         assert_eq!(pull.watermarks(), &stored);
     }
 
@@ -860,11 +886,26 @@ mod tests {
             .expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].source_id, "7");
-        assert_eq!(rows[0].payload.get("code").map(RuntimeValue::canonical), Some("9000.10".into()));
+        assert_eq!(
+            rows[0].payload.get("code").map(RuntimeValue::canonical),
+            Some("9000.10".into())
+        );
         assert_eq!(rows[0].payload.get("missing"), Some(&RuntimeValue::Null));
-        assert_eq!(project(&RuntimeValue::from_json_text(r#"{"id":7}"#).expect("item"), "text:/id"), RuntimeValue::String("7".into()));
+        assert_eq!(
+            project(
+                &RuntimeValue::from_json_text(r#"{"id":7}"#).expect("item"),
+                "text:/id"
+            ),
+            RuntimeValue::String("7".into())
+        );
         assert!(pull.next_request().is_none());
-        assert_eq!(pull.watermarks()["Item"], Watermark { version: "1".into(), id: Value::from(7) });
+        assert_eq!(
+            pull.watermarks()["Item"],
+            Watermark {
+                version: "1".into(),
+                id: Value::from(7)
+            }
+        );
     }
 
     #[test]
@@ -884,13 +925,17 @@ mod tests {
         let first = pull.next_request().expect("first");
         let body: Value = serde_json::from_str(first.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["variables"]["after"], Value::Null);
-        assert_eq!(body["variables"]["q"], "updated_at:>='1970-01-01T00:00:00Z'");
+        assert_eq!(
+            body["variables"]["q"],
+            "updated_at:>='1970-01-01T00:00:00Z'"
+        );
         let rows = pull
             .accept(200, br#"{"data":{"v":{"nodes":[{"id":"a","updatedAt":"2026-11-02T00:00:00Z"},{"id":"b","updatedAt":"2026-11-03T00:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}"#)
             .expect("page 1");
         assert_eq!(rows.len(), 2);
         let second = pull.next_request().expect("second");
-        let body: Value = serde_json::from_str(second.body.as_deref().expect("body")).expect("json");
+        let body: Value =
+            serde_json::from_str(second.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["variables"]["after"], "c1");
         pull.accept(200, br#"{"data":{"v":{"nodes":[{"id":"c","updatedAt":"2026-11-01T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":"c2"}}}}"#)
             .expect("page 2");

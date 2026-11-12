@@ -287,7 +287,11 @@ impl Sources {
         };
         let watermarks_known = self.state.get(id).and_then(|s| s.watermarks.clone());
         let Some(run) = self.state.get_mut(id).and_then(|s| s.run.as_mut()) else {
-            return Step::Done(failed_summary("", "source.not_running", "no sync is running"));
+            return Step::Done(failed_summary(
+                "",
+                "source.not_running",
+                "no sync is running",
+            ));
         };
         let outcome = match response {
             None => begin(host, &config, &self.secrets, run, watermarks_known),
@@ -309,7 +313,11 @@ impl Sources {
     ) -> Step {
         let state = self.state.entry(config.id.clone()).or_default();
         let Some(run) = state.run.take() else {
-            return Step::Done(failed_summary("", "source.not_running", "no sync is running"));
+            return Step::Done(failed_summary(
+                "",
+                "source.not_running",
+                "no sync is running",
+            ));
         };
         state.last_end_ms = Some(now_ms);
         let watermarks = run
@@ -368,18 +376,38 @@ fn begin<E: SqlEngine>(
 ) -> Result<Option<HttpRequest>, Failure> {
     let connector = host
         .installed_artifact(&config.connector)
-        .map_err(|_| fail("source.connector_missing", "the definitions could not be read"))?
-        .ok_or_else(|| fail("source.connector_missing", format!("{} is not installed", config.connector)))?;
+        .map_err(|_| {
+            fail(
+                "source.connector_missing",
+                "the definitions could not be read",
+            )
+        })?
+        .ok_or_else(|| {
+            fail(
+                "source.connector_missing",
+                format!("{} is not installed", config.connector),
+            )
+        })?;
     let payload = connector.get("payload").cloned().unwrap_or_default();
     let profile = PullProfile::from_connector(&payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?
-        .ok_or_else(|| fail("source.profile_missing", format!("{} declares no norn.pull/1 profile", config.connector)))?;
+        .ok_or_else(|| {
+            fail(
+                "source.profile_missing",
+                format!("{} declares no norn.pull/1 profile", config.connector),
+            )
+        })?;
     run.auth = auth_headers(&payload, secrets)?;
     let stored = host
         .host_object(crate::sources::CONNECTION_TYPE, &config.id)
         .ok()
         .flatten()
-        .and_then(|object| object.get("watermark").and_then(RuntimeValue::as_str).map(str::to_owned))
+        .and_then(|object| {
+            object
+                .get("watermark")
+                .and_then(RuntimeValue::as_str)
+                .map(str::to_owned)
+        })
         .and_then(|text| serde_json::from_str::<BTreeMap<String, Watermark>>(&text).ok());
     let watermarks = stored.or(known).unwrap_or_default();
     run.watermark_from = watermark_text(&watermarks);
@@ -421,7 +449,9 @@ fn advance<E: SqlEngine>(
         PullError::Status { .. } => fail("source.http_status", error.to_string()),
         PullError::Shape { .. } => fail("source.response_shape", error.to_string()),
         PullError::Bound { .. } => fail("source.bound", error.to_string()),
-        PullError::Profile(_) | PullError::NotWaiting => fail("source.profile_invalid", error.to_string()),
+        PullError::Profile(_) | PullError::NotWaiting => {
+            fail("source.profile_invalid", error.to_string())
+        }
     })?;
     let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(now_ms));
     let profile = pull.profile().clone();
@@ -446,7 +476,9 @@ fn advance<E: SqlEngine>(
     let outcomes = host
         .ingest(&batch)
         .map_err(|refusal| fail("source.ingest", refusal.message))?;
-    run.read = run.read.saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
+    run.read = run
+        .read
+        .saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
     for ingested in outcomes {
         match ingested.outcome {
             MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
@@ -461,7 +493,9 @@ fn advance<E: SqlEngine>(
             }
         }
     }
-    Ok(pull.next_request().map(|request| http(config, &run.auth, request)))
+    Ok(pull
+        .next_request()
+        .map(|request| http(config, &run.auth, request)))
 }
 
 /// The connector's declared header auth, resolved from server secrets.
@@ -479,11 +513,19 @@ fn auth_headers(
             let secret = secrets
                 .get(&name)
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| fail("source.secret_missing", format!("the server has no {name}")))?;
+                .ok_or_else(|| {
+                    fail("source.secret_missing", format!("the server has no {name}"))
+                })?;
             let header = field("name").unwrap_or("Authorization");
-            Ok(vec![(header.to_owned(), format!("{}{secret}", field("prefix").unwrap_or_default()))])
+            Ok(vec![(
+                header.to_owned(),
+                format!("{}{secret}", field("prefix").unwrap_or_default()),
+            )])
         }
-        _ => Err(fail("source.auth_unsupported", "this connector's auth is not supported by the pull host")),
+        _ => Err(fail(
+            "source.auth_unsupported",
+            "this connector's auth is not supported by the pull host",
+        )),
     }
 }
 
@@ -566,8 +608,16 @@ fn report<E: SqlEngine>(
         .error
         .clone()
         .map_or((None, None), |(c, m)| (Some(c), Some(m)));
-    let status = if ended.is_none() { "syncing" } else { summary.outcome };
-    let auth = if config.connector.is_empty() { "presigned_upload" } else { "api_key" };
+    let status = if ended.is_none() {
+        "syncing"
+    } else {
+        summary.outcome
+    };
+    let auth = if config.connector.is_empty() {
+        "presigned_upload"
+    } else {
+        "api_key"
+    };
     let connection = norn_ir::runtime_object! {
         "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
         "target" => config.base_url.as_str(), "auth" => auth, "status" => status,

@@ -60,7 +60,9 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "norn.connect.source",
         "norn.connect.mapping",
     ] {
-        set.push(artifact(&format!("registry/packs/sources/artifacts/{name}.json")));
+        set.push(artifact(&format!(
+            "registry/packs/sources/artifacts/{name}.json"
+        )));
     }
     set
 }
@@ -91,7 +93,10 @@ fn host() -> DevHost<norn_cell::engine::NativeEngine> {
     .expect("checked");
     assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Entity)
+    {
         let root: EntityRoot = serde_json::from_value(
             serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
         )
@@ -151,9 +156,9 @@ fn profile(system: &str) -> PullProfile {
 /// The recorded first page per dataset, then empty pages.
 fn recorded(system: &str) -> BTreeMap<String, (u16, Value)> {
     let document: Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            root().join(format!("fixtures/connectors/sandbox/{system}.responses.json")),
-        )
+        &std::fs::read_to_string(root().join(format!(
+            "fixtures/connectors/sandbox/{system}.responses.json"
+        )))
         .expect("recorded responses"),
     )
     .expect("JSON");
@@ -174,12 +179,20 @@ fn recorded(system: &str) -> BTreeMap<String, (u16, Value)> {
 }
 
 fn empty_page(profile: &PullProfile, dataset: &str) -> Value {
-    let feed = profile.feeds.iter().find(|f| f.dataset == dataset).expect("feed");
+    let feed = profile
+        .feeds
+        .iter()
+        .find(|f| f.dataset == dataset)
+        .expect("feed");
     let mut body = json!({});
     let mut at = &mut body;
     let parts: Vec<&str> = feed.items_path.trim_start_matches('/').split('/').collect();
     for (i, part) in parts.iter().enumerate() {
-        at[*part] = if i + 1 == parts.len() { json!([]) } else { json!({}) };
+        at[*part] = if i + 1 == parts.len() {
+            json!([])
+        } else {
+            json!({})
+        };
         at = &mut at[*part];
     }
     body
@@ -237,15 +250,27 @@ fn sandbox_rows_land_through_the_mapping_path_once() {
             .filter(|o| matches!(o.outcome, MappingOutcome::Quarantined(_)))
             .collect();
         assert!(quarantined.is_empty(), "{system}: {quarantined:#?}");
-        assert_eq!(count(&outcomes, &MappingOutcome::Landed), rows.len(), "{system}");
+        assert_eq!(
+            count(&outcomes, &MappingOutcome::Landed),
+            rows.len(),
+            "{system}"
+        );
         // The same source events again are the same observations: nothing lands twice.
         let again = host.ingest(&rows).expect("re-ingested");
-        assert_eq!(count(&again, &MappingOutcome::AlreadyLanded), rows.len(), "{system}");
+        assert_eq!(
+            count(&again, &MappingOutcome::AlreadyLanded),
+            rows.len(),
+            "{system}"
+        );
         // Every feed's watermark is its last row's position.
         let profile = profile(system);
         assert_eq!(
             watermarks.keys().collect::<BTreeSet<_>>(),
-            profile.feeds.iter().map(|f| &f.dataset).collect::<BTreeSet<_>>()
+            profile
+                .feeds
+                .iter()
+                .map(|f| &f.dataset)
+                .collect::<BTreeSet<_>>()
         );
     }
 }
@@ -283,14 +308,26 @@ fn a_row_without_a_canonical_reference_is_quarantined_with_its_reason() {
 #[test]
 fn sandbox_mappings_pin_their_source_schemas() {
     let pairs = [
-        ("erpnext", "erpnext.sandbox", "registry/packs/erpnext/sandbox.ts"),
+        (
+            "erpnext",
+            "erpnext.sandbox",
+            "registry/packs/erpnext/sandbox.ts",
+        ),
         ("odoo", "odoo.sandbox", "registry/packs/odoo/sandbox.ts"),
-        ("sources", "norn.connect", "registry/packs/sources/records.ts"),
+        (
+            "sources",
+            "norn.connect",
+            "registry/packs/sources/records.ts",
+        ),
     ];
     let mut wrong = Vec::new();
     for (pack, stem, typed) in pairs {
-        let source = artifact(&format!("registry/packs/{pack}/artifacts/{stem}.source.json"));
-        let mapping = artifact(&format!("registry/packs/{pack}/artifacts/{stem}.mapping.json"));
+        let source = artifact(&format!(
+            "registry/packs/{pack}/artifacts/{stem}.source.json"
+        ));
+        let mapping = artifact(&format!(
+            "registry/packs/{pack}/artifacts/{stem}.mapping.json"
+        ));
         let pin = norn_checker::ArtifactRef::of(&source).expect("pin").sha256;
         let payload = serde_json::to_value(mapping.payload.to_json_value()).expect("payload");
         if payload["source"]["sha256"].as_str() != Some(pin.as_str()) {
@@ -312,8 +349,14 @@ fn sources() -> Sources {
     Sources::new(
         CONFIG,
         BTreeMap::from([
-            ("NORN_SECRET_ERPNEXT_SANDBOX_TOKEN".to_owned(), "key:secret".to_owned()),
-            ("NORN_SECRET_ODOO_SANDBOX_API_KEY".to_owned(), "odoo-key".to_owned()),
+            (
+                "NORN_SECRET_ERPNEXT_SANDBOX_TOKEN".to_owned(),
+                "key:secret".to_owned(),
+            ),
+            (
+                "NORN_SECRET_ODOO_SANDBOX_API_KEY".to_owned(),
+                "odoo-key".to_owned(),
+            ),
         ]),
     )
     .expect("configuration")
@@ -345,7 +388,12 @@ fn sync(
                     .remove(&feed.dataset)
                     .unwrap_or_else(|| (200, empty_page(&profile, &feed.dataset)));
                 sent.push(request);
-                step = sources.step(host, id, Some((status, body.to_string().as_bytes())), now_ms);
+                step = sources.step(
+                    host,
+                    id,
+                    Some((status, body.to_string().as_bytes())),
+                    now_ms,
+                );
             }
         }
     }
@@ -356,30 +404,64 @@ fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
     let host = host();
     let mut sources = sources();
     sources
-        .claim("erpnext.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_800_000)
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:owner@demo",
+            1_794_484_800_000,
+        )
         .expect("claimed");
     // SYNC-ONE-1: a second claim while it runs is refused.
     assert_eq!(
-        sources.claim("erpnext.sandbox", Trigger::Manual, "user:other@demo", 1_794_484_800_001),
+        sources.claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:other@demo",
+            1_794_484_800_001
+        ),
         Err(ClaimError::Running)
     );
-    let (summary, sent) = sync(&host, &mut sources, "erpnext.sandbox", "erpnext", 1_794_484_800_000);
+    let (summary, sent) = sync(
+        &host,
+        &mut sources,
+        "erpnext.sandbox",
+        "erpnext",
+        1_794_484_800_000,
+    );
     assert_eq!(summary.outcome, "ok", "{summary:#?}");
     assert!(summary.rows_read > 0);
     assert_eq!(summary.rows_landed, summary.rows_read);
     // Credentials and the site header ride every request; the URL is the base plus the planned path.
     for request in &sent {
-        assert!(request.url.starts_with("http://erpnext-sandbox:8000/api/resource/"));
-        assert!(request.headers.contains(&("Authorization".into(), "token key:secret".into())));
-        assert!(request.headers.contains(&("X-Frappe-Site-Name".into(), "frontend".into())));
+        assert!(
+            request
+                .url
+                .starts_with("http://erpnext-sandbox:8000/api/resource/")
+        );
+        assert!(
+            request
+                .headers
+                .contains(&("Authorization".into(), "token key:secret".into()))
+        );
+        assert!(
+            request
+                .headers
+                .contains(&("X-Frappe-Site-Name".into(), "frontend".into()))
+        );
     }
     let connection = host
         .host_object("source.Connection", "erpnext.sandbox")
         .expect("read")
         .expect("the connection object");
-    assert_eq!(connection.get("status").and_then(RuntimeValue::as_str), Some("ok"));
+    assert_eq!(
+        connection.get("status").and_then(RuntimeValue::as_str),
+        Some("ok")
+    );
     let watermark: BTreeMap<String, Value> = serde_json::from_str(
-        connection.get("watermark").and_then(RuntimeValue::as_str).expect("watermark"),
+        connection
+            .get("watermark")
+            .and_then(RuntimeValue::as_str)
+            .expect("watermark"),
     )
     .expect("watermark JSON");
     assert_eq!(watermark.len(), 4);
@@ -387,16 +469,40 @@ fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
         .host_object("source.SyncRun", &summary.run)
         .expect("read")
         .expect("the run object");
-    assert_eq!(run.get("actor").and_then(RuntimeValue::as_str), Some("user:owner@demo"));
-    assert_eq!(run.get("trigger").and_then(RuntimeValue::as_str), Some("manual"));
+    assert_eq!(
+        run.get("actor").and_then(RuntimeValue::as_str),
+        Some("user:owner@demo")
+    );
+    assert_eq!(
+        run.get("trigger").and_then(RuntimeValue::as_str),
+        Some("manual")
+    );
     // The next sync starts from the recorded watermark, read back from the cell.
     sources
-        .claim("erpnext.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_900_000)
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:owner@demo",
+            1_794_484_900_000,
+        )
         .expect("claimed again");
-    let (again, sent) = sync(&host, &mut sources, "erpnext.sandbox", "erpnext", 1_794_484_900_000);
+    let (again, sent) = sync(
+        &host,
+        &mut sources,
+        "erpnext.sandbox",
+        "erpnext",
+        1_794_484_900_000,
+    );
     assert_eq!(again.outcome, "ok");
-    let party = watermark["Party"]["version"].as_str().expect("version").replace(' ', "%20");
-    assert!(sent[0].url.contains(&party.replace(':', "%3A")), "{}", sent[0].url);
+    let party = watermark["Party"]["version"]
+        .as_str()
+        .expect("version")
+        .replace(' ', "%20");
+    assert!(
+        sent[0].url.contains(&party.replace(':', "%3A")),
+        "{}",
+        sent[0].url
+    );
 }
 
 #[test]
@@ -408,14 +514,33 @@ fn the_schedule_claims_each_due_connection_once_as_its_own_principal() {
     let second = sources.due(t0).expect("the other one is due too");
     assert_ne!(first, second);
     assert_eq!(sources.due(t0), None, "both are running");
-    for (id, system) in [(first.as_str(), &first[..first.find('.').expect("dotted")]), (second.as_str(), &second[..second.find('.').expect("dotted")])] {
+    for (id, system) in [
+        (first.as_str(), &first[..first.find('.').expect("dotted")]),
+        (
+            second.as_str(),
+            &second[..second.find('.').expect("dotted")],
+        ),
+    ] {
         let (summary, _) = sync(&host, &mut sources, id, system, t0);
         assert_eq!(summary.outcome, "ok", "{summary:#?}");
-        let run = host.host_object("source.SyncRun", &summary.run).expect("read").expect("run");
-        assert_eq!(run.get("actor").and_then(RuntimeValue::as_str), Some(format!("connection:{id}").as_str()));
-        assert_eq!(run.get("trigger").and_then(RuntimeValue::as_str), Some("schedule"));
+        let run = host
+            .host_object("source.SyncRun", &summary.run)
+            .expect("read")
+            .expect("run");
+        assert_eq!(
+            run.get("actor").and_then(RuntimeValue::as_str),
+            Some(format!("connection:{id}").as_str())
+        );
+        assert_eq!(
+            run.get("trigger").and_then(RuntimeValue::as_str),
+            Some("schedule")
+        );
     }
-    assert_eq!(sources.due(t0 + 60_000), None, "not due again within 15 minutes");
+    assert_eq!(
+        sources.due(t0 + 60_000),
+        None,
+        "not due again within 15 minutes"
+    );
     assert!(sources.due(t0 + 15 * 60_000).is_some());
 }
 
@@ -424,7 +549,12 @@ fn a_refused_read_fails_the_run_and_says_why() {
     let host = host();
     let mut sources = sources();
     sources
-        .claim("odoo.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_800_000)
+        .claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:owner@demo",
+            1_794_484_800_000,
+        )
         .expect("claimed");
     let Step::Request(_) = sources.step(&host, "odoo.sandbox", None, 1_794_484_800_000) else {
         panic!("a first request")
@@ -435,11 +565,17 @@ fn a_refused_read_fails_the_run_and_says_why() {
         panic!("the run ends")
     };
     assert_eq!(summary.outcome, "failed");
-    assert_eq!(summary.error.as_ref().map(|e| e.0.as_str()), Some("source.http_status"));
+    assert_eq!(
+        summary.error.as_ref().map(|e| e.0.as_str()),
+        Some("source.http_status")
+    );
     let connection = host
         .host_object("source.Connection", "odoo.sandbox")
         .expect("read")
         .expect("connection");
-    assert_eq!(connection.get("status").and_then(RuntimeValue::as_str), Some("failed"));
+    assert_eq!(
+        connection.get("status").and_then(RuntimeValue::as_str),
+        Some("failed")
+    );
     assert!(!sources.running("odoo.sandbox"));
 }
