@@ -121,17 +121,31 @@ export function decideRequest(decisionId: string, input: Fields, idempotencyKey:
   }
 }
 
+const UNITS: Readonly<Record<Locale, { readonly day: (n: number) => string; readonly h: string; readonly min: string; readonly s: string }>> = {
+  en: { day: (n) => (n === 1 ? "day" : "days"), h: "h", min: "min", s: "s" },
+  ar: { day: (n) => (n === 1 ? "يوم" : n === 2 ? "يومان" : n <= 10 ? "أيام" : "يومًا"), h: "س", min: "د", s: "ث" },
+}
+
 /** What is left before the deadline, in the two largest units; null once it has passed. */
-export function remaining(expiresAtMs: number, now: number): string | null {
+export function remaining(expiresAtMs: number, now: number, locale: Locale = "en"): string | null {
   const ms = expiresAtMs - now
   if (ms <= 0) return null
+  const u = UNITS[locale]
   const s = Math.floor(ms / 1000)
   const d = Math.floor(s / 86_400)
   const h = Math.floor((s % 86_400) / 3600)
   const m = Math.floor((s % 3600) / 60)
-  if (d > 0) return [`${d} ${d === 1 ? "day" : "days"}`, h > 0 ? `${h} h` : ""].filter(Boolean).join(" ")
-  if (h > 0) return [`${h} h`, m > 0 ? `${m} min` : ""].filter(Boolean).join(" ")
-  return m > 0 ? `${m} min` : `${s} s`
+  if (d > 0) return [`${d} ${u.day(d)}`, h > 0 ? `${h} ${u.h}` : ""].filter(Boolean).join(" ")
+  if (h > 0) return [`${h} ${u.h}`, m > 0 ? `${m} ${u.min}` : ""].filter(Boolean).join(" ")
+  return m > 0 ? `${m} ${u.min}` : `${s} ${u.s}`
+}
+
+/** A flow's name in words when the server sends no title: `canon.refund_review.flow.rule` → "Refund review". */
+export function flowName(flow: SheetDecision["flow"]): string {
+  if (flow.title) return flow.title
+  const id = flow.ruleId.replace(/\.flow\.rule$/, "")
+  const words = id.slice(id.lastIndexOf(".") + 1).replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll(/[_-]+/g, " ").trim()
+  return words === "" ? flow.ruleId : words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
 }
 
 /** The sheet's markup for one decision. Structure only; `paint` applies the machine's state. */
@@ -160,7 +174,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
     <section class="norn-sheet" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${locale}" aria-label="${escape(label(byId.get("decision-sheet"), locale))}">
       <header class="norn-sheet-header">
         <h2 class="norn-title" data-region="question">${escape(decision.question)}</h2>
-        <p class="norn-meta">${escape(decision.flow.title ?? decision.flow.ruleId)} · ${escape(decision.step.label ?? decision.step.id)}</p>
+        <p class="norn-meta">${escape(flowName(decision.flow))} · ${escape(decision.step.label ?? decision.step.id)}</p>
         <div class="norn-actions">
           <span class="norn-chip" data-tone="risk-${decision.risk}">${escape(w[`risk.${decision.risk}`])}</span>
           <span class="norn-meta" data-region="countdown"></span>
@@ -257,7 +271,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
   const paintCountdown = (settled: boolean) => {
     const countdown = q('[data-region="countdown"]')
     if (!countdown) return
-    const left = now === undefined || settled ? undefined : remaining(decision.expiresAtMs, now)
+    const left = now === undefined || settled ? undefined : remaining(decision.expiresAtMs, now, locale)
     countdown.textContent = left === undefined ? "" : left === null ? w.lapsed : say("left", left)
     countdown.toggleAttribute("data-urgent", now !== undefined && decision.expiresAtMs - now < 3_600_000)
   }
@@ -292,7 +306,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
         [w.decision, decision.id],
       ]
       const dl = details.querySelector("dl")
-      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt><dd><code>${escape(value)}</code></dd>`).join("")
+      // Long values (the receipt hash) read as their first 16 characters; the whole value is the title.
+      const short = (value: string) => (value.length > 20 ? `${value.slice(0, 16)}…` : value)
+      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt><dd><code title="${escape(value)}">${escape(short(value))}</code></dd>`).join("")
       details.hidden = false
     } else if (state === "resolved") {
       const resolution = record(doc.resolution)
@@ -336,7 +352,10 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const confirmButton = q<HTMLButtonElement>('[data-node="confirm-button"]')
     if (confirmButton) confirmButton.textContent = say("confirmAs", optionLabel(choice).toLowerCase())
     const hint = q('[data-region="hint"]')
-    if (hint) hint.textContent = choice ? "" : w.choose
+    if (hint) hint.textContent = choice || !enabled(machine, evaluate, snapshot, "option-choice") ? "" : w.choose
+    // The footer shows only while it offers something.
+    const footer = q('[data-region="decision-actions"]')
+    if (footer) footer.hidden = ![...footer.querySelectorAll<HTMLButtonElement>("button[data-node]")].some((button) => !button.hidden)
     const confirmBody = q('[data-region="confirm-body"]')
     if (confirmBody) confirmBody.textContent = say("confirm.body", optionLabel(choice), decision.options.find((o) => o.id === choice)?.scope ?? "")
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
@@ -356,6 +375,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       const extra = found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
       status.textContent = [message, ...extra].filter(Boolean).join(" ")
       status.hidden = status.textContent === ""
+      status.dataset.tone = "danger"
     }
     for (const problem of root.querySelectorAll<HTMLElement>("[data-problem]")) {
       const words = found.filter((p) => p.pointer === problem.dataset.problem).map((p) => p.message).join(" ")
