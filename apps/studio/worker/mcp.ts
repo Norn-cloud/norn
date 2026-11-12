@@ -115,9 +115,13 @@ const WIDGET_META = { ui: { prefersBorder: true, csp: { connectDomains: [], reso
 const rpcResult = (id: unknown, result: unknown) => json(200, { jsonrpc: "2.0", id, result })
 const rpcFailure = (id: unknown, code: number, message: string, data?: unknown) => json(200, { jsonrpc: "2.0", id, error: { code, message, ...data === undefined ? {} : { data } } })
 
-/** The widget page for one view, naming the view and Studio's origin for its links; null when this build has none. */
+/**
+ * The widget page for one view, naming the view and Studio's origin for its links; null when this
+ * build has none. It is read at `/widgets/norn`: the static layer answers `norn.html` with a 307
+ * to that path, and the SPA fallback page carries no widget marker, so it reads as no build.
+ */
 export async function widgetPage(edge: Pick<McpEdge, "assets" | "baseURL">, view: (typeof WIDGET_VIEWS)[number]): Promise<string | null> {
-  const response = await edge.assets.fetch(new Request(new URL("/widgets/norn.html", edge.baseURL)))
+  const response = await edge.assets.fetch(new Request(new URL("/widgets/norn", edge.baseURL)))
   if (!response.ok) return null
   return viewPage(await response.text(), view, new URL(edge.baseURL).origin)
 }

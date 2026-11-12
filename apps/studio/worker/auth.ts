@@ -133,6 +133,9 @@ const assistantAuthorization = (baseURL: string) => [
     // only the callbacks above can receive a code.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
+    // A registration that names no application_type is typed by its callbacks: a loopback one
+    // (Claude Code, the MCP inspector) registers as native, an https one stays web.
+    clientRegistrationDefaultApplicationType: "infer",
     validateRedirectUri: (uri: string, _registered: readonly string[], matched: boolean) => matched && assistantCallback(uri),
     accessTokenExpiresIn: 15 * MINUTE,
     // The consent is recorded against the organization the person is working in.
