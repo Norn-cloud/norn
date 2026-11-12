@@ -191,8 +191,7 @@ fn use_site_additivity_needs_a_numeric_type_and_never_contradicts_its_declaratio
 fn an_inline_requirement_still_needs_the_same_additivity() {
     let mut artifacts = admitted();
     let mut event: Value = serde_json::to_value(&artifacts[1]).expect("wire");
-    event["payload"]["interface"]["properties"][1]["type"] =
-        json!({"kind": "decimal", "scale": 6});
+    event["payload"]["interface"]["properties"][1]["type"] = json!({"kind": "decimal", "scale": 6});
     artifacts[1] = serde_json::from_value(event).expect("envelope");
     assert!(errors(&artifacts).contains(object_codes::INTERFACE_PROPERTY_TYPE_MISMATCH));
 }
