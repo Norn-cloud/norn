@@ -19,6 +19,7 @@ import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { LinkedRecords } from "./linked-records.tsx"
+import { RecordActions } from "./actions/record-actions.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -65,6 +66,7 @@ export function ObjectPage() {
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>}
           </div>}
+          {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={() => void reads.refetch()} /></div>}
           {data && concept && <div className="flex flex-wrap gap-1.5 pt-1">
             {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}
             {/* Personal data is marked by the server in the documents it sends; these mark none. */}
