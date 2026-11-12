@@ -1,6 +1,7 @@
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import { MCP_PATH, ORG_CLAIM, activeMembership, mcpResource, type Auth } from "./auth.ts"
 import { hostToken, type NornActor } from "./actor.ts"
+import { viewPage } from "./widget-page.ts"
 
 /**
  * The MCP endpoint people add to an assistant they already use (Claude, ChatGPT):
@@ -110,8 +111,6 @@ const WIDGET_TITLES: Readonly<Record<(typeof WIDGET_VIEWS)[number], string>> = {
 }
 /** The sandbox the widget needs: inline script and style only, no connections, no frames. */
 const WIDGET_META = { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } }
-/** Marks the built widget page, so the single-page fallback is never served as a widget. */
-const WIDGET_MARKER = '<meta name="norn-widget" content="1"'
 
 const rpcResult = (id: unknown, result: unknown) => json(200, { jsonrpc: "2.0", id, result })
 const rpcFailure = (id: unknown, code: number, message: string, data?: unknown) => json(200, { jsonrpc: "2.0", id, error: { code, message, ...data === undefined ? {} : { data } } })
@@ -120,10 +119,7 @@ const rpcFailure = (id: unknown, code: number, message: string, data?: unknown) 
 export async function widgetPage(edge: Pick<McpEdge, "assets" | "baseURL">, view: (typeof WIDGET_VIEWS)[number]): Promise<string | null> {
   const response = await edge.assets.fetch(new Request(new URL("/widgets/norn.html", edge.baseURL)))
   if (!response.ok) return null
-  const html = await response.text()
-  if (!html.includes(WIDGET_MARKER) || !html.includes("<head>")) return null
-  const origin = new URL(edge.baseURL).origin
-  return html.replace("<head>", `<head><meta name="norn-view" content="${view}"><meta name="norn-studio" content="${origin}">`)
+  return viewPage(await response.text(), view, new URL(edge.baseURL).origin)
 }
 
 const RESOURCE_METHODS = new Set(["resources/list", "resources/read", "resources/templates/list"])
