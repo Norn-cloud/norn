@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { NotServed } from "@/lib/live-transport"
 import { profiled, readProfile, type ObjectProfile, type PropertyProfile } from "@/lib/profile"
+import { atScale } from "@/lib/objects"
 
 const percent = (part: number, whole: number) => whole === 0 ? "—" : `${((part / whole) * 100).toFixed(part === 0 || part === whole ? 0 : 1)}%`
 
@@ -58,13 +59,15 @@ function quantile(read: Read<ObjectProfile>, at: string, property: PropertyProfi
  * count, nulls, distinct values, range, quartiles and histogram. Every figure is the cell's; rows
  * whose values it withholds from this reader are counted apart and add nothing to the figures.
  */
-export function ProfilePanel({ objectType }: { readonly objectType: string }) {
+export function ProfilePanel({ objectType, scales = new Map() }: { readonly objectType: string; readonly scales?: ReadonlyMap<string, number> }) {
   const profile = useQuery({ queryKey: ["profile", objectType], queryFn: () => readProfile(objectType), retry: false })
   if (profile.isPending) return <p className="text-sm text-muted-foreground">Profiling the records…</p>
   if (profile.isError) return profile.error instanceof NotServed
     ? <EmptyState icon={BarChart3} title="Not served">{profile.error.message}</EmptyState>
     : <p role="alert" className="text-sm text-destructive">{profile.error.message}</p>
   const read = profile.data
+  // A numeric figure is written at its property's declared scale, as the record shows it.
+  const scaled = (property: PropertyProfile, text: string) => property.kind === "numeric" ? atScale(text, scales.get(property.property)) : text
   const { rows, withheldRows, quarantinedRows, approximate, scanLimit, engine, properties } = read.document
   return (
     <Panel icon={BarChart3} label="Profile" action={<span className="text-meta text-muted-foreground">computed by the {engine} engine</span>}>
@@ -92,9 +95,9 @@ export function ProfilePanel({ objectType }: { readonly objectType: string }) {
                     <TableCell className="text-right tabular-nums">{property.count}</TableCell>
                     <TableCell className="text-right tabular-nums" title={`${property.nulls} of ${property.count + property.nulls}`}>{percent(property.nulls, property.count + property.nulls)}</TableCell>
                     <TableCell className="text-right tabular-nums">{property.distinct}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{ranged ? profiled(read, `${at}/min`, property.min) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-xs" title={ranged ? property.quantiles.map(({ percent: p }, q) => `p${p} ${profiled(read, `${at}/quantiles/${q}/value`, property.quantiles[q]?.value)}`).join(" · ") : undefined}>{ranged ? quantile(read, at, property, 50) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{ranged ? profiled(read, `${at}/max`, property.max) : ""}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{ranged ? scaled(property, profiled(read, `${at}/min`, property.min)) : ""}</TableCell>
+                    <TableCell className="text-right font-mono text-xs" title={ranged ? property.quantiles.map(({ percent: p }, q) => `p${p} ${profiled(read, `${at}/quantiles/${q}/value`, property.quantiles[q]?.value)}`).join(" · ") : undefined}>{ranged ? scaled(property, quantile(read, at, property, 50)) : ""}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{ranged ? scaled(property, profiled(read, `${at}/max`, property.max)) : ""}</TableCell>
                     <TableCell>{property.histogram && property.histogram.bins.length > 0 ? <Bars read={read} at={at} histogram={property.histogram} /> : <span className="text-xs text-muted-foreground">{ranged ? "—" : `${property.distinct} distinct`}</span>}</TableCell>
                   </TableRow>
                 )
