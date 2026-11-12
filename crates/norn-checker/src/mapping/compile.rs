@@ -3053,15 +3053,16 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         }
         (Some(Json::Number(number)), Type::Number | Type::Decimal { .. }) => number_value(number),
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
-        (Some(value), Type::Json) => any_value(value),
-        // A declared child table: its rows are records the checker typed
-        // statically; each row is converted exactly, as opaque JSON was.
+        // A declared child table's row is a record the checker typed
+        // statically; it is converted exactly, as opaque JSON is.
+        (Some(value), Type::Json) | (Some(value @ Json::Object(_)), Type::Record(_)) => {
+            any_value(value)
+        }
         (Some(Json::Array(rows)), Type::List(row)) => rows
             .iter()
             .map(|item| conform(Some(item), row))
             .collect::<Result<_, _>>()
             .map(Value::Array),
-        (Some(value @ Json::Object(_)), Type::Record(_)) => any_value(value),
         (Some(value), ty) => Err(format!("{value:?} does not conform to {ty:?}")),
     }
 }
