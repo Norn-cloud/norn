@@ -174,6 +174,10 @@ property tests run both at the same frontier.
   object version with its commit interval, synced by the cell in whole
   commits; an answer at frontier `F` reads exactly the versions current at
   `F`. A batch that does not continue the mirror's frontier refuses whole.
+- **HOST-READ-5 (engine):** `:profile` on a host with an engine is computed
+  by it over the snapshot an export reads, in the exact profile's shape and
+  semantics (named scenario
+  `the_engine_profile_equals_the_exact_profile_of_every_demo_type`).
 - **QUERY-ENGINE-1 (engine):** within the plan's bound the engine's envelope
   equals the exact engine's, normalizing only `engine`; the same Core 03
   refusals apply. Past the bound the engine answers where the exact engine
@@ -194,9 +198,12 @@ property tests run both at the same frontier.
   `(uri, sha256, row)`, and an answer over the dataset is exact at its load.
 
 Laws on loaded datasets, honestly: pointwise laws are checked at load (the
-value types and required values). Laws that relate rows (uniqueness,
-conservation, sums, lifecycles, links) and invariants that the checker has not
-lowered to a row predicate are **not** enforced on a dataset. A dataset is
+value types, required values, enum values, numeric bounds and text lengths);
+a property with a constraint the engine does not evaluate (a pattern) refuses
+the load (`bulk.unsupported_law`) rather than admitting unchecked rows. Laws
+that relate rows (uniqueness, conservation, sums, lifecycles, links) and
+invariants that the checker has not lowered to a row predicate are **not**
+enforced on a dataset. A dataset is
 analytical evidence, not governed facts: a fact that must hold under those laws
 goes through the kernel's governed path.
 
