@@ -59,7 +59,9 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { read
             </TableCell>
             <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
             <TableCell>{contribution.source.status === "resolved"
-              ? <><div className="font-medium">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-xs text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+              ? contribution.source.provenance?.sourceRecordRef
+                ? <><div className="font-medium">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-xs text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+                : <span className="text-muted-foreground">Resolved</span>
               : <span className="text-muted-foreground" title={contribution.source.status === "restricted" ? "Your role may not see where this record came from." : "The cell retains no source record for it."}>{contribution.source.status === "restricted" ? "Withheld" : "None retained"}</span>}</TableCell>
             <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>

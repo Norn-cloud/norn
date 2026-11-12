@@ -29,7 +29,7 @@ export interface Contribution {
   readonly receiptHash: string | null
   readonly factDigest: string | null
   /** Where the record came from: its source record when the reader holds Sources, else why not. */
-  readonly source: { readonly status: "resolved"; readonly provenance: Schemas["NornInstanceSourceProvenance"] } | { readonly status: "restricted" | "unavailable" }
+  readonly source: { readonly status: "resolved"; readonly provenance?: Schemas["NornInstanceSourceProvenance"] } | { readonly status: "restricted" | "unavailable" }
   readonly commitSeq: number
   readonly recordedAtMs: number
   /** The server withheld this record's values from the reader's role. */
