@@ -443,8 +443,8 @@ mod page_tests {
             (row("x"), items.clone()),
             (row("y"), items.clone()),
             (row("x"), items.clone()),
-            (row("z"), bins.clone()),
-            (row("z"), items.clone()),
+            (row("z"), bins),
+            (row("z"), items),
         ];
         let framed: Vec<(String, Vec<String>)> = pages(&mixed)
             .into_iter()
