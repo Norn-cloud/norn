@@ -14,6 +14,12 @@ crate-type = ["cdylib", "rlib"]
 name = "norn-dev-host"
 path = "src/bin/norn-dev-host.rs"
 
+# The tenant analytics engine next to the cell host (D102).
+[[bin]]
+name = "norn-olapd"
+path = "src/bin/norn-olapd.rs"
+required-features = ["duckdb"]
+
 [dependencies]
 norn-api = { path = "../norn-api" }
 norn-cell = { path = "../norn-cell", default-features = false }
@@ -41,6 +47,8 @@ norn-cell = { path = "../norn-cell", default-features = false, features = ["nati
 clap = { version = "4.6.7", features = ["derive"] }
 # The per-session dev token and lineage handle key.
 getrandom = "0.3.4"
+# `norn-olapd` reads a dataset from the presigned URL the cell minted.
+ureq = { version = "=3.4.0", default-features = false, features = ["rustls"], optional = true }
 
 # O_NOFOLLOW for the owner-only session files.
 [target.'cfg(unix)'.dependencies]
@@ -59,7 +67,7 @@ ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"
 fixtures = []
 # `norn-dev-host` answers questions DuckDB can lower on DuckDB (QUERY-ENGINE-1)
 # and falls back to the native exact engine. Opt-in: it builds bundled DuckDB.
-duckdb = ["norn-cell/duckdb"]
+duckdb = ["norn-cell/duckdb", "dep:ureq"]
 
 [lints]
 workspace = true

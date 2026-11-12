@@ -177,3 +177,35 @@ pub fn coefficient(value: &Decimal) -> Option<i64> {
         .contains(&coefficient)
         .then_some(coefficient)
 }
+
+/// The exact UTC ordering key of a stored timestamp (or of a date's UTC
+/// midnight), by the same rules [`project`] reads instants with.
+#[must_use]
+pub fn instant_key(text: &str, date: bool) -> Option<(i64, u32)> {
+    norn_expr::temporal::timestamp_ordering_key(&if date {
+        format!("{text}T00:00:00Z")
+    } else {
+        text.to_owned()
+    })
+    .ok()
+}
+
+/// The UTC seconds of the Monday starting the week of `seconds`, as [`project`] buckets it.
+#[must_use]
+pub fn week_start(seconds: i64) -> Option<i64> {
+    seconds
+        .checked_sub(345_600)?
+        .div_euclid(604_800)
+        .checked_mul(604_800)?
+        .checked_add(345_600)
+}
+
+/// The week bucket value [`project`] gives the Monday at `monday` UTC seconds.
+#[must_use]
+pub fn week_label(monday: i64) -> Option<RuntimeValue> {
+    let date = norn_expr::temporal::naming_series_date_at(monday.checked_mul(1000)?, "UTC").ok()?;
+    Some(RuntimeValue::from(format!(
+        "{:04}-{:02}-{:02}",
+        date.year, date.month, date.day
+    )))
+}

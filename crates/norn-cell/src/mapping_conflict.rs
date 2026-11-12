@@ -339,6 +339,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(read(&cache.borrow()))
     }
 
+    /// D102: identities of `root` with any source or identity finding, the
+    /// candidates an analytical answer checks for exclusion.
+    pub(crate) fn source_finding_keys(&self, root: &str) -> Result<BTreeSet<String>, CellError> {
+        self.with_source_dispute_index(|index| {
+            index
+                .subjects
+                .keys()
+                .filter(|(kind, _)| kind == root)
+                .map(|(_, key)| key.clone())
+                .collect()
+        })
+    }
+
     pub(crate) fn indexed_source_findings(
         &self,
         object_type: &str,

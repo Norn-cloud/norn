@@ -193,6 +193,8 @@ fn aggregate_rows(
                 members: BTreeMap::new(),
                 suppressed: false,
                 null_counts,
+                member_count: None,
+                membership_digest: None,
             },
         );
     }
