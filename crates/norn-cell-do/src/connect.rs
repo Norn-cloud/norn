@@ -797,6 +797,8 @@ mod tests {
             "NORN_S3_DOCUMENTS_BUCKET": "documents-bucket",
             "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
             "NORN_SECRET_S3_SECRET_ACCESS_KEY": secret,
+            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
+            "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
         Connect::new("[]", &vars.to_string()).expect("configuration")
     }
