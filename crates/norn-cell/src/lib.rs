@@ -70,6 +70,14 @@ pub mod transparency;
 mod write;
 
 pub use error::CellError;
+
+/// Whether `function_id@version` is a compiled-in built-in
+/// (`norn_builtins::resolve`); a host registers it so a flow step may
+/// perform only built-ins (#1252).
+#[must_use]
+pub fn builtin_registered(function_id: &str, version: u32) -> bool {
+    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
+}
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};

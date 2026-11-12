@@ -1,8 +1,9 @@
 //! Fetch dispatch over `norn_api`'s shared, authorized services: the read
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
-//! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `/v1/definitions/{id}:retire`), the one governed action route,
+//! `POST /v1/actions/{actionId}`, and the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -132,6 +133,10 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/runs` (RUN-ROUTES-1).
+    RunStart => ("POST", "/v1/runs"),
+    /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
+    Run => ("GET", "/v1/runs/{id}"),
 }
 
 impl Route {
@@ -143,7 +148,14 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            "/v1/runs" => return Some(Self::RunStart),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/runs/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Run);
         }
         if let Some(route) = definitions_route(path) {
             return Some(match route {
@@ -230,6 +242,9 @@ pub fn handle_all<E: SqlEngine>(
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
+    if let Some(response) = crate::runs::dispatch(host, actor, request) {
+        return response;
+    }
     let question = question_path(path);
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
@@ -687,7 +702,7 @@ fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<
     runtime
 }
 
-fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
+pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
     serde_json::to_string(document).map_err(Refusal::host)
 }
 
@@ -710,7 +725,10 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 }
 
 /// A bounded query string with only `allowed` keys, each at most once.
-fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
+pub(crate) fn parse(
+    query: &str,
+    allowed: &[&'static str],
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
     parse_within(query, allowed, MAX_QUERY_BYTES)
 }
 

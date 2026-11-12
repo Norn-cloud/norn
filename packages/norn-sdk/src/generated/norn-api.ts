@@ -357,6 +357,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/runs`: start a run of an installed flow.
+         * @description # Errors
+         *     Missing or foreign scope or a denied caller (one opaque 403), an invalid
+         *     body, an unknown or retired flow (`run.flow_not_found`), a run id already
+         *     started for another flow (`run.exists`), a refused start turn
+         *     (`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),
+         *     a concurrent change (`run.start_conflict`), or a host failure.
+         */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs/{id}`.
+         * @description # Errors
+         *     Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+         */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -9501,6 +9547,104 @@ export interface components {
              */
             expectedVersion: number;
         };
+        /** @description One run, as the routes return it. */
+        RunDocument: {
+            /**
+             * Format: int64
+             * @description Start time (logical milliseconds).
+             */
+            createdAtMs: number;
+            /**
+             * Format: int64
+             * @description The starting commit.
+             */
+            createdCommitSeq: number;
+            /** @description The flow it runs. */
+            flow: components["schemas"]["RunFlow"];
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description The run's object type. */
+            objectType: string;
+            /** @description Its lifecycle state; `null` once the run object is deleted. */
+            state?: string | null;
+            /** @description The steps the run reached, in order. */
+            steps: components["schemas"]["RunStep"][];
+            /** @description The run has ended and will not change. */
+            terminal: boolean;
+            /**
+             * Format: int64
+             * @description Last write time (logical milliseconds).
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description The last commit that wrote the run object.
+             */
+            updatedCommitSeq: number;
+            /**
+             * Format: int64
+             * @description The run object's version.
+             */
+            version: number;
+        };
+        /** @description The flow a run executes. */
+        RunFlow: {
+            /** @description The flow's definition id. */
+            id: string;
+            /** @description The flow's `decide` rule artifact id (`<id>.flow.rule`). */
+            ruleId: string;
+            /** @description The flow's display title, when it has one. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One step of a run's timeline. */
+        RunStep: {
+            /**
+             * Format: int64
+             * @description When the run left it.
+             */
+            endedAtMs?: number | null;
+            error?: components["schemas"]["RunStepError"] | null;
+            /** @description The flow's step id (`succeed` or `fail` for the run's end). */
+            id: string;
+            /** @description What the step is. */
+            kind: components["schemas"]["RunStepKind"];
+            /** @description The step's display label from the flow, when it has one. */
+            label?: string | null;
+            /** @description The step's receipts the caller may see; none are disclosed yet. */
+            receipts: components["schemas"]["StepReceipt"][];
+            /**
+             * Format: int64
+             * @description When the run reached it (logical milliseconds).
+             */
+            startedAtMs?: number | null;
+            /** @description Where it stands. */
+            status: components["schemas"]["RunStepStatus"];
+            waitingOn?: components["schemas"]["StepWait"] | null;
+        };
+        /** @description Why a step or run failed. */
+        RunStepError: {
+            /** @description The failed lifecycle state. */
+            code: string;
+            /** @description Display words. */
+            message: string;
+        };
+        /**
+         * @description What a step is.
+         * @enum {string}
+         */
+        RunStepKind: "perform" | "decide" | "wait" | "succeed" | "fail";
+        /**
+         * @description Where a step stands.
+         * @enum {string}
+         */
+        RunStepStatus: "running" | "waiting" | "done" | "failed";
         /** @description A recorded sign-off: every field set by the host. */
         SignoffDocument: {
             /** @description Lower-case hex SHA-256 of the host-recomputed restatement. */
@@ -9518,6 +9662,48 @@ export interface components {
             /** @description Lower-case hex SHA-256 of the UTF-8 restatement. */
             restatementSha256: string;
         };
+        /** @description `POST /v1/runs` body. */
+        StartRunRequest: {
+            /**
+             * @description The installed flow's definition id (`flow.id`); its rule is
+             *     `<flow>.flow.rule`.
+             */
+            flow: string;
+            /**
+             * @description The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
+             *     with the same id and flow returns the existing run.
+             */
+            runId: string;
+        };
+        /** @description One receipt behind a step, as the caller may see it. */
+        StepReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description Who acted, in display words, never an id. */
+            executor?: string | null;
+            /** @description What it records. */
+            kind: components["schemas"]["StepReceiptKind"];
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /**
+         * @description What a step receipt records.
+         * @enum {string}
+         */
+        StepReceiptKind: "function" | "decision" | "commit";
+        /**
+         * @description What a waiting step waits on.
+         * @enum {string}
+         */
+        StepWait: "decision" | "executor" | "timer";
     };
     responses: never;
     parameters: never;
@@ -10754,6 +10940,162 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description A retry with the same run id and flow: the existing run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The run started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such installed flow. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The run id is taken, or the cell changed while the run started. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The flow refused to start. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The run id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such run is visible to the caller. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

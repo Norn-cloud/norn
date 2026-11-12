@@ -297,7 +297,7 @@ pub fn call_action<E: SqlEngine>(
 /// stored floor. It is the clock the receipt records, so a naming series and
 /// the receipt agree even after a refused call moved the cell clock past `now`
 /// without moving the floor.
-fn turn_clock<E: SqlEngine>(
+pub(crate) fn turn_clock<E: SqlEngine>(
     cell: &mut crate::host::ActionCell<E>,
     now: LogicalTime,
 ) -> Result<LogicalTime, Refusal> {
