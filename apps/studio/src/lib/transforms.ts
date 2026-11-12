@@ -6,6 +6,7 @@
 import { useQuery } from "@tanstack/react-query"
 import type { Read } from "./exact.ts"
 import { cellRead } from "./live-transport.ts"
+import { atScale } from "./objects.ts"
 import type { Artifact } from "./transport.ts"
 
 /** One typed column of a transform's row. */
@@ -116,10 +117,16 @@ export const useTransformPlan = (id: string) =>
     retry: false,
   })
 
-/** A value as the cell sent it: numbers by their exact text. */
-export function exactValue(read: Read<unknown>, pointer: string, value: unknown): string {
+/** The declared scale of a `decimal<N>` column type, as the plan names it. */
+export function scaleOf(type: string): number | undefined {
+  const declared = /^decimal<(\d+)>$/.exec(type)
+  return declared === null ? undefined : Number(declared[1])
+}
+
+/** A value as the cell sent it: numbers by their exact text, decimals written to their declared scale as elsewhere in Studio. */
+export function exactValue(read: Read<unknown>, pointer: string, value: unknown, scale?: number): string {
   if (value === null || value === undefined) return "—"
-  if (typeof value === "number") return read.numbers.get(pointer) ?? String(value)
+  if (typeof value === "number") return atScale(read.numbers.get(pointer) ?? String(value), scale)
   if (typeof value === "string") return value
   return JSON.stringify(value)
 }
