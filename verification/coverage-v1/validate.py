@@ -18,11 +18,35 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
-from proof_enrollment import validate as validate_enrollment  # noqa: E402
-import coverage_manifest  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+_verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
+selector_is_declared = _verification_attestation.selector_is_declared
+_proof_enrollment = _sibling("proof_enrollment", ROOT / "scripts")
+validate_enrollment = _proof_enrollment.validate
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
 
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
@@ -823,13 +847,13 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
             "bundle may prune only Cargo build outputs, between tasks and when disk is low")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
-    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
+    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
     require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
             "browser phase must run the Studio Playwright rows and the checker-admission test, and refuse missing or empty tests")
     # The Rust parity tests (crates/norn-skeleton-guard/src/ci/mod.rs) must have run and passed in
     # the cheap phase, which every plan runs: nextest's JUnit report, not their source text.
     require_passed = '# Fails unless each named test of binary $2 ran and passed in nextest\'s JUnit report $1:\n# absent (renamed, deleted, ignored, cfg\'d out), skipped, failed or an unreadable report fails.\nrequire_passed() {\n  python3 - "$@" << \'PY\'\nimport sys\nimport xml.etree.ElementTree as ET\nreport, binary, *names = sys.argv[1:]\ncases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")\n         if suite.get("name") == binary for case in suite.iter("testcase")}\nbad = [name for name in names if name not in cases or any(\n    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]\nif not names or bad:\n    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or \'none named\'}")\nPY\n}\n'
-    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c \'import json, sys; print(json.load(sys.stdin)["target_directory"])\')/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
+    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      # nextest keeps its reports under the workspace root\'s target/nextest, whatever\n      # CARGO_TARGET_DIR says, and the guard\'s workspace root is its own directory (D95).\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c \'import json, sys; print(json.load(sys.stdin)["workspace_root"])\')/target/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
     require(runner.count(require_passed) == 1 and runner.count(rust_parity) == 1,
             "cheap phase must require the two Rust concurrency parity tests to have run and passed")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
@@ -838,6 +862,14 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
     require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
+    # The guard is its own workspace (D95): no test shard or workspace command reaches it, so
+    # its suite, clippy, docs and doctests run by name in phases every plan selects or full runs.
+    require("guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)\n" in runner
+            and '"${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"\n' in runner
+            and 'cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings\n' in runner
+            and 'cargo test --locked "${guard[@]}" --doc\n' in runner
+            and 'RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps\n' in runner,
+            "the guard workspace's suite, clippy, doctests and docs must run")
 
 
 def validate_timeout_budgets(

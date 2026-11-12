@@ -772,7 +772,8 @@ class DefinitionCompiler {
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
-      const closed = this.schemas.closed(this.schemas.read(node))
+      // An absent member is a nullable plain scalar (Schema.NullOr), as ActionIR admits.
+      const closed = this.schemas.closed(this.schemas.read(node), "scalar")
       if (closed.type !== "object") throw new CompileError("NORN-FLOW-SCHEMA-PROJECTION", `action ${key} is a Schema.Struct`, node)
       return closed
     }
