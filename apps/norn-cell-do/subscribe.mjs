@@ -45,14 +45,16 @@ const send = (ws, message) => {
  * Accept one live socket on `ctx` for `scope` as `authorization`. The upgrade itself carries no
  * data; every answer comes later from `evaluate`.
  */
-export function accept(ctx, scope, authorization) {
+export function accept(ctx, scope, authorization, requested = "") {
   if (ctx.getWebSockets().length >= MAX_SOCKETS) {
     return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${MAX_SOCKETS} sockets per cell` }, { status: 429 });
   }
   const [client, server] = Object.values(new WebSocketPair());
   ctx.acceptWebSocket(server);
   server.serializeAttachment({ scope, authorization, subs: {} });
-  return new Response(null, { status: 101, webSocket: client, headers: { "sec-websocket-protocol": PROTOCOL } });
+  // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
+  const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
+  return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
 }
 
 /**

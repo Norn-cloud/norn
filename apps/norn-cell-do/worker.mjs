@@ -118,7 +118,7 @@ export class Cell {
       }
       const scope = Cell.scopeOf(request);
       await this.ready(scope);
-      return live.accept(this.ctx, scope, authorization);
+      return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "");
     }
     // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
     const body = request.method === "POST" ? await readBounded(request, MAX_BODY) : undefined;
