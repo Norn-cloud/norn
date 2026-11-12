@@ -2357,6 +2357,7 @@ dependencies = [
  "norn-canonical",
  "norn-graph",
  "norn-ir",
+ "proptest",
  "serde",
  "serde_json",
 ]

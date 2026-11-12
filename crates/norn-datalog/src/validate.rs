@@ -48,6 +48,9 @@ pub enum Code {
     /// An internal graph invariant failed; never an admission result.
     #[serde(rename = "datalog.graph_refused")]
     GraphRefused,
+    /// Facts were supplied for a relation that rules define.
+    #[serde(rename = "datalog.derived_in_input")]
+    DerivedInInput,
 }
 
 /// One deterministic refusal. No partial admission plan is returned.
@@ -70,7 +73,7 @@ impl fmt::Display for Diagnostic {
 
 impl std::error::Error for Diagnostic {}
 
-fn refusal(code: Code, rule: Option<&str>, symbol: Option<&str>) -> Diagnostic {
+pub(crate) fn refusal(code: Code, rule: Option<&str>, symbol: Option<&str>) -> Diagnostic {
     Diagnostic {
         code,
         rule_id: rule.map(str::to_owned),
@@ -80,7 +83,7 @@ fn refusal(code: Code, rule: Option<&str>, symbol: Option<&str>) -> Diagnostic {
 
 /// Explicit ceilings checked before building graph storage. Work units include
 /// every scan and conservative full-call charges for the existing graph library.
-/// These are validator limits, not bounds on future executor fact counts.
+/// These are validator limits; evaluation has its own `ExecBudget`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
     /// Maximum relation signatures.
@@ -183,19 +186,8 @@ impl Meter {
             self.charge(1)?;
             match term {
                 Term::Variable(name) => self.symbol(name)?,
-                Term::Constant(Value::Text(text)) => self.constant_text(text)?,
-                Term::Constant(Value::Bool(_)) => {}
-                Term::Constant(Value::Scope(scope)) => {
-                    for text in [
-                        &scope.org_id,
-                        &scope.tenant_id,
-                        &scope.workspace_id,
-                        &scope.environment_id,
-                        &scope.business_unit_id,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
+                Term::Constant(value) => {
+                    for text in constant_texts(value) {
                         self.constant_text(text)?;
                     }
                 }
@@ -224,6 +216,26 @@ impl Meter {
             max_edges: graph.edges.len(),
             max_steps: steps,
         })
+    }
+}
+
+/// Every text a constant carries; each must be NFC before it is admitted,
+/// in a rule or in an input fact.
+pub(crate) fn constant_texts(value: &Value) -> Vec<&str> {
+    match value {
+        Value::Text(text) => vec![text.as_str()],
+        Value::Bool(_) => Vec::new(),
+        Value::Scope(scope) => [
+            &scope.org_id,
+            &scope.tenant_id,
+            &scope.workspace_id,
+            &scope.environment_id,
+            &scope.business_unit_id,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect(),
     }
 }
 

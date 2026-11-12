@@ -73,15 +73,46 @@ fn every_small_single_parent_graph_matches_the_old_oracle() {
                     digit.checked_sub(1)
                 })
                 .collect();
-            assert_eq!(
-                evaluate(&parents, Budget::default())
-                    .expect("bounded graph")
-                    .0,
-                oracle(&parents),
-                "{parents:?}"
-            );
+            let ascent = evaluate(&parents, Budget::default())
+                .expect("bounded graph")
+                .0;
+            assert_eq!(ascent, oracle(&parents), "{parents:?}");
+            assert_eq!(ascent, executor_cycles(&parents), "{parents:?}");
         }
     }
+}
+
+/// The recursive `ancestor` pack, run as data by the reference executor. It
+/// shares no rule and no engine with the generated one-step Ascent program,
+/// so agreement here checks two rule packs on two engines against each other.
+fn executor_cycles(parents: &[Option<usize>]) -> BTreeSet<usize> {
+    use norn_datalog::{ExecBudget, Facts, Value, overlap};
+
+    let scope = Value::Scope(norn_ir::ScopeRef::default());
+    let name = |index: usize| Value::Text(format!("test.N{index:04}"));
+    let facts = Facts::from([(
+        "extends".to_owned(),
+        parents
+            .iter()
+            .enumerate()
+            .filter_map(|(child, parent)| {
+                // An unknown parent yields no edge, as in `classify`.
+                let parent = parent.filter(|parent| *parent < parents.len())?;
+                Some(vec![scope.clone(), name(child), name(parent)])
+            })
+            .collect(),
+    )]);
+    let result = norn_datalog::evaluate(
+        &overlap::declared_metadata_v1(),
+        &facts,
+        norn_datalog::Budget::default(),
+        ExecBudget::default(),
+    )
+    .expect("the admitted overlap pack evaluates");
+    let cyclic = result.tuples("inheritance_cycle");
+    (0..parents.len())
+        .filter(|index| cyclic.contains(&vec![scope.clone(), name(*index)]))
+        .collect()
 }
 
 #[test]

@@ -58,3 +58,19 @@ Cycle evidence is structural, with the fixed AST rule identity, not certified
 proof. No new role, law, separation-of-duties or dimensional semantics are
 admitted.
 
+## Addendum: reference executor (2026-11-12, Norn-cloud/norn#45)
+
+`norn-datalog` gains `evaluate`: semi-naive bottom-up evaluation over finite
+input facts, stratum by stratum, behind `validate`, with its own metered
+`ExecBudget` that refuses rather than runs away. Output order is canonical and
+independent of fact and rule order. It adds no dependency (proptest is
+test-only), no IO, no witnesses and no aggregates; the refusal of every
+aggregate is unchanged. One code is added, `datalog.derived_in_input`, for
+facts supplied to a rule-defined relation. It is the first executor in this
+crate, used for rule packs over code and metadata facts that arrive as data.
+The checker keeps its generated Ascent step; the executor is a dev-only second
+engine in the checker's inheritance differential test. A maintained crate was
+considered first: Ascent compiles rules to Rust at build time and cannot run a
+pack supplied at run time; crepe is the same kind of macro; datafrog is a join
+library without a rule language, stratification or budgets, so a rule AST
+interpreter would still be needed on top of it.
