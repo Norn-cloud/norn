@@ -328,6 +328,7 @@ fn trace_query(lineage: &str) -> TraceQuery {
         environment_id: Some("dev".into()),
         lineage_ref: Some(lineage.into()),
         bucket: Some(WEEK.into()),
+        ..TraceQuery::default()
     }
 }
 
@@ -518,6 +519,18 @@ fn asof_uses_authenticated_cutoff_and_preserves_the_old_answer_after_correction(
             .expect_err("cutoff must match");
         assert_eq!((denied.status, denied.code.as_str()), (422, code));
     }
+}
+
+#[test]
+fn a_moved_answer_is_a_retryable_conflict_saying_so() {
+    let refusal = Refusal::from_compute(norn_cell::CellError::ComputeRefused(
+        "core.projection.answer_moved",
+    ));
+    assert_eq!(
+        (refusal.status, refusal.code.as_str(), refusal.retryable),
+        (409, "core.projection.answer_moved", true)
+    );
+    assert_eq!(refusal.message, "the data changed since this answer");
 }
 
 #[test]

@@ -303,7 +303,9 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     let baseline = evaluate(&cell, None, &question("gold"));
     assert_eq!(baseline.status, 403);
     let mut inadmissible = question("gold");
-    inadmissible["groupBy"] = json!([{"path": {"property": "occurred_at"}, "grain": "day"}]);
+    // Outside the bounded profile: an ordering filter.
+    inadmissible["filter"] =
+        json!([{"path": {"property": "metal"}, "operator": "gt", "value": "gold"}]);
     // Anonymous, inadmissible: the denial, not the 422.
     assert_eq!(evaluate(&cell, None, &inadmissible).body, baseline.body);
     // A declared metric the caller holds no grant on — here the ratio's
@@ -512,9 +514,12 @@ fn the_question_catalog_lists_only_what_the_caller_may_read() {
             .any(|p| p["id"] == "recovered" && p["type"]["unit"]["code"] == "g"),
         "{properties:?}"
     );
-    assert_eq!(catalog["grains"], json!(["week"]));
+    assert_eq!(
+        catalog["grains"],
+        json!(["day", "week", "month", "quarter", "year"])
+    );
     assert_eq!(catalog["operators"], json!(["eq", "ne"]));
-    assert_eq!(catalog["maxGroupBy"], json!(1));
+    assert_eq!(catalog["maxGroupBy"], json!(4));
     assert_eq!(catalog["maxBuckets"], json!(analytics::AD_HOC_MAX_BUCKETS));
     // An ungranted operand is not listed, nor is any ratio over it.
     cell.runtime.ungranted = Some("demo.recovered");

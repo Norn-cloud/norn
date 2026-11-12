@@ -11,6 +11,8 @@ export interface MetricSummary {
   readonly timeProperty: string | null
   readonly numerator: string | null
   readonly denominator: string | null
+  /** The properties a question summing this metric must fix to one value each (mixed units are refused), when the cell names them. */
+  readonly unitPartition?: readonly string[]
 }
 
 /** The metrics this reader may ask about; a cell without the route says so. */

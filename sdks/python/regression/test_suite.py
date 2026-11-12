@@ -113,6 +113,13 @@ class Suite(unittest.TestCase):
         again, _ = assumption_suite(text, "y", ["x1", "x2"], order="t")
         self.assertEqual([c.as_dict() for c in first], [c.as_dict() for c in again])
 
+    def test_a_p_value_is_recorded_as_exact_decimal_text(self):
+        from norn_regression.cell import p_decimal
+        self.assertEqual(p_decimal("2.96446e-14"), "0.000000000000029645")
+        self.assertEqual(p_decimal("0.5"), "0.5")
+        self.assertEqual(p_decimal("1"), "1.0")
+        self.assertIsNone(p_decimal(None))
+
     def test_bad_requests_are_refused(self):
         with self.assertRaisesRegex(ValueError, "both the target and a feature"):
             assumption_suite(clean(), "y", ["y", "x1"])

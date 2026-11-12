@@ -2257,6 +2257,9 @@ impl<E: SqlEngine> CellStore<E> {
         {
             conn.execute_batch(statement)?;
         }
+        // Claim endpoints of bundles consumed before the table existed; a
+        // no-op for every bundle already indexed.
+        conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;

@@ -28,7 +28,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::{CellStore, InstalledDefinitionSet, ObjectRecord};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::QuestionPlan;
-use norn_checker::metric::derive::derive_metric_space;
+use norn_checker::metric::derive::{MetricSpace, derive_metric_space};
 use norn_ir::{ArtifactEnvelope, LawRoot, MetricDefinition};
 use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput};
 
@@ -38,6 +38,9 @@ struct Derived {
     receipt: String,
     definitions: Vec<MetricDefinition>,
     catalog: EffectiveCatalog,
+    /// The space itself, which admits every question (none when nothing is
+    /// installed, so nothing is admitted).
+    space: Option<MetricSpace>,
 }
 
 /// The dev host's question authority across revisions: the per-session
@@ -117,6 +120,7 @@ fn derive(
             receipt,
             definitions: Vec::new(),
             catalog: EffectiveCatalog::default(),
+            space: None,
         });
     };
     let artifacts: Vec<ArtifactEnvelope> =
@@ -138,6 +142,7 @@ fn derive(
             .map(|candidate| candidate.definition.clone())
             .collect(),
         catalog: space.catalog().clone(),
+        space: Some(space),
     })
 }
 
@@ -308,8 +313,49 @@ impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
     fn definitions(&self) -> &[MetricDefinition] {
         &self.derived.definitions
     }
+    fn unit_partition(&self, metric: &str) -> Vec<String> {
+        let Some(space) = &self.derived.space else {
+            return Vec::new();
+        };
+        space
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.definition.name == metric)
+            .map(|candidate| {
+                candidate
+                    .unit_partition
+                    .iter()
+                    .map(|path| {
+                        path.links
+                            .iter()
+                            .map(|link| link.0.as_str())
+                            .chain(std::iter::once(path.property.0.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
     fn catalog(&self) -> &EffectiveCatalog {
         &self.derived.catalog
+    }
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        // One admission seam: the derived space's own rules apply to every
+        // question over its metrics.
+        match &self.derived.space {
+            Some(space) => space.admit(question, max_rows),
+            None => norn_checker::metric::compute::admit(
+                &self.derived.definitions,
+                question,
+                &self.derived.catalog,
+                max_rows,
+            ),
+        }
     }
     fn max_rows(&self) -> u32 {
         MAX_ROWS

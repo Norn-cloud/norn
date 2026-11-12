@@ -121,6 +121,7 @@ fn question_limits_are_additive_and_hashed_when_declared() {
     let mut declared = v1.clone();
     declared.question = Some(QuestionLimits {
         max_scanned_records: 5,
+        max_scanned_bytes: 4_096,
     });
     assert_eq!(declared.question_limits().max_scanned_records, 5);
     let serde_bytes = serde_json::to_vec(&declared).unwrap();

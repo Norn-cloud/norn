@@ -141,7 +141,7 @@ fn with_engine<E: SqlEngine + 'static>(
     scope: &CellScope,
     open: impl Fn() -> Result<E, String> + 'static,
 ) -> Result<Cell<E>, String> {
-    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open))
+    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open), None)
         .map_err(|error| error.to_string())?;
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
         .map_err(|refusal| refusal.code)?;
@@ -677,7 +677,7 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
         let admitted = provision::admit_submission(&trusted, &scope, &body).unwrap();
         let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
         let refusal =
-            provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
+            provision::provision_cell(engine, &scope, &trusted, &admitted, (NOW + 5) * 1000)
                 .map(|(_, receipt)| receipt)
                 .expect_err("a cell is provisioned once");
         assert_eq!(refusal.code, provision::codes::PROVISION_CONFLICT);
@@ -1038,6 +1038,9 @@ struct Swept {
     vacant: u32,
     whole: u32,
     cases: u32,
+    /// Plans whose statement list ended while faults still fired: the
+    /// transaction may have more statements than the list reached.
+    unexhausted: Vec<String>,
 }
 
 /// HOST-PROVISION-ATOMIC through the request layer, on the Durable Object
@@ -1086,6 +1089,7 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
         vacant: 0,
         whole: 0,
         cases: 0,
+        unexhausted: Vec::new(),
     };
     for (kind, transaction, statements) in plans {
         let mut past = false;
@@ -1133,6 +1137,11 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             remove_store(&path);
             past = !hit;
         }
+        if !past && statements.len() > 1 {
+            swept
+                .unexhausted
+                .push(format!("{kind:?} at transaction {transaction}"));
+        }
     }
     swept
 }
@@ -1175,7 +1184,8 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         Ok("crash") => vec![EngineFaultKind::Crash],
         Ok("io") => vec![EngineFaultKind::Io],
         Ok("commit") => vec![EngineFaultKind::Commit],
-        _ => vec![
+        Ok(other) => panic!("NORN_SWEEP_KIND is crash, io or commit, not {other:?}"),
+        Err(_) => vec![
             EngineFaultKind::Crash,
             EngineFaultKind::Io,
             EngineFaultKind::Commit,
@@ -1192,6 +1202,15 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         started.elapsed().as_secs_f64()
     );
     assert!(swept.vacant >= 16 || from > 0 || kinds == [EngineFaultKind::Commit]);
+    // A shard that runs to the bound must reach the end of every transaction
+    // (a fault that no longer fires); a shard ending earlier stops by design.
+    if to == 400_000 {
+        assert!(
+            swept.unexhausted.is_empty(),
+            "statements left past the bound in: {:?}",
+            swept.unexhausted
+        );
+    }
 }
 
 // ------------------------------------------------------------- seeded cells

@@ -3,12 +3,14 @@ import { member } from "./exact.ts"
 import type { LinkPage, ObjectRecord } from "./transport.ts"
 
 /**
- * An exact decimal's text written to its declared scale: the cell stores decimals canonically
- * (72.00 is kept as 72), so the declared places are put back by padding the fraction with zeros.
+ * An exact decimal's text written to its declared scale, up to two places: the cell stores
+ * decimals canonically (72.00 is kept as 72), so the declared places are put back by padding.
  * Digits are never rounded or dropped; text that is not a plain decimal is left as sent.
  */
 export function atScale(text: string, scale: number | undefined): string {
-  if (scale === undefined || scale <= 0 || !/^-?\d+(\.\d+)?$/.test(text)) return text
+  // Two places (cents, grams to the hundredth) is how such a value is written; a larger declared
+  // scale is a precision bound (a p-value to 18 places), so it is not padded.
+  if (scale === undefined || scale <= 0 || scale > 2 || !/^-?\d+(\.\d+)?$/.test(text)) return text
   const [whole, fraction = ""] = text.split(".")
   return fraction.length >= scale ? text : `${whole}.${fraction.padEnd(scale, "0")}`
 }

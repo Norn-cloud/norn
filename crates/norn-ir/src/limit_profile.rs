@@ -88,18 +88,31 @@ pub struct ResourceLimitProfile {
 pub struct QuestionLimits {
     /// Maximum source records one evaluation of a question may scan.
     pub max_scanned_records: u32,
+    /// Maximum stored bytes those records may decode to: the scan's memory
+    /// bound.
+    pub max_scanned_bytes: u64,
 }
 
 impl QuestionLimits {
-    /// The bound a profile without question limits applies, measured on the
-    /// exact engine (see the PR that introduced it for the measurement).
+    /// The bound a profile without question limits applies. Measured on the
+    /// exact native engine (release build, one evaluation of a keyed sum, a
+    /// 4-vCPU sandbox): 10,000 rows in ~0.6 s and +6.5 MB, 100,000 in 6-8 s
+    /// and +170 MB, 1,000,000 in 55-82 s and +1.9 GB, linear at ~70 µs and
+    /// ~1.7 KB held per row (each row's contribution and member lineage are
+    /// kept until the answer is built). The bound is the ruling's floor,
+    /// 100,000 rows; past it an analytical engine answers or the question
+    /// narrows.
     pub const DEFAULT: Self = Self {
         max_scanned_records: QUESTION_MAX_SCANNED_RECORDS,
+        max_scanned_bytes: QUESTION_MAX_SCANNED_BYTES,
     };
 }
 
 /// [`QuestionLimits::DEFAULT`]'s scan bound.
-const QUESTION_MAX_SCANNED_RECORDS: u32 = 1_000_000;
+const QUESTION_MAX_SCANNED_RECORDS: u32 = 100_000;
+
+/// [`QuestionLimits::DEFAULT`]'s decoded-bytes bound.
+const QUESTION_MAX_SCANNED_BYTES: u64 = 64 * MIB;
 
 // The ruling's floor: an analytical question scans at least 100,000 records.
 const _: () = assert!(QUESTION_MAX_SCANNED_RECORDS >= 100_000);
@@ -345,10 +358,13 @@ impl ResourceLimitProfile {
         if let (Some(question), JsonValue::Object(fields)) = (question, &mut value) {
             fields.insert(
                 "question".to_owned(),
-                object([(
-                    "max_scanned_records",
-                    number(u64::from(question.max_scanned_records)),
-                )]),
+                object([
+                    (
+                        "max_scanned_records",
+                        number(u64::from(question.max_scanned_records)),
+                    ),
+                    ("max_scanned_bytes", number(question.max_scanned_bytes)),
+                ]),
             );
         }
         value

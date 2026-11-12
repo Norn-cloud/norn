@@ -347,6 +347,8 @@ mod tests {
             .unwrap();
         assert_eq!(entry["objectType"], TYPE);
         assert_eq!(entry["timeProperty"], "occurred_at");
+        // Its values share one unit: nothing to group by or fix.
+        assert_eq!(entry["unitPartition"], json!([]));
         let (status, answer) = call(
             &host,
             &metrics,
@@ -495,6 +497,56 @@ mod tests {
                 .question_limits()
                 .max_scanned_records
         );
+    }
+
+    /// Several group-bys bucket by the tuple of their values, in the
+    /// question's order, on whichever engine answers; one stays a scalar.
+    #[test]
+    fn a_question_groups_by_several_dimensions_as_a_tuple() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let amount = metric(&metrics, &host, "amount", false);
+        let mut asked = question(&amount);
+        asked["groupBy"] = json!([
+            {"path": {"property": "region"}},
+            {"path": {"property": "occurred_at"}, "grain": "day"}
+        ]);
+        let (status, answer) = call(
+            &host,
+            &metrics,
+            "/v1/questions:evaluate",
+            &json!({"question": asked}),
+        );
+        assert_eq!(status, 200, "{answer}");
+        let rows = answer["rows"].as_object().unwrap();
+        let mut buckets: Vec<(Value, String)> = rows
+            .values()
+            .map(|row| (row["bucket"].clone(), row["totals"][0].to_string()))
+            .collect();
+        buckets.sort_by_key(|(bucket, _)| bucket.to_string());
+        assert_eq!(
+            buckets,
+            [
+                (json!(["north", "2026-11-02"]), "15.5".to_owned()),
+                (json!(["south", "2026-11-03"]), "7.25".to_owned()),
+            ],
+            "{answer}"
+        );
+        // A tuple row opens its trace by the same key.
+        let key = rows
+            .keys()
+            .find(|key| key.contains("north"))
+            .unwrap()
+            .clone();
+        let (status, trace) = call(
+            &host,
+            &metrics,
+            "/v1/questions:trace",
+            &json!({"question": asked, "lineageRef": answer["lineageRef"], "bucket": key}),
+        );
+        assert_eq!(status, 200, "{trace}");
+        assert_eq!(trace["contributions"].as_array().unwrap().len(), 2);
     }
 
     #[test]

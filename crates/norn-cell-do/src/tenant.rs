@@ -13,6 +13,11 @@
 //! - A restarted host reopens the cell at its active definitions
 //!   (HOST-REOPEN-1): the model is rebuilt from the retained set and nothing
 //!   is written.
+//! - Governed actions (HOST-ACTION-2, #1252) are decided by the scope's own
+//!   policy ([`ActionPolicy`]), compiled from the active definitions and
+//!   recompiled before the first request after they change. A tenant cell's
+//!   receipt handles are keyed by the stage's lineage key; without one it
+//!   serves no action.
 
 use std::sync::Arc;
 
@@ -27,8 +32,16 @@ use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::CellStore;
 use norn_cell::engine::SqlEngine;
 
+use norn_api::authz::ReadCapability;
+use norn_api::question_routes::{QuestionRuntime, QuestionSnapshot};
+use norn_cell::ObjectRecord;
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::QuestionPlan;
+use norn_ir::MetricDefinition;
+
+use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
-use crate::policy::{CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
@@ -51,6 +64,61 @@ pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
         .with_builtins(norn_cell::builtin_registered)
 }
 
+/// The receipt-disclosure authority of a cell that publishes no questions:
+/// the handle key that keys its receipt coordinates (D53), and nothing else.
+struct ReceiptHandles {
+    key: Vec<u8>,
+    catalog: EffectiveCatalog,
+}
+
+impl<E: SqlEngine> QuestionRuntime<E> for ReceiptHandles {
+    fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn snapshot(
+        &self,
+        _store: &CellStore<E>,
+        _plan: &QuestionPlan,
+        _actor: &str,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn access(
+        &self,
+        _scope: &CellScope,
+        _actor: &str,
+        _question: &str,
+        _capability: ReadCapability,
+        _row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn min_disclosed_bucket(&self) -> usize {
+        norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET
+    }
+    fn handle_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl<E: SqlEngine> AdHocQuestions<E> for ReceiptHandles {
+    fn definitions(&self) -> &[MetricDefinition] {
+        &[]
+    }
+    fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
+    }
+    fn max_rows(&self) -> u32 {
+        0
+    }
+    fn max_buckets(&self) -> usize {
+        0
+    }
+}
+
+/// The smallest lineage key a cell's receipt handles are keyed with, in bytes.
+pub const MIN_HANDLE_KEY_BYTES: usize = 32;
+
 /// One opened cell and what its requests are served with.
 struct Serving<E: SqlEngine> {
     host: DevHost<E>,
@@ -58,6 +126,10 @@ struct Serving<E: SqlEngine> {
     questions: Option<DemoQuestions>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// Where the cell's action policy is installed.
+    actions: ActionSlot,
+    /// The definitions version the installed action policy was compiled from.
+    compiled: Option<u64>,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -72,6 +144,7 @@ impl<E: SqlEngine> Serving<E> {
         // Data reads are decided by the kernel PDP over this cell's own model.
         let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
             .with_caller(Arc::clone(caller));
+        let actions = policy.action_slot();
         let object_types = store
             .model()
             .object_types()
@@ -84,7 +157,31 @@ impl<E: SqlEngine> Serving<E> {
             host,
             questions,
             object_types,
+            actions,
+            compiled: None,
         })
+    }
+
+    /// Install the action policy of the active definitions when they changed
+    /// since it was compiled. A policy that does not compile, or definitions
+    /// that cannot be read, install none: the cell then serves no action.
+    fn refresh_actions(&mut self) {
+        let active = self.host.active_definitions().ok().flatten();
+        let version = active.as_ref().map(|set| set.version);
+        if version == self.compiled && version.is_some() {
+            return;
+        }
+        let policy = active.and_then(|set| {
+            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set).ok()?;
+            let model = norn_api::kernel_set::kernel_model(&artifacts).ok()?;
+            ActionPolicy::compile(&model, &artifacts, self.host.scope())
+                .ok()
+                .flatten()
+        });
+        if let Ok(mut slot) = self.actions.write() {
+            *slot = policy.map(Arc::new);
+            self.compiled = version;
+        }
     }
 }
 
@@ -102,6 +199,8 @@ pub struct Tenant<E: SqlEngine> {
     kinds: DefinitionKinds,
     open: OpenEngine<E>,
     state: State<E>,
+    /// The receipt-disclosure authority of a cell with no questions.
+    handles: Option<ReceiptHandles>,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -115,6 +214,7 @@ impl<E: SqlEngine> Tenant<E> {
         scope: CellScope,
         table: &'static GrantTable,
         open: OpenEngine<E>,
+        handle_key: Option<&[u8]>,
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
@@ -127,6 +227,7 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open,
             state,
+            handles: handles(handle_key),
         })
     }
 
@@ -151,6 +252,7 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open: Box::new(|| Err("a seeded cell is never provisioned again".to_owned())),
             state: State::Serving(Box::new(serving)),
+            handles: None,
         })
     }
 
@@ -198,6 +300,9 @@ impl<E: SqlEngine> Tenant<E> {
         if request.path == PROVISION_PATH {
             return server::respond(self.provision(principals, request));
         }
+        if let State::Serving(serving) = &mut self.state {
+            serving.refresh_actions();
+        }
         match &self.state {
             State::Serving(serving) if request.path == "/v1/access" => server::access(
                 &serving.host,
@@ -210,7 +315,12 @@ impl<E: SqlEngine> Tenant<E> {
                 let questions = serving
                     .questions
                     .as_ref()
-                    .map(|questions| -> &dyn AdHocQuestions<E> { questions });
+                    .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+                    .or_else(|| {
+                        self.handles
+                            .as_ref()
+                            .map(|handles| -> &dyn AdHocQuestions<E> { handles })
+                    });
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
             State::Vacant => self.vacant(principals, request),
@@ -316,7 +426,7 @@ impl<E: SqlEngine> Tenant<E> {
                     engine,
                     &self.scope,
                     &self.base,
-                    admitted,
+                    &admitted,
                     request.now.saturating_mul(1000),
                 )?;
                 let serving =
@@ -331,6 +441,15 @@ impl<E: SqlEngine> Tenant<E> {
         };
         server::document_json(&provision::replay(&serving.host, &self.base, &admitted)?)
     }
+}
+
+/// The receipt handles keyed by `key`, when it is long enough.
+fn handles(key: Option<&[u8]>) -> Option<ReceiptHandles> {
+    key.filter(|key| key.len() >= MIN_HANDLE_KEY_BYTES)
+        .map(|key| ReceiptHandles {
+            key: key.to_vec(),
+            catalog: EffectiveCatalog::default(),
+        })
 }
 
 /// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with
@@ -352,6 +471,9 @@ fn reopen<E: SqlEngine>(
         .map_err(|e| fail("active definitions", &e))?;
     let model = norn_api::kernel_set::kernel_model(&artifacts)
         .map_err(|refusal| SeedError(format!("active definitions: {refusal:?}")))?;
+    // As provisioned: the kernel's action types are part of the model.
+    let model = norn_api::action_admission::prepare_action_model(&model)
+        .map_err(|refusal| SeedError(format!("action model: {}", refusal.code)))?;
     let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
     // A store bound to another scope is never served under this one.
     store

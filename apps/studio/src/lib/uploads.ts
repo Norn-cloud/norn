@@ -1,14 +1,40 @@
-import { cellRead } from "./live-transport.ts"
+import { CellRefusal, NotServed, cellRead } from "./live-transport.ts"
 
-/** The cell's upload routes (L-connect): the bytes go straight to storage under a signed URL; the cell reads them back. */
+/**
+ * A CSV into the cell (L-connect's upload routes, L-bulk's dataset load): the bytes go straight to
+ * storage under a URL the cell signs; the cell reads them back and proposes each column's kind;
+ * `:define` admits a type for them; then either L-bulk's `/v1/datasets:load` puts every row in the
+ * tenant's analytical engine, or `:load` writes each row through the cell as a governed record.
+ * Every step is the cell's decision; Studio only carries the choices.
+ */
 export interface Begun { readonly uploadId: string; readonly putUrl: string; readonly putHeaders: Readonly<Record<string, string>>; readonly expiresAt: string }
-export type Inferred = "string" | "decimal" | "integer" | "boolean" | "date" | "datetime"
-export interface Column { readonly name: string; readonly inferred: Inferred; readonly nullable: boolean; readonly samples: readonly unknown[] }
+export type Inferred = "string" | "text" | "decimal" | "integer" | "boolean" | "date" | "datetime"
+/** The kinds a column can be defined as. */
+export type Kind = "text" | "integer" | "decimal" | "boolean" | "datetime"
+export const KINDS: readonly Kind[] = ["text", "integer", "decimal", "boolean", "datetime"]
+export interface Column { readonly id?: string; readonly name: string; readonly inferred: Inferred; readonly nullable: boolean; readonly samples: readonly unknown[] }
 export interface Completed { readonly uri: string; readonly sha256: string; readonly size: number; readonly rows: number; readonly columns: readonly Column[] }
-export interface Loaded { readonly connectionId: string; readonly objectType: string; readonly definitionsVersion: number }
-export interface LoadColumn { readonly name: string; readonly type: Inferred; readonly include: boolean }
+export interface DefineColumn { readonly id: string; readonly type: Kind; readonly include: boolean; readonly measure: boolean }
+export interface Defined { readonly objectType: string; readonly definitionsVersion: number }
+/** L-bulk's answer: how many rows landed in the engine and why any were set aside. */
+export interface DatasetLoaded {
+  readonly objectType: string
+  readonly rows: number
+  readonly rejected: number
+  readonly reasons: Readonly<Record<string, number>>
+  readonly bytes: number
+  readonly millis: number
+}
+/** L-connect's row-by-row load. */
+export interface RecordsLoaded { readonly connectionId: string; readonly objectType: string; readonly definitionsVersion: number }
 
 type Put = (url: string, init: RequestInit) => Promise<Response>
+
+/** A column's id as the cell names it: the snake id `:complete` gave, or its header written that way. */
+export const columnId = (column: Column): string => column.id ?? column.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+
+/** The kind a column starts as: what the cell inferred, in the words `:define` takes. */
+export const kindOf = (inferred: Inferred): Kind => inferred === "string" ? "text" : inferred === "date" ? "datetime" : inferred
 
 /** Begin an upload, send the file to the URL the cell signed, and have the cell read it back. */
 export async function upload(file: File, put: Put = (url, init) => fetch(url, init)): Promise<{ readonly uploadId: string; readonly completed: Completed }> {
@@ -19,6 +45,27 @@ export async function upload(file: File, put: Put = (url, init) => fetch(url, in
   return { uploadId: begun.uploadId, completed }
 }
 
-/** Ask the cell to admit a type for the upload and load its rows through the mapping path. */
-export const load = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly LoadColumn[]): Promise<Loaded> =>
-  (await cellRead<Loaded>(`/v1/uploads/${encodeURIComponent(uploadId)}:load`, "Uploads are", { method: "POST", body: JSON.stringify({ typeName, key, columns }) })).document
+const typing = (typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string) =>
+  JSON.stringify({ typeName, key, columns, sha256 })
+
+/** Ask the cell to admit a type for the upload, without writing any row. */
+export const define = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string): Promise<Defined> =>
+  (await cellRead<Defined>(`/v1/uploads/${encodeURIComponent(uploadId)}:define`, "Defining a type from an upload is", { method: "POST", body: typing(typeName, key, columns, sha256) })).document
+
+/**
+ * Load the upload's rows into the admitted type: into the analytical engine when the cell has one
+ * (`/v1/datasets:load`), or, when it says it has none (`NotServed`, or 501 unconfigured), not at all:
+ * the caller then offers the row-by-row load, never silently.
+ */
+export async function loadDataset(uploadId: string, objectType: string): Promise<DatasetLoaded | "no-engine"> {
+  try {
+    return (await cellRead<DatasetLoaded>("/v1/datasets:load", "Analysis datasets are", { method: "POST", body: JSON.stringify({ uploadId, objectType }) })).document
+  } catch (error) {
+    if (error instanceof NotServed || (error instanceof CellRefusal && error.status === 501)) return "no-engine"
+    throw error
+  }
+}
+
+/** Write each row through the cell as a governed record (L-connect's `:load`): checked one by one. */
+export const loadRecords = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string): Promise<RecordsLoaded> =>
+  (await cellRead<RecordsLoaded>(`/v1/uploads/${encodeURIComponent(uploadId)}:load`, "Uploads are", { method: "POST", body: typing(typeName, key, columns, sha256) })).document
