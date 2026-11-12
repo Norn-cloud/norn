@@ -115,7 +115,7 @@ fn keys(value: &Value, out: &mut Vec<String>) {
             }
         }
         Value::Array(items) => items.iter().for_each(|item| keys(item, out)),
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
