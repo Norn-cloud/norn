@@ -25355,6 +25355,52 @@
         },
         "additionalProperties": false
       },
+      "NornIrWidgetBehavior": {
+        "type": "string",
+        "description": "Accessibility behaviours a node requires, named as UI SDK's behaviour\nprimitives (`@ui-sdk/core`). They say what the control must do for\nkeyboard, focus and assistive technology, never how it looks.",
+        "enum": [
+          "focus_scope",
+          "roving_focus",
+          "typeahead",
+          "selection",
+          "popup",
+          "dismiss",
+          "drag_and_drop",
+          "live_region"
+        ],
+        "x-enumDescriptions": [
+          "Focus is contained while open and restored on close.",
+          "Arrow keys move focus among items; one tab stop.",
+          "Typing moves to the first matching item.",
+          "Items can be selected and the selection is announced.",
+          "Opens anchored to its invoker.",
+          "Escape and outside press dismiss it.",
+          "Items can be reordered or moved with pointer and keyboard.",
+          "Changes are announced politely."
+        ]
+      },
+      "NornIrWidgetCallOutcome": {
+        "type": "string",
+        "description": "Every way a call or read the page awaits can end.",
+        "enum": [
+          "accepted",
+          "refused",
+          "pending_approval",
+          "answer_moved",
+          "network_failure",
+          "timeout",
+          "cancelled"
+        ],
+        "x-enumDescriptions": [
+          "The server committed the call or answered the read.",
+          "The server refused with a coded refusal.",
+          "The call waits for an approval decision (HTTP 202, APPROVAL-1).",
+          "The read's answer or snapshot moved under it (HTTP 409\n`core.projection.answer_moved`, `object.snapshot_moved`).",
+          "No answer arrived from the server (network failure, 5xx without a\ncoded refusal, route not served).",
+          "The state's declared deadline passed first.",
+          "The page cancelled the call."
+        ]
+      },
       "NornIrWidgetComponent": {
         "oneOf": [
           {
@@ -26641,6 +26687,518 @@
           "dashboard"
         ]
       },
+      "NornIrWidgetMachine": {
+        "type": "object",
+        "description": "A page's interaction statechart (UI-MACHINE-1).\n\nClient state is the typed `fields` record, changed only by the `assign`\nof a transition that a declared event fires. Effects are closed: call a\ndeclared action binding, read a declared data binding, call a declared\nhost operation, cancel the awaited call, or navigate. The machine grants\nno authority: the server decides every call and read it names.",
+        "required": [
+          "machineVersion",
+          "initialStateId",
+          "fields",
+          "events",
+          "states",
+          "transitions"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineEvent"
+            },
+            "description": "Declared events and where each comes from."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineField"
+            },
+            "description": "Typed client-state fields."
+          },
+          "initialStateId": {
+            "type": "string",
+            "description": "State the page opens in; it must have the `idle` role."
+          },
+          "machineVersion": {
+            "type": "string",
+            "description": "Version of the machine contract.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineState"
+            },
+            "description": "Declared states."
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineTransition"
+            },
+            "description": "Declared transitions."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineCall": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineCallOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineCallOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineCallOneOf2"
+          }
+        ],
+        "description": "A server call or read named by a pending state or an effect."
+      },
+      "NornIrWidgetMachineCallOneOf0": {
+        "type": "object",
+        "description": "Call the declared action binding.",
+        "required": [
+          "kind",
+          "bindingId"
+        ],
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "action"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineCallOneOf1": {
+        "type": "object",
+        "description": "Read the declared data binding.",
+        "required": [
+          "kind",
+          "bindingId"
+        ],
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "read"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineCallOneOf2": {
+        "type": "object",
+        "description": "Call a host operation by its `OpenAPI` operation id.",
+        "required": [
+          "kind",
+          "operationId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "operation"
+            ]
+          },
+          "operationId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEffect": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEffectOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEffectOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEffectOneOf2"
+          }
+        ],
+        "description": "Closed transition effects."
+      },
+      "NornIrWidgetMachineEffectOneOf0": {
+        "type": "object",
+        "description": "Start the call or read; its outcome arrives as an `outcome` event.",
+        "required": [
+          "kind",
+          "call"
+        ],
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineCall"
+          },
+          "input": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEffectOneOf0PropertyInput"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "start"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEffectOneOf0PropertyInput": {
+        "type": "object",
+        "description": "Request members, each a ZEN expression over `input.fields` and\n`input.event`. An action binding maps its own inputs and takes none.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrZenExpression"
+        }
+      },
+      "NornIrWidgetMachineEffectOneOf1": {
+        "type": "object",
+        "description": "Cancel the awaited call; its outcome arrives as `cancelled`.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cancel"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEffectOneOf2": {
+        "type": "object",
+        "description": "Navigate to a declared navigation item.",
+        "required": [
+          "kind",
+          "itemId"
+        ],
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "navigate"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEvent": {
+        "type": "object",
+        "description": "One declared event.",
+        "required": [
+          "eventId",
+          "source"
+        ],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "description": "Stable event id."
+          },
+          "payload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineField"
+            },
+            "description": "Typed payload members carried by a user or subscription event.\nOutcome events carry the fixed payload of their outcome."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSource",
+            "description": "Where the event comes from."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEventSource": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSourceOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSourceOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSourceOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSourceOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMachineEventSourceOneOf4"
+          }
+        ],
+        "description": "Closed event sources. Every source is an input: a person, the server, a\nsubscription, or a deadline the machine itself declared."
+      },
+      "NornIrWidgetMachineEventSourceOneOf0": {
+        "type": "object",
+        "description": "The page was opened by the host.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "page_opened"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEventSourceOneOf1": {
+        "type": "object",
+        "description": "A person used the control at `node_id` in this page's tree.",
+        "required": [
+          "kind",
+          "nodeId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user"
+            ]
+          },
+          "nodeId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEventSourceOneOf2": {
+        "type": "object",
+        "description": "The server answered the call or read the current state awaits.",
+        "required": [
+          "kind",
+          "outcome"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "For `refused` only: the refusal category matched. Omitted, it\nmatches every category.",
+            "enum": [
+              "visibility",
+              "permission",
+              "precondition",
+              "conflict",
+              "invalid",
+              "limit",
+              "internal"
+            ],
+            "x-enumDescriptions": [
+              "The target is not visible to the caller.",
+              "The caller lacks permission.",
+              "A precondition or law refused the call.",
+              "The call conflicts with current state.",
+              "The input is invalid.",
+              "A limit was reached.",
+              "The server failed internally."
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "outcome"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NornIrWidgetCallOutcome"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEventSourceOneOf3": {
+        "type": "object",
+        "description": "A subscribed data binding delivered a new snapshot.",
+        "required": [
+          "kind",
+          "bindingId"
+        ],
+        "properties": {
+          "bindingId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "subscription"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineEventSourceOneOf4": {
+        "type": "object",
+        "description": "Fires `after_ms` after the source state of its transition is entered.",
+        "required": [
+          "kind",
+          "afterMs"
+        ],
+        "properties": {
+          "afterMs": {
+            "$ref": "#/components/schemas/NornIrWholeNumber"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "timer"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineField": {
+        "type": "object",
+        "description": "One typed client-state field, or one typed member of an event payload.",
+        "required": [
+          "fieldId",
+          "type",
+          "required"
+        ],
+        "properties": {
+          "fieldId": {
+            "type": "string",
+            "description": "Stable field id, unique within its record."
+          },
+          "initial": {
+            "$ref": "#/components/schemas/NornIrJsonValue",
+            "description": "Initial value of a state field. Required fields need one; payload\nmembers never carry one."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the value is always present (otherwise it may be null)."
+          },
+          "type": {
+            "type": "string",
+            "description": "Scalar type.",
+            "enum": [
+              "text",
+              "integer",
+              "number",
+              "boolean",
+              "date",
+              "timestamp",
+              "duration",
+              "json"
+            ],
+            "x-enumDescriptions": [
+              "Text.",
+              "Signed integer.",
+              "Exact decimal or general numeric value.",
+              "Boolean.",
+              "Calendar date.",
+              "Timestamp with an explicit zone.",
+              "Elapsed duration.",
+              "Opaque JSON value; it cannot be inspected by ZEN."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineState": {
+        "type": "object",
+        "description": "One declared state.",
+        "required": [
+          "stateId",
+          "role"
+        ],
+        "properties": {
+          "awaits": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineCall",
+            "description": "The call or read a `pending` state waits for."
+          },
+          "deadlineMs": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Deadline of a `pending` state; when it passes the runtime cancels the\ncall and raises the `timeout` outcome.",
+            "maximum": 9007199254740992,
+            "minimum": 0
+          },
+          "role": {
+            "type": "string",
+            "description": "Role of the state.",
+            "enum": [
+              "idle",
+              "pending",
+              "error",
+              "terminal"
+            ],
+            "x-enumDescriptions": [
+              "Waiting for a person or a subscription.",
+              "Waiting for the server to answer the call or read in `awaits`.",
+              "Showing a failure the person can recover from.",
+              "Done; the page has nothing left to do. No transition leaves it."
+            ]
+          },
+          "stateId": {
+            "type": "string",
+            "description": "Stable state id."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineTransition": {
+        "type": "object",
+        "description": "One declared transition.",
+        "required": [
+          "transitionId",
+          "from",
+          "on",
+          "target"
+        ],
+        "properties": {
+          "assign": {
+            "$ref": "#/components/schemas/NornIrWidgetMachineTransitionPropertyAssign"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetMachineEffect"
+            },
+            "description": "Effects run when the transition fires, in order."
+          },
+          "from": {
+            "type": "string",
+            "description": "Source state."
+          },
+          "guard": {
+            "type": "string",
+            "description": "Boolean ZEN guard over `input.fields` and `input.event`. A guarded\ntransition refines; it never counts as covering an outcome."
+          },
+          "on": {
+            "type": "string",
+            "description": "Triggering event."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target state."
+          },
+          "transitionId": {
+            "type": "string",
+            "description": "Stable transition id."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineTransitionPropertyAssign": {
+        "type": "object",
+        "description": "New field values, each a ZEN expression over `input.fields` and\n`input.event`, typed as the field.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrZenExpression"
+        }
+      },
       "NornIrWidgetNativeProjection": {
         "type": "string",
         "description": "Host-native projections available to Widget UX.",
@@ -26792,6 +27350,13 @@
           "children"
         ],
         "properties": {
+          "behaviors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetBehavior"
+            },
+            "description": "Accessibility behaviours this node requires (UI-VIEW-1)."
+          },
           "children": {
             "type": "array",
             "items": {
@@ -27016,6 +27581,10 @@
             },
             "description": "Typed values supplied by routes or the host when opening this page."
           },
+          "machine": {
+            "$ref": "#/components/schemas/NornIrWidgetMachine",
+            "description": "Declared interaction statechart of this page (UI-MACHINE-1). The\nrenderer executes only this machine; the checker proves it has no\nabsorbing non-terminal state and that every pending state handles\nevery server outcome."
+          },
           "name": {
             "type": "string",
             "description": "Human-readable page name."
@@ -27027,6 +27596,10 @@
           "root": {
             "$ref": "#/components/schemas/NornIrWidgetNode",
             "description": "Root of the page component tree."
+          },
+          "view": {
+            "$ref": "#/components/schemas/NornIrWidgetView",
+            "description": "What this page is in the UI ontology (UI-VIEW-1): a semantic view\nkind bound to the domain concept it presents. Renderer-neutral."
           }
         },
         "additionalProperties": false
@@ -27236,6 +27809,28 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrWidgetRefusalCategory": {
+        "type": "string",
+        "description": "Refusal categories, as the server's `norn/refusal@2` documents them.",
+        "enum": [
+          "visibility",
+          "permission",
+          "precondition",
+          "conflict",
+          "invalid",
+          "limit",
+          "internal"
+        ],
+        "x-enumDescriptions": [
+          "The target is not visible to the caller.",
+          "The caller lacks permission.",
+          "A precondition or law refused the call.",
+          "The call conflicts with current state.",
+          "The input is invalid.",
+          "A limit was reached.",
+          "The server failed internally."
+        ]
+      },
       "NornIrWidgetRenderer": {
         "type": "string",
         "description": "Projection renderers.",
@@ -27434,6 +28029,22 @@
           "Descending."
         ]
       },
+      "NornIrWidgetStateRole": {
+        "type": "string",
+        "description": "The role of a state. Roles drive the checker's laws.",
+        "enum": [
+          "idle",
+          "pending",
+          "error",
+          "terminal"
+        ],
+        "x-enumDescriptions": [
+          "Waiting for a person or a subscription.",
+          "Waiting for the server to answer the call or read in `awaits`.",
+          "Showing a failure the person can recover from.",
+          "Done; the page has nothing left to do. No transition leaves it."
+        ]
+      },
       "NornIrWidgetUx": {
         "type": "object",
         "description": "The typed UX contract nested in a legacy `widget` payload.",
@@ -27617,6 +28228,69 @@
         },
         "additionalProperties": false
       },
+      "NornIrWidgetView": {
+        "type": "object",
+        "description": "A page's place in the UI ontology (UI-VIEW-1).\n\nA view is a semantic, typed UI concept, never a visual one. Its four\ncontracts are the page's typed data bindings (data), its `machine`\n(interaction), the `behaviors` on its nodes (accessibility), and the\ncapability catalog derived by [`WidgetUx::renderer_capabilities`]\n(what a renderer must implement to draw it). Renderers are compile\ntargets of this contract; swapping one never touches the page.",
+        "required": [
+          "kind",
+          "subject"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Semantic kind of the view.",
+            "enum": [
+              "collection",
+              "record",
+              "form",
+              "question",
+              "dashboard",
+              "run",
+              "decision_inbox",
+              "lineage"
+            ],
+            "x-enumDescriptions": [
+              "Many objects of one type.",
+              "One object.",
+              "Input to one action.",
+              "The answer to one question or transform.",
+              "A dashboard definition's tiles.",
+              "One run of a flow, step by step.",
+              "Decisions waiting on the viewer.",
+              "Where one object's values came from."
+            ]
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubject",
+            "description": "The domain concept the view presents."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewKind": {
+        "type": "string",
+        "description": "Closed semantic view kinds.",
+        "enum": [
+          "collection",
+          "record",
+          "form",
+          "question",
+          "dashboard",
+          "run",
+          "decision_inbox",
+          "lineage"
+        ],
+        "x-enumDescriptions": [
+          "Many objects of one type.",
+          "One object.",
+          "Input to one action.",
+          "The answer to one question or transform.",
+          "A dashboard definition's tiles.",
+          "One run of a flow, step by step.",
+          "Decisions waiting on the viewer.",
+          "Where one object's values came from."
+        ]
+      },
       "NornIrWidgetViewState": {
         "type": "object",
         "description": "One render state of a widget.",
@@ -27646,6 +28320,168 @@
           "error",
           "preview"
         ]
+      },
+      "NornIrWidgetViewSubject": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrWidgetViewSubjectOneOf6"
+          }
+        ],
+        "description": "The domain concept a view presents."
+      },
+      "NornIrWidgetViewSubjectOneOf0": {
+        "type": "object",
+        "description": "An object type (entity artifact).",
+        "required": [
+          "kind",
+          "object"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "object_type"
+            ]
+          },
+          "object": {
+            "$ref": "#/components/schemas/NornIrArtifactRef"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf1": {
+        "type": "object",
+        "description": "An action artifact.",
+        "required": [
+          "kind",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/NornIrArtifactRef"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "action"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf2": {
+        "type": "object",
+        "description": "A retained question definition.",
+        "required": [
+          "kind",
+          "definitionId"
+        ],
+        "properties": {
+          "definitionId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "question"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf3": {
+        "type": "object",
+        "description": "A transform.",
+        "required": [
+          "kind",
+          "transformId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transform"
+            ]
+          },
+          "transformId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf4": {
+        "type": "object",
+        "description": "A retained dashboard definition.",
+        "required": [
+          "kind",
+          "definitionId"
+        ],
+        "properties": {
+          "definitionId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dashboard"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf5": {
+        "type": "object",
+        "description": "A retained flow definition.",
+        "required": [
+          "kind",
+          "definitionId"
+        ],
+        "properties": {
+          "definitionId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "flow"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetViewSubjectOneOf6": {
+        "type": "object",
+        "description": "The viewer's decisions.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "decisions"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrWindowChoice": {
         "type": "string",

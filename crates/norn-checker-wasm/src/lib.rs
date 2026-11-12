@@ -560,7 +560,9 @@ fn parse_expression_inputs(
                     return Err(invalid("inputJson", "recordKey must be a nonempty string"));
                 }
             }
-            "record" | "row" | "draft" | "context" => {
+            // `fields` and `event` are a page machine's guard and assignment inputs
+            // (UI-MACHINE-1): the runtime evaluates them with this same engine.
+            "record" | "row" | "draft" | "context" | "fields" | "event" => {
                 if !matches!(&value, norn_ir::RuntimeValue::Object(_)) {
                     return Err(invalid(
                         "inputJson",

@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.pending_outcome_uncovered",
+  "message": "a pending page machine state has no unguarded transition for an outcome its call can have: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

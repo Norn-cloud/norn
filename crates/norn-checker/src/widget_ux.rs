@@ -229,6 +229,8 @@ pub(crate) fn check_widget_ux_set(
             &nullable_inputs,
             &composed,
         ));
+        diagnostics.extend(crate::ui_machine::check(artifact, &ux));
+        diagnostics.extend(crate::ui_view::check(artifact, &ux));
     }
     diagnostics
 }
@@ -6864,7 +6866,7 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
     Some(if property.nullable { ty.optional() } else { ty })
 }
 
-fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
+pub(crate) fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
     let ty = match value_type {
         norn_ir::WidgetValueType::Text => Type::text(),
         norn_ir::WidgetValueType::Integer => Type::Integer,

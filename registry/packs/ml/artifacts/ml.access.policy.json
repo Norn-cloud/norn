@@ -1,0 +1,92 @@
+{
+  "artifactId": "ml.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Model versions",
+  "namespace": "ml",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "ml.access",
+    "rules": [
+      {
+        "actions": [
+          "ml.modelversion.register"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "ml.ModelVersion",
+        "ruleId": "register",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "ml.modelversion.promote"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "ml.ModelVersion",
+        "ruleId": "promote",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "ml.modelversion.retire"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "ml.ModelVersion",
+        "ruleId": "retire",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
