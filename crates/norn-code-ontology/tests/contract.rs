@@ -79,13 +79,12 @@ fn callback_join_retains_registration_evidence() {
             .iter()
             .find(|h| h.id == format!("demo/demo/api.py:{symbol}"))
             .expect("fixture callback");
-        let mut unit: norn_code_ontology::CodeUnit =
-            serde_json::from_value(serde_json::json!({
-                "id": handler.id, "app": "demo", "doctype": "", "kind": "function",
-                "source": handler.source, "symbol": symbol,
-                "reads": [], "writes": [], "calls": [], "triggers": [], "clause": null
-            }))
-            .expect("behaviour callback unit");
+        let mut unit: norn_code_ontology::CodeUnit = serde_json::from_value(serde_json::json!({
+            "id": handler.id, "app": "demo", "doctype": "", "kind": "function",
+            "source": handler.source, "symbol": symbol,
+            "reads": [], "writes": [], "calls": [], "triggers": [], "clause": null
+        }))
+        .expect("behaviour callback unit");
         unit.source.path = format!("code/{}", unit.source.path);
         let registration = graph
             .facts_for(&unit)
