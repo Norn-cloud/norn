@@ -203,7 +203,7 @@ function LiveLaws() {
   const { read, catalog } = useCatalog()
   if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
   if (read.isError) return <p className="text-destructive">{read.error.message}</p>
-  const governed = catalog?.concepts.filter(({ laws, definition }) => laws.length > 0 && definition === "object type") ?? []
+  const governed = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
   return (
     <div className="space-y-6">
       {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
