@@ -52,4 +52,4 @@ whose fields hold numbers or numeric text, such as a dataset uploaded as CSV.
 **Limits.**
 - The model is ordinary least squares with an intercept. Rows with a missing value are dropped.
 - Fitted values and residuals are returned for plotting, not stored in the cell.
-- Absent values are recorded as "": `orderField` when no order field is named, `pValue` for checks without one. The profile has no nullable action inputs.
+- Absent values are recorded as "": `order_field` when no order field is named, `p_value` for checks without one. The profile has no nullable action inputs.

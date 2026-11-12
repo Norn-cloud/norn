@@ -118,8 +118,8 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
     identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset], separators=(",", ":"))
     spec_id = "ms-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
     checks, plots = assumption_suite(rows, target, list(features), order)
-    spec = {"spec": spec_id, "objectType": object_type, "target": target, "features": ",".join(features),
-            "orderField": order, "datasetRevision": dataset, "rows": int(len(rows)), "rowsUsed": int(plots["n"]),
+    spec = {"spec": spec_id, "object_type": object_type, "target": target, "features": ",".join(features),
+            "order_field": order, "dataset_revision": dataset, "rows": int(len(rows)), "rows_used": int(plots["n"]),
             "method": environment(), "summary": summary(checks)}
     result = RegressionChecks(spec, checks, plots)
     # The definitions have no nullable members: an absent value is recorded as "".
@@ -127,7 +127,7 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
     result.receipts.append(cell.call("stats.modelspec.record", present(spec), spec_id)["receipt"]["receiptHash"])
     for index, check in enumerate(checks):
         values = {"check": f"{spec_id}-{index:02d}", "spec": spec_id, "assumption": check.assumption, "test": check.test,
-                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "pValue": check.p_value,
-                  "threshold": check.threshold, "thresholdSource": check.threshold_source, "remediation": check.remediation}
+                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": check.p_value,
+                  "threshold": check.threshold, "threshold_source": check.threshold_source, "remediation": check.remediation}
         result.receipts.append(cell.call("stats.assumptioncheck.record", present(values), values["check"])["receipt"]["receiptHash"])
     return result

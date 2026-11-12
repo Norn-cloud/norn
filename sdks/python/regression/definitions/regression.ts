@@ -10,13 +10,13 @@ const Assumption = Schema.Literals(["missingness", "sanity", "linearity", "norma
 
 const SpecFields = Schema.Struct({
   spec: Schema.String,
-  objectType: Schema.String,
+  object_type: Schema.String,
   target: Schema.String,
   features: Schema.String,
-  orderField: Schema.String, // "" when no order field was named
-  datasetRevision: Schema.String,
+  order_field: Schema.String, // "" when no order field was named
+  dataset_revision: Schema.String,
   rows: Schema.Int,
-  rowsUsed: Schema.Int,
+  rows_used: Schema.Int,
   method: Schema.String,
   summary: Summary,
 })
@@ -35,9 +35,9 @@ const CheckFields = Schema.Struct({
   subject: Schema.String,
   status: Status,
   statistic: Schema.String,
-  pValue: Schema.String, // "" for a check without a p-value
+  p_value: Schema.String, // "" for a check without a p-value
   threshold: Schema.String,
-  thresholdSource: Schema.String,
+  threshold_source: Schema.String,
   remediation: Schema.String,
 })
 
@@ -45,7 +45,7 @@ export const AssumptionCheck = Norn.type({
   name: "stats.AssumptionCheck", title: "Regression assumption check", version: "0.1.0",
   properties: CheckFields,
   identity: [{ name: "primary", properties: ["check"] }],
-  links: [{ id: "spec", target: "stats.ModelSpec", cardinality: { to: "one", from: "many" } }],
+  links: [{ id: "model", target: "stats.ModelSpec", cardinality: { to: "one", from: "many" } }],
 })
 
 export const RecordModelSpec = Norn.action({
@@ -65,9 +65,9 @@ export const RecordAssumptionCheck = Norn.action({
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   writes: [{ type: AssumptionCheck, change: "created" }],
-  // The spec must exist: it is read by its key in the same commit, and linked.
+  // The spec must exist: it is read by its key in the same commit, and linked (link "model").
   slice: [{ name: "spec", type: ModelSpec, key: { property: { from: "input", property: "spec" } } }],
-  createLinks: [{ link: "spec", targetType: ModelSpec, targetIdField: "spec" }],
+  createLinks: [{ link: "model", targetType: ModelSpec, targetIdField: "spec" }],
   effect: { kind: "upsert_input_object", type: AssumptionCheck, objectIdField: "check", writeMode: { kind: "create_only" } },
 })
 
@@ -76,10 +76,10 @@ export const RecordAssumptionCheck = Norn.action({
 // through stats.checkrequest.finish; the request keeps its history in receipts.
 const RequestFields = Schema.Struct({
   request: Schema.String,
-  objectType: Schema.String,
+  object_type: Schema.String,
   target: Schema.String,
   features: Schema.String, // comma-joined
-  orderField: Schema.String, // "" when none
+  order_field: Schema.String, // "" when none
   status: Schema.Literals(["queued", "running", "done", "failed"]),
   spec: Schema.String, // the stats.ModelSpec id once done, else ""
   error: Schema.String, // why it failed, else ""
@@ -107,7 +107,7 @@ export const FinishCheckRequest = Norn.action({
   output: Schema.Struct({ request: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
-  writes: [{ type: CheckRequest, change: "modified" }],
+  writes: [{ type: CheckRequest, change: "created" }, { type: CheckRequest, change: "modified" }],
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
 })
 

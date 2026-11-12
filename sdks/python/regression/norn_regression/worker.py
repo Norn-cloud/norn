@@ -21,7 +21,7 @@ import traceback
 
 from .cell import Cell, check_regression
 
-FIELDS = ("request", "objectType", "target", "features", "orderField", "status", "spec", "error")
+FIELDS = ("request", "object_type", "target", "features", "order_field", "status", "spec", "error")
 
 
 def report(cell: Cell, request: dict, status: str, spec: str = "", error: str = "") -> None:
@@ -33,8 +33,8 @@ def run(cell: Cell, request: dict) -> str:
     report(cell, request, "running")
     try:
         features = [name for name in str(request["features"]).split(",") if name]
-        result = check_regression(str(request["objectType"]), str(request["target"]), features, cell=cell,
-                                  order=str(request.get("orderField") or "") or None)
+        result = check_regression(str(request["object_type"]), str(request["target"]), features, cell=cell,
+                                  order=str(request.get("order_field") or "") or None)
     except Exception as error:  # the reason goes to the request, where Studio shows it
         report(cell, request, "failed", error=f"{type(error).__name__}: {error}")
         return "failed"

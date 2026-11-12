@@ -33,8 +33,8 @@ cell = Cell.from_project(project)
 
 # %%
 result = check_regression("lab.Sample", target="y", features=["x1", "x2", "x3"], order="t", cell=cell)
-print(f"{result.spec['objectType']} at revision {result.spec['datasetRevision'][:12]}: {result.status} "
-      f"({result.spec['rowsUsed']} of {result.spec['rows']} rows used; spec {result.spec['spec']})")
+print(f"{result.spec['object_type']} at revision {result.spec['dataset_revision'][:12]}: {result.status} "
+      f"({result.spec['rows_used']} of {result.spec['rows']} rows used; spec {result.spec['spec']})")
 pd.set_option("display.width", 200)
 pd.set_option("display.max_colwidth", 60)
 table = result.frame()[["assumption", "test", "subject", "status", "statistic", "p_value", "threshold"]]

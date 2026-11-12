@@ -34,14 +34,14 @@ assert len(cell.rows("stats.ModelSpec")) == 1 and len(cell.rows("stats.Assumptio
 # A write to the dataset is a new revision, and a new spec beside the first.
 cell.call("lab.sample.add", {"sample": "s99999", "t": 99999, "x1": "1.0000", "x2": "2.0000", "x3": "3.0000", "y": "4.0000"}, "extra-row")
 later = check_regression("lab.Sample", **args)
-assert later.spec["datasetRevision"] != first.spec["datasetRevision"] and later.spec["spec"] != first.spec["spec"]
+assert later.spec["dataset_revision"] != first.spec["dataset_revision"] and later.spec["spec"] != first.spec["spec"]
 assert len(cell.rows("stats.ModelSpec")) == 2
 # One click in Studio: a queued request, run by the worker through the same governed actions.
 import subprocess  # noqa: E402
-cell.call("stats.checkrequest.submit", {"request": "rq-demo-1", "objectType": "lab.Sample", "target": "y", "features": "x1,x2",
-                                        "orderField": "t", "status": "queued", "spec": "", "error": ""}, "rq-demo-1")
-cell.call("stats.checkrequest.submit", {"request": "rq-demo-2", "objectType": "lab.Sample", "target": "y", "features": "nope",
-                                        "orderField": "", "status": "queued", "spec": "", "error": ""}, "rq-demo-2")
+cell.call("stats.checkrequest.submit", {"request": "rq-demo-1", "object_type": "lab.Sample", "target": "y", "features": "x1,x2",
+                                        "order_field": "t", "status": "queued", "spec": "", "error": ""}, "rq-demo-1")
+cell.call("stats.checkrequest.submit", {"request": "rq-demo-2", "object_type": "lab.Sample", "target": "y", "features": "nope",
+                                        "order_field": "", "status": "queued", "spec": "", "error": ""}, "rq-demo-2")
 subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
 requests = cell.rows("stats.CheckRequest").set_index("request")
 assert requests.loc["rq-demo-1", "status"] == "done", requests
