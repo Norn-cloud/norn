@@ -1028,6 +1028,19 @@
       },
       {
         "label": {
+          "ar": "وقت الرصد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "observed_at"
+        }
+      },
+      {
+        "label": {
           "ar": "المخزن"
         },
         "review": {

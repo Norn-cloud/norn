@@ -741,6 +741,39 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
+    /// METRIC-SNAPSHOT-ASOF-1: every stored version of one object, oldest
+    /// first, each read through its proof; tombstones are left out. `None`
+    /// when the budget or the 4096-version bound runs out.
+    ///
+    /// # Errors
+    /// Missing/corrupt proof or engine failure.
+    pub(crate) fn object_versions_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<Vec<ObjectRecord>>, CellError> {
+        let root = self.root_type(object_type).unwrap_or(object_type);
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 ORDER BY \"version\" LIMIT 4097"),
+            params![world, root, key],
+        )?;
+        if rows.len() > 4096 {
+            return Ok(None);
+        }
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = to_u64(SqlRow(row).get(0)?, "fact version")?;
+            match self.object_at_version_with_budget(world, object_type, key, version, budget)? {
+                crate::reactive::BudgetedRead::Found(record) => records.push(record),
+                crate::reactive::BudgetedRead::Missing => {}
+                crate::reactive::BudgetedRead::Exhausted => return Ok(None),
+            }
+        }
+        Ok(Some(records))
+    }
+
     /// Read a pinned incarnation only if its authenticated emitting receipt was
     /// recorded by `known_as_of` (inclusive, in the cell's logical clock).
     /// Enforces ASOF-KNOWLEDGE-1 for pinned historical inputs.

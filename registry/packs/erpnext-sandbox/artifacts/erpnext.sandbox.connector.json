@@ -97,6 +97,7 @@
               "custom_norn_ref": "/custom_norn_ref",
               "item_ref": "/item_ref",
               "location": "/location",
+              "modified": "/modified",
               "name": "/name",
               "owner_ref": "/owner_ref",
               "quantity": "/quantity",

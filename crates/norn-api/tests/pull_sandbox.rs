@@ -390,7 +390,7 @@ fn sync(
     loop {
         match step {
             Step::Done(summary) => return (summary, sent),
-            // SYNC-YIELD-1: rows map a few at a time between the host's turns.
+            // SYNC-YIELD-1: rows map a page at a time between the host's turns.
             Step::Continue => step = sources.step(host, id, None, now_ms),
             Step::Request(request) => {
                 let feed = profile
@@ -686,4 +686,20 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
             .iter()
             .all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_)))
     );
+}
+
+/// SYNC-INSTANCE-1 and SYNC-URL-1: configuration the cell refuses before
+/// any sync, a connection claiming the cell's own instance or a plain-HTTP
+/// public base URL.
+#[test]
+fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
+    let one = |instance: &str, base: &str| {
+        format!(
+            r#"[{{"id": "x", "system": "erpnext", "label": "X", "connector": "c", "mapping": "m", "instance": "{instance}", "baseUrl": "{base}"}}]"#
+        )
+    };
+    let refused = |config: String| Sources::new(&config, BTreeMap::new()).expect_err("refused");
+    assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
+    assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
+    assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
 }

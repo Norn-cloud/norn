@@ -133,17 +133,29 @@ export class Cell {
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
+    const started = Date.now();
+    let fetchMs = 0;
+    let fetches = 0;
+    let yields = 0;
     let step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
     while (step.request || step.continue) {
       if (step.continue) {
-        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped chunks.
+        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped pages.
         await new Promise((resolve) => setTimeout(resolve, 0));
+        yields += 1;
         step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
         continue;
       }
+      const sent = Date.now();
       const { status, bytes } = await perform(step.request);
+      fetchMs += Date.now() - sent;
+      fetches += 1;
       step = JSON.parse(this.cell.syncStep(id, status, bytes, Date.now()));
     }
+    // Counts and times only: what a run cost, never what it read or carried.
+    const done = step.done ?? {};
+    const wallMs = Date.now() - started;
+    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, fetches, yields, wallMs, fetchMs, cellMs: wallMs - fetchMs }));
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {
