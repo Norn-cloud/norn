@@ -301,8 +301,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let key = model.canonical_link(key);
-        let scope =
-            ClaimScope::either(BTreeSet::from([key.source.key.clone(), key.target.key.clone()]));
+        let scope = ClaimScope::either(BTreeSet::from([
+            key.source.key.clone(),
+            key.target.key.clone(),
+        ]));
         let entries = self.claim_journal(None, Some(&scope))?;
         Ok(Self::distinct(entries.into_iter().filter(|e| {
             e.claim.target.as_ref().is_some_and(|target| {
@@ -641,7 +643,7 @@ mod tests {
         }
         consumed(&store, 1003, "demo/\"quoted\"");
         let reader = store.read();
-        let scope = BTreeSet::from(["demo/\"quoted\"".to_owned()]);
+        let scope = ClaimScope::either(BTreeSet::from(["demo/\"quoted\"".to_owned()]));
         assert_eq!(
             reader
                 .claim_bundles(Some(&scope), MAX_CLAIM_BUNDLES)

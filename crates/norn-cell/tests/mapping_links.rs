@@ -843,7 +843,8 @@ proptest::proptest! {
         let rows = source["snapshot"].as_array().expect("rows").clone();
         let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
         for (row, party, version) in steps {
-            let mut row = rows[usize::from(row) % rows.len()].clone();
+            // The erpnext snapshot has seven rows; `row` is drawn from 0..7.
+            let mut row = rows[usize::from(row)].clone();
             let record = row["record"].as_object_mut().expect("record");
             let party = parties[usize::from(party)];
             if record.contains_key("provider_ref") && party != "clear" {
