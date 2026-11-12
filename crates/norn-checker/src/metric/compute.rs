@@ -16,11 +16,17 @@ use crate::{Diagnostic, Span};
 pub const AMBIGUOUS_GRAIN: &str = "core.compute.ambiguous_grain";
 /// Calendar grains this profile buckets a time property by; a group-by
 /// without a grain groups by the property's values.
-pub const GRAINS: &[TimeGrain] = &[TimeGrain::Week];
+pub const GRAINS: &[TimeGrain] = &[
+    TimeGrain::Day,
+    TimeGrain::Week,
+    TimeGrain::Month,
+    TimeGrain::Quarter,
+    TimeGrain::Year,
+];
 /// Filter operators this profile admits.
 pub const OPERATORS: &[FilterOperator] = &[FilterOperator::Eq, FilterOperator::Ne];
 /// Most group-bys one question may have in this profile.
-pub const MAX_GROUP_BY: usize = 1;
+pub const MAX_GROUP_BY: usize = 4;
 /// The requested semantics have no qualified execution in this profile.
 pub const UNSUPPORTED_ENGINE: &str = "core.compute.unsupported_engine";
 

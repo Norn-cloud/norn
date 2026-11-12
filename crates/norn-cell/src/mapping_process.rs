@@ -30,22 +30,10 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         }
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-        self.store().read().recheck_mapping_bundle(&bundle)?;
-        if self
-            .store()
-            .read()
-            .installed_definitions(None)?
-            .map(|d| d.version)
-            != Some(bundle.definitions_version)
-            || observation_id != format!("mapping-bundle:{}", bundle.digest)
-        {
+        if observation_id != format!("mapping-bundle:{}", bundle.digest) {
             return Err(CellError::MappingBundleMismatch);
         }
-        if self.store().read().mapping_conflict(&bundle)?.is_some()
-            || self.store().read().mapping_event_is_disputed(&bundle)?
-        {
-            return Err(CellError::UnsupportedMappingProfile);
-        }
+        self.store().read().check_mapping_bundle(&bundle)?;
         let model = self.store().model().clone();
         let catalog = TypeCatalog::new(model.object_types())
             .with_interfaces(model.interfaces())
@@ -59,61 +47,28 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         };
         let mut commit = CellCommit::empty().consuming(observed.consumed());
         let mut authorization = ObservationAuthorization::empty();
-        if bundle.raw.get("kind").and_then(RuntimeValue::as_str) != Some("upsert")
-            || !bundle.diagnostics.is_empty()
-        {
-            return Err(CellError::UnsupportedMappingProfile);
-        }
-        for record in &bundle.records {
-            if record.invocations.len() != 1 {
-                return Err(CellError::UnsupportedMappingProfile);
-            }
-            let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = self.store().read().mapping_observation_slice(&key)?;
-            let mut values = record
-                .invocations
-                .first()
-                .ok_or(CellError::MappingBundleMismatch)?
-                .input
-                .clone();
-            values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
-            let prepared = prepare_observed_snapshot(
+        let bundles = [bundle];
+        let reader = self.store().read();
+        for bundle in &bundles {
+            reader.prepare_mapping_records(
+                bundle,
                 &catalog,
-                &slice,
                 &turn,
-                ObservedSnapshot {
-                    key: &key,
-                    values: &values,
-                    lifecycles: &record.lifecycle_snapshots,
-                    provenance: &record.provenance,
-                },
-            )
-            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-            prepared
-                .append_to(&mut commit, &mut authorization)
-                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+                &mut commit,
+                &mut authorization,
+            )?;
         }
-        self.store().read().prepare_mapping_links(
-            &bundle,
-            &catalog,
-            &turn,
-            &mut commit,
-            &mut authorization,
-        )?;
+        reader.prepare_mapping_links(&bundles, &catalog, &turn, &mut commit, &mut authorization)?;
         // LAW-LINK-1: laws that read a link are evaluated once the bundle's
         // links are known, over the state this commit leaves; a changed target
         // re-checks the subjects that link to it.
         authorization
-            .refresh_link_findings(
-                &catalog,
-                &mut commit,
-                &crate::host::GuardView(&self.store().read()),
-            )
+            .refresh_link_findings(&catalog, &mut commit, &crate::host::GuardView(&reader))
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, &authorization, Some(&bundle))
+        self.commit_observed_evidence(commit, &authorization, &bundles)
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
     }
@@ -196,6 +151,67 @@ fn refusal_code(error: &CellError) -> String {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// The checks every mapped commit makes before preparing a bundle: the
+    /// mapping recomputes to the retained bundle under the active pins, and
+    /// the source event is neither in conflict nor disputed.
+    pub(crate) fn check_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
+        self.recheck_mapping_bundle(bundle)?;
+        if self.installed_definitions(None)?.map(|d| d.version) != Some(bundle.definitions_version)
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        if self.mapping_conflict(bundle)?.is_some() || self.mapping_event_is_disputed(bundle)? {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
+        if bundle.raw.get("kind").and_then(RuntimeValue::as_str) != Some("upsert")
+            || !bundle.diagnostics.is_empty()
+        {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
+        Ok(())
+    }
+
+    /// Append one bundle's record snapshots to `commit`.
+    pub(crate) fn prepare_mapping_records(
+        &self,
+        bundle: &MappingBundle,
+        catalog: &TypeCatalog<'_>,
+        turn: &DecisionTurn,
+        commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
+        authorization: &mut ObservationAuthorization,
+    ) -> Result<(), CellError> {
+        for record in &bundle.records {
+            if record.invocations.len() != 1 {
+                return Err(CellError::UnsupportedMappingProfile);
+            }
+            let key = FactKey::new(record.object_type.as_str(), &record.key);
+            let slice = self.mapping_observation_slice(&key)?;
+            let mut values = record
+                .invocations
+                .first()
+                .ok_or(CellError::MappingBundleMismatch)?
+                .input
+                .clone();
+            values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
+            let prepared = prepare_observed_snapshot(
+                catalog,
+                &slice,
+                turn,
+                ObservedSnapshot {
+                    key: &key,
+                    values: &values,
+                    lifecycles: &record.lifecycle_snapshots,
+                    provenance: &record.provenance,
+                },
+            )
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+            prepared
+                .append_to(commit, authorization)
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        }
+        Ok(())
+    }
+
     // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.
     pub(crate) fn mapping_observation_slice(
         &self,

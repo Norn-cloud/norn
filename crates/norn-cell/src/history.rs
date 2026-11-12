@@ -2120,6 +2120,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             position,
             observation_id,
             observed,
+            members,
         } => {
             if position == 0
                 || record.batch.consumes
@@ -2135,6 +2136,13 @@ pub(crate) fn restore_input<E: SqlEngine>(
                 &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
                 params![to_i64(position, "position")?, observation_id, canonical_json(&observed)?],
             ).map_err(|_invalid| mismatch())?;
+            // OBS-PAGE-1: the page's members, pending again at their old positions.
+            for member in members {
+                store.conn.execute(
+                    &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
+                    params![to_i64(member.position, "position")?, member.observation_id, canonical_json(&member.observed)?],
+                ).map_err(|_invalid| mismatch())?;
+            }
         }
         ConsumedInput::Timer { commit_seq, timer } => {
             let expected = crate::PendingTimer { commit_seq, timer };
@@ -2269,10 +2277,15 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
     match input.get("kind").and_then(norn_ir::RuntimeValue::as_str) {
         Some("observation") => {
             let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
+            let members = match input.get("members") {
+                Some(members) => norn_ir::runtime::decode(members)?,
+                None => Vec::new(),
+            };
             Ok(ConsumedInput::Observation {
                 position: row.position,
                 observation_id: row.observation_id,
                 observed: row.observed,
+                members,
             })
         }
         Some("timer") => {

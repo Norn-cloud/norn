@@ -238,6 +238,20 @@ fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
     plan.as_of_instant()
         .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
 }
+/// A question scans under its own bound (ruling 2026-11-12), not the bound
+/// on records a slice returns.
+fn question_budget() -> Result<DecodeBudget, CellError> {
+    let profile = ResourceLimitProfile::norn_limits_v1();
+    let question = profile.question_limits();
+    let limits = ReactiveLimits {
+        max_scan: usize::try_from(question.max_scanned_records)
+            .map_err(|_bound| refused("core.compute.bound_exceeded"))?,
+        max_candidate_bytes_per_commit: question.max_scanned_bytes,
+        ..ReactiveLimits::from_profile(&profile)
+    };
+    Ok(DecodeBudget::new(&limits))
+}
+
 fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
@@ -307,22 +321,25 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
-        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+        self.question_snapshot_at_with(plan, context, cutoff, false, visible, |snapshot, _| {
+            Ok(snapshot)
+        })
     }
-    fn question_snapshot_with<T>(
-        &self,
-        plan: &QuestionPlan,
-        context: QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
-    ) -> Result<T, CellError> {
-        self.question_snapshot_at_with(plan, context, None, visible, consume)
-    }
+    /// The question's snapshot, read live or as of `cutoff`. An `answered`
+    /// read is a live answer recomputed from the commit it was given at: its
+    /// rows are read as of `cutoff`, but it is pinned as the live answer was
+    /// (no slice pin, no historical receipt), so it reproduces that answer's
+    /// lineage pin exactly when nothing it read has changed since.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one snapshot: read, gate, project, pin, in order"
+    )]
     fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,
         cutoff: Option<crate::KnowledgeCutoff>,
+        answered: bool,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
     ) -> Result<T, CellError> {
@@ -333,14 +350,15 @@ impl<E: SqlEngine> CellStore<E> {
             let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
-            let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
-            let mut budget = DecodeBudget::new(&limits);
+            let mut budget = question_budget()?;
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
                 (revision, frontier_receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                if !answered {
+                    historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                }
                 historical::history_ids(
                     &reader,
                     &context.world,
@@ -406,7 +424,8 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
-            let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
+            let (query_pin, definition_pin) =
+                self.question_pins(plan, cutoff.filter(|_| !answered))?;
             let result = materialize(
                 plan,
                 (context, exclusions),

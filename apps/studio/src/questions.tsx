@@ -33,7 +33,8 @@ export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-
 /** One metric the cell derives, asked per day or week over every date its records carry. */
 function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const [conditions, setConditions] = useState<readonly Condition[]>([])
+  // A sum the cell will not add across units starts with one condition per property it must fix; the reader picks each value.
+  const [conditions, setConditions] = useState<readonly Condition[]>(() => (metric.unitPartition ?? []).map((property) => ({ property, value: "" })))
   const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false })
   const window = profile.data && metric.timeProperty !== null ? windowOf(profile.data.document, metric.timeProperty) : undefined
   // The answer is read with the type's own declaration, as the cell admitted it.
@@ -52,6 +53,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         {profile.data && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <p className="text-meta text-muted-foreground">Per {window.grain}, {window.start.slice(0, 10)} to {window.end.slice(0, 10)}: every date its records carry.</p>
+          {(metric.unitPartition?.length ?? 0) > 0 && <p className="text-meta text-muted-foreground">The cell adds these up only within one {metric.unitPartition?.map((path) => path.replaceAll("_", " ")).join(" and ")}: choose one of each.</p>}
           <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={setConditions} />
           <RunQuestion key={JSON.stringify(conditions)} question={metricQuestion(metric, window, conditions)} catalog={declarations} label="Ask the cell" />
         </>}

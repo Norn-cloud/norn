@@ -413,18 +413,26 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        self.conn.transaction(|| {
-            let version = self
-                .read()
-                .installed_definitions(None)?
-                .ok_or_else(mismatch)?
-                .version;
-            if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
-                return Ok(captured);
-            }
-            let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
-            crate::mapping_conflict::capture(self, raw, &bundle)
-        })
+        self.conn
+            .transaction(|| self.capture_mapping_bundle(raw, input))
+    }
+
+    /// [`Self::inject_mapping_bundle`] inside the caller's transaction.
+    pub(crate) fn capture_mapping_bundle(
+        &self,
+        raw: &Observed<RuntimeValue>,
+        input: &MappingInput,
+    ) -> Result<(String, bool), CellError> {
+        let version = self
+            .read()
+            .installed_definitions(None)?
+            .ok_or_else(mismatch)?
+            .version;
+        if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
+            return Ok(captured);
+        }
+        let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
+        crate::mapping_conflict::capture(self, raw, &bundle)
     }
 }
 

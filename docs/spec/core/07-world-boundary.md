@@ -88,7 +88,7 @@ after cell-owned recomputation matches the pinned bundle
 CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
-**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads and verifies the export-journal record for the row's `commit_seq`, requires its installed row to equal the row read, requires the stored receipt at `commit_seq` to equal the journal's, and requires the journal model snapshot to equal the one the plan was proven on; the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
+**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads the installed row, the export-journal record for the row's `commit_seq` with the payload bodies it references, and the stored receipt at `commit_seq`. It verifies them in full (the journal record verifies, its installed row equals the row read, the receipt equals the journal's), or finds their raw bytes exactly equal to those of the last copy this store verified in full, which proves the same result. It also requires the journal model snapshot to equal the one the plan was proven on (byte comparison: coordinator ruling 2026-11-12, pending maintainer review); the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
 
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
@@ -101,6 +101,39 @@ both admitted bundles; stored finding claims confer no authority. Redelivery and
 restart add no second conflict finding; ordinary corrections do not resolve it.
 Full cursor convergence and conflict capture for ordinary unmapped submissions
 remain follow-up cuts for this CP2 bundle bridge.
+
+**OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
+addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry
+a page of 1..K source records. A page is only a unit of delivery. Each record
+keeps its own identity (connector instance, partition, source, source id, event
+id), source version and payload digest, and is captured, conflict-checked,
+dispute-checked, mapped and, when refused, quarantined exactly as if it had
+arrived alone. The cell consumes one delivery per commit: the single commit that
+consumes a page applies every admitted record and records a finding for every
+refused one; no commit applies part of a record and no page is split across
+commits. A host failure aborts the whole commit and the page is redelivered.
+Redelivery of a page, or of a record inside another page, is idempotent per
+record identity. A page holds at most one record per identity (connector
+instance, partition, source, source id): the host splits a source batch before
+a repeated identity, so the repeat is the next page and the next commit, and
+the earlier and later deliveries (a higher `source_version` supersedes; an
+equal version with a different payload digest is a FEED-CONFLICT and is
+quarantined) keep exactly the one-by-one versions, events and CAS chain. A
+record that links to a target arriving later in the same page is pending until
+that target applies, then resolves inside the same commit. A page is refused
+whole only for framing (page digest, size bound, unknown mapping pin, or a
+repeated identity inside the page), before anything is captured. K is at most
+1,000 records and 4 MiB of canonical payload, within the commit envelope's
+`max_events` and the link journal's claim budget; hosts default to 500.
+Equivalence scenario: **OBS-PAGE-EQUIV** (consuming a page equals consuming
+its records one by one in page order, over committed end state: the same facts,
+versions, events, links, findings, quarantine and per-record lineage, modulo
+bundle digests and commit count; events compare as a multiset, with object
+events in page order, and within a commit no event precedes one it depends on:
+a link-claim event follows the object events of both endpoints the commit
+creates or changes; a transient pending row that never commits is not part of
+the comparison; generated pages mix refusals, identities repeated
+across pages, intra-page links in both orders, and pages refused for framing).
 
 ## Perform and recovery semantics
 

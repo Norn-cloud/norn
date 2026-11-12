@@ -171,6 +171,19 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.inject_mapping_bundle(raw, input)
     }
 
+    /// Capture a page of raw source records read from one dataset
+    /// (OBS-PAGE-1); see [`CellStore::inject_mapping_page`].
+    ///
+    /// # Errors
+    /// Framing refusals, invalid pins, or the durable inbox failure.
+    pub fn inject_mapping_page(
+        &mut self,
+        raws: &[Observed<Value>],
+        input: &crate::mapping_bundle::MappingInput,
+    ) -> Result<Vec<(String, bool)>, CellError> {
+        self.store.inject_mapping_page(raws, input)
+    }
+
     /// Begin a private rebuild in this native host's world and tenant scope.
     /// # Errors
     /// Refuses foreign scope, stale slot versions or invalid rebuild declarations.
@@ -1556,7 +1569,7 @@ where
             &[],
             &[],
             &[],
-            None,
+            &[],
             None,
         )
     }
@@ -1574,7 +1587,7 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1592,7 +1605,7 @@ where
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = start.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(event))
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
     /// Commit a kernel-prepared turn that consumes a parked decision's
@@ -1610,14 +1623,14 @@ where
         resolved: &crate::decision_ledger::DecisionResolved,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(event))
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
     pub(crate) fn commit_observed_evidence(
         &mut self,
         mut commit: CellCommit<E, C, I>,
         authorization: &ObservationAuthorization,
-        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+        mapped: &[crate::mapping_bundle::MappingBundle],
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
         E: From<ObservationEvent>,
@@ -1635,7 +1648,7 @@ where
             &[],
             &references,
             &[],
-            mapped_bundle,
+            mapped,
             None,
         )
     }
@@ -1654,7 +1667,7 @@ where
         derived: &[(FactKey, Vec<String>)],
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
-        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+        mapped: &[crate::mapping_bundle::MappingBundle],
         bookkeeping: Option<norn_ir::RuntimeValue>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
@@ -1754,36 +1767,51 @@ where
         }
         let guard = |reader: &StoreReader<'_, S>| {
             // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
-            if let Some(bundle) = mapped_bundle {
+            for bundle in mapped {
                 reader
-                    .recheck_mapping_bundle(bundle)
+                    .check_mapping_bundle(bundle)
                     .map_err(CommitError::Host)?;
-                if reader
-                    .installed_definitions(None)
-                    .map_err(CommitError::Host)?
-                    .map(|d| d.version)
-                    != Some(bundle.definitions_version)
-                {
-                    return Err(CommitError::Host(CellError::MappingBundleMismatch));
+            }
+            if let Some(Consumed::Observation {
+                id: ObservationId(observation_id),
+            }) = &commit.consumes
+            {
+                // OBS-PAGE-1: a page commit applies exactly its still-pending
+                // members, in page order; a bundle commit exactly its bundle.
+                let applied: Vec<String> = mapped
+                    .iter()
+                    .map(|b| format!("mapping-bundle:{}", b.digest))
+                    .collect();
+                let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                    let page = reader
+                        .pending_observation(observation_id)
+                        .map_err(CommitError::Host)?
+                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?;
+                    reader
+                        .pending_page_members(&page.observed)
+                        .map_err(CommitError::Host)?
+                        .into_iter()
+                        .map(|(id, _)| id)
+                        .collect()
+                } else if mapped.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![observation_id.clone()]
+                };
+                if applied != expected {
+                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
                 }
-                if reader
-                    .mapping_link_plan(bundle, &commit)
+            } else if !mapped.is_empty() {
+                return Err(CommitError::Host(CellError::MappingBundleMismatch));
+            }
+            if !mapped.is_empty()
+                && reader
+                    .mapping_link_plan(mapped, &commit)
                     .map_err(CommitError::Host)?
                     .links
                     != commit.links
-                {
-                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-                }
-                if reader
-                    .mapping_conflict(bundle)
-                    .map_err(CommitError::Host)?
-                    .is_some()
-                    || reader
-                        .mapping_event_is_disputed(bundle)
-                        .map_err(CommitError::Host)?
-                {
-                    return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
-                }
+            {
+                return Err(CommitError::Host(CellError::SourceEvidenceChanged));
             }
             if authorization.is_none() {
                 for key in commit
@@ -2069,7 +2097,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
     }
 
     fn commit_action_references(
@@ -2089,7 +2117,7 @@ where
             &[],
             proof.reference_reads(),
             proof.property_reads(),
-            None,
+            &[],
             None,
         )
     }
@@ -2121,7 +2149,7 @@ where
             &[],
             &[],
             &[],
-            None,
+            &[],
             None,
         )
     }
@@ -2134,7 +2162,7 @@ where
     where
         E: From<ObservationEvent>,
     {
-        self.commit_observed_evidence(commit, &authorization, None)
+        self.commit_observed_evidence(commit, &authorization, &[])
     }
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {

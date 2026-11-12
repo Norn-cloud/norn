@@ -204,7 +204,11 @@ fn effective_as_of_schema() -> Ref {
 
 fn bucket_schema() -> Schema {
     let mut schema = Object::with_type(SchemaType::AnyValue);
-    schema.description = Some("Scalar grouping value.".to_owned());
+    schema.description = Some(
+        "Grouping value: null without a group-by, the value for one, and for several an array \
+         of their values in the question's order (a null member is its own group)."
+            .to_owned(),
+    );
     Schema::Object(schema)
 }
 

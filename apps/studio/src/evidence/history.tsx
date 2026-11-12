@@ -4,6 +4,8 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { CopyId } from "@/components/copy-id"
 import { systemName } from "../lib/catalog.ts"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
+import { atScale } from "../lib/objects.ts"
+import { useCatalog } from "../sources.tsx"
 import { changedProperties, readHistory, versionValue, type ObjectVersion } from "./review.ts"
 
 /** Who or what wrote one version, in a line. */
@@ -38,6 +40,9 @@ function Writer({ version }: { readonly version: ObjectVersion }) {
  */
 export function History({ objectType, id }: { readonly objectType: string; readonly id: string }) {
   const read = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  // Exact decimals are stored canonically (72.00 as 72): each is shown at its property's declared scale.
+  const { catalog } = useCatalog()
+  const scales = new Map((catalog?.byName.get(objectType)?.fields ?? []).flatMap(({ id: field, decimal }) => decimal?.scale === undefined ? [] : [[field, decimal.scale] as const]))
   if (read.isPending) return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground">Reading the history…</Well></Panel>
   if (read.isError) {
     const message = read.error instanceof NotServed ? "This cell does not serve record history yet." : read.error instanceof CellRefusal ? read.error.message : "The history could not be read."
@@ -66,8 +71,8 @@ export function History({ objectType, id }: { readonly objectType: string; reado
                       {changed.map((property) => (
                         <tr key={property}>
                           <td className="py-0.5 pe-3 text-muted-foreground">{property.replaceAll("_", " ")}</td>
-                          <td className="py-0.5 pe-3 font-mono tabular-nums text-muted-foreground line-through">{versionValue(history, index + 1, property)}</td>
-                          <td className="py-0.5 font-mono tabular-nums">{versionValue(history, index, property)}</td>
+                          <td className="py-0.5 pe-3 font-mono tabular-nums text-muted-foreground line-through">{atScale(versionValue(history, index + 1, property), scales.get(property))}</td>
+                          <td className="py-0.5 font-mono tabular-nums">{atScale(versionValue(history, index, property), scales.get(property))}</td>
                         </tr>
                       ))}
                     </tbody>

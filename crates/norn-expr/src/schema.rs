@@ -331,6 +331,9 @@ impl Schema {
             (Self::Decimal(_), _) => {
                 Err(Violation::new(path, "decimal input requires a JSON string"))
             }
+            // An absent value stays null; a present one decodes as the inner leaf.
+            (Self::Nullable(_), RuntimeValue::Null) => Ok(RuntimeValue::Null),
+            (Self::Nullable(inner), value) => inner.decode_action_input(value, path),
             (Self::Object { properties, .. }, RuntimeValue::Object(members)) => members
                 .into_iter()
                 .map(|(name, value)| {
@@ -619,12 +622,6 @@ fn parse_action_type_union(
     schema: &BTreeMap<String, JsonValue>,
     path: &str,
 ) -> Result<Schema, Violation> {
-    if schema.len() != 1 || !schema.contains_key("type") {
-        return Err(Violation::new(
-            path,
-            "an ActionIR type-array leaf permits only the type keyword",
-        ));
-    }
     let names: Vec<&str> = members
         .iter()
         .map(JsonValue::as_string)
@@ -635,28 +632,26 @@ fn parse_action_type_union(
         .into_iter()
         .collect();
     if names.len() == 6 && unique.len() == 6 && unique == json_domain {
+        if schema.len() != 1 || !schema.contains_key("type") {
+            return Err(Violation::new(
+                path,
+                "the JSON value domain leaf permits only the type keyword",
+            ));
+        }
         return Ok(Schema::Json);
     }
     if names.len() == 2 && unique.len() == 2 && unique.contains("null") {
+        // A nullable scalar is its non-null leaf, with what that leaf may carry
+        // (a string enum, a decimal nornType, display labels), or null.
         let scalar = unique
             .iter()
             .copied()
-            .find(|name| *name != "null")
-            .filter(|name| matches!(*name, "string" | "integer" | "number" | "boolean"));
+            .find(|name| matches!(*name, "string" | "integer" | "number" | "boolean"));
         if let Some(scalar) = scalar {
-            let inner = match scalar {
-                "string" => Schema::String(None),
-                "integer" => Schema::Integer,
-                "number" => Schema::Number,
-                "boolean" => Schema::Boolean,
-                _ => {
-                    return Err(Violation::new(
-                        &format!("{path}.type"),
-                        "ActionIR type array must contain a nullable primitive scalar",
-                    ));
-                }
-            };
-            return Ok(Schema::Nullable(Box::new(inner)));
+            let mut inner = schema.clone();
+            inner.insert("type".to_owned(), JsonValue::String(scalar.to_owned()));
+            return Schema::parse_at(&JsonValue::Object(inner), path, 1, true)
+                .map(|inner| Schema::Nullable(Box::new(inner)));
         }
     }
     Err(Violation::new(
@@ -1020,6 +1015,82 @@ mod tests {
             serde_json::from_str(r#"{"kind":"decimal","scale":19}"#).unwrap(),
         );
         assert!(Schema::parse_action(&JsonValue::Object(invalid), "amount").is_err());
+    }
+
+    #[test]
+    fn nullable_decimal_and_enum_inputs_admit_null_or_a_valid_value() {
+        use norn_ir::{Decimal, RuntimeValue};
+        let decimal: JsonValue = serde_json::from_str(
+            r#"{"type":["number","null"],"nornType":{"kind":"decimal","scale":2},"title":"P-value"}"#,
+        )
+        .unwrap();
+        let schema = Schema::parse_action(&action_record(decimal.clone(), decimal), "$input");
+        // A type array is a leaf: the record holds it.
+        let schema = schema.unwrap();
+        let input = |p: RuntimeValue| {
+            RuntimeValue::Object(
+                [
+                    ("json".to_owned(), RuntimeValue::Null),
+                    ("email".to_owned(), p),
+                ]
+                .into_iter()
+                .collect(),
+            )
+        };
+        let decoded = schema
+            .decode_action_input(input(RuntimeValue::String("0.25".into())), "$input")
+            .unwrap();
+        assert_eq!(
+            decoded,
+            input(RuntimeValue::Number(Decimal::parse("0.25").unwrap()))
+        );
+        assert!(
+            schema
+                .check(&Value::try_from(&decoded).unwrap(), "$input")
+                .is_ok()
+        );
+        let absent = schema
+            .decode_action_input(input(RuntimeValue::Null), "$input")
+            .unwrap();
+        assert!(
+            schema
+                .check(&Value::try_from(&absent).unwrap(), "$input")
+                .is_ok()
+        );
+        for bad in ["0.255", "NaN"] {
+            assert!(
+                schema
+                    .decode_action_input(input(RuntimeValue::String(bad.into())), "$input")
+                    .is_err()
+            );
+        }
+
+        let status: JsonValue =
+            serde_json::from_str(r#"{"type":["string","null"],"enum":["pass","fail"]}"#).unwrap();
+        let schema =
+            Schema::parse_action(&action_record(status.clone(), status), "$input").unwrap();
+        for (value, ok) in [
+            (Value::from("pass"), true),
+            (Value::Null, true),
+            (Value::from("maybe"), false),
+        ] {
+            assert_eq!(
+                schema
+                    .check(
+                        &Value::object([("json", Value::Null), ("email", value)]),
+                        "$input"
+                    )
+                    .is_ok(),
+                ok
+            );
+        }
+
+        // The JSON value domain leaf still carries nothing else.
+        let mut json = type_array(&["null", "boolean", "number", "string", "array", "object"]);
+        if let JsonValue::Object(members) = &mut json {
+            members.insert("title".into(), JsonValue::String("x".into()));
+        }
+        assert!(Schema::parse_action(&action_record(json, ty("string")), "$input").is_err());
     }
 
     #[test]
