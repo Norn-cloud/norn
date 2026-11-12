@@ -1,0 +1,5 @@
+# What the generated client imports, plus pandas for the dataframe.
+httpx2
+attrs
+pandas
+mypy
