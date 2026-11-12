@@ -334,7 +334,10 @@ pub trait CommitView {
     /// # Errors
     ///
     /// The host's read failure.
-    fn object_values(&self, key: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
+    fn object_values(
+        &self,
+        key: &FactKey,
+    ) -> Result<Option<crate::cell_host::JsonObject>, Self::Error> {
         let _ = key;
         Ok(None)
     }
@@ -675,7 +678,7 @@ fn values_after_commit<E, C, T, V: CommitView + ?Sized>(
     model: CommitModel<'_, '_>,
     view: &V,
     object: &FactKey,
-) -> Result<Option<JsonObject>, CommitError<V::Error>> {
+) -> Result<Option<crate::cell_host::JsonObject>, CommitError<V::Error>> {
     if let Some(write) = commit
         .writes
         .iter()
@@ -740,7 +743,7 @@ impl<E, C, T, V: CommitView + ?Sized> crate::governing_laws::LinkTargets
             ))
         };
         let (commit, model, view) = (self.commit, self.model, self.view);
-        let resolved = (|| -> Result<Option<(FactKey, u64, JsonObject)>, CommitError<V::Error>> {
+        let resolved = (|| -> Result<Option<(FactKey, u64, crate::cell_host::JsonObject)>, CommitError<V::Error>> {
             let live = links_after_commit(commit, model, view, &self.subject)?;
             let mut targets = live
                 .into_iter()
@@ -810,7 +813,7 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     let mut remaining = EvaluationBudget::default().units();
     let mut evaluate =
         |key: &FactKey,
-         values: &JsonObject,
+         values: &crate::cell_host::JsonObject,
          remaining: &mut u64|
          -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
             let mut links = CommitLinks::new(commit, model, view, key);
