@@ -244,6 +244,10 @@ fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
 ) -> Result<(), CellError> {
+    // METRIC-SNAPSHOT-ASOF-1: a snapshot reads every stored version at the head.
+    if plan.as_of() && cutoff.is_some() {
+        return Err(refused(UNSUPPORTED_ENGINE));
+    }
     if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
         let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
         if !asof_matches(plan, point.recorded_at.as_millis()) {
@@ -363,10 +367,6 @@ impl<E: SqlEngine> CellStore<E> {
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
-            // METRIC-SNAPSHOT-ASOF-1: a snapshot reads every stored version at the head.
-            if plan.as_of() && cutoff.is_some() {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
@@ -408,24 +408,10 @@ impl<E: SqlEngine> CellStore<E> {
                 )? {
                     continue;
                 }
-                if plan.as_of() {
-                    let versions = reader
-                        .object_versions_with_budget(
-                            &context.world,
-                            plan.grain().as_str(),
-                            &id,
-                            &mut budget,
-                        )?
-                        .ok_or_else(|| refused("core.compute.bound_exceeded"))?
-                        .into_iter()
-                        .map(|version| (version.version, version.values))
-                        .collect::<Vec<_>>();
-                    let entries = as_of(plan, &versions).map_err(refused)?;
-                    if !entries.is_empty() {
-                        contributions.insert(id, entries);
-                    }
-                } else if let Some(value) = project(plan, &record.values).map_err(refused)? {
-                    contributions.insert(id, vec![(record.version, value)]);
+                let entries =
+                    subject_contributions(&reader, plan, &context, &id, &record, &mut budget)?;
+                if !entries.is_empty() {
+                    contributions.insert(id, entries);
                 }
             }
             let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
@@ -537,6 +523,40 @@ fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
         .unwrap_or_default()
 }
 
+/// One root identity's contributions: its current row's, or, for a snapshot
+/// sum, one per bucket from every stored version (METRIC-SNAPSHOT-ASOF-1).
+fn subject_contributions<E: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, E>,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    id: &str,
+    record: &ObjectRecord,
+    budget: &mut DecodeBudget,
+) -> Result<Vec<(u64, Contribution)>, CellError> {
+    if !plan.as_of() {
+        return Ok(project(plan, &record.values)
+            .map_err(refused)?
+            .map(|value| vec![(record.version, value)])
+            .unwrap_or_default());
+    }
+    let versions = reader
+        .object_versions_with_budget(&context.world, plan.grain().as_str(), id, budget)?
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?
+        .into_iter()
+        .map(|version| (version.version, version.values))
+        .collect::<Vec<_>>();
+    as_of(plan, &versions).map_err(refused)
+}
+
+/// Every `(root identity, versioned contribution)` pair.
+fn entries(
+    contributions: &Contributions,
+) -> impl Iterator<Item = (&String, &(u64, Contribution))> {
+    contributions
+        .iter()
+        .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
+}
+
 fn bucket_key(value: &Contribution) -> Result<String, CellError> {
     String::from_utf8(value.bucket.canonical_json()?)
         .map_err(|e| CellError::Encoding(e.to_string()))
@@ -577,10 +597,7 @@ pub(crate) fn finish(
     let (context, exclusions) = population;
     let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
-    for (id, (version, contribution)) in contributions
-        .iter()
-        .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
-    {
+    for (id, (version, contribution)) in entries(contributions) {
         let key = bucket_key(contribution)?;
         let bucket = grouped.entry(key.clone()).or_insert_with(|| {
             (

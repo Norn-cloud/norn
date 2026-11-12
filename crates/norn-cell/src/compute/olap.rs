@@ -96,11 +96,7 @@ fn execute(
     db(conn.execute_batch("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;"))?;
     db(conn.execute_batch(schema))?;
     let mut insert = db(conn.prepare("INSERT INTO input VALUES (?,?,?,?,?,?,?)"))?;
-    for (id, (version, contribution)) in snapshot
-        .contributions
-        .iter()
-        .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
-    {
+    for (id, (version, contribution)) in super::entries(&snapshot.contributions) {
         let (a, b) = match contribution.amounts.as_slice() {
             [a] => (*a, None),
             [a, b] => (*a, *b),
