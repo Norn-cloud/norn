@@ -303,7 +303,9 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     let baseline = evaluate(&cell, None, &question("gold"));
     assert_eq!(baseline.status, 403);
     let mut inadmissible = question("gold");
-    inadmissible["groupBy"] = json!([{"path": {"property": "occurred_at"}, "grain": "day"}]);
+    // Outside the bounded profile: an ordering filter.
+    inadmissible["filter"] =
+        json!([{"path": {"property": "metal"}, "operator": "gt", "value": "gold"}]);
     // Anonymous, inadmissible: the denial, not the 422.
     assert_eq!(evaluate(&cell, None, &inadmissible).body, baseline.body);
     // A declared metric the caller holds no grant on — here the ratio's
