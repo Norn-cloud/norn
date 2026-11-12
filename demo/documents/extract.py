@@ -411,15 +411,15 @@ def command_audit(args) -> None:
     documents only) and label each difference by its origin: an error the
     generator seeded into the legacy import on purpose, or a real misread by the
     named extractor version. Prints JSON; writes nothing."""
-    truth = {doc["id"]: doc for doc in json.loads(Path(args.truth).read_text())}
+    exact_json = lambda text: json.loads(text, parse_float=Decimal)  # keep each number's printed scale
+    truth = {doc["id"]: doc for doc in exact_json(Path(args.truth).read_text())}
     seeded = {(e["document"], e["field"]) for e in json.loads(Path(args.manifest).read_text())["seededErrors"]}
     store = Store(Path(args.store))
-    marked = re.sub(r'"(total|amount|bbox_[xywh])": (-?[0-9.]+)', r'"\1": "\2"', store.path.read_text())
     differences, exact = [], 0
-    for line in marked.splitlines():
+    for line in store.path.read_text().splitlines():
         if not line.strip():
             continue
-        row = json.loads(line)
+        row = exact_json(line)
         printed = truth.get(row["id"])
         if printed is None:
             continue

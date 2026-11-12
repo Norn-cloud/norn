@@ -47,7 +47,7 @@ VENDORS = ["Atlas Casting Supply", "Northgate Packaging", "Harbor Metals Exchang
            "Meridian Freight", "Cobalt Bench Works", "Lumen Display Co", "Saffron Courier"]
 STORES = ["Corner Hardware", "Bench Cafe", "Metro Stationers", "Riverside Fuel"]
 TRAVEL = ["Field travel", "Client visit", "Trade fair", "Assay lab visit"]
-LEGACY_INVOICES = range(31, 46)  # INV-0031..INV-0045 came through the legacy OCR
+LEGACY_INVOICES = range(42, 46)  # INV-0042..INV-0045 came through the legacy OCR
 REPORTS = range(101, 141)        # RPT-0101..RPT-0140, all through the legacy OCR
 SEEDED_ERRORS = [
     {"document": "SCAN-INV-0042", "field": "total", "printed": "72.00", "imported": "720",
@@ -114,7 +114,7 @@ def scan(page: Page, rng: random.Random):
 
 
 def invoice(number: int, rng: random.Random, start: date) -> dict:
-    lines = [(rng.choice(ITEMS), money(rng, 4, 180)) for _ in range(rng.randint(1, 4))]
+    lines = [(rng.choice(ITEMS), money(rng, 4, 60)) for _ in range(rng.randint(1, 4))]
     if number == 42:
         lines = [("Gift boxes", Decimal("30.00")), ("Tissue paper", Decimal("40.00")), ("Courier fee", Decimal("2.00"))]
     total = sum((amount for _, amount in lines), Decimal("0.00"))
