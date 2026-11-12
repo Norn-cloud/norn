@@ -52,6 +52,7 @@ pub struct DerivedQuestions {
     handle_key: [u8; 32],
     scope: CellScope,
     now: fn() -> u64,
+    label: String,
     cache: Mutex<Option<Arc<Derived>>>,
 }
 
@@ -65,8 +66,17 @@ impl DerivedQuestions {
             handle_key,
             scope,
             now,
+            label: "dev".into(),
             cache: Mutex::new(None),
         }
+    }
+
+    /// Label the answer frontier's population and mapping pins with `label`
+    /// (`dev` by default; a hosted cell says `tenant`). A label only.
+    #[must_use]
+    pub fn with_label(mut self, label: &str) -> Self {
+        label.clone_into(&mut self.label);
+        self
     }
 
     /// The question runtime for `host`'s active revision, to pass to
@@ -173,9 +183,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
             context: QueryContext {
                 world: norn_cell::MAIN_WORLD.to_owned(),
                 scope: self.metrics.scope.key(),
-                population_pin: format!("dev:{actor}"),
+                population_pin: format!("{}:{actor}", self.metrics.label),
                 authorization_epoch: 1,
-                mapping_pin: format!("dev:{}", self.derived.receipt),
+                mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
                 now_ms: (self.metrics.now)(),
                 source_cursors: BTreeMap::new(),
                 watermarks: BTreeMap::new(),
