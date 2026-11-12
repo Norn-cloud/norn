@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChartArea, ChartColumn, ChartLine, ChartPie, Hash, Maximize2, Table2, type LucideIcon } from "lucide-react"
 import { useState } from "react"
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis } from "recharts"
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis, type PieLabelRenderProps } from "recharts"
 import { ValidationPanel } from "@/components/editor"
 import { EmptyState, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
@@ -112,26 +112,39 @@ export function DrawnAnswer({ view, rows, name }: { readonly view: View; readonl
   if (view.chart === "pie") {
     const slices = pieSlices(rows)
     if (typeof slices === "string") return <div className="space-y-2"><p role="status" className="px-2 text-meta text-muted-foreground">{slices}</p><Rows rows={rows} /></div>
+    // A slice's share beside it when it is wide enough to carry one; every part is named in the table either way.
+    const sliceLabel = (props: PieLabelRenderProps) => {
+      const [cx, cy, midAngle, outerRadius, percent] = [props.cx, props.cy, props.midAngle, props.outerRadius, props.percent].map(Number)
+      if (!((percent ?? 0) >= 0.06)) return null
+      const angle = (-(midAngle ?? 0) * Math.PI) / 180
+      const radius = (outerRadius ?? 0) + 14
+      return <text x={(cx ?? 0) + radius * Math.cos(angle)} y={(cy ?? 0) + radius * Math.sin(angle)} textAnchor={Math.cos(angle) >= 0 ? "start" : "end"} dominantBaseline="central" className="fill-muted-foreground text-[11px] tabular-nums">{slices[Number(props.index)]?.share}</text>
+    }
     return (
       <div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-view="pie">
         <ChartContainer config={Object.fromEntries(slices.map((slice, index) => [`s${index}`, { label: slice.label, color: PIE_FILLS[index % PIE_FILLS.length] }]))} className="h-52 w-full">
           <PieChart>
             <Tip name={name} />
-            <Pie data={slices.map((slice) => ({ ...slice, shown: slice.exact }))} dataKey="value" nameKey="label" innerRadius="55%" outerRadius="85%" strokeWidth={2} stroke="var(--card)" isAnimationActive={false}>
+            <Pie data={slices.map((slice) => ({ ...slice, shown: slice.exact }))} dataKey="value" nameKey="label" innerRadius="50%" outerRadius="72%" strokeWidth={2} stroke="var(--card)" label={sliceLabel} labelLine={false} isAnimationActive={false}>
               {slices.map((slice, index) => <Cell key={slice.label} fill={PIE_FILLS[index % PIE_FILLS.length]} />)}
             </Pie>
           </PieChart>
         </ChartContainer>
-        <ul className="space-y-1.5 px-2 text-meta" aria-label={`${name}, by part`}>
-          {slices.map((slice, index) => (
-            <li key={slice.label} className="flex items-center gap-2">
-              <span aria-hidden className="size-2.5 shrink-0 rounded-[3px] border" style={{ background: PIE_FILLS[index % PIE_FILLS.length] }} />
-              <span className="min-w-0 flex-1 truncate">{slice.label}</span>
-              <span className="tabular-nums">{slice.exact}</span>
-              <span className="w-12 text-end text-muted-foreground tabular-nums">{slice.share}</span>
-            </li>
-          ))}
-        </ul>
+        <table className="w-full text-meta tabular-nums" aria-label={`${name}, by part`}>
+          <caption className="sr-only">{name}: each part's exact value and its share of the whole</caption>
+          <thead className="sr-only"><tr><th scope="col">Part</th><th scope="col">Value</th><th scope="col">Share</th></tr></thead>
+          <tbody>
+            {slices.map((slice, index) => (
+              <tr key={slice.label} className="border-b last:border-b-0">
+                <th scope="row" className="py-1.5 pe-2 text-start font-normal">
+                  <span className="flex min-w-0 items-center gap-2"><span aria-hidden className="size-2.5 shrink-0 rounded-[3px] border" style={{ background: PIE_FILLS[index % PIE_FILLS.length] }} /><span className="truncate">{slice.label}</span></span>
+                </th>
+                <td className="py-1.5 text-end">{slice.exact}</td>
+                <td className="w-14 py-1.5 text-end text-muted-foreground">{slice.share}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     )
   }
