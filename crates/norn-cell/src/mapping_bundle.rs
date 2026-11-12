@@ -92,10 +92,10 @@ pub(crate) struct MappingPlan {
 #[derive(Debug, Default)]
 pub(crate) struct MappingPlanCache {
     plans: BTreeMap<(u64, String, String), Arc<MappingPlan>>,
-    /// The last fully verified install: the raw-byte fingerprint of every row
-    /// the verification read, with what it proved (the set's canonical digest
-    /// and the journal's install record).
-    verified: Option<([u8; 32], String, crate::store::DefinitionInstallRecord)>,
+    /// The last fully verified install: the raw bytes of every row the
+    /// verification read, with what it proved (the set's canonical digest and
+    /// the journal's install record).
+    verified: Option<(Vec<u8>, String, crate::store::DefinitionInstallRecord)>,
 }
 
 const MAX_MAPPING_PLANS: usize = 16;
@@ -208,16 +208,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .filter(|(seen, ..)| *seen == fingerprint)
                 .map(|(_, digest, installation)| (digest.clone(), installation.clone()))
         });
-        let (set_digest, installation) = match known {
-            Some(known) => known,
-            None => {
-                let proved = (digest(&installed)?, self.retained_definition_install(&installed)?);
-                if let Some(cache) = self.mapping_plans {
-                    cache.borrow_mut().verified =
-                        Some((fingerprint, proved.0.clone(), proved.1.clone()));
-                }
-                proved
+        let (set_digest, installation) = if let Some(known) = known {
+            known
+        } else {
+            let proved = (
+                digest(&installed)?,
+                self.retained_definition_install(&installed)?,
+            );
+            if let Some(cache) = self.mapping_plans {
+                cache.borrow_mut().verified =
+                    Some((fingerprint, proved.0.clone(), proved.1.clone()));
             }
+            proved
         };
         let key = (version, set_digest, input.mapping.clone());
         let cached = self
@@ -269,18 +271,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(plan)
     }
 
-    /// SHA-256 over the raw bytes of every row the install verification
-    /// reads: the installed row, its journal record, the payload bodies the
-    /// record references and the receipt. No canonicalization.
+    /// The raw bytes of every row the install verification reads, each
+    /// length-prefixed: the installed row, its journal record, the payload
+    /// bodies the record references and the receipt. No canonicalization, and
+    /// compared exactly, not by a digest.
     fn install_fingerprint(
         &self,
         installed: &crate::InstalledDefinitionSet,
-    ) -> Result<[u8; 32], CellError> {
-        use sha2::{Digest as _, Sha256};
-        let mut hash = Sha256::new();
-        let mut field = |bytes: &[u8]| {
-            hash.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-            hash.update(bytes);
+    ) -> Result<Vec<u8>, CellError> {
+        let mut bytes = Vec::new();
+        let mut field = |part: &[u8]| {
+            bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+            bytes.extend_from_slice(part);
         };
         field(serde_json::to_string(installed)?.as_bytes());
         let seq = crate::read::to_i64(installed.commit_seq, "commit_seq")?;
@@ -304,7 +306,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         field(serde_json::to_string(&self.receipt_at(installed.commit_seq)?)?.as_bytes());
-        Ok(hash.finalize().into())
+        Ok(bytes)
     }
 
     pub(crate) fn mapping_bundle(
