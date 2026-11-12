@@ -19,10 +19,20 @@ const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 
 /// Gate files pinned to the trusted base, besides every workflow and [`GATE_DIRECTORIES`].
-/// A gate file absent from the base must stay absent: the toolchain files are gates although
-/// none exists, because rustup reads them from the working directory and a `[toolchain]
-/// path` entry selects an arbitrary toolchain for the trusted build.
-const GATE_FILES: [&str; 18] = [
+/// A gate file absent from the base must stay absent. The toolchain files are gates although
+/// none exists, as defence in depth: rustup reads them from the working directory, but the
+/// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
+const GATE_FILES: [&str; 26] = [
+    // Python isolation (#513): the base-owned check and its canaries, and every file a gated
+    // Python file loads by explicit path, so none of them can change what a gate decides.
+    "scripts/ci/python_isolation.py",
+    "scripts/ci/test_python_isolation.py",
+    "scripts/verification_attestation.py",
+    "scripts/quint_apalache.py",
+    "scripts/write-verification-result.py",
+    "verification/coverage-v1/validate_result.py",
+    "scripts/importers/erpnext_runtime.py",
+    "verification/kernel-v2/validate.py",
     "rust-toolchain.toml",
     "rust-toolchain",
     "verification/coverage-v1/fixtures/pull-request-concurrency.json",
@@ -262,6 +272,82 @@ fn gate_directory_contract(
     contract
 }
 
+/// Refusals no approval lifts (#513): a symlink anywhere in a gate (a workflow, a gate file, a
+/// gate directory or a file under one) points the trusted lane at bytes outside it, and so
+/// does Cargo configuration that names another file. The trusted build's `.cargo/config.toml`
+/// (or legacy `.cargo/config`) may hold only `[alias]`, and no alias may pass `--config` or
+/// `-Z`: `include`, `paths`, `[patch]`, `[source]`, wrappers, linkers and runners are refused.
+fn gate_entry_errors(root: &Path, current: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    // Every component, not only the last: `scripts/ci` as a symlink redirects `core.sh`.
+    let symlink = |path: &str| {
+        let mut at = root.to_path_buf();
+        Path::new(path).components().any(|component| {
+            at.push(component);
+            at.symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_symlink())
+        })
+    };
+    for directory in GATE_DIRECTORIES {
+        if symlink(directory.trim_end_matches('/')) {
+            errors.push(format!(
+                "{directory}: a gate directory that is a symlink is refused, even with approval"
+            ));
+        }
+    }
+    for path in current.iter().filter(|path| {
+        path.starts_with(".github/workflows/")
+            || GATE_FILES.contains(&path.as_str())
+            || GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory))
+    }) {
+        if symlink(path) {
+            errors.push(format!(
+                "{path}: a symlink in a gate is refused, even with approval"
+            ));
+        }
+    }
+    for path in [".cargo/config.toml", ".cargo/config"] {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        match toml::from_str::<toml::Table>(&text) {
+            Err(error) => errors.push(format!("{path}: Cargo config does not parse: {error}")),
+            Ok(table) => {
+                for key in table.keys().filter(|key| key.as_str() != "alias") {
+                    errors.push(format!(
+                        "{path}: `{key}` is refused in the trusted build's Cargo config, even with approval; only `[alias]` is admitted"
+                    ));
+                }
+                let aliases = table.get("alias").and_then(toml::Value::as_table);
+                for (name, value) in aliases.into_iter().flatten() {
+                    let words: Vec<&str> = match value {
+                        toml::Value::String(text) => text.split_whitespace().collect(),
+                        toml::Value::Array(items) => {
+                            items.iter().filter_map(toml::Value::as_str).collect()
+                        }
+                        toml::Value::Integer(_)
+                        | toml::Value::Float(_)
+                        | toml::Value::Boolean(_)
+                        | toml::Value::Datetime(_)
+                        | toml::Value::Table(_) => vec!["--config"],
+                    };
+                    if words
+                        .iter()
+                        .any(|word| word.starts_with("--config") || word.starts_with("-Z"))
+                    {
+                        errors.push(format!(
+                            "{path}: alias `{name}` passes `--config` or `-Z`, refused even with approval"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    errors
+}
+
 /// Whether `before` and `after` are the same entry: both absent, or both regular files with the
 /// same executable bit and bytes, or both symlinks with the same target. A symlink to identical
 /// content, an exec-bit flip, or a file appearing or disappearing is a difference, as in the
@@ -397,28 +483,28 @@ impl Scan<'_> {
                         _ => None,
                     };
                     match argument.map(|target| included_path(path, &target)) {
-                    Some(Some(target)) if is_gated(&target, self.tracked) => {
-                        if ident == "include" {
-                            self.included.push(target);
+                        Some(Some(target)) if is_gated(&target, self.tracked) => {
+                            if ident == "include" {
+                                self.included.push(target);
+                            }
                         }
+                        Some(Some(target)) => self.errors.push(format!(
+                            "{path}: `{ident}!` of {target}, untracked or outside every gate, is refused"
+                        )),
+                        _ => self.errors.push(format!(
+                            "{path}: `{ident}` is used other than as a direct `{ident}!(\"<gated file>\")`"
+                        )),
                     }
-                    Some(Some(target)) => self.errors.push(format!(
-                        "{path}: `{ident}!` of {target}, untracked or outside every gate, is refused"
-                    )),
-                    _ => self.errors.push(format!(
-                        "{path}: `{ident}` is used other than as a direct `{ident}!(\"<gated file>\")`"
-                    )),
-                }
                 }
                 TokenTree::Group(group) => {
                     // `#[...]`, or `#![...]`: the bracket group right after `#` or `#!`.
                     let punct = |offset: usize, wanted: char| {
                         index
-                        .checked_sub(offset)
-                        .and_then(|at| tokens.get(at))
-                        .is_some_and(|token| {
-                            matches!(token, TokenTree::Punct(punct) if punct.as_char() == wanted)
-                        })
+                            .checked_sub(offset)
+                            .and_then(|at| tokens.get(at))
+                            .is_some_and(|token| {
+                                matches!(token, TokenTree::Punct(punct) if punct.as_char() == wanted)
+                            })
                     };
                     let attribute = matches!(group.delimiter(), Delimiter::Bracket)
                         && (punct(1, '#') || (punct(1, '!') && punct(2, '#')));
@@ -520,6 +606,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
     }
     contract.extend(gate_directory_contract(root, base, &previous, &current));
     errors.extend(gate_source_errors(root, &current));
+    errors.extend(gate_entry_errors(root, &current));
     let approval = evidence
         .filter(|_| !contract.is_empty())
         .map(|path| approval_of(path, root));
@@ -944,6 +1031,106 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Symlinks in a gate and Cargo config indirection are refused whatever the approval.
+    #[cfg(unix)]
+    #[test]
+    fn gate_entries_refuse_symlinks_and_cargo_indirection() {
+        use std::os::unix::fs::symlink;
+        let tree = |config: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir_all(dir.path().join(".cargo")).expect("mkdir");
+            std::fs::write(dir.path().join(".cargo/config.toml"), config).expect("write");
+            dir
+        };
+        let run = |dir: &tempfile::TempDir, current: &[&str]| {
+            let current: Vec<String> = current.iter().map(|path| (*path).to_owned()).collect();
+            super::gate_entry_errors(dir.path(), &current)
+        };
+        let plain = tree("[alias]\nxtask = \"run --locked --bin xtask --\"\n");
+        assert_eq!(run(&plain, &[".cargo/config.toml"]), Vec::<String>::new());
+        for (config, wanted) in [
+            ("include = \"other.toml\"\n", "`include` is refused"),
+            (
+                "[[include]]\npath = \"other.toml\"\n",
+                "`include` is refused",
+            ),
+            ("paths = [\"../syn\"]\n", "`paths` is refused"),
+            (
+                "[patch.crates-io]\nsyn = { path = \"x\" }\n",
+                "`patch` is refused",
+            ),
+            (
+                "[build]\nrustc-wrapper = \"/tmp/w\"\n",
+                "`build` is refused",
+            ),
+            ("[env]\nPATH = \"/tmp\"\n", "`env` is refused"),
+            (
+                "[alias]\nxtask = \"run --config other.toml\"\n",
+                "alias `xtask` passes",
+            ),
+            (
+                "[alias]\nxtask = [\"run\", \"-Zunstable-options\"]\n",
+                "alias `xtask` passes",
+            ),
+        ] {
+            let errors = run(&tree(config), &[".cargo/config.toml"]);
+            assert!(
+                errors.iter().any(|error| error.contains(wanted)),
+                "{config}: {errors:?}"
+            );
+        }
+        // A symlink as a file in a gate directory, as a gate file, as a workflow, and as the
+        // gate directory itself.
+        let linked = tree("[alias]\n");
+        std::fs::write(linked.path().join("target.txt"), b"x").expect("write");
+        for path in [
+            ".cargo/linked.toml",
+            "scripts/ci/core.sh",
+            ".github/workflows/core.yml",
+        ] {
+            if path == "scripts/ci/core.sh" {
+                // A symlinked parent directory, the file itself real.
+                let real = linked.path().join("real-ci");
+                std::fs::create_dir_all(&real).expect("mkdir");
+                std::fs::write(real.join("core.sh"), b"x").expect("write");
+                std::fs::create_dir_all(linked.path().join("scripts")).expect("mkdir");
+                symlink(&real, linked.path().join("scripts/ci")).expect("symlink");
+                let errors = run(&linked, &[path]);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                    "parent {path}: {errors:?}"
+                );
+                continue;
+            }
+            std::fs::create_dir_all(linked.path().join(path).parent().expect("parent"))
+                .expect("mkdir");
+            symlink(linked.path().join("target.txt"), linked.path().join(path)).expect("symlink");
+            let errors = run(&linked, &[path]);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                "{path}: {errors:?}"
+            );
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(directory.path().join("real")).expect("mkdir");
+        symlink(
+            directory.path().join("real"),
+            directory.path().join(".cargo"),
+        )
+        .expect("symlink");
+        let errors = super::gate_entry_errors(directory.path(), &[]);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(".cargo/: a gate directory that is a symlink")),
+            "{errors:?}"
+        );
+    }
+
     /// An entry is the same only with the same type, exec bit and bytes, or link target;
     /// both absent is the same, one absent is not.
     #[cfg(unix)]

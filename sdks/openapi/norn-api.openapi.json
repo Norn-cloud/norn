@@ -156,6 +156,114 @@
         ]
       }
     },
+    "/v1/definitions": {
+      "get": {
+        "tags": [
+          "crate::routes"
+        ],
+        "summary": "Read under one definition epoch; scope and authorization precede store access.",
+        "description": "# Errors\nMissing/mismatched scope, denied actor, absent version or host failure.",
+        "operationId": "get_definitions_catalog",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Required organization.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Required environment.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "A retained revision; absent selects the active one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The admitted definitions at the active or requested revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDefinitionsCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a version that does not parse.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: a missing or foreign scope, or denied authority, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`defs.version_not_found`): the requested version was never installed, or no version was asked for and nothing is installed yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`defs.receipt_context_unavailable`): this host cannot resolve the retained admission context (the receipt's external base, limit profile or checker version).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/definitions/{id}": {
       "get": {
         "tags": [
@@ -732,27 +840,19 @@
         ]
       }
     },
-    "/v1/objects/{type}:profile": {
+    "/v1/objects/{type}": {
       "get": {
         "tags": [
           "crate::object_routes"
         ],
-        "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
-        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
-        "operationId": "get_object_profile",
+        "summary": "HOST-READ-3: one page of a grid query over a concept's objects (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an invalid query\n(400 with every violation), a cursor that does not continue it (400\n`query.cursor_invalid`), a commit since the cursor (409\n`object.snapshot_moved`), a sort or filter over more visible rows than one scan\n(413), or a host failure.",
+        "operationId": "query_objects",
         "parameters": [
-          {
-            "name": "type",
-            "in": "path",
-            "description": "The concept to profile.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "orgId",
             "in": "query",
+            "description": "Organization (required).",
             "required": true,
             "schema": {
               "type": "string"
@@ -761,6 +861,57 @@
           {
             "name": "environmentId",
             "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200; 50 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Up to three sort keys, `property:asc` or `property:desc`, comma separated.\nA property sorts only when it has a comparable type; missing and\nwithheld values sort last in both directions.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "name:asc"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "A JSON document `{\"all\":[clause, ...]}` of at most eight clauses, each\n`{\"property\", \"op\", \"value\"}`. Operators by property type: text `eq`,\n`ne`, `in`, `contains`, `prefix`; integer and decimal `eq`, `ne`, `in`,\n`lt`, `lte`, `gt`, `gte`, `between`; date, timestamp and duration the\nsame without `in`; boolean `eq`; enum `eq`, `ne`, `in`; `empty` and\n`present` on any comparable type. `in` takes at most 50 values. A\nwithheld row matches no clause.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "{\"all\":[{\"property\":\"name\",\"op\":\"prefix\",\"value\":\"A\"}]}"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "An opaque cursor from a previous page's `next`, valid only for the same\ntype, query, scope and caller, and only until the cell next commits.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
             "required": true,
             "schema": {
               "type": "string"
@@ -769,17 +920,27 @@
         ],
         "responses": {
           "200": {
-            "description": "The profile of the caller's authorized snapshot.",
+            "description": "One page of the concept's objects in the applied order, under the caller's visibility: a row it may count but not read is listed as withheld, with nothing value-derived.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NornObjectProfile"
+                  "$ref": "#/components/schemas/NornObjectQueryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the limit, sort, filter or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             }
           },
           "403": {
-            "description": "The request was refused: scope or authority denied.",
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
             "content": {
               "application/json": {
                 "schema": {
@@ -789,7 +950,7 @@
             }
           },
           "404": {
-            "description": "The request was refused: not found.",
+            "description": "The request was refused: the type is not declared in this cell.",
             "content": {
               "application/json": {
                 "schema": {
@@ -799,7 +960,17 @@
             }
           },
           "409": {
-            "description": "The snapshot moved while it was read; retry.",
+            "description": "The request was refused (`object.snapshot_moved`, retryable from the first page): the cell committed while the page was read, between two scan batches of a first page or since the cursor was issued; a page is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`object.scan_bound_exceeded`): a sort or filter would read more than 10,000 visible rows in one scan; page without sort or filter instead, which streams by id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -810,6 +981,441 @@
           },
           "500": {
             "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}": {
+      "get": {
+        "tags": [
+          "crate::object_routes"
+        ],
+        "summary": "HOST-READ-3: one object as a grid shows it (D67): withheld under\nPopulation alone; absent, invisible and quarantined objects refuse alike.\nRow authorization runs outside the cell lock; the row and its quarantine\nare read under one snapshot.",
+        "description": "# Errors\nAs [`get_object`], and a commit between the row read and the closing\nsnapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).",
+        "operationId": "get_object",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object as a grid shows it; withheld, with no values or version, when the caller may count but not read it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQueriedRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/lineage": {
+      "get": {
+        "tags": [
+          "crate::object_links"
+        ],
+        "summary": "HOST-READ-4: where an object's current version came from (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, quarantined, withheld or\nsource-withheld object, or one without a retained source bundle (one 404);\na commit between the row and provenance reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "operationId": "get_object_lineage",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the object's current version came from: its source record, document and mapping.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornInstanceSourceProvenance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the row and provenance reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/links": {
+      "get": {
+        "tags": [
+          "crate::object_links"
+        ],
+        "summary": "HOST-READ-4: one page of the links touching an object (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, invisible or quarantined object\n(404); an invalid query (400 with every violation); a cursor that does not\ncontinue it (400 `query.cursor_invalid`); a commit since the cursor (409\n`object.snapshot_moved`); more visible links than one scan reads (413);\nor a host failure.",
+        "operationId": "get_object_links",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "`out`, `in` or `both` (the default).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(out|in|both)$"
+            }
+          },
+          {
+            "name": "link",
+            "in": "query",
+            "description": "One declared link id, to list only those links.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 100; 50 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "An opaque cursor from a previous page's `next`, valid only for the same\nobject, query, scope and caller, and only until the cell next commits.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the links the caller may see at both ends; links to rows it cannot see are neither listed nor counted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectLinkPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the direction, link, limit or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`object.scan_bound_exceeded`): more than 10,000 visible links touch the object, more than one scan reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -985,28 +1591,6 @@
             }
           },
           {
-            "name": "knownAsOf",
-            "in": "query",
-            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since. Without them the\ntrace is of the cell's current answer.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "nowMs",
-            "in": "query",
-            "description": "The answer's `nowMs`, with `knownAsOf`.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
-            }
-          },
-          {
             "name": "question",
             "in": "path",
             "required": true,
@@ -1174,72 +1758,6 @@
           },
           "422": {
             "description": "The request was refused by a typed compute refusal.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The request was refused: host failure.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "hostToken": []
-          }
-        ]
-      }
-    },
-    "/v1/questions:metrics": {
-      "get": {
-        "tags": [
-          "crate::question_routes"
-        ],
-        "summary": "F2b: list the metrics an ad-hoc question may name. A metric is listed\nonly when the caller may read its concept's population (HOST-READ-1), so\nthe list never names a concept the caller cannot read.\n# Errors\nNo actor, or a host failure.",
-        "operationId": "list_metrics",
-        "parameters": [
-          {
-            "name": "orgId",
-            "in": "query",
-            "description": "Organization (required).",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environmentId",
-            "in": "query",
-            "description": "Environment (required).",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The metrics ad-hoc questions may name.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NornMetricList"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1476,31 +1994,14 @@
             "type": "string",
             "description": "Canonical bucket key from that answer."
           },
-          "knownAsOf": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since.",
-            "minimum": 0
-          },
           "lineageRef": {
             "type": "string",
             "description": "The `lineageRef` handle that answer returned."
           },
-          "nowMs": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "The answer's `nowMs`, with `knownAsOf`.",
-            "minimum": 0
-          },
           "question": {
             "type": "object",
-            "description": "The same `QuestionIR` the answer was evaluated from."
+            "description": "The same `QuestionIR` the answer was evaluated from.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1524,7 +2025,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The kind's payload."
+            "description": "The kind's payload.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1606,7 +2108,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The admitted payload, as canonical JSON."
+            "description": "The admitted payload, as canonical JSON.",
+            "additionalProperties": true
           },
           "receipt": {
             "$ref": "#/components/schemas/DefinitionReceipt",
@@ -1756,7 +2259,8 @@
         "properties": {
           "question": {
             "type": "object",
-            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is\nevaluated once and never installed."
+            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is evaluated once and never installed.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1824,7 +2328,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The kind's payload."
+            "description": "The kind's payload.",
+            "additionalProperties": true
           },
           "signoff": {
             "oneOf": [
@@ -2088,6 +2593,31 @@
         "type": "string",
         "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
         "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+      },
+      "NornAppliedQuery": {
+        "type": "object",
+        "description": "The sort and filter a page actually applied.",
+        "required": [
+          "sort",
+          "filter"
+        ],
+        "properties": {
+          "filter": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The applied filter, normalized (`{\"all\":[clause, ...]}`); null without one.",
+            "additionalProperties": true
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornSortKey"
+            },
+            "description": "The applied sort keys, before the id tie-break; empty means scan order."
+          }
+        }
       },
       "NornArtifactEnvelope": {
         "oneOf": [
@@ -2628,29 +3158,6 @@
         ],
         "title": "NornArtifactEnvelopeWidget"
       },
-      "NornBin": {
-        "type": "object",
-        "description": "One histogram bin.",
-        "required": [
-          "lower",
-          "upper",
-          "count"
-        ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows in the bin.",
-            "minimum": 0
-          },
-          "lower": {
-            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
-          },
-          "upper": {
-            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
-          }
-        }
-      },
       "NornCheckReceipt": {
         "type": "object",
         "description": "A current checker admission receipt.",
@@ -3035,6 +3542,87 @@
           "T6",
           "T7"
         ]
+      },
+      "NornDefinitionsCatalog": {
+        "type": "object",
+        "description": "An admitted document; source and receipt travel as exact JSON text.",
+        "required": [
+          "admitted",
+          "version",
+          "layoutRevision",
+          "layout",
+          "layoutDiagnostics",
+          "receipt",
+          "receiptSha256",
+          "diagnostics",
+          "registry",
+          "baseArtifactIds",
+          "artifacts"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "Always `true`: this route serves only an admitted revision. The member is kept because readers of this route already rely on its shape.",
+            "enum": [
+              true
+            ]
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One admitted artifact, preserving exact numeric values.",
+              "additionalProperties": true
+            },
+            "description": "Every admitted artifact of the revision, in one unpaged array: references between artifacts resolve only against the whole set, so the set is not split. Its size is the installed set's; this read applies no count bound of its own."
+          },
+          "baseArtifactIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Read-only base artifact identities."
+          },
+          "diagnostics": {
+            "type": "null",
+            "description": "Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member."
+          },
+          "layout": {
+            "$ref": "#/components/schemas/LayoutSidecar"
+          },
+          "layoutDiagnostics": {
+            "type": "null",
+            "description": "Always null: layout diagnostics are not retained with a revision, and this read does not re-run the checker. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member."
+          },
+          "layoutRevision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Editor sidecar revision.",
+            "minimum": 0
+          },
+          "receipt": {
+            "type": "object",
+            "description": "The original checker receipt, without host reinterpretation.",
+            "additionalProperties": true
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "Original receipt digest."
+          },
+          "registry": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected registry releases."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retained definition revision.",
+            "minimum": 0
+          }
+        }
       },
       "NornDiagnosticFormat": {
         "type": "string",
@@ -3747,27 +4335,6 @@
           "The Unified Code for Units of Measure (case-sensitive codes).",
           "A QUDT unit (`unit:` local name)."
         ]
-      },
-      "NornHistogram": {
-        "type": "object",
-        "description": "A histogram.",
-        "required": [
-          "kind",
-          "bins"
-        ],
-        "properties": {
-          "bins": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornBin"
-            },
-            "description": "Bins in ascending order."
-          },
-          "kind": {
-            "type": "string",
-            "description": "`equal_population` (numeric: bins of equal row count, bounded by the\nvalues at their edges, so no bin edge is computed), `day` or `month`\n(temporal: calendar bins in UTC)."
-          }
-        }
       },
       "NornHistoricalQuestionResult": {
         "type": "object",
@@ -17146,29 +17713,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrQuestionLimits": {
-        "type": "object",
-        "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
-        "required": [
-          "max_scanned_records",
-          "max_scanned_bytes"
-        ],
-        "properties": {
-          "max_scanned_bytes": {
-            "type": "integer",
-            "format": "uint64",
-            "description": "Maximum stored bytes those records may decode to: the scan's memory\nbound.",
-            "minimum": 0
-          },
-          "max_scanned_records": {
-            "type": "integer",
-            "format": "uint32",
-            "description": "Maximum source records one evaluation of a question may scan.",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrQuestionMetric": {
         "type": "object",
         "description": "A selected metric, optionally with an explicit re-aggregation request.",
@@ -18788,17 +19332,6 @@
           "memory": {
             "$ref": "#/components/schemas/NornIrMemoryLimits",
             "description": "Working memory."
-          },
-          "question": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornIrQuestionLimits"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Bounds on an analytical question. Absent from `norn.limits/1`, whose\nbytes and hash are unchanged; a profile without them bounds questions\nby [`QuestionLimits::DEFAULT`] (see\n[`ResourceLimitProfile::question_limits`])."
           },
           "slice": {
             "$ref": "#/components/schemas/NornIrSliceLimits",
@@ -24356,85 +24889,6 @@
         },
         "additionalProperties": false
       },
-      "NornMetricList": {
-        "type": "object",
-        "description": "The metrics ad-hoc questions may name, among those the caller may read.",
-        "required": [
-          "metrics"
-        ],
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornMetricSummary"
-            },
-            "description": "In name order."
-          }
-        }
-      },
-      "NornMetricSummary": {
-        "type": "object",
-        "description": "One metric an ad-hoc question may name.",
-        "required": [
-          "name",
-          "label",
-          "kind",
-          "objectType",
-          "expression",
-          "timeProperty",
-          "numerator",
-          "denominator"
-        ],
-        "properties": {
-          "denominator": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The denominator metric, for a ratio."
-          },
-          "expression": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The aggregated expression (a property), for a simple metric."
-          },
-          "kind": {
-            "type": "string",
-            "description": "`simple`, `ratio`, `cumulative`, `derived` or `conversion`."
-          },
-          "label": {
-            "type": "string",
-            "description": "Its label."
-          },
-          "name": {
-            "type": "string",
-            "description": "The metric's name, as a question's `aggregate` names it."
-          },
-          "numerator": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The numerator metric, for a ratio."
-          },
-          "objectType": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The concept it aggregates, for a simple metric."
-          },
-          "timeProperty": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The time property its buckets use, for a simple metric."
-          }
-        }
-      },
       "NornNumericContribution": {
         "type": "object",
         "description": "One original numeric member; enrichment does not enter this list.",
@@ -24596,6 +25050,40 @@
         },
         "additionalProperties": false
       },
+      "NornObjectLinkPage": {
+        "type": "object",
+        "description": "HOST-READ-4: one page of the links touching an object that the caller may\nsee at both ends (D67); links to rows it cannot see are neither listed nor\ncounted.",
+        "required": [
+          "objectType",
+          "id",
+          "items",
+          "next"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The requested object's identity."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornLinkEdge"
+            },
+            "description": "Visible links, in the cell's stable order."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor for the next page, when one exists."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The requested object's type."
+          }
+        }
+      },
       "NornObjectPage": {
         "type": "object",
         "description": "One bounded page of a concept's authoritative objects.",
@@ -24633,62 +25121,56 @@
         },
         "additionalProperties": false
       },
-      "NornObjectProfile": {
+      "NornObjectQueryPage": {
         "type": "object",
-        "description": "The profile of a concept's objects as the caller may see them.",
+        "description": "One page of a grid query over a concept's objects.",
         "required": [
           "objectType",
-          "rows",
-          "withheldRows",
-          "quarantinedRows",
-          "approximate",
-          "scanLimit",
-          "engine",
-          "properties"
+          "records",
+          "quarantineCount",
+          "query",
+          "next",
+          "total"
         ],
         "properties": {
-          "approximate": {
-            "type": "boolean",
-            "description": "True when the scan bound was reached: the profile covers only the rows\nread, and every count is a lower bound."
-          },
-          "engine": {
-            "type": "string",
-            "description": "The engine that computed the profile: `cell`, the native exact engine."
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor for the next page; null at the end."
           },
           "objectType": {
             "type": "string",
-            "description": "The concept profiled; rows may be of its subtypes."
+            "description": "The concept read; records may be of its subtypes."
           },
-          "properties": {
+          "quarantineCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Readable candidates held back by source disputes or open findings.",
+            "minimum": 0
+          },
+          "query": {
+            "$ref": "#/components/schemas/NornAppliedQuery",
+            "description": "The sort and filter applied."
+          },
+          "records": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornPropertyProfile"
+              "$ref": "#/components/schemas/NornQueriedRecord"
             },
-            "description": "One profile per declared property, in declared order."
+            "description": "The page, in the applied order."
           },
-          "quarantinedRows": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows held back by source disputes or open quarantining findings.",
-            "minimum": 0
-          },
-          "rows": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows whose values were profiled.",
-            "minimum": 0
-          },
-          "scanLimit": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The visible-row scan bound.",
-            "minimum": 0
-          },
-          "withheldRows": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows the caller may know exist but whose values are withheld; none of\ntheir values is counted.",
-            "minimum": 0
+          "total": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornQueryTotal",
+                "description": "The matching rows, under the same visibility as the list. Present on a\nfirst page, and on every page of a sorted or filtered query; null on the\ncontinuation pages of an unsorted, unfiltered listing."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -24729,89 +25211,58 @@
         },
         "additionalProperties": false
       },
-      "NornPropertyProfile": {
+      "NornQueriedRecord": {
         "type": "object",
-        "description": "The profile of one property over the profiled rows.",
+        "description": "One object as a grid query shows it (HOST-READ-3, D67). A row the caller\nmay count but not read is listed with `withheld: true` and nothing\nvalue-derived: no values and no version.",
         "required": [
-          "property",
-          "kind",
-          "count",
-          "nulls",
-          "distinct",
-          "min",
-          "max",
-          "quantiles",
-          "histogram"
+          "objectType",
+          "id",
+          "scope",
+          "version",
+          "values",
+          "withheld",
+          "withheldProperties"
         ],
         "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows with a value.",
-            "minimum": 0
-          },
-          "distinct": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Distinct values.",
-            "minimum": 0
-          },
-          "histogram": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/NornHistogram",
-                "description": "The distribution (numeric and temporal properties)."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "kind": {
+          "id": {
             "type": "string",
-            "description": "`numeric`, `temporal`, `boolean`, `text` or `other`."
+            "description": "The object's identity."
           },
-          "max": {
-            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
           },
-          "min": {
-            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
+          "scope": {
+            "type": "string",
+            "description": "The tenant scope."
           },
-          "nulls": {
-            "type": "integer",
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Every stored property by property id; decimals are exact JSON number tokens. Null when the row is withheld.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Rows without one.",
+            "description": "The owner version; null when the row is withheld.",
             "minimum": 0
           },
-          "property": {
-            "type": "string",
-            "description": "The property id."
+          "withheld": {
+            "type": "boolean",
+            "description": "The caller holds Population but not Values on this row."
           },
-          "quantiles": {
+          "withheldProperties": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornQuantile"
+              "type": "string"
             },
-            "description": "Quantiles by nearest rank (numeric and temporal properties)."
-          }
-        }
-      },
-      "NornQuantile": {
-        "type": "object",
-        "description": "One quantile.",
-        "required": [
-          "percent",
-          "value"
-        ],
-        "properties": {
-          "percent": {
-            "type": "integer",
-            "format": "int32",
-            "description": "The percentile, 0 to 100.",
-            "minimum": 0
-          },
-          "value": {
-            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+            "description": "Properties withheld by policy on a readable row. Always present; empty\nuntil field-level policy exists, and never derived from which values a\nrow has."
           }
         }
       },
@@ -25030,7 +25481,7 @@
         ],
         "properties": {
           "bucket": {
-            "description": "Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group)."
+            "description": "Scalar grouping value."
           },
           "members": {
             "type": "object",
@@ -25063,6 +25514,26 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornQueryTotal": {
+        "type": "object",
+        "description": "How many rows match the query.",
+        "required": [
+          "count",
+          "approximate"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "The count is a lower bound: the collection is larger than one scan."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The matching rows counted.",
+            "minimum": 0
+          }
+        }
       },
       "NornQueryWatermark": {
         "type": "object",
@@ -25105,6 +25576,32 @@
           }
         ],
         "description": "Current or authenticated historical answer, matching the native service envelope."
+      },
+      "NornSortDirection": {
+        "type": "string",
+        "description": "A sort direction.",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "NornSortKey": {
+        "type": "object",
+        "description": "One applied sort key.",
+        "required": [
+          "property",
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/NornSortDirection",
+            "description": "The sort direction."
+          },
+          "property": {
+            "type": "string",
+            "description": "The property sorted on."
+          }
+        }
       },
       "NornWorld": {
         "oneOf": [
