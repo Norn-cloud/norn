@@ -573,6 +573,11 @@ pub struct LoadRequest {
     /// Each column's accepted kind; a column left out is loaded as inferred.
     #[serde(default)]
     pub columns: Vec<ColumnChoice>,
+    /// Column ids whose values together name one row (a declared unique key,
+    /// beside the row id); each is an included, never-empty text or integer
+    /// column, and no two rows share the tuple (UPLOAD-KEY-1). Empty: no key.
+    #[serde(default)]
+    pub key: Vec<String>,
     /// The SHA-256 `:complete` returned; a cell that no longer remembers the
     /// upload checks the object against it (UPLOAD-DIGEST-1).
     #[serde(default)]
@@ -591,6 +596,10 @@ pub struct ColumnChoice {
     /// `false` leaves the column out.
     #[serde(default = "yes")]
     pub include: bool,
+    /// `true` declares an integer or decimal column additive, so the cell may
+    /// sum it (UPLOAD-MEASURE-1); a measure is never part of the key.
+    #[serde(default)]
+    pub measure: bool,
 }
 
 const fn yes() -> bool {
@@ -652,12 +661,29 @@ pub fn generate(
             None => Some((column.clone(), column.inferred)),
         })
         .collect();
+    let measures: BTreeSet<&str> = request
+        .columns
+        .iter()
+        .filter(|c| c.include && c.measure)
+        .map(|c| c.id.as_str())
+        .collect();
+    if let Some((column, _)) = columns.iter().find(|(column, kind)| {
+        measures.contains(column.id.as_str())
+            && !matches!(kind, ColumnKind::Integer | ColumnKind::Decimal)
+    }) {
+        return Err(format!("{} is a measure but not a number", column.id));
+    }
+    let key = key_of(table, &columns, &request.key, &measures)?;
     let snake = name.to_ascii_lowercase();
     let object_type = format!("upload.{name}");
     let interface = format!("upload.{name}Record");
     let source_schema = format!("upload.{snake}.source");
     let mapping = format!("upload.{snake}.mapping");
-    let (properties, fields, map_properties) = shapes(&columns);
+    let (properties, fields, map_properties) = shapes(&columns, &measures);
+    let mut identity = vec![json!({"name": "primary", "properties": ["row_id"]})];
+    if !key.is_empty() {
+        identity.push(json!({"name": "key", "properties": key}));
+    }
     let base = |id: &str, kind: &str, title: &str, payload: Value, dependencies: Value| {
         json!({"artifactId": id, "dependencies": dependencies, "irVersion": "0.1", "kind": kind, "lifecycle": "active",
             "name": title, "namespace": "upload", "payload": payload, "provenance": {"source": "system"}, "scope": {}, "version": "0.1.0"})
@@ -673,7 +699,7 @@ pub fn generate(
         &format!("{object_type}.entity"),
         "entity",
         &format!("{name} (uploaded)"),
-        json!({"entityVersion": "2.0", "objectType": {"identity": [{"name": "primary", "properties": ["row_id"]}],
+        json!({"entityVersion": "2.0", "objectType": {"identity": identity,
             "implements": [interface], "links": [], "name": object_type, "properties": properties}}),
         json!([]),
     ))?;
@@ -715,15 +741,71 @@ pub fn generate(
     })
 }
 
+/// UPLOAD-KEY-1: the declared key's column ids, once each names an included,
+/// never-empty text or integer column that is not a measure, and no two rows
+/// share the key's values.
+fn key_of(
+    table: &Table,
+    columns: &[(Column, ColumnKind)],
+    key: &[String],
+    measures: &BTreeSet<&str>,
+) -> Result<Vec<String>, String> {
+    let mut positions = Vec::with_capacity(key.len());
+    let mut named = BTreeSet::new();
+    for id in key {
+        let Some((column, kind)) = columns.iter().find(|(c, _)| &c.id == id) else {
+            return Err(format!("the key column {id} is not an included column"));
+        };
+        if !named.insert(id.as_str()) {
+            return Err(format!("the key names {id} twice"));
+        }
+        if !matches!(kind, ColumnKind::Text | ColumnKind::Integer) {
+            return Err(format!("the key column {id} is not text or a whole number"));
+        }
+        if column.nullable {
+            return Err(format!("the key column {id} has empty cells"));
+        }
+        if measures.contains(id.as_str()) {
+            return Err(format!("the key column {id} is a measure"));
+        }
+        let index = table
+            .columns
+            .iter()
+            .position(|c| &c.id == id)
+            .ok_or_else(|| format!("no column {id}"))?;
+        positions.push(index);
+    }
+    let mut seen = BTreeMap::new();
+    for (number, row) in (1_usize..).zip(&table.rows) {
+        let tuple: Vec<Option<&String>> = positions
+            .iter()
+            .map(|index| row.get(*index).and_then(Option::as_ref))
+            .collect();
+        if let Some(first) = seen.insert(tuple, number) {
+            return Err(format!("rows {first} and {number} share the key"));
+        }
+    }
+    Ok(key.to_vec())
+}
+
 /// Each loaded column as an object property, a source field and a mapping
 /// property, after the row id.
-fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
-    let property_type = |kind: ColumnKind, scale: u32| match kind {
-        ColumnKind::Integer => json!({"kind": "integer"}),
-        ColumnKind::Decimal => json!({"kind": "decimal", "scale": scale.max(1)}),
-        ColumnKind::Boolean => json!({"kind": "boolean"}),
-        ColumnKind::Datetime => json!({"kind": "ref", "name": "iso8601.timestamp"}),
-        ColumnKind::Text => json!({"kind": "text"}),
+fn shapes(
+    columns: &[(Column, ColumnKind)],
+    measures: &BTreeSet<&str>,
+) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
+    let property_type = |kind: ColumnKind, scale: u32, measure: bool| match (kind, measure) {
+        (ColumnKind::Integer, false) => json!({"kind": "integer"}),
+        (ColumnKind::Integer, true) => {
+            json!({"kind": "integer", "additivity": {"kind": "additive"}})
+        }
+        (ColumnKind::Decimal, false) => json!({"kind": "decimal", "scale": scale.max(1)}),
+        (ColumnKind::Decimal, true) => {
+            json!({"kind": "decimal", "scale": scale.max(1), "additivity": {"kind": "additive"}})
+        }
+        (ColumnKind::Boolean, _) => json!({"kind": "boolean"}),
+        (ColumnKind::Datetime, _) => json!({"kind": "ref", "name": "iso8601.timestamp"}),
+        (ColumnKind::Text, _) => json!({"kind": "text"}),
     };
     let mut properties = vec![json!({"id": "row_id", "type": {"kind": "text"}})];
     let mut fields = vec![
@@ -737,7 +819,9 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
         } else {
             *kind
         };
-        let mut property = json!({"id": column.id, "type": property_type(*kind, column.scale)});
+        let measure = measures.contains(column.id.as_str());
+        let mut property =
+            json!({"id": column.id, "type": property_type(*kind, column.scale, measure)});
         if column.nullable
             && let Some(object) = property.as_object_mut()
         {
@@ -1021,6 +1105,95 @@ mod tests {
         assert!(parse_csv("a,b\n\"1,2\n").is_err());
     }
 
+    fn choice(id: &str, kind: ColumnKind, measure: bool) -> ColumnChoice {
+        ColumnChoice {
+            id: id.into(),
+            kind,
+            include: true,
+            measure,
+        }
+    }
+
+    fn entity_of(generated: &Generated) -> Value {
+        serde_json::to_value(generated.artifacts[1].payload.to_json_value()).expect("payload")
+    }
+
+    /// UPLOAD-MEASURE-1 and UPLOAD-KEY-1: a measure declares its property
+    /// additive; a key is a second unique identity beside the row id.
+    #[test]
+    fn measures_are_additive_and_the_key_is_a_unique_identity() {
+        let csv = "sku,qty,price,note\nA-1,3,2.50,x\nA-2,4,1.25,\n";
+        let table = parse_csv(csv).expect("parsed");
+        let sha = sha256_hex(csv.as_bytes());
+        let request = |columns: Vec<ColumnChoice>, key: Vec<&str>| LoadRequest {
+            type_name: "Stock".into(),
+            columns,
+            key: key.into_iter().map(Into::into).collect(),
+            sha256: None,
+        };
+        let generated = generate(
+            &table,
+            &request(
+                vec![
+                    choice("qty", ColumnKind::Integer, true),
+                    choice("price", ColumnKind::Decimal, true),
+                ],
+                vec!["sku"],
+            ),
+            "u",
+            &sha,
+            "2026-11-12T12:00:00.000Z",
+        )
+        .expect("generated");
+        let entity = entity_of(&generated);
+        let object = &entity["objectType"];
+        assert_eq!(
+            object["identity"],
+            json!([{"name": "primary", "properties": ["row_id"]}, {"name": "key", "properties": ["sku"]}])
+        );
+        let property = |id: &str| {
+            object["properties"]
+                .as_array()
+                .expect("properties")
+                .iter()
+                .find(|p| p["id"] == id)
+                .cloned()
+                .expect("property")
+        };
+        assert_eq!(
+            property("qty")["type"]["additivity"],
+            json!({"kind": "additive"})
+        );
+        assert_eq!(
+            property("price")["type"]["additivity"],
+            json!({"kind": "additive"})
+        );
+        assert_eq!(property("sku")["type"].get("additivity"), None);
+
+        let refused = |columns: Vec<ColumnChoice>, key: Vec<&str>| {
+            generate(&table, &request(columns, key), "u", &sha, "t").expect_err("refused")
+        };
+        assert!(
+            refused(vec![choice("sku", ColumnKind::Text, true)], vec![]).contains("not a number")
+        );
+        assert!(refused(vec![], vec!["note"]).contains("empty cells"));
+        assert!(refused(vec![], vec!["price"]).contains("not text or a whole number"));
+        assert!(
+            refused(vec![choice("qty", ColumnKind::Integer, true)], vec!["qty"])
+                .contains("is a measure")
+        );
+        assert!(refused(vec![], vec!["sku", "sku"]).contains("twice"));
+        assert!(refused(vec![], vec!["nope"]).contains("not an included column"));
+        let mut excluded = choice("sku", ColumnKind::Text, false);
+        excluded.include = false;
+        assert!(refused(vec![excluded], vec!["sku"]).contains("not an included column"));
+
+        let duplicated = parse_csv("sku,qty\nA,1\nB,2\nA,3\n").expect("parsed");
+        let reason = generate(&duplicated, &request(vec![], vec!["sku"]), "u", &sha, "t")
+            .expect_err("refused");
+        assert_eq!(reason, "rows 1 and 3 share the key");
+    }
+
     #[test]
     fn generated_definitions_pin_their_source_schema() {
         let table = parse_csv("x,y\n1,2.5\n").expect("parsed");
@@ -1029,6 +1202,7 @@ mod tests {
             &LoadRequest {
                 type_name: "Points".into(),
                 columns: vec![],
+                key: vec![],
                 sha256: None,
             },
             "s3://uploads/k.csv",
@@ -1049,6 +1223,7 @@ mod tests {
                 &LoadRequest {
                     type_name: "lower".into(),
                     columns: vec![],
+                    key: vec![],
                     sha256: None,
                 },
                 "u",

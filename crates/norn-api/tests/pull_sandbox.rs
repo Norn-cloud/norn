@@ -608,6 +608,7 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let request = LoadRequest {
         type_name: "Sales".into(),
         columns: vec![],
+        key: vec![],
         sha256: None,
     };
     let generated =
