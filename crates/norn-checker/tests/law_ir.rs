@@ -858,8 +858,7 @@ fn law_link_reads_admit_one_to_one_hop_only() {
         serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
             .expect("entities");
     let link = |id: &str, target: &str, to: &str| json!({"id": id, "target": target, "cardinality": {"from": "many", "to": to}});
-    values[0]["payload"]["objectType"]["links"] =
-        json!([link("request", "erpnext.Request", "one")]);
+    values[0]["payload"]["objectType"]["links"] = json!([link("ticket", "erpnext.Request", "one")]);
     values[1]["payload"]["objectType"]["links"] = json!([
         link("order", "erpnext.SalesOrder", "one"),
         link("requests", "erpnext.Request", "many"),
@@ -890,7 +889,10 @@ fn law_link_reads_admit_one_to_one_hop_only() {
     // A to-many link and a second hop refuse admission.
     let many = check(None, "count(self.requests) == 0");
     assert!(refused(&many, codes::UNKNOWN_BINDING), "{many:?}");
-    let second = check(Some("self.order != null"), "self.order.request == null");
+    let second = check(
+        Some("self.order != null"),
+        "self.order.ticket.status == 'accepted'",
+    );
     assert!(refused(&second, codes::UNKNOWN_BINDING), "{second:?}");
 }
 
