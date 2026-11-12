@@ -380,6 +380,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The request was refused: the scope's stored cell cannot be opened.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
           }
         },
         "security": [

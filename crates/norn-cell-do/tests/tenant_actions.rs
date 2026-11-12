@@ -170,8 +170,8 @@ impl Cell {
     }
 }
 
-/// A tenant cell at `path` provisioned by its owner with `artifacts`.
-fn provisioned(path: &Path, artifacts: &[Value]) -> Cell {
+/// The tenant cell stored at `path`, opened as the host opens it.
+fn opened(path: &Path) -> Cell {
     let file = path.to_owned();
     let tenant = Tenant::open(
         scope(),
@@ -183,15 +183,61 @@ fn provisioned(path: &Path, artifacts: &[Value]) -> Cell {
     )
     .unwrap();
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope(), tenant.caller(), NOW).unwrap();
-    let mut cell = Cell { tenant, tokens };
+    Cell { tenant, tokens }
+}
+
+/// The owner's provisioning of the cell at `path` with `artifacts`, and
+/// what it answered.
+fn provision(path: &Path, artifacts: &[Value]) -> (Cell, Response) {
+    let mut cell = opened(path);
     let body = json!({
         "baseSha256": base::trusted_base().unwrap().sha256(),
         "artifacts": artifacts,
     })
     .to_string();
     let response = cell.call("POST", PROVISION_PATH, Some(&user("owner")), &body);
+    (cell, response)
+}
+
+/// A tenant cell at `path` provisioned by its owner with `artifacts`.
+fn provisioned(path: &Path, artifacts: &[Value]) -> Cell {
+    let (cell, response) = provision(path, artifacts);
     assert_eq!(response.status, 200, "{}", response.body);
     cell
+}
+
+/// An admin installs a retained flow on the cell: a new definitions version
+/// whose model is the flow's admission. The flow is the lowered `norn-ts`
+/// "Approve a refund" fixture (one step performing the `norn.decision@1`
+/// built-in), so it needs no installed binding.
+fn install_flow(cell: &mut Cell) {
+    let mut artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/ask.flow.json")).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    }
+    let body = json!({ "kind": "flow", "id": "ops.approve_refund", "payload": {
+        "flow": { "id": "ops.approve_refund", "version": "1.0.0", "title": "Approve a refund",
+                  "steps": [{ "id": "ask_review", "label": "Review the refund" }] },
+        "artifacts": artifacts } });
+    let admitted = cell.call(
+        "POST",
+        "/v1/definitions:admit",
+        Some(&user("admin")),
+        &body.to_string(),
+    );
+    assert_eq!(admitted.status, 200, "{}", admitted.body);
+    let digest =
+        serde_json::from_str::<Value>(&admitted.body).unwrap()["restatementSha256"].clone();
+    let mut body = body;
+    body["signoff"] = json!({ "restatementSha256": digest });
+    let installed = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&user("admin")),
+        &body.to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
 }
 
 fn with_policy(roles: &[&str]) -> Vec<Value> {
@@ -462,4 +508,164 @@ fn a_profile_of_an_undeclared_type_answers_as_the_object_routes_do() {
         "",
     );
     assert_eq!(melts.status, 200, "{}", melts.body);
+}
+
+/// A flow installed after an action changes the definitions version: the
+/// action policy is recompiled for it and decides as before, the action still
+/// commits, and a reopened cell serves the same decisions over the same
+/// records.
+#[test]
+fn a_flow_install_and_a_reopen_keep_the_action_and_its_policy() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let mut cell = provisioned(&path, &with_policy(&["admin"]));
+    let committed = |cell: &mut Cell, id: &str| {
+        let response = cell.melt(MELT_ACTION, Some(&user("admin")), id);
+        assert_eq!(response.status, 200, "{id}: {}", response.body);
+        let receipt: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(receipt["outcome"], "committed", "{id}: {receipt}");
+    };
+    committed(&mut cell, "m1");
+    install_flow(&mut cell);
+    committed(&mut cell, "m2");
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("member")), "x1"), denied);
+    assert_eq!(cell.tenant.action_policy_error(), None);
+    drop(cell);
+    let mut cell = opened(&path);
+    committed(&mut cell, "m3");
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("member")), "x2"), denied);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(3));
+}
+
+/// A `rel` or `context` condition never permits on a tenant cell. The host
+/// projects no relationship metadata and supplies an empty context, so the
+/// strict Cedar validator finds the rule impossible: the policy does not
+/// compile, the cell serves no action (even to the admin the rule's role
+/// names), nothing commits, and the operator is told why.
+#[test]
+fn relationship_and_context_conditions_never_permit() {
+    let directory = tempfile::tempdir().unwrap();
+    let conditions = [
+        (
+            "rel",
+            json!({ "rel": { "from": "resource", "role": "owner" } }),
+        ),
+        (
+            "context",
+            json!({ "context": { "name": "channel", "op": "eq", "value": "web" } }),
+        ),
+    ];
+    for (case, condition) in conditions {
+        let mut artifacts = melt(Some(&access()));
+        let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
+        gated["payload"]["rules"][0]["allOf"]
+            .as_array_mut()
+            .unwrap()
+            .push(condition);
+        artifacts.push(gated);
+        let (mut cell, provisioned) =
+            provision(&directory.path().join(format!("{case}.sqlite")), &artifacts);
+        assert_eq!(provisioned.status, 200, "{case}: {}", provisioned.body);
+        let denied = denial(&mut cell);
+        assert_eq!(
+            cell.melt(MELT_ACTION, Some(&user("admin")), "m"),
+            denied,
+            "{case}"
+        );
+        let reason = cell.tenant.action_policy_error().unwrap_or_default();
+        assert!(reason.contains("policy is impossible"), "{case}: {reason}");
+        assert_eq!(
+            cell.melts()["records"].as_array().map(Vec::len),
+            Some(0),
+            "{case}"
+        );
+    }
+}
+
+/// A call the policy grants still reads only what its caller may read: an
+/// action whose precondition slice reads an existing melt is refused to a
+/// viewer (the policy grants the call, but a viewer holds no Values grant on
+/// `constitution.Melt`) with the one opaque denial, and nothing commits.
+#[test]
+fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
+    const RECHECK: &str = "constitution.melt.recheck";
+    let directory = tempfile::tempdir().unwrap();
+    let mut artifacts = melt(Some(&access()));
+    let mut recheck = artifacts
+        .iter()
+        .find(|artifact| artifact["kind"] == "action")
+        .cloned()
+        .unwrap();
+    recheck["artifactId"] = json!(format!("{RECHECK}.action"));
+    let payload = &mut recheck["payload"];
+    payload["actionId"] = json!(RECHECK);
+    payload["inputSchema"]["properties"]["of"] = json!({ "type": "string" });
+    payload["inputSchema"]["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("of"));
+    payload["slice"] = json!([{ "name": "earlier", "objectType": MELT,
+        "key": { "property": { "from": "input", "property": "of" } } }]);
+    artifacts.push(recheck);
+    let mut rules = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    let mut readers = rules["payload"]["rules"][0].clone();
+    readers["ruleId"] = json!("readers");
+    readers["actions"] = json!([RECHECK]);
+    readers["allOf"] = json!([{ "role": { "anyOf": ["viewer"] } }]);
+    rules["payload"]["rules"]
+        .as_array_mut()
+        .unwrap()
+        .push(readers);
+    artifacts.push(rules);
+    let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
+    assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    assert_eq!(cell.tenant.action_policy_error(), None);
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("admin")), "earlier")
+            .status,
+        200
+    );
+    let recheck = |cell: &mut Cell, role: &str, id: &str| {
+        let body = format!(
+            r#"{{"input":{{"id":"{id}","of":"earlier","input_fine_g":"100","output_fine_g":"98"}},"idempotencyKey":"{id}"}}"#
+        );
+        cell.call(
+            "POST",
+            &format!("/v1/actions/{RECHECK}"),
+            Some(&user(role)),
+            &body,
+        )
+    };
+    let denied = denial(&mut cell);
+    assert_eq!(recheck(&mut cell, "viewer", "v"), denied);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+}
+
+/// A referenced policy that does not compile leaves the cell serving no
+/// action, and the reason is kept for the operator, not the caller.
+#[test]
+fn a_policy_compile_failure_is_reported_to_the_operator() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut artifacts = melt(Some(&access()));
+    let mut broken = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    let rule = broken["payload"]["rules"][0].clone();
+    broken["payload"]["rules"]
+        .as_array_mut()
+        .unwrap()
+        .push(rule);
+    artifacts.push(broken);
+    let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
+    assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "m"), denied);
+    let reason = cell.tenant.action_policy_error().map(str::to_owned);
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("authz.access.rule_duplicate")),
+        "{reason:?}"
+    );
+    assert!(!denied.body.contains(reason.as_deref().unwrap_or_default()));
 }
