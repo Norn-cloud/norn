@@ -6,6 +6,7 @@ from contextlib import ExitStack
 import hashlib
 import importlib.metadata
 import json
+import os
 import random
 import select
 import subprocess
@@ -13,6 +14,9 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
+
+# Hypothesis keeps a cache directory; never let it land in the caller's tree.
+os.environ.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", str(Path(tempfile.gettempdir()) / "norn-port-hypothesis"))
 
 from hypothesis import HealthCheck, Phase, find, given, seed, settings, strategies as st
 from hypothesis_jsonschema import from_schema
