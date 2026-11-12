@@ -1835,6 +1835,11 @@ export interface components {
          * @enum {string}
          */
         NornIrAdditivityAxis: "time";
+        /**
+         * @description An aggregate function.
+         * @enum {string}
+         */
+        NornIrAggregateFn: "sum" | "count" | "count_distinct" | "min" | "max";
         /** @description The fold computed over the matched objects. */
         NornIrAggregateFunction: components["schemas"]["NornIrAggregateFunctionOneOf0"] | components["schemas"]["NornIrAggregateFunctionOneOf1"];
         /**
@@ -1936,11 +1941,12 @@ export interface components {
         /**
          * @description Serializable calc expression leaf for a Derived view.
          *
-         *     In ViewIR v0 only the `field_projection` form is admitted. `effectful_ts`
-         *     is decodable so the checker can reject it (IO belongs in an Effect
-         *     artifact); `raw_promise` is never admitted.
+         *     ViewIR v0 admits the `field_projection` form; ViewIR v1 adds `relational`
+         *     (a closed, typed operator plan). `effectful_ts` is decodable so the checker
+         *     can reject it (IO belongs in an Effect artifact); `raw_promise` is never
+         *     admitted.
          */
-        NornIrCalcExpr: components["schemas"]["NornIrCalcExprOneOf0"] | components["schemas"]["NornIrCalcExprOneOf1"];
+        NornIrCalcExpr: components["schemas"]["NornIrCalcExprOneOf0"] | components["schemas"]["NornIrCalcExprOneOf1"] | components["schemas"]["NornIrCalcExprOneOf2"];
         /** @description Simple field projection: select a non-empty subset of named fields from the primary input. */
         NornIrCalcExprOneOf0: {
             fields: string[];
@@ -1954,6 +1960,22 @@ export interface components {
             /** @enum {string} */
             kind: "effectful_ts";
             sourceRef: string;
+        };
+        /**
+         * @description ViewIR v1 (VIEW-TYPE-1): a closed relational plan over the declared
+         *     inputs. Every node is typed by the checker against the effective
+         *     catalog; nothing in it is executed raw.
+         */
+        NornIrCalcExprOneOf2: {
+            /** @enum {string} */
+            kind: "relational";
+            nodes: components["schemas"]["NornIrCalcExprOneOf2PropertyNodes"];
+            /** @description The node whose rows are the view's rows. */
+            output: string;
+        };
+        /** @description Operators by node id. */
+        NornIrCalcExprOneOf2PropertyNodes: {
+            [key: string]: components["schemas"]["NornIrViewNode"];
         };
         /** @description An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone. */
         NornIrCalendarDate: string;
@@ -2941,6 +2963,11 @@ export interface components {
          */
         NornIrDecimalLiteral: string;
         /**
+         * @description Which row of a key a dedupe keeps.
+         * @enum {string}
+         */
+        NornIrDedupeKeep: "first" | "last";
+        /**
          * @description A literal default value of a property's type (any JSON except `null`).
          *
          *     The literal's shape per kind (checked by `norn-checker`): a string for
@@ -3837,6 +3864,16 @@ export interface components {
             /** @enum {string} */
             kind: "allAdmittedObjectTypes";
         };
+        /** @description One grouping key. */
+        NornIrGroupKey: {
+            /** @description The grouped column. */
+            column: string;
+            /**
+             * @description A calendar bucket for a date or timestamp column (ISO/UTC).
+             * @enum {string}
+             */
+            grain?: "day" | "week" | "month" | "quarter" | "year";
+        };
         /**
          * @description Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so
          *     these only bind a future admission; the helper's fuel is charged to the
@@ -4339,11 +4376,36 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
+        /**
+         * @description Inner or left outer.
+         * @enum {string}
+         */
+        NornIrJoinKind: "inner" | "left";
+        /** @description How a join pairs rows. Ad-hoc joins on arbitrary columns do not exist. */
+        NornIrJoinOn: components["schemas"]["NornIrJoinOnOneOf0"] | components["schemas"]["NornIrJoinOnOneOf1"];
+        /** @description Along a declared link of the type whose ids a left column holds. */
+        NornIrJoinOnOneOf0: {
+            link: components["schemas"]["NornIrLinkJoin"];
+        };
+        /**
+         * @description A declared key equivalence: left columns equal, under the key's own
+         *     normalization, a declared unique key (or the id) of the right type.
+         */
+        NornIrJoinOnOneOf1: {
+            key: components["schemas"]["NornIrKeyJoin"];
+        };
         /** @constant */
         NornIrJsonFalse: false;
         NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
+        };
+        /** @description A join on a declared key of the right type. */
+        NornIrKeyJoin: {
+            /** @description Left columns, in the key's component order. */
+            left: string[];
+            /** @description A key declared by the right type, or `id` for its identity. */
+            right: string;
         };
         /**
          * @description Name of a [`KeySpec`] within its object type (`primary`, `by_email`),
@@ -5042,6 +5104,13 @@ export interface components {
             /** @description Forward source link IDs from the image of `concept`; empty is identity. */
             path: string[];
         };
+        /** @description A join along a declared forward link role. */
+        NornIrLinkJoin: {
+            /** @description The left column holding the link's source object ids. */
+            column: string;
+            /** @description The declared forward link role. */
+            link: string;
+        };
         /**
          * @description One link rule: the produced object links to the object another map
          *     produces with this key (an RML referencing object map with its join).
@@ -5302,6 +5371,18 @@ export interface components {
         NornIrMaskPolicyOneOf2: {
             /** @enum {string} */
             kind: "null";
+        };
+        /** @description One measure of an aggregate. */
+        NornIrMeasure: {
+            /** @description The measured column; omitted only for a row `count`. */
+            column?: string;
+            /**
+             * @description The function.
+             * @enum {string}
+             */
+            fn: "sum" | "count" | "count_distinct" | "min" | "max";
+            /** @description The output column name. */
+            name: string;
         };
         /**
          * @description Base aggregate operators. Count without a property counts objects.
@@ -6029,6 +6110,16 @@ export interface components {
          * @enum {string}
          */
         NornIrOntologyTermStatus: "active" | "deprecated" | "superseded";
+        /** @description One order key. */
+        NornIrOrderKey: {
+            /** @description The ordered column. */
+            column: string;
+            /**
+             * @description Its direction.
+             * @enum {string}
+             */
+            direction: "asc" | "desc";
+        };
         /**
          * @description A deterministic collection derivation through an existing RuleIR helper.
          *     The helper's input is exactly `{accumulator, item, index}` and its output
@@ -6190,6 +6281,16 @@ export interface components {
          * @enum {string}
          */
         NornIrProfileMethod: "full_scan" | "sample";
+        /** @description One output column of a projection. */
+        NornIrProjectColumn: {
+            /**
+             * @description A ZEN expression over `input.<column>`; `input.c` alone passes the
+             *     column through with its full contract.
+             */
+            expression: string;
+            /** @description The output column name. */
+            name: string;
+        };
         /** @description One property of an object type. */
         NornIrProperty: {
             /**
@@ -7666,6 +7767,11 @@ export interface components {
          * @enum {string}
          */
         NornIrSnapshotDeviationReason: "no_declared_path" | "ambiguous_shortest_path";
+        /**
+         * @description Sort direction. Nulls sort last in both directions.
+         * @enum {string}
+         */
+        NornIrSortDirection: "asc" | "desc";
         /** @description The adapter that produced a document. */
         NornIrSourceAdapter: {
             /** @description Adapter name (`norn.importers.frappe`). */
@@ -8143,6 +8249,100 @@ export interface components {
          * @enum {string}
          */
         NornIrViewMaintenance: "recompute_on_read" | "incremental";
+        /** @description One closed relational operator (VIEW-TYPE-1). No arbitrary function node. */
+        NornIrViewNode: components["schemas"]["NornIrViewNodeOneOf0"] | components["schemas"]["NornIrViewNodeOneOf1"] | components["schemas"]["NornIrViewNodeOneOf2"] | components["schemas"]["NornIrViewNodeOneOf3"] | components["schemas"]["NornIrViewNodeOneOf4"] | components["schemas"]["NornIrViewNodeOneOf5"] | components["schemas"]["NornIrViewNodeOneOf6"] | components["schemas"]["NornIrViewNodeOneOf7"];
+        /** @description Every readable row of one declared input; its grain is the object id. */
+        NornIrViewNodeOneOf0: {
+            /** @description The `inputs[].alias` read. */
+            input: string;
+            /** @enum {string} */
+            op: "scan";
+        };
+        /** @description Rows whose ZEN predicate is `true`. */
+        NornIrViewNodeOneOf1: {
+            /** @description The node filtered. */
+            input: string;
+            /** @enum {string} */
+            op: "filter";
+            /** @description A Boolean ZEN expression over `input.<column>`. */
+            predicate: string;
+        };
+        /** @description Exactly the listed columns, each a typed ZEN expression over the row. */
+        NornIrViewNodeOneOf2: {
+            /** @description The output columns, in order. */
+            columns: components["schemas"]["NornIrProjectColumn"][];
+            /** @description The node projected. */
+            input: string;
+            /** @enum {string} */
+            op: "project";
+        };
+        /** @description A join along a declared link or a declared key equivalence (VIEW-JOIN-1). */
+        NornIrViewNodeOneOf3: {
+            /**
+             * @description Inner or left.
+             * @enum {string}
+             */
+            kind: "inner" | "left";
+            /** @description The left node. */
+            left: string;
+            /** @description The declared relationship. */
+            on: components["schemas"]["NornIrJoinOn"];
+            /** @enum {string} */
+            op: "join";
+            /** @description Prefix for every right column; output names must stay unique. */
+            prefix: string;
+            /** @description The right node: rows of one object type, at its identity grain. */
+            right: string;
+        };
+        /** @description Grouped measures under the metric layer's additivity laws (VIEW-AGG-1). */
+        NornIrViewNodeOneOf4: {
+            /** @description Group keys; empty means one row over the whole input. */
+            groupBy: components["schemas"]["NornIrGroupKey"][];
+            /** @description The node aggregated. */
+            input: string;
+            /** @description Non-empty measures. */
+            measures: components["schemas"]["NornIrMeasure"][];
+            /** @enum {string} */
+            op: "aggregate";
+        };
+        /** @description Ranking, offsets and running totals over a total order (VIEW-ORDER-1). */
+        NornIrViewNodeOneOf5: {
+            /** @description Non-empty window columns. */
+            columns: components["schemas"]["NornIrWindowColumn"][];
+            /** @description The node windowed. */
+            input: string;
+            /** @enum {string} */
+            op: "window";
+            /** @description Order keys; with the partition they must cover the input grain. */
+            orderBy: components["schemas"]["NornIrOrderKey"][];
+            /** @description Partition columns. */
+            partitionBy: string[];
+        };
+        /** @description Same-shaped inputs, tagged by branch (VIEW-UNION-1). */
+        NornIrViewNodeOneOf6: {
+            /** @description The output column holding each row's input node id. */
+            branch: string;
+            /** @description Two or more node ids. */
+            inputs: string[];
+            /** @enum {string} */
+            op: "union";
+        };
+        /** @description One row per key, chosen by a total order (VIEW-ORDER-1). */
+        NornIrViewNodeOneOf7: {
+            /** @description The node deduplicated. */
+            input: string;
+            /**
+             * @description Which row is kept.
+             * @enum {string}
+             */
+            keep: "first" | "last";
+            /** @description The key columns; the output grain. */
+            key: string[];
+            /** @enum {string} */
+            op: "dedupe";
+            /** @description Order keys; with the key they must cover the input grain. */
+            orderBy: components["schemas"]["NornIrOrderKey"][];
+        };
         /**
          * Format: uint64
          * @description A non-negative integral JSON number.
@@ -9003,6 +9203,28 @@ export interface components {
          * @enum {string}
          */
         NornIrWindowChoice: "min" | "max";
+        /** @description One window column. */
+        NornIrWindowColumn: {
+            /** @description The column read by `lag`, `lead` and `running_sum`. */
+            column?: string;
+            /**
+             * @description The function.
+             * @enum {string}
+             */
+            fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
+            /** @description The output column name. */
+            name: string;
+            /**
+             * Format: uint32
+             * @description Rows back or ahead for `lag`/`lead` (default 1).
+             */
+            offset?: number;
+        };
+        /**
+         * @description A window function.
+         * @enum {string}
+         */
+        NornIrWindowFn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
         /** @description Activation policy for `within`; the duration stays in `law.timing`. */
         NornIrWithinTiming: {
             /** @description Principal or role answerable for discharge; grants no authority. */

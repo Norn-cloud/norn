@@ -5462,6 +5462,24 @@
           "The declared time dimension."
         ]
       },
+      "NornIrAggregateFn": {
+        "type": "string",
+        "description": "An aggregate function.",
+        "enum": [
+          "sum",
+          "count",
+          "count_distinct",
+          "min",
+          "max"
+        ],
+        "x-enumDescriptions": [
+          "Exact sum of an additive column.",
+          "Rows, or non-null values of `column`.",
+          "Distinct non-null values of `column`.",
+          "Least non-null value.",
+          "Greatest non-null value."
+        ]
+      },
       "NornIrAggregateFunction": {
         "oneOf": [
           {
@@ -5825,9 +5843,12 @@
           },
           {
             "$ref": "#/components/schemas/NornIrCalcExprOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrCalcExprOneOf2"
           }
         ],
-        "description": "Serializable calc expression leaf for a Derived view.\n\nIn ViewIR v0 only the `field_projection` form is admitted. `effectful_ts`\nis decodable so the checker can reject it (IO belongs in an Effect\nartifact); `raw_promise` is never admitted."
+        "description": "Serializable calc expression leaf for a Derived view.\n\nViewIR v0 admits the `field_projection` form; ViewIR v1 adds `relational`\n(a closed, typed operator plan). `effectful_ts` is decodable so the checker\ncan reject it (IO belongs in an Effect artifact); `raw_promise` is never\nadmitted."
       },
       "NornIrCalcExprOneOf0": {
         "type": "object",
@@ -5871,6 +5892,38 @@
           "sourceRef": {
             "type": "string"
           }
+        }
+      },
+      "NornIrCalcExprOneOf2": {
+        "type": "object",
+        "description": "ViewIR v1 (VIEW-TYPE-1): a closed relational plan over the declared\ninputs. Every node is typed by the checker against the effective\ncatalog; nothing in it is executed raw.",
+        "required": [
+          "kind",
+          "nodes",
+          "output"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "relational"
+            ]
+          },
+          "nodes": {
+            "$ref": "#/components/schemas/NornIrCalcExprOneOf2PropertyNodes"
+          },
+          "output": {
+            "type": "string",
+            "description": "The node whose rows are the view's rows."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrCalcExprOneOf2PropertyNodes": {
+        "type": "object",
+        "description": "Operators by node id.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrViewNode"
         }
       },
       "NornIrCalendarDate": {
@@ -8651,6 +8704,18 @@
         "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
         "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
       },
+      "NornIrDedupeKeep": {
+        "type": "string",
+        "description": "Which row of a key a dedupe keeps.",
+        "enum": [
+          "first",
+          "last"
+        ],
+        "x-enumDescriptions": [
+          "The first row in order.",
+          "The last row in order."
+        ]
+      },
       "NornIrDefaultValue": {
         "anyOf": [
           {
@@ -11002,6 +11067,38 @@
         },
         "additionalProperties": false
       },
+      "NornIrGroupKey": {
+        "type": "object",
+        "description": "One grouping key.",
+        "required": [
+          "column"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The grouped column."
+          },
+          "grain": {
+            "type": "string",
+            "description": "A calendar bucket for a date or timestamp column (ISO/UTC).",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "x-enumDescriptions": [
+              "Day.",
+              "Week.",
+              "Month.",
+              "Quarter.",
+              "Year."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrHelperLimits": {
         "type": "object",
         "description": "Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so\nthese only bind a future admission; the helper's fuel is charged to the\nenclosing decision and turn budget.",
@@ -12257,6 +12354,55 @@
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
       },
+      "NornIrJoinKind": {
+        "type": "string",
+        "description": "Inner or left outer.",
+        "enum": [
+          "inner",
+          "left"
+        ],
+        "x-enumDescriptions": [
+          "Only matched pairs.",
+          "Every left row; unmatched right columns are null."
+        ]
+      },
+      "NornIrJoinOn": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrJoinOnOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrJoinOnOneOf1"
+          }
+        ],
+        "description": "How a join pairs rows. Ad-hoc joins on arbitrary columns do not exist."
+      },
+      "NornIrJoinOnOneOf0": {
+        "type": "object",
+        "description": "Along a declared link of the type whose ids a left column holds.",
+        "required": [
+          "link"
+        ],
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/NornIrLinkJoin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrJoinOnOneOf1": {
+        "type": "object",
+        "description": "A declared key equivalence: left columns equal, under the key's own\nnormalization, a declared unique key (or the id) of the right type.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/NornIrKeyJoin"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrJsonFalse": {
         "type": "boolean",
         "const": false
@@ -12288,6 +12434,28 @@
       "NornIrJsonValueAnyOf5": {
         "type": "object",
         "additionalProperties": {}
+      },
+      "NornIrKeyJoin": {
+        "type": "object",
+        "description": "A join on a declared key of the right type.",
+        "required": [
+          "left",
+          "right"
+        ],
+        "properties": {
+          "left": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Left columns, in the key's component order."
+          },
+          "right": {
+            "type": "string",
+            "description": "A key declared by the right type, or `id` for its identity."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrKeyName": {
         "type": "string",
@@ -14006,6 +14174,25 @@
         },
         "additionalProperties": false
       },
+      "NornIrLinkJoin": {
+        "type": "object",
+        "description": "A join along a declared forward link role.",
+        "required": [
+          "column",
+          "link"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The left column holding the link's source object ids."
+          },
+          "link": {
+            "type": "string",
+            "description": "The declared forward link role."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLinkMap": {
         "type": "object",
         "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
@@ -14623,6 +14810,43 @@
             "enum": [
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMeasure": {
+        "type": "object",
+        "description": "One measure of an aggregate.",
+        "required": [
+          "name",
+          "fn"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The measured column; omitted only for a row `count`."
+          },
+          "fn": {
+            "type": "string",
+            "description": "The function.",
+            "enum": [
+              "sum",
+              "count",
+              "count_distinct",
+              "min",
+              "max"
+            ],
+            "x-enumDescriptions": [
+              "Exact sum of an additive column.",
+              "Rows, or non-null values of `column`.",
+              "Distinct non-null values of `column`.",
+              "Least non-null value.",
+              "Greatest non-null value."
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
           }
         },
         "additionalProperties": false
@@ -16337,6 +16561,33 @@
           "superseded"
         ]
       },
+      "NornIrOrderKey": {
+        "type": "object",
+        "description": "One order key.",
+        "required": [
+          "column",
+          "direction"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The ordered column."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Its direction.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "x-enumDescriptions": [
+              "Ascending.",
+              "Descending."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrOrderedFold": {
         "type": "object",
         "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
@@ -16801,6 +17052,25 @@
           "Every row was read.",
           "A sample of rows was read."
         ]
+      },
+      "NornIrProjectColumn": {
+        "type": "object",
+        "description": "One output column of a projection.",
+        "required": [
+          "name",
+          "expression"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract."
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrProperty": {
         "type": "object",
@@ -20956,6 +21226,18 @@
           "More than one shortest declared transition path reaches the target."
         ]
       },
+      "NornIrSortDirection": {
+        "type": "string",
+        "description": "Sort direction. Nulls sort last in both directions.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "x-enumDescriptions": [
+          "Ascending.",
+          "Descending."
+        ]
+      },
       "NornIrSourceAdapter": {
         "type": "object",
         "description": "The adapter that produced a document.",
@@ -22057,6 +22339,321 @@
           null,
           "Reserved — not implemented. The checker rejects artifacts carrying this value."
         ]
+      },
+      "NornIrViewNode": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf7"
+          }
+        ],
+        "description": "One closed relational operator (VIEW-TYPE-1). No arbitrary function node."
+      },
+      "NornIrViewNodeOneOf0": {
+        "type": "object",
+        "description": "Every readable row of one declared input; its grain is the object id.",
+        "required": [
+          "op",
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The `inputs[].alias` read."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "scan"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf1": {
+        "type": "object",
+        "description": "Rows whose ZEN predicate is `true`.",
+        "required": [
+          "op",
+          "input",
+          "predicate"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The node filtered."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "filter"
+            ]
+          },
+          "predicate": {
+            "type": "string",
+            "description": "A Boolean ZEN expression over `input.<column>`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf2": {
+        "type": "object",
+        "description": "Exactly the listed columns, each a typed ZEN expression over the row.",
+        "required": [
+          "op",
+          "input",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrProjectColumn"
+            },
+            "description": "The output columns, in order."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node projected."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "project"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf3": {
+        "type": "object",
+        "description": "A join along a declared link or a declared key equivalence (VIEW-JOIN-1).",
+        "required": [
+          "op",
+          "left",
+          "right",
+          "on",
+          "kind",
+          "prefix"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Inner or left.",
+            "enum": [
+              "inner",
+              "left"
+            ],
+            "x-enumDescriptions": [
+              "Only matched pairs.",
+              "Every left row; unmatched right columns are null."
+            ]
+          },
+          "left": {
+            "type": "string",
+            "description": "The left node."
+          },
+          "on": {
+            "$ref": "#/components/schemas/NornIrJoinOn",
+            "description": "The declared relationship."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "join"
+            ]
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Prefix for every right column; output names must stay unique."
+          },
+          "right": {
+            "type": "string",
+            "description": "The right node: rows of one object type, at its identity grain."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf4": {
+        "type": "object",
+        "description": "Grouped measures under the metric layer's additivity laws (VIEW-AGG-1).",
+        "required": [
+          "op",
+          "input",
+          "groupBy",
+          "measures"
+        ],
+        "properties": {
+          "groupBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrGroupKey"
+            },
+            "description": "Group keys; empty means one row over the whole input."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node aggregated."
+          },
+          "measures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMeasure"
+            },
+            "description": "Non-empty measures."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "aggregate"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf5": {
+        "type": "object",
+        "description": "Ranking, offsets and running totals over a total order (VIEW-ORDER-1).",
+        "required": [
+          "op",
+          "input",
+          "partitionBy",
+          "orderBy",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWindowColumn"
+            },
+            "description": "Non-empty window columns."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node windowed."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "window"
+            ]
+          },
+          "orderBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrOrderKey"
+            },
+            "description": "Order keys; with the partition they must cover the input grain."
+          },
+          "partitionBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Partition columns."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf6": {
+        "type": "object",
+        "description": "Same-shaped inputs, tagged by branch (VIEW-UNION-1).",
+        "required": [
+          "op",
+          "inputs",
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The output column holding each row's input node id."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Two or more node ids."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "union"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf7": {
+        "type": "object",
+        "description": "One row per key, chosen by a total order (VIEW-ORDER-1).",
+        "required": [
+          "op",
+          "input",
+          "key",
+          "orderBy",
+          "keep"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The node deduplicated."
+          },
+          "keep": {
+            "type": "string",
+            "description": "Which row is kept.",
+            "enum": [
+              "first",
+              "last"
+            ],
+            "x-enumDescriptions": [
+              "The first row in order.",
+              "The last row in order."
+            ]
+          },
+          "key": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The key columns; the output grain."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "dedupe"
+            ]
+          },
+          "orderBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrOrderKey"
+            },
+            "description": "Order keys; with the key they must cover the input grain."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrWholeNumber": {
         "type": "integer",
@@ -24621,6 +25218,71 @@
         "x-enumDescriptions": [
           "Earliest timestamp.",
           "Latest timestamp."
+        ]
+      },
+      "NornIrWindowColumn": {
+        "type": "object",
+        "description": "One window column.",
+        "required": [
+          "name",
+          "fn"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The column read by `lag`, `lead` and `running_sum`."
+          },
+          "fn": {
+            "type": "string",
+            "description": "The function.",
+            "enum": [
+              "row_number",
+              "rank",
+              "dense_rank",
+              "lag",
+              "lead",
+              "running_sum"
+            ],
+            "x-enumDescriptions": [
+              "1, 2, 3, … in order.",
+              "Rank with gaps over equal order values.",
+              "Rank without gaps.",
+              "`column` of the row `offset` rows earlier; null before the first.",
+              "`column` of the row `offset` rows later; null after the last.",
+              "Exact sum of an additive column from the partition start to this row."
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Rows back or ahead for `lag`/`lead` (default 1).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWindowFn": {
+        "type": "string",
+        "description": "A window function.",
+        "enum": [
+          "row_number",
+          "rank",
+          "dense_rank",
+          "lag",
+          "lead",
+          "running_sum"
+        ],
+        "x-enumDescriptions": [
+          "1, 2, 3, … in order.",
+          "Rank with gaps over equal order values.",
+          "Rank without gaps.",
+          "`column` of the row `offset` rows earlier; null before the first.",
+          "`column` of the row `offset` rows later; null after the last.",
+          "Exact sum of an additive column from the partition start to this row."
         ]
       },
       "NornIrWithinTiming": {
