@@ -494,6 +494,20 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     /// Output buckets per answer. Above it the answer refuses
     /// `question.bucket_bound_exceeded` (413); never a truncated answer.
     fn max_buckets(&self) -> usize;
+    /// Admit `question`, already authorized, against this runtime's metrics
+    /// with at most `max_rows` rows read. By default the checker's
+    /// [`admit`] over [`Self::definitions`] and [`Self::catalog`]; a runtime
+    /// whose metrics come from a derived metric space admits through that
+    /// space, so its admission rules apply to every question.
+    /// # Errors
+    /// The checker's findings, with pointers into the question.
+    fn admit(
+        &self,
+        question: &QuestionIR,
+        max_rows: u32,
+    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        admit(self.definitions(), question, self.catalog(), max_rows)
+    }
 }
 
 /// `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.
@@ -667,12 +681,7 @@ pub fn check_ad_hoc<E: SqlEngine>(
             },
         )?);
     }
-    let plan = match admit(
-        runtime.definitions(),
-        question,
-        runtime.catalog(),
-        runtime.max_rows(),
-    ) {
+    let plan = match runtime.admit(question, runtime.max_rows()) {
         Ok(plan) => plan,
         // D62: pointers into the one submitted question, each finding once.
         Err(findings) => return Ok(Err(rebased(findings))),
