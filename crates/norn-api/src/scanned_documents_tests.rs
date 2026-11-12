@@ -816,7 +816,6 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
             .all(|finding| finding.status == DataQualityFindingStatus::Resolved),
         "both laws hold again: {findings:#?}"
     );
-    drop(reader);
     drop(cell);
     corrections_under_the_ledger_law(&host);
 }
@@ -952,7 +951,7 @@ fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
 /// A later observation of `record` (a source re-export), as version `version`.
 fn reobserved(record: &RuntimeValue, version: u64) -> Observed<RuntimeValue> {
     let mut observed = raw(record);
-    let at = EXTRACTED_AT_MS + version * 60_000;
+    let at = EXTRACTED_AT_MS.saturating_add(version.saturating_mul(60_000));
     observed.id = ObservationId(format!("{}@{version}", observed.id.0));
     observed.provenance.observed_at = LogicalTime::from_millis(at);
     let RuntimeValue::Object(input) = &mut observed.input else {
