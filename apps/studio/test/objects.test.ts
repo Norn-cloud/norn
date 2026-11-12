@@ -8,7 +8,7 @@ import type { Artifact, LinkPage, ObjectPage, ObjectRecord } from "../src/lib/tr
 
 // The cell's reads of the three-systems world (crates/norn-api/tests/explorer_objects.rs).
 const recorded = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects", name), "utf8")
-const text: Field = { id: "code", type: "Text", optional: false, decimal: undefined, scalar: { kind: "text" } }
+const text: Field = { id: "code", label: "code", labelLang: "en", valueLabels: new Map(), type: "Text", optional: false, decimal: undefined, scalar: { kind: "text" } }
 
 test("the one gold item reads as the cell stored it", () => {
   const page = readDocument<ObjectPage>(recorded("canon.Item.page.json"), "recorded")
@@ -21,7 +21,7 @@ test("the one gold item reads as the cell stored it", () => {
 test("decimals keep their exact text and declared currency; missing facts read as a dash", () => {
   const source = '{"objectType":"canon.Holding","id":"h","scope":"s","version":1,"values":{"stock_cost":8100.500000,"cost_currency":"USD","unit":null}}'
   const read = readDocument<ObjectRecord>(source, "recorded")
-  const cost: Field = { id: "stock_cost", type: "", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" }, scalar: { kind: "decimal" } }
+  const cost: Field = { id: "stock_cost", label: "stock cost", labelLang: "en", valueLabels: new Map(), type: "", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" }, scalar: { kind: "decimal" } }
   expect(factText(cost, read.document, read.numbers, "")).toBe("8100.500000 USD")
   expect(factText({ ...text, id: "unit" }, read.document, read.numbers, "")).toBe("—")
   expect(recordName(read.document)).toBe("h")
@@ -29,7 +29,7 @@ test("decimals keep their exact text and declared currency; missing facts read a
 
 test("a declared per-unit reads after the unit", () => {
   const read = readDocument<ObjectRecord>('{"objectType":"t","id":"p","scope":"s","version":1,"values":{"price":12.50}}', "recorded")
-  const price: Field = { id: "price", type: "", optional: false, decimal: { unit: "USD", perUnit: "kg", currencyFrom: undefined }, scalar: { kind: "decimal" } }
+  const price: Field = { id: "price", label: "price", labelLang: "en", valueLabels: new Map(), type: "", optional: false, decimal: { unit: "USD", perUnit: "kg", currencyFrom: undefined }, scalar: { kind: "decimal" } }
   expect(factText(price, read.document, read.numbers, "")).toBe("12.50 USD per kg")
 })
 
@@ -74,7 +74,7 @@ test("object types without a lifecycle declare none", () => {
 test("composite facts keep every nested number's exact text", () => {
   const read = readDocument<ObjectRecord>('{"objectType":"t","id":"x","scope":"s","version":1,"values":{"lots":[{"qty":100.000,"unit":"g"}],"range":{"low":1.50,"high":2}}}', "recorded")
   expect(exactJson(read.document.values.lots, read.numbers, "/values/lots")).toBe('[{"qty":100.000,"unit":"g"}]')
-  expect(factText({ id: "lots", type: "List", optional: false, decimal: undefined, scalar: { kind: "record" } }, read.document, read.numbers, "")).toBe('[{"qty":100.000,"unit":"g"}]')
+  expect(factText({ id: "lots", label: "lots", labelLang: "en", valueLabels: new Map(), type: "List", optional: false, decimal: undefined, scalar: { kind: "record" } }, read.document, read.numbers, "")).toBe('[{"qty":100.000,"unit":"g"}]')
   expect(exactJson(read.document.values.range, read.numbers, "/values/range")).toBe('{"low":1.50,"high":2}')
 })
 

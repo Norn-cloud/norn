@@ -17,15 +17,15 @@ artifact-promotion protocol. It binds one pure production Rust function:
 
 The promoted extraction command selects only that Rust symbol with hax, rejects
 proof holes/admitted SMT queries, checks the generated F* module, and then
-checks the total theorem. The theorem quantifies over all current 15
-`ArtifactKind` variants and all seven `ArtifactLifecycle` variants (105
+checks the total theorem. The theorem quantifies over all current 16
+`ArtifactKind` variants and all seven `ArtifactLifecycle` variants (112
 combinations). It proves that direct writes reject `Approved` and `Active` for
-the 14 authority-bearing kinds, including `Mapping`, while the evidence-only
-`SourceSchema` kind remains directly writable at every lifecycle.
+the 15 authority-bearing kinds, including `Mapping` and `Labels`, while the
+evidence-only `SourceSchema` kind remains directly writable at every lifecycle.
 
-The promoted Rust integration tests check 101 of those 105 combinations: the 14
+The promoted Rust integration tests check 108 of those 112 combinations: the 15
 authority-bearing kinds for `Draft`, `Proposed`, `Approved`, and `Active`, then
-all 15 kinds for `Deprecated`, `Superseded`, and `Rejected`. They do not assert
+all 16 kinds for `Deprecated`, `Superseded`, and `Rejected`. They do not assert
 `SourceSchema` with `Draft`, `Proposed`, `Approved`, or `Active`; only the
 kind-by-lifecycle theorem covers those four.
 

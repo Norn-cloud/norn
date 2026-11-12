@@ -22,6 +22,7 @@ import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
+import { EditorShortcuts } from "@/components/keys"
 
 export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
@@ -106,7 +107,7 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
   if (count === 0) return (
     <>
       <p className="text-muted-foreground">Select a state or a step. Drag from a state's right edge to another state to add a step, or drag a step's end to reconnect it. Shift-click or shift-drag selects several.</p>
-      <p className="text-meta text-muted-foreground">⌘Z undo · ⌘⇧Z redo · ⌘D duplicate · ⌘C/⌘V copy and paste · ⌘A select all · ⌘S save draft · ⇧⌘L tidy up · Delete removes</p>
+      <EditorShortcuts className="text-meta text-muted-foreground" />
       {standing.length > 0 && (
         <details className="text-meta text-muted-foreground">
           <summary className="cursor-pointer select-none">{standing.length} findings the loaded definitions already had</summary>

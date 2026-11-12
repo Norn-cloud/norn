@@ -20,6 +20,11 @@ import * as g from "./lib/canvas/graph.ts"
 import { lifecyclesIn } from "./lib/canvas/lifecycle.ts"
 import type { Envelope } from "./lib/transport.ts"
 import { SHEET } from "./sheet-states.ts"
+import { CodedMessage } from "@/components/coded-message"
+import { catalogOf } from "./lib/catalog.ts"
+import { LocaleProvider, applyLocale, isLocale, type Locale } from "./lib/locale.tsx"
+import type { Artifact } from "./lib/transport.ts"
+import { FactsTable } from "./sources.tsx"
 import "./index.css"
 
 const DEFINITIONS = Object.values(import.meta.glob<string>("../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })).map((source) => JSON.parse(source) as Envelope)
@@ -41,7 +46,7 @@ function Step({ id, issues = [] }: { readonly id: string; readonly issues?: read
 const automation = (id: string, extra: Partial<Parameters<typeof CanvasFrame>[0]> = {}) =>
   <CanvasFrame {...automationFrame(() => ({ issues: [], status: <Badge variant="outline">Checker: no findings</Badge> }))} draftKey={`sheet:${id}`} {...extra} />
 
-const problem: Issue = { code: "lifecycle.validation.dead_end_state", message: 'state "invoiced" has no outgoing transition', node: "invoiced" }
+const problem: Issue = { code: "lifecycle.validation.dead_end_state", message: "state invoiced has no outgoing transition; declare one or list it as terminal", node: "invoiced" }
 
 function frame(id: string, issues: readonly Issue[], status: ReactNode, extra: Partial<Parameters<typeof CanvasFrame>[0]> = {}) {
   if (!ORDER || !ORDER_ENVELOPE) return null
@@ -49,7 +54,37 @@ function frame(id: string, issues: readonly Issue[], status: ReactNode, extra: P
   return <CanvasFrame {...props} draftKey={`sheet:${id}`} {...extra} />
 }
 
+// Specimen labels for the sales order (Egyptian business Arabic). `order_date` and the `on_hold` status value
+// are left unlabelled, to show both fallbacks: every fact and every enum value still shows.
+const ORDER_LABELS = {
+  irVersion: "0.1", artifactId: "sheet.SalesOrder.labels", kind: "labels", namespace: "sheet", name: "Sales order labels", version: "0.1.0",
+  lifecycle: "draft", scope: {}, dependencies: [], provenance: { source: "system" },
+  payload: { labelsVersion: "0.1", entries: [
+    { target: { kind: "objectType", objectType: "commerce.SalesOrder" }, label: { en: "Sales order", ar: "أمر بيع" } },
+    { target: { kind: "property", objectType: "commerce.SalesOrder", property: "order_number" }, label: { en: "Order number", ar: "رقم الأمر" } },
+    { target: { kind: "property", objectType: "commerce.SalesOrder", property: "currency" }, label: { en: "Currency", ar: "العملة" } },
+    { target: { kind: "property", objectType: "commerce.SalesOrder", property: "total_amount" }, label: { en: "Total", ar: "الإجمالي" } },
+    { target: { kind: "property", objectType: "commerce.SalesOrder", property: "status" }, label: { en: "Status", ar: "الحالة" } },
+    ...Object.entries({ draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", invoiced: "تمت فوترته", completed: "مكتمل", cancelled: "ملغى" })
+      .map(([value, ar]) => ({ target: { kind: "enumValue", objectType: "commerce.SalesOrder", property: "status", value }, label: { ar }, review: { ar: "needs_review" } })),
+  ] },
+} as unknown as Artifact
+const SPECIMEN_LOCALE: Locale = (() => { const tag = new URLSearchParams(window.location.search).get("locale"); return isLocale(tag) ? tag : "en" })()
+function OrderFacts() {
+  const concept = catalogOf([...DEFINITIONS as unknown as Artifact[], ORDER_LABELS], SPECIMEN_LOCALE).byName.get("commerce.SalesOrder")
+  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang} className="font-medium">{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
+}
+
 const SPECIMENS: Record<string, () => ReactNode> = {
+  "locale/facts": () => <OrderFacts />,
+  "locale/message": () => (
+    <p className="max-w-xl space-y-2">
+      <CodedMessage code="artifact_set.resolution.missing_dependency" message="required entity commerce.SalesOrder.entity version 1.0.0 is neither in the artifact set nor installed" showCode />
+      <br />
+      <CodedMessage code="source_schema.validation.unknown_field" message="dataset customers has no field +20 100 123 4567" showCode />
+    </p>
+  ),
+  "locale/problems": () => frame("locale-problems", [problem, { ...problem, code: "lifecycle.validation.unreachable_state", message: "state completed is not reachable from an initial state", node: "completed" }], <Badge variant="destructive">2</Badge>),
   "state/default": () => <Box label="Submitted" />,
   "state/flags": () => <Box label="Draft" flags="initial · immutable" />,
   "state/selected": () => <Box label="Approved" selected />,
@@ -110,5 +145,8 @@ function Sheet() {
 }
 
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
-document.documentElement.classList.toggle("dark", dark.matches)
-createRoot(document.getElementById("root") as HTMLElement).render(<StrictMode><QueryClientProvider client={new QueryClient()}><Sheet /></QueryClientProvider></StrictMode>)
+const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
+applyScheme()
+dark.addEventListener("change", applyScheme)
+applyLocale(SPECIMEN_LOCALE)
+createRoot(document.getElementById("root") as HTMLElement).render(<StrictMode><QueryClientProvider client={new QueryClient()}><LocaleProvider initial={SPECIMEN_LOCALE}><Sheet /></LocaleProvider></QueryClientProvider></StrictMode>)

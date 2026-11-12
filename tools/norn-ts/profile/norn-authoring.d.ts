@@ -180,7 +180,26 @@ declare module "@norn/authoring" {
     /** Canonical EntityIR v2 catalog; values are masked by runtime lenses. */
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
-    interface InterfaceMeta<S extends Schema.Top> {
+    /**
+     * Localized labels (LABEL-LOCALE-1): BCP 47 tag → text. They lower to a
+     * separate `<artifact id>.labels` artifact, never into the definition, so
+     * they change no hash or evidence identity.
+     */
+    type LocaleText = import("../src/builder/labels.ts").LocaleText
+    interface Localized {
+      /** Short name per locale (`{ en: "Invoice", ar: "فاتورة" }`). */
+      readonly label?: LocaleText
+      /** Longer description per locale; `description` stays the canonical text. */
+      readonly localizedDescription?: LocaleText
+      /** Locales whose labels were proposed (for example machine-translated) and still need review. */
+      readonly needsReview?: ReadonlyArray<string>
+    }
+
+    interface InterfaceMeta<S extends Schema.Top> extends Localized {
+      /** Property labels, keyed by a declared property. */
+      readonly propertyLabels?: { readonly [P in keyof S["Type"]]?: LocaleText }
+      /** Enum value labels: declared enum property → stored value → label. */
+      readonly valueLabels?: { readonly [P in keyof S["Type"]]?: { readonly [value: string]: LocaleText } }
       readonly role?: "thing" | "happening"
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
@@ -289,7 +308,7 @@ declare module "@norn/authoring" {
             | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
         }
 
-    interface ActionMeta<I extends Schema.Top, O extends Schema.Top> {
+    interface ActionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
       readonly id: string
@@ -397,6 +416,33 @@ declare module "@norn/authoring" {
       readonly rules: ReadonlyArray<AccessRuleSpec>
     }): AccessDefinition
 
+    /** One type's labels in a standalone catalog. */
+    interface TypeLabels extends Localized {
+      /** Property id → label. */
+      readonly properties?: { readonly [property: string]: LocaleText }
+      /** Enum property id → stored value → label. */
+      readonly values?: { readonly [property: string]: { readonly [value: string]: LocaleText } }
+    }
+    interface LabelsDefinition { readonly _tag: "NornLabels" }
+    /**
+     * A standalone labels catalog: a tenant or locale pack labels definitions another
+     * layer owns, without touching them (LABEL-LOCALE-1). Its labels replace the
+     * installed ones for the same target and locale; the Rust checker resolves targets.
+     */
+    function labels(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** Locales this layer serves; definitions with no label in one are listed as a warning. */
+      readonly requiredLocales?: ReadonlyArray<string>
+      /** Locales whose labels were proposed and still need review. */
+      readonly needsReview?: ReadonlyArray<string>
+      /** Object type or interface name → labels. */
+      readonly types?: { readonly [objectType: string]: TypeLabels }
+      /** Action id → labels. */
+      readonly actions?: { readonly [actionId: string]: Localized }
+    }): LabelsDefinition
+
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
     /** What a law lambda reads as `self`: the subject's properties and, one level deep, its links. */
@@ -434,7 +480,7 @@ declare module "@norn/authoring" {
      * the lambdas compile statically and never run.
      */
     function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>>(name: string, spec: LawSpec<D>): LawDefinition
-    function law(meta: {
+    function law(meta: Localized & {
       readonly id: string
       readonly title: string
       readonly version: string
@@ -490,7 +536,7 @@ declare module "@norn/authoring" {
       readonly settings?: JsonData
     }
 
-    interface DecisionMeta<I extends Schema.Top, O extends Schema.Top> {
+    interface DecisionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       /** `ruleId` (`commerce.rule.sales_order_credit_hold`). */
       readonly id: string
       /** The artifact id; defaults to `<id>.rule`. */

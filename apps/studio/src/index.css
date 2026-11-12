@@ -233,7 +233,6 @@
 .code span { color: var(--shiki-light); }
 .dark .code span { color: var(--shiki-dark); }
 
-
 /* Canvas nodes float: contact plus ambient shadow and a top highlight; hover lifts; selection is an accent ring. */
 .canvas-node { box-shadow: var(--node-highlight), var(--elevation-node); transition: box-shadow 200ms var(--ease-spring, ease), transform 200ms var(--ease-spring, ease); }
 .canvas-node:hover { box-shadow: var(--node-highlight), var(--elevation-node-hover); transform: translateY(-1.5px); }
@@ -273,3 +272,11 @@
 /* Exits are small pills on the node's edge. */
 .react-flow__handle.canvas-pill { width: 10px; height: 10px; border-radius: 9999px; border: 1.5px solid var(--node-border); background: var(--card); box-shadow: var(--elevation-1); }
 .react-flow__handle.canvas-pill:hover { border-color: var(--edge-active); }
+
+/* Arabic mirrors the layout, but text not yet translated stays English: each block of text takes the
+   direction of its own first strong character, so an English sentence keeps its punctuation and
+   numbers in order inside a right-to-left page (LABEL-LOCALE-1). Table cells keep the page direction
+   and align to its start; the text inside them decides its own. */
+[dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, label, button, a, dt, dd, figcaption, span):not([dir]) {
+  unicode-bidi: plaintext;
+}

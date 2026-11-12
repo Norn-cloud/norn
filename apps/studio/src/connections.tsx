@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api, ConnectorError, fixLabel, offersButton, startFix, type AccountDetail, type Inventory, type Requirement, type Status } from "./lib/connectors.ts"
+import { CodedMessage } from "@/components/coded-message"
 
 /**
  * Connections (#772): the person's sign-in to the tool gateway and the accounts they connected
@@ -24,7 +25,7 @@ export function ConnectorProblem({ error }: { readonly error: unknown }) {
   return (
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
       <TriangleAlert aria-hidden className="size-4 text-destructive" />
-      <span className="min-w-0 flex-1">{error instanceof Error ? error.message : String(error)} {typed && <code className="text-meta text-muted-foreground">{typed.code}</code>}</span>
+      <span className="min-w-0 flex-1">{typed ? <CodedMessage code={typed.code} message={typed.message} showCode /> : error instanceof Error ? error.message : String(error)}</span>
       {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => startFix(action).then((url) => window.location.assign(url), (e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
       {action !== null && !offersButton(action) && <span className="text-muted-foreground">{fixLabel(action)}.</span>}
       {failed && <span className="w-full text-destructive">{failed}</span>}

@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.invalid_payload",
+  "message": "labels payload does not match its strict root",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
