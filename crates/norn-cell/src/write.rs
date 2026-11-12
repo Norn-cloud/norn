@@ -685,6 +685,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     ),
                     params![commit_seq, observation_id],
                 )?;
+                if observation_id.starts_with("mapping-bundle:") {
+                    self.conn.execute(
+                        &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                        params![observation_id],
+                    )?;
+                }
             }
         }
         Ok(())

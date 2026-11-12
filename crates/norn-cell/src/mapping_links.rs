@@ -144,24 +144,36 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         scope: Option<&ClaimScope>,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
-        let selected = self.with_source_dispute_index(|index| {
-            let mut selected = BTreeMap::new();
-            for (side, keys) in [
-                (&index.claim_sources, scope.map(|scope| &scope.sources)),
-                (&index.claim_targets, scope.map(|scope| &scope.targets)),
-            ] {
-                for (key, entries) in side {
-                    if keys.is_none_or(|keys| keys.contains(key)) {
-                        selected.extend(
-                            entries
-                                .iter()
-                                .map(|(identity, bytes)| (identity.clone(), *bytes)),
-                        );
-                    }
-                }
+        // Bundles touching the scope, by the side of the claim, from the
+        // endpoints recorded when each bundle was consumed.
+        let side = |name: &str,
+                    keys: Option<&BTreeSet<String>>|
+         -> Result<Vec<Vec<crate::engine::SqlValue>>, CellError> {
+            let table = crate::system::CLAIM_ENDPOINT;
+            match keys {
+                None => Ok(self.conn.query(
+                    &format!("SELECT \"commit_seq\", \"observation_id\", \"bytes\" FROM \"{table}\" WHERE \"side\" = ?1"),
+                    params![name],
+                )?),
+                Some(keys) => Ok(self.conn.query(
+                    &format!("SELECT \"commit_seq\", \"observation_id\", \"bytes\" FROM \"{table}\" WHERE \"side\" = ?1 AND \"key\" IN (SELECT value FROM json_each(?2))"),
+                    params![name, serde_json::to_string(keys)?],
+                )?),
             }
-            selected
-        })?;
+        };
+        let mut selected = BTreeMap::new();
+        for rows in [
+            side("source", scope.map(|scope| &scope.sources))?,
+            side("target", scope.map(|scope| &scope.targets))?,
+        ] {
+            for row in rows {
+                let row = crate::engine::SqlRow(row);
+                let seq = crate::read::to_u64(row.get(0)?, "claim sequence")?;
+                let id: String = row.get(1)?;
+                let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
+                selected.insert((seq, id), bytes);
+            }
+        }
         if selected.len() > limit {
             return Err(CellError::OutOfRange("link claim bundles"));
         }
@@ -629,6 +641,14 @@ mod tests {
                 params![position, &id, &observed],
             )
             .expect("consumed bundle");
+        // Consumption records the bundle's claim endpoints in the same write.
+        store
+            .conn
+            .execute(
+                &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                params![&id],
+            )
+            .expect("claim endpoints");
     }
 
     #[test]
