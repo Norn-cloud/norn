@@ -171,6 +171,16 @@ impl<E: SqlEngine> Tenant<E> {
         &self.scope
     }
 
+    /// The served cell's host when the scope is provisioned, for the host's
+    /// own background work (a source sync); requests go through [`Self::handle`].
+    #[must_use]
+    pub fn serving_host(&self) -> Option<&DevHost<E>> {
+        match &self.state {
+            State::Serving(serving) => Some(&serving.host),
+            State::Vacant => None,
+        }
+    }
+
     /// Whether the scope has a cell.
     #[must_use]
     pub const fn is_provisioned(&self) -> bool {
@@ -200,6 +210,22 @@ impl<E: SqlEngine> Tenant<E> {
     #[must_use]
     pub fn take_engine_call(&self) -> Option<norn_api::analytics_routes::EngineCall> {
         self.engine.as_ref().and_then(crate::olap::Exchange::take_pending)
+    }
+
+    /// D102: a load or an export on a served cell with an engine, reading
+    /// `uploads` for loads; `None` for any other request.
+    pub fn handle_analytics(
+        &self,
+        principals: &dyn PrincipalResolver,
+        uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        match (&self.state, &self.engine) {
+            (State::Serving(serving), Some(engine)) => {
+                server::analytics(&serving.host, principals, engine, uploads, request)
+            }
+            (State::Serving(_) | State::Vacant, _) => None,
+        }
     }
 
     /// Serve one request; every outcome is a status and a JSON document.

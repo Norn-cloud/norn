@@ -31,7 +31,7 @@ export function RecordsPage() {
           ? <Tabs defaultValue="records">
             <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger></TabsList>
             <TabsContent value="records" className="pt-3"><RecordsGrid key={concept.name} concept={concept} /></TabsContent>
-            <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} /></TabsContent>
+            <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
             <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
           </Tabs>
           : <RecordsGrid key={concept.name} concept={concept} />}

@@ -103,3 +103,18 @@ pub fn refusal_status(code: &str) -> u16 {
     }
 }
 
+
+/// The cell's completed uploads, for loads (#921).
+impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
+    fn record(&self, id: &str) -> Option<norn_api::analytics_routes::UploadRecord> {
+        self.upload_record(id)
+            .map(|record| norn_api::analytics_routes::UploadRecord {
+                uri: record.uri,
+                sha256: record.sha256,
+                content_type: record.content_type,
+            })
+    }
+    fn signed_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
+        Self::signed_get(self, uri, u32::try_from(seconds).ok()?, now_ms)
+    }
+}

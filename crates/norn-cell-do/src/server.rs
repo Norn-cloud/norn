@@ -153,6 +153,17 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/sources/{id}:sync`, dispatched by the published host's entry
+    /// point (`connect`), which runs the sync's fetch loop (#921).
+    SourceSync => ("POST", "/v1/sources/{id}:sync"),
+    /// `POST /v1/uploads:begin`, dispatched by the entry point (`connect`).
+    UploadBegin => ("POST", "/v1/uploads:begin"),
+    /// `POST /v1/uploads:read`, dispatched by the entry point (`connect`).
+    UploadRead => ("POST", "/v1/uploads:read"),
+    /// `POST /v1/uploads/{id}:complete`, dispatched by the entry point (`connect`).
+    UploadComplete => ("POST", "/v1/uploads/{id}:complete"),
+    /// `POST /v1/uploads/{id}:load`, dispatched by the entry point (`connect`).
+    UploadLoad => ("POST", "/v1/uploads/{id}:load"),
     /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
@@ -176,11 +187,29 @@ routes! {
 }
 
 impl Route {
+    /// Whether the published host's entry point dispatches this route itself
+    /// (the access view; the cell's source and upload routes, which need its
+    /// fetch loop), so this dispatcher never serves it.
+    #[must_use]
+    pub const fn entry_point(self) -> bool {
+        matches!(
+            self,
+            Self::Access
+                | Self::SourceSync
+                | Self::UploadBegin
+                | Self::UploadRead
+                | Self::UploadComplete
+                | Self::UploadLoad
+        )
+    }
+
     /// The route a request path names, if any.
     #[must_use]
     pub fn of(path: &str) -> Option<Self> {
         match path {
             "/v1/access" => return Some(Self::Access),
+            "/v1/uploads:begin" => return Some(Self::UploadBegin),
+            "/v1/uploads:read" => return Some(Self::UploadRead),
             "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
@@ -236,6 +265,22 @@ impl Route {
                 (Some(_), Some("history")) => Self::ObjectHistory,
                 (Some(_), Some(_)) => return None,
             });
+        }
+        if let Some(id) = path
+            .strip_prefix("/v1/sources/")
+            .and_then(|rest| rest.strip_suffix(":sync"))
+        {
+            return (!id.is_empty() && !id.contains('/')).then_some(Self::SourceSync);
+        }
+        if let Some((id, verb)) = path
+            .strip_prefix("/v1/uploads/")
+            .and_then(|rest| rest.split_once(':'))
+        {
+            return match verb {
+                "complete" if !id.is_empty() && !id.contains('/') => Some(Self::UploadComplete),
+                "load" if !id.is_empty() && !id.contains('/') => Some(Self::UploadLoad),
+                _ => None,
+            };
         }
         path.strip_prefix("/v1/actions/")
             .filter(|id| !id.is_empty() && !id.contains('/'))
@@ -364,7 +409,7 @@ fn route<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let route_of = Route::of(path);
-    let served = route_of.is_some_and(|route| route != Route::Access);
+    let served = route_of.is_some_and(|route| !route.entry_point());
     if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -414,7 +459,9 @@ fn route<E: SqlEngine>(
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => trace_query(query)
-                .and_then(|query| get_numeric_trace(cell(host)?, &query, actor, name, named(runtime)))
+                .and_then(|query| {
+                    get_numeric_trace(cell(host)?, &query, actor, name, named(runtime))
+                })
                 .and_then(|document| document_json(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,

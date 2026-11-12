@@ -392,12 +392,14 @@ impl Authorizer for ReadPolicy {
             Operation::ReadDefinitions => request
                 .actor
                 .is_some_and(|actor| self.pdp_for(actor).is_some()),
-            Operation::WriteDefinitions => request.actor.is_some_and(|actor| {
-                self.caller
-                    .current()
-                    .filter(|caller| caller.subject_id == actor)
-                    .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
-            }),
+            Operation::WriteDefinitions | Operation::SyncSource(_) => {
+                request.actor.is_some_and(|actor| {
+                    self.caller
+                        .current()
+                        .filter(|caller| caller.subject_id == actor)
+                        .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+                })
+            }
             Operation::ProvisionCell => request
                 .actor
                 .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
