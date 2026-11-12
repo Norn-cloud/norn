@@ -22,6 +22,7 @@
     clippy::panic,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
+    clippy::too_many_lines,
     reason = "provisioning correspondence"
 )]
 
@@ -220,8 +221,28 @@ fn provisioned(path: &Path, scope: &CellScope, artifacts: &[String]) -> Cell<Nat
 }
 
 fn definitions<E: SqlEngine>(cell: &mut Cell<E>, authorization: Option<&str>) -> Response {
+    definitions_at(cell, authorization, NOW)
+}
+
+/// The catalog read at `now`: a cell's token resolver refuses its keys once
+/// the clock has moved backwards, so a test that advances the clock reads on.
+fn definitions_at<E: SqlEngine>(
+    cell: &mut Cell<E>,
+    authorization: Option<&str>,
+    now: u64,
+) -> Response {
     let query = query(cell.tenant.scope());
-    call(cell, "GET", "/v1/definitions", &query, authorization, "")
+    cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method: "GET",
+            path: "/v1/definitions",
+            query: &query,
+            authorization,
+            now,
+            body: "",
+        },
+    )
 }
 
 fn file(directory: &tempfile::TempDir, name: &str) -> PathBuf {
@@ -230,28 +251,33 @@ fn file(directory: &tempfile::TempDir, name: &str) -> PathBuf {
 
 // -------------------------------------------------------------------- base
 
-/// The compiled-in base is exactly the reserved-namespace artifacts of
-/// `registry/core/artifacts`: a new or changed base artifact cannot be
-/// missed by the list.
+/// The compiled-in base is exactly the reserved-namespace artifacts the
+/// seeded demo cell admits with, each byte-equal to its registry copy, and
+/// it admits on its own.
 #[test]
-fn the_compiled_in_base_is_every_reserved_registry_artifact() {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/core/artifacts");
-    let mut reserved = Vec::new();
-    for entry in std::fs::read_dir(directory).unwrap() {
-        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
-        let artifact: Value = serde_json::from_str(&text).unwrap();
-        let id = artifact["artifactId"].as_str().unwrap();
-        if norn_api::kernel_set::is_reserved(id) {
-            reserved.push(text);
-        }
-    }
-    reserved.sort();
-    let mut compiled: Vec<String> = base::SOURCES
-        .iter()
-        .map(|text| (*text).to_owned())
+fn the_compiled_in_base_is_the_seeds_reserved_artifacts() {
+    let recorded: Vec<Value> = serde_json::from_str(RECORDED).unwrap();
+    let mut seeded: Vec<Value> = recorded
+        .into_iter()
+        .filter(|artifact| {
+            norn_api::kernel_set::is_reserved(artifact["artifactId"].as_str().unwrap())
+        })
         .collect();
-    compiled.sort();
-    assert_eq!(compiled, reserved);
+    let mut compiled: Vec<Value> = base::SOURCES
+        .iter()
+        .map(|text| serde_json::from_str(text).unwrap())
+        .collect();
+    let id = |artifact: &Value| artifact["artifactId"].as_str().unwrap().to_owned();
+    seeded.sort_by_key(id);
+    compiled.sort_by_key(id);
+    assert_eq!(compiled, seeded);
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/core/artifacts");
+    for source in base::SOURCES {
+        let artifact: Value = serde_json::from_str(source).unwrap();
+        let on_disk =
+            std::fs::read_to_string(directory.join(format!("{}.json", id(&artifact)))).unwrap();
+        assert_eq!(source, on_disk, "{}", id(&artifact));
+    }
     let trusted = base::trusted_base().unwrap();
     assert_eq!(trusted.ids().len(), base::SOURCES.len());
     assert!(
@@ -260,6 +286,9 @@ fn the_compiled_in_base_is_every_reserved_registry_artifact() {
             .iter()
             .all(|id| norn_api::kernel_set::is_reserved(id))
     );
+    // An empty tenant set provisions: the base admits alone.
+    let admitted = provision::admit_submission(&trusted, &submission(&[]));
+    assert!(admitted.is_ok(), "{:?}", admitted.err());
 }
 
 // --------------------------------------------------------------- authority
@@ -449,7 +478,7 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
             provision(&mut cell, Some(&owner), body).status,
             status,
             "{}",
-            &body[..body.len().min(40)]
+            body.len()
         );
     }
     let not_an_envelope =
@@ -502,8 +531,8 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
     let first = json_of(&provision(&mut cell, Some(&owner), &body));
     assert_eq!(first["outcome"], "provisioned");
     let installed = definitions(&mut cell, Some(&owner));
-    let replayed = |cell: &mut Cell<NativeEngine>, now: u64| {
-        let response = cell.tenant.handle(
+    let provision_at = |cell: &mut Cell<NativeEngine>, body: &str, now: u64| {
+        cell.tenant.handle(
             &cell.tokens,
             &Request {
                 method: "POST",
@@ -511,9 +540,12 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
                 query: &query(&scope),
                 authorization: Some(&owner),
                 now,
-                body: &body,
+                body,
             },
-        );
+        )
+    };
+    let replayed = |cell: &mut Cell<NativeEngine>, now: u64| {
+        let response = provision_at(cell, &body, now);
         assert_eq!(response.status, 200, "{}", response.body);
         let mut receipt = json_of(&response);
         assert_eq!(receipt["outcome"], "replayed");
@@ -522,23 +554,24 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
     };
     // Later on the host clock: the recorded install time is the cell's.
     replayed(&mut cell, NOW + 60);
-    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    assert_eq!(definitions_at(&mut cell, Some(&owner), NOW + 60), installed);
     // The reply was lost and the host restarted: the retry meets a non-fresh
     // engine, serves it and replays.
     drop(cell);
     let mut cell = open(&path, &scope);
     assert!(cell.tenant.is_provisioned());
-    replayed(&mut cell, NOW + 120);
-    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    let later = NOW + 120;
+    replayed(&mut cell, later);
+    assert_eq!(definitions_at(&mut cell, Some(&owner), later), installed);
     // A different submission never replaces the cell.
-    let other = provision(&mut cell, Some(&owner), &submission(&plain()));
+    let other = provision_at(&mut cell, &submission(&plain()), later);
     assert_eq!(
         (other.status, code(&other).as_str()),
         (409, provision::codes::PROVISION_CONFLICT)
     );
-    let empty = provision(&mut cell, Some(&owner), &submission(&[]));
+    let empty = provision_at(&mut cell, &submission(&[]), later);
     assert_eq!(empty.status, 409);
-    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+    assert_eq!(definitions_at(&mut cell, Some(&owner), later), installed);
     drop(cell);
     // The store-level contract under it: provisioning a non-fresh engine
     // again (another install time, or other definitions) refuses.
@@ -815,6 +848,58 @@ fn two_scopes_are_isolated_from_each_other() {
     );
 }
 
+/// The isolation boundary, pinned as it is. A host token names an
+/// organization and a role, never an environment: organizations are isolated
+/// by the token, while the environments of one organization are separate
+/// cells (their own storage, identity and definitions) that share principals
+/// and roles. One token is accepted at both; a tenant that wants the
+/// environments to differ says so in its own policy.
+#[test]
+fn environments_of_one_organization_share_principals_and_roles() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prod, dev) = (scope("org_a", "prod"), scope("org_a", "dev"));
+    let owner = user("org_a", "owner");
+    let viewer = user("org_a", "viewer");
+    // The same owner token provisions both environments.
+    let mut at_prod = provisioned(&file(&directory, "prod"), &prod, &full());
+    let mut at_dev = open(&file(&directory, "dev"), &dev);
+    let created = provision(&mut at_dev, Some(&owner), &submission(&plain()));
+    assert_eq!(created.status, 200, "{}", created.body);
+    // The same viewer token reads both, with its role in each.
+    let (in_prod, in_dev) = (
+        definitions(&mut at_prod, Some(&viewer)),
+        definitions(&mut at_dev, Some(&viewer)),
+    );
+    assert_eq!((in_prod.status, in_dev.status), (200, 200));
+    // They are different cells all the same: own identity, own definitions.
+    assert_ne!(in_prod.body, in_dev.body);
+    let id = |cell: &mut Cell<NativeEngine>, artifacts: &[String]| {
+        json_of(&provision(cell, Some(&owner), &submission(artifacts)))["cellId"].clone()
+    };
+    assert_ne!(id(&mut at_prod, &full()), id(&mut at_dev, &plain()));
+    // A request is served only by the cell of the scope it names.
+    let crossed = call(
+        &mut at_prod,
+        "GET",
+        "/v1/definitions",
+        &query(&dev),
+        Some(&viewer),
+        "",
+    );
+    assert_eq!(
+        crossed,
+        call(
+            &mut at_prod,
+            "GET",
+            "/v1/definitions",
+            &query(&dev),
+            None,
+            ""
+        )
+    );
+    assert_eq!(crossed.status, 403);
+}
+
 // ------------------------------------------------------------------ faults
 
 type Faulted = FaultEngine<DoEngine<DoStorageEmulator>>;
@@ -835,42 +920,53 @@ fn open_faulted(
     })
 }
 
+/// What a sweep saw: faults that left no cell, faults after the commit that
+/// left the whole cell, and the cases run.
+struct Swept {
+    vacant: u32,
+    whole: u32,
+    cases: u32,
+}
+
 /// HOST-PROVISION-ATOMIC through the request layer, on the Durable Object
-/// transaction glue: a crash, an I/O error or a failed storage commit at
-/// every statement of the provisioning request leaves the scope vacant with
-/// nothing half-made (the restarted host finds no cell, and the retry
-/// creates one), and a fault that does not fire leaves a served cell.
-#[test]
-fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
+/// transaction glue: a crash or an I/O error at each statement in `first`
+/// of the request's first transaction (and `later` of its second), and a
+/// failed storage commit of each, leaves either no cell (the retry creates
+/// one) or the whole cell (only the reply was lost; the retry replays),
+/// never a part. A fault that does not fire leaves a served cell. The
+/// submission is the trusted base alone: the whole provisioning transaction
+/// with the least admission work.
+/// The statements tried in one transaction: past its last statement only the
+/// commit point (`u32::MAX`) is left, so the rest are skipped once a fault
+/// stops firing.
+fn fault_sweep(first: &[u32], later: &[u32]) -> Swept {
     let directory = tempfile::tempdir().unwrap();
     let scope = scope("org_a", "prod");
     let owner = user("org_a", "owner");
-    let body = submission(&full());
-    // Crashes and I/O errors: every statement of the request's first
-    // transaction and its commit point, and the start and commit point of
-    // the next two; a failed storage commit: each of the first three.
-    let sweep = (0..4_000_u32).chain([u32::MAX]);
-    let mut plans: Vec<(EngineFaultKind, u32, Vec<u32>)> = Vec::new();
+    let body = submission(&[]);
+    let mut plans: Vec<(EngineFaultKind, u32, &[u32])> = Vec::new();
     for kind in [EngineFaultKind::Crash, EngineFaultKind::Io] {
-        plans.push((kind, 0, sweep.clone().collect()));
-        plans.push((kind, 1, vec![0, 1, u32::MAX]));
-        plans.push((kind, 2, vec![0, 1, u32::MAX]));
+        plans.push((kind, 0, first));
+        plans.push((kind, 1, later));
     }
-    for transaction in 0..3 {
-        plans.push((EngineFaultKind::Commit, transaction, vec![u32::MAX]));
+    let commit_point = [u32::MAX];
+    for transaction in 0..2 {
+        plans.push((EngineFaultKind::Commit, transaction, &commit_point));
     }
-    let (mut vacant_after, mut whole_after, mut case) = (0_u32, 0_u32, 0_u32);
+    let mut swept = Swept {
+        vacant: 0,
+        whole: 0,
+        cases: 0,
+    };
     for (kind, transaction, statements) in plans {
-        // Past the transaction's last statement only its commit point is
-        // left to try.
         let mut past = false;
-        for at_statement in statements {
+        for &at_statement in statements {
             if past && at_statement != u32::MAX {
                 continue;
             }
-            case += 1;
+            swept.cases += 1;
             let at = format!("{kind:?} at transaction {transaction}, statement {at_statement}");
-            let path = file(&directory, &format!("fault-{case}"));
+            let path = file(&directory, &format!("fault-{}", swept.cases));
             let faults = FaultSwitch::default();
             let mut cell = open_faulted(&path, &scope, &faults).unwrap();
             faults.arm(EngineFault {
@@ -887,17 +983,15 @@ fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
             if hit {
                 assert!(response.status >= 400, "{at}: {}", response.body);
                 assert!(json_of(&response)["code"].is_string(), "{at}");
-                // Nothing, or the whole cell (the fault fell after the
-                // commit, so only the reply was lost): never a part.
                 let whole = cell.tenant.is_provisioned();
                 let retry = provision(&mut cell, Some(&owner), &body);
                 assert_eq!(retry.status, 200, "{at}: {}", retry.body);
                 let expected = if whole { "replayed" } else { "provisioned" };
                 assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
                 if whole {
-                    whole_after += 1;
+                    swept.whole += 1;
                 } else {
-                    vacant_after += 1;
+                    swept.vacant += 1;
                 }
             } else {
                 assert_eq!(response.status, 200, "{at}: {}", response.body);
@@ -907,10 +1001,48 @@ fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
             past = !hit;
         }
     }
+    swept
+}
+
+/// [`fault_sweep`] sampled for every run: the first 8 statements of the
+/// provisioning transaction, then every 61st, and its commit point. The
+/// store's own correspondence
+/// (`definitions_install::host_provision_atomic_at_every_storage_boundary`)
+/// injects at every SQL operation of the same `provision_definitions`
+/// transaction natively; [`a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made`]
+/// is the exhaustive host-level sweep, run on demand.
+#[test]
+fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
+    let first: Vec<u32> = (0..8_u32)
+        .chain((1..200_u32).map(|stride| stride * 61))
+        .chain([u32::MAX])
+        .collect();
+    let swept = fault_sweep(&first, &[0, 1, u32::MAX]);
     assert!(
-        vacant_after >= 30,
-        "the sweep must reach the provisioning transaction: {vacant_after} faults left a vacant scope, {whole_after} a whole cell"
+        swept.vacant >= 16,
+        "the sweep must reach the provisioning transaction: {} faults left a vacant scope, {} a whole cell",
+        swept.vacant,
+        swept.whole
     );
+}
+
+/// [`fault_sweep`] at every statement of both transactions and their commit
+/// points. Minutes in a release build:
+/// `cargo test --release -p norn-cell-do --test provision -- --ignored`.
+#[test]
+#[ignore = "exhaustive host-level sweep; run on demand in release mode"]
+fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
+    let every: Vec<u32> = (0..200_000_u32).chain([u32::MAX]).collect();
+    let started = std::time::Instant::now();
+    let swept = fault_sweep(&every, &every);
+    println!(
+        "exhaustive provisioning sweep: {} cases, {} left no cell, {} left the whole cell, {:.1} s",
+        swept.cases,
+        swept.vacant,
+        swept.whole,
+        started.elapsed().as_secs_f64()
+    );
+    assert!(swept.vacant >= 16);
 }
 
 // ------------------------------------------------------------- seeded cells

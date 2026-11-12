@@ -180,13 +180,13 @@ pub fn authorize(
     scope: &ScopeQuery,
     actor: Option<&str>,
 ) -> Result<(), Refusal> {
-    let authorized = authorizer.authorize(&AccessRequest {
+    let decided = authorizer.authorize(&AccessRequest {
         scope: cell,
         actor,
         operation: Operation::ProvisionCell,
     });
     let scoped = cell.admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() || actor.is_none() {
+    if decided.is_err() || scoped.is_err() || actor.is_none() {
         return Err(read_denied());
     }
     Ok(())
@@ -236,44 +236,13 @@ pub fn unservable(detail: impl Into<String>) -> Refusal {
     }])
 }
 
-/// Bound, decode and admit one provisioning body against `base`. Call only
-/// after [`authorize`]: the findings describe the caller's own submission.
-///
-/// # Errors
-/// `request.too_large` (413) above [`MAX_PROVISION_BYTES`]; `request.invalid`
-/// (400) for a body that is not a submission; `cell.base_mismatch` (409) for
-/// another base digest, stating the host's; `cell.reserved_artifact` (400)
-/// for any artifact in a reserved namespace, before admission;
-/// `cell.provision_refused` (422) with the checker's findings.
-pub fn admit_submission(base: &TrustedBase, body: &str) -> Result<AdmittedSet, Refusal> {
-    if body.len() > MAX_PROVISION_BYTES {
-        return Err(Refusal::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "request.too_large",
-            "the request body exceeds the host bound",
-            "a provisioning body is at most 1 MiB",
-        ));
-    }
-    let request: ProvisionRequest = serde_json::from_str(body).map_err(|error| {
-        Refusal::invalid(format!(
-            "the request body is not a provisioning submission: {error}"
-        ))
-    })?;
-    if request.base_sha256 != base.sha256 {
-        return Err(Refusal::new(
-            StatusCode::CONFLICT,
-            codes::BASE_MISMATCH,
-            "the submission was authored against another trusted base",
-            format!(
-                "this host's trusted base is sha256 {}; rebuild the submission against it",
-                base.sha256
-            ),
-        ));
-    }
+/// The submission's own artifacts, decoded from their exact text: none in a
+/// reserved namespace, each an artifact envelope.
+fn tenant_artifacts(sources: &[Box<RawValue>]) -> Result<Vec<ArtifactEnvelope>, Refusal> {
     let mut reserved = Vec::new();
     let mut malformed = Vec::new();
-    let mut tenant = Vec::with_capacity(request.artifacts.len());
-    for (index, source) in request.artifacts.iter().enumerate() {
+    let mut tenant = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
         // Read from the exact text: numbers keep their tokens.
         let id = serde_json::from_str::<Named>(source.get())
             .ok()
@@ -328,6 +297,44 @@ pub fn admit_submission(base: &TrustedBase, body: &str) -> Result<AdmittedSet, R
             "a reserved artifact passed the submission check",
         ));
     }
+    Ok(tenant)
+}
+
+/// Bound, decode and admit one provisioning body against `base`. Call only
+/// after [`authorize`]: the findings describe the caller's own submission.
+///
+/// # Errors
+/// `request.too_large` (413) above [`MAX_PROVISION_BYTES`]; `request.invalid`
+/// (400) for a body that is not a submission; `cell.base_mismatch` (409) for
+/// another base digest, stating the host's; `cell.reserved_artifact` (400)
+/// for any artifact in a reserved namespace, before admission;
+/// `cell.provision_refused` (422) with the checker's findings.
+pub fn admit_submission(base: &TrustedBase, body: &str) -> Result<AdmittedSet, Refusal> {
+    if body.len() > MAX_PROVISION_BYTES {
+        return Err(Refusal::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request.too_large",
+            "the request body exceeds the host bound",
+            "a provisioning body is at most 1 MiB",
+        ));
+    }
+    let request: ProvisionRequest = serde_json::from_str(body).map_err(|error| {
+        Refusal::invalid(format!(
+            "the request body is not a provisioning submission: {error}"
+        ))
+    })?;
+    if request.base_sha256 != base.sha256 {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            codes::BASE_MISMATCH,
+            "the submission was authored against another trusted base",
+            format!(
+                "this host's trusted base is sha256 {}; rebuild the submission against it",
+                base.sha256
+            ),
+        ));
+    }
+    let tenant = tenant_artifacts(&request.artifacts)?;
     let position = |id: &str| {
         tenant
             .iter()
@@ -425,9 +432,12 @@ pub fn provision_cell<E: SqlEngine>(
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
     let input = install_input(&admitted, now_ms);
     let store = CellStore::provision_definitions(engine, admitted.model, &input, &scope.key())
-        .map_err(|error| match error {
-            CellError::IdempotencyConflict(_) => conflict(),
-            other => Refusal::host(other),
+        .map_err(|error| {
+            if matches!(error, CellError::IdempotencyConflict(_)) {
+                conflict()
+            } else {
+                Refusal::host(error)
+            }
         })?;
     let receipt = receipt(&store, base, ProvisionOutcome::Provisioned)?;
     Ok((store, receipt))

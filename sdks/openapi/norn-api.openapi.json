@@ -151,6 +151,118 @@
         }
       }
     },
+    "/v1/cell:provision": {
+      "post": {
+        "tags": [
+          "crate::provision"
+        ],
+        "summary": "Provision the cell for `scope` on a fresh `engine` from an admitted\nsubmission, in one engine transaction (HOST-PROVISION-ATOMIC): the store\nschema, the scope binding, a fresh cell identity, the definitions, their\nreceipt and the ledger commit together, or nothing.",
+        "description": "The caller has already passed [`authorize`]; `now_ms` is the host clock\n(Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
+        "operationId": "provision_cell",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The cell was provisioned, or already holds exactly this submission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid, or carries an artifact in a reserved namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the cell holds other definitions, or the submission names another trusted base.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: the definitions are not admissible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/definitions/{id}": {
       "get": {
         "tags": [
@@ -23046,6 +23158,71 @@
           }
         ],
         "description": "An execution world."
+      },
+      "ProvisionOutcome": {
+        "type": "string",
+        "description": "Whether the call provisioned the cell or found it provisioned.",
+        "enum": [
+          "provisioned",
+          "replayed"
+        ]
+      },
+      "ProvisionReceipt": {
+        "type": "object",
+        "description": "The provisioned cell.",
+        "required": [
+          "outcome",
+          "cellId",
+          "definitionsVersion",
+          "receiptSha256",
+          "baseSha256"
+        ],
+        "properties": {
+          "baseSha256": {
+            "type": "string",
+            "description": "The trusted base the set was admitted against."
+          },
+          "cellId": {
+            "type": "string",
+            "description": "The cell's logical identity, bound when it was created."
+          },
+          "definitionsVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The definitions version the submission was installed as.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ProvisionOutcome",
+            "description": "Whether this call created the cell."
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "The checker's admission receipt digest for the installed set."
+          }
+        }
+      },
+      "ProvisionRequest": {
+        "type": "object",
+        "description": "`POST /v1/cell:provision`.",
+        "required": [
+          "baseSha256",
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "The tenant's artifact envelopes. None may be in a reserved namespace\n(`core.`, `std.`): the host supplies the trusted base itself."
+          },
+          "baseSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the trusted base the artifacts were\nauthored against; it must be the host's."
+          }
+        },
+        "additionalProperties": false
       },
       "Refusal": {
         "allOf": [

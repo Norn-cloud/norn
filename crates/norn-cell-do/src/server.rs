@@ -159,9 +159,9 @@ fn route<E: SqlEngine>(
         method,
         path,
         query,
-        authorization: _,
         now,
         body,
+        ..
     } = *request;
     let question = path
         .strip_prefix("/v1/questions/")

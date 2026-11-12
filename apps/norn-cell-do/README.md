@@ -44,6 +44,14 @@ POST /v1/cell:provision?orgId=<org>&environmentId=<environment>
   disclosed. A verified member of its organization gets 404
   `cell.not_provisioned`.
 
+The isolation boundary: a host token names an organization and a role, not
+an environment. Organizations are isolated by the token (another
+organization's principal is nobody here). The environments of one organization
+are separate cells (own storage, identity and definitions) reached by routing
+and checked by scope admission, and a principal holds its role in all of them:
+there are no per-environment roles. A tenant that wants its environments to
+differ says so in its own policy.
+
 Refusal codes this adds: `cell.not_provisioned` (404), `cell.provision_conflict`
 (409), `cell.base_mismatch` (409), `cell.reserved_artifact` (400),
 `cell.provision_refused` (422, with the checker's findings).

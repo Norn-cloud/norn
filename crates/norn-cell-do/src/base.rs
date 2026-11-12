@@ -1,30 +1,33 @@
-//! The trusted base this host compiles in: the artifacts of
-//! `registry/core/artifacts` in a reserved namespace (`core.`, `std.`).
+//! The trusted base this host compiles in.
 //!
 //! A tenant never submits these. Provisioning prepends them to the tenant's
 //! artifacts and admits the tenant's as candidates against them
 //! (`norn_api::provision`), so what a cell trusts is decided by this build,
 //! never by a name or bytes in a request. A submission names the base it was
-//! authored against by digest ([`TrustedBase::sha256`]).
+//! authored against by digest (`TrustedBase::sha256`).
+//!
+//! The base is the reserved-namespace (`core.`, `std.`) artifacts the host's
+//! seeded demo cell admits with, read from `registry/core/artifacts`: an
+//! admissible base this host already serves. Not every reserved registry
+//! artifact is one on its own (`core.Order.interface` names value types and
+//! interfaces that no reserved artifact defines), so the base is listed, and
+//! `tests/provision.rs` checks the list against the seed and the registry.
 
 use norn_api::provision::TrustedBase;
 
 use crate::seed::SeedError;
 
-/// Every reserved-namespace artifact of `registry/core/artifacts`, one
-/// envelope each. `tests/provision.rs` checks the list against the directory.
-pub const SOURCES: [&str; 22] = [
+/// The trusted base: one artifact envelope each.
+pub const SOURCES: [&str; 20] = [
     include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
     include_str!("../../../registry/core/artifacts/core.AgentRole.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Claim.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Commitment.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
     include_str!("../../../registry/core/artifacts/core.EconomicEvent.interface.json"),
-    include_str!("../../../registry/core/artifacts/core.Entitlement.entity.json"),
     include_str!("../../../registry/core/artifacts/core.Exchange.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Hold.interface.json"),
     include_str!("../../../registry/core/artifacts/core.LedgerEffect.interface.json"),
-    include_str!("../../../registry/core/artifacts/core.Order.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
     include_str!("../../../registry/core/artifacts/core.analytics.Restatement.entity.json"),
