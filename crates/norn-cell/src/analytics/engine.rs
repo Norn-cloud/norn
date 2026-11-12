@@ -1092,6 +1092,66 @@ fn filters_sql(scope: &Scope, filters: &[Filter]) -> Outcome<Condition> {
 
 /// One records clause over `column`: every comparison but `empty` needs a
 /// present value; a timestamp or date is present when it has its key.
+/// One operand compared with `op` (`=`, `<>`, `<`, `<=`, `>`, `>=`) as
+/// `column` compares: text by bytes, numbers exactly, instants by key.
+fn page_compare(column: &Column, operand: &PageOperand, op: &str) -> Outcome<Frag> {
+    let invalid = || {
+        refusal(
+            "analytics.invalid",
+            format!("{} does not compare as asked", column.id),
+        )
+    };
+    let c = ident(&column.id);
+    match (column.kind, operand) {
+        (ColumnKind::Text | ColumnKind::Opaque, PageOperand::Text(text)) => {
+            Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Text(text.clone())))
+        }
+        (ColumnKind::Integer | ColumnKind::Decimal { .. }, PageOperand::Number(text)) => {
+            let decimal = norn_ir::Decimal::parse(text).map_err(|_unparsed| invalid())?;
+            let canonical = decimal.canonical();
+            let scale = canonical.split_once('.').map_or(0, |(_, f)| f.len());
+            let digits = canonical.bytes().filter(u8::is_ascii_digit).count();
+            if digits > 38 {
+                return Err(invalid());
+            }
+            Ok(Frag::bind(
+                &format!("{c} {op} CAST(? AS DECIMAL(38,{scale}))"),
+                Sql::Text(canonical),
+            ))
+        }
+        (ColumnKind::Boolean, PageOperand::Bool(flag)) => {
+            Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Boolean(*flag)))
+        }
+        (ColumnKind::Timestamp | ColumnKind::Date, PageOperand::Instant { secs, nanos }) => {
+            let t = derived(&column.id, "t");
+            let n = derived(&column.id, "n");
+            let secs = Frag::bind("?", Sql::BigInt(*secs));
+            let nanos = Frag::bind("?", Sql::BigInt(i64::from(*nanos)));
+            let (strict, last) = match op {
+                "=" => {
+                    return Ok(Frag::fmt(
+                        &format!("({t} = {{}} AND {n} = {{}})"),
+                        &[&secs, &nanos],
+                    ));
+                }
+                "<>" => {
+                    return Ok(Frag::fmt(
+                        &format!("NOT ({t} = {{}} AND {n} = {{}})"),
+                        &[&secs, &nanos],
+                    ));
+                }
+                "<" | "<=" => ("<", op),
+                _ => (">", op),
+            };
+            Ok(Frag::fmt(
+                &format!("({t} {strict} {{}} OR ({t} = {{}} AND {n} {last} {{}}))"),
+                &[&secs, &secs, &nanos],
+            ))
+        }
+        _ => Err(invalid()),
+    }
+}
+
 fn page_clause(column: &Column, clause: &PageClause) -> Outcome<Frag> {
     let invalid = || {
         refusal(
@@ -1106,57 +1166,7 @@ fn page_clause(column: &Column, clause: &PageClause) -> Outcome<Frag> {
     } else {
         format!("{c} IS NOT NULL")
     };
-    // One operand compared with `op` (`=`, `<>`, `<`, `<=`, `>`, `>=`).
-    let compare = |operand: &PageOperand, op: &str| -> Outcome<Frag> {
-        match (column.kind, operand) {
-            (ColumnKind::Text | ColumnKind::Opaque, PageOperand::Text(text)) => {
-                Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Text(text.clone())))
-            }
-            (ColumnKind::Integer | ColumnKind::Decimal { .. }, PageOperand::Number(text)) => {
-                let decimal = norn_ir::Decimal::parse(text).map_err(|_| invalid())?;
-                let canonical = decimal.canonical();
-                let scale = canonical.split_once('.').map_or(0, |(_, f)| f.len());
-                let digits = canonical.bytes().filter(u8::is_ascii_digit).count();
-                if digits > 38 {
-                    return Err(invalid());
-                }
-                Ok(Frag::bind(
-                    &format!("{c} {op} CAST(? AS DECIMAL(38,{scale}))"),
-                    Sql::Text(canonical),
-                ))
-            }
-            (ColumnKind::Boolean, PageOperand::Bool(flag)) => {
-                Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Boolean(*flag)))
-            }
-            (ColumnKind::Timestamp | ColumnKind::Date, PageOperand::Instant { secs, nanos }) => {
-                let t = derived(&column.id, "t");
-                let n = derived(&column.id, "n");
-                let secs = Frag::bind("?", Sql::BigInt(*secs));
-                let nanos = Frag::bind("?", Sql::BigInt(i64::from(*nanos)));
-                let (strict, last) = match op {
-                    "=" => {
-                        return Ok(Frag::fmt(
-                            &format!("({t} = {{}} AND {n} = {{}})"),
-                            &[&secs, &nanos],
-                        ));
-                    }
-                    "<>" => {
-                        return Ok(Frag::fmt(
-                            &format!("NOT ({t} = {{}} AND {n} = {{}})"),
-                            &[&secs, &nanos],
-                        ));
-                    }
-                    "<" | "<=" => ("<", op),
-                    _ => (">", op),
-                };
-                Ok(Frag::fmt(
-                    &format!("({t} {strict} {{}} OR ({t} = {{}} AND {n} {last} {{}}))"),
-                    &[&secs, &secs, &nanos],
-                ))
-            }
-            _ => Err(invalid()),
-        }
-    };
+    let compare = |operand: &PageOperand, op: &str| page_compare(column, operand, op);
     let one = || match clause.operands.as_slice() {
         [operand] => Ok(operand),
         _ => Err(invalid()),

@@ -1369,6 +1369,12 @@ mod sources_pack {
             .expect("source");
         let table = store.analytics_table("source.Connection").expect("table");
         let columns: Vec<String> = table.columns.iter().map(|c| c.id.clone()).collect();
+        // A row carries its own `id` and `version`; no property is exported under them.
+        let exported: Vec<String> = columns
+            .iter()
+            .filter(|c| !["id", "version"].contains(&c.as_str()))
+            .cloned()
+            .collect();
         let profile = engine
             .profile(&ProfileRequest {
                 tenant: tenant(),
@@ -1392,7 +1398,7 @@ mod sources_pack {
             .export(&ExportRequest {
                 tenant: tenant(),
                 source,
-                columns,
+                columns: exported,
                 format: ExportFormat::Jsonl,
             })
             .expect("export");

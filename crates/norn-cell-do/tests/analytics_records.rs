@@ -326,7 +326,7 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             &host,
             &principals,
             &transport,
-            Some(&Files(&transport)),
+            Some(&Files(&transport) as &dyn Uploads),
             &server::Request {
                 method: "POST",
                 path: "/v1/datasets:load",
