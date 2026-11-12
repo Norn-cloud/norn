@@ -41,7 +41,7 @@ function amounts(read: Read<Trace>, index: number) {
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
 /** Refusals that mean the cell committed since this answer: its trace handle no longer names this number. */
-const MOVED = new Set(["question.answer_moved", "core.projection.lineage_incomplete"])
+const MOVED = new Set(["core.projection.answer_moved", "core.projection.lineage_incomplete"])
 
 export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
