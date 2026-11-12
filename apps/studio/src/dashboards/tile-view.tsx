@@ -113,14 +113,26 @@ export function DrawnAnswer({ view, rows, name }: { readonly view: View; readonl
     const slices = pieSlices(rows)
     if (typeof slices === "string") return <div className="space-y-2"><p role="status" className="px-2 text-meta text-muted-foreground">{slices}</p><Rows rows={rows} /></div>
     return (
-      <ChartContainer config={Object.fromEntries(slices.map((slice, index) => [`s${index}`, { label: slice.label, color: PIE_FILLS[index % PIE_FILLS.length] }]))} className="h-52 w-full" data-view="pie">
-        <PieChart>
-          <Tip name={name} />
-          <Pie data={slices.map((slice) => ({ ...slice, shown: slice.exact }))} dataKey="value" nameKey="label" innerRadius="55%" outerRadius="85%" strokeWidth={2} stroke="var(--card)" isAnimationActive={false}>
-            {slices.map((slice, index) => <Cell key={slice.label} fill={PIE_FILLS[index % PIE_FILLS.length]} />)}
-          </Pie>
-        </PieChart>
-      </ChartContainer>
+      <div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-view="pie">
+        <ChartContainer config={Object.fromEntries(slices.map((slice, index) => [`s${index}`, { label: slice.label, color: PIE_FILLS[index % PIE_FILLS.length] }]))} className="h-52 w-full">
+          <PieChart>
+            <Tip name={name} />
+            <Pie data={slices.map((slice) => ({ ...slice, shown: slice.exact }))} dataKey="value" nameKey="label" innerRadius="55%" outerRadius="85%" strokeWidth={2} stroke="var(--card)" isAnimationActive={false}>
+              {slices.map((slice, index) => <Cell key={slice.label} fill={PIE_FILLS[index % PIE_FILLS.length]} />)}
+            </Pie>
+          </PieChart>
+        </ChartContainer>
+        <ul className="space-y-1.5 px-2 text-meta" aria-label={`${name}, by part`}>
+          {slices.map((slice, index) => (
+            <li key={slice.label} className="flex items-center gap-2">
+              <span aria-hidden className="size-2.5 shrink-0 rounded-[3px] border" style={{ background: PIE_FILLS[index % PIE_FILLS.length] }} />
+              <span className="min-w-0 flex-1 truncate">{slice.label}</span>
+              <span className="tabular-nums">{slice.exact}</span>
+              <span className="w-12 text-end text-muted-foreground tabular-nums">{slice.share}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     )
   }
   const frame = chartFrame(rows)
