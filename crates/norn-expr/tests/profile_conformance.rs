@@ -871,23 +871,23 @@ fn a_guarding_condition_narrows_only_the_reads_it_proves() {
     let read = "input.maybe.x == input.s";
     refused(read, &Type::Bool, &[codes::NULLABLE]);
     refused(
-        "input.maybe != null && input.maybe.x == input.s",
+        "input.maybe != null and input.maybe.x == input.s",
         &Type::Bool,
         &[codes::NULLABLE],
     );
     for guard in [
         "input.maybe != null",
         "null != input.maybe",
-        "(input.maybe != null) && input.flag",
-        "input.flag && !(input.maybe == null)",
+        "(input.maybe != null) and input.flag",
+        "input.flag and not (input.maybe == null)",
     ] {
         assert_eq!(under(read, guard), Ok(()), "{guard}");
     }
     for guard in [
         "input.flag",
         "input.maybe == null",
-        "input.maybe != null || input.flag",
-        "!(input.maybe != null)",
+        "input.maybe != null or input.flag",
+        "not (input.maybe != null)",
         "input.o != null",
     ] {
         assert!(

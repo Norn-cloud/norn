@@ -477,7 +477,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
     // 720 breaks both laws: its lines sum to 72 and its booked entry is 72.00.
-    assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
+    assert_eq!(law_pins(&findings), [LAW_B, LAW], "{findings:#?}");
     assert!(
         findings
             .iter()
