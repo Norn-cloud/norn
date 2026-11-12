@@ -132,10 +132,22 @@ export const FinishCheckRequest = Norn.action({
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
 })
 
-// The worker's result: done, linked to the model spec it recorded.
+// The worker's result: done, linked to the model spec it recorded. Here the
+// spec is required: the action reads it and links to it.
+const CompleteFields = Schema.Struct({
+  request: Schema.String,
+  object_type: Schema.String,
+  target: Schema.String,
+  features: Schema.String,
+  order_field: Schema.NullOr(Schema.String),
+  status: Schema.Literals(["queued", "running", "done", "failed"]),
+  spec: Schema.String,
+  error: Schema.NullOr(Schema.String),
+})
+
 export const CompleteCheckRequest = Norn.action({
   id: "stats.checkrequest.complete", title: "Complete a regression check request", version: "0.1.0",
-  input: RequestFields,
+  input: CompleteFields,
   output: Schema.Struct({ request: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
