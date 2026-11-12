@@ -6,7 +6,8 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/sources/records.ts"
+    "registry/packs/sources/records.ts",
+    "registry/packs/sources/report.json"
   ],
   "rights_evidence": [
     {
