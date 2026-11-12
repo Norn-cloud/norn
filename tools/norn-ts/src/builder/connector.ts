@@ -29,6 +29,25 @@ export type ConnectorMapping =
   | { readonly kind: "field"; readonly resourceId: string; readonly sourcePath: string; readonly targetObjectKind: string; readonly targetField: string }
   | { readonly kind: "external_id"; readonly resourceId: string; readonly sourcePath: string; readonly targetObjectKind: string; readonly externalSource: string }
 
+/** One dataset feed of a `norn.pull/1` profile; the Rust pull engine (norn-api `pull`) executes it. */
+export interface PullFeed {
+  readonly dataset: string
+  readonly request: { readonly method: "GET" | "POST"; readonly path: string; readonly query?: Readonly<Record<string, string>>; readonly headers?: Readonly<Record<string, string>>; readonly body?: Json }
+  readonly itemsPath: string
+  readonly paging: { readonly kind: "keyset"; readonly size: number } | { readonly kind: "cursor"; readonly size: number; readonly nextCursorPath: string; readonly hasNextPath: string }
+  readonly idPath: string
+  readonly versionPath: string
+  readonly fields: Readonly<Record<string, string>>
+  readonly initial: { readonly version: string; readonly id: string | number }
+}
+
+/** A generic pull profile: the source it observes and its dataset feeds, in order. */
+export interface PullProfile {
+  readonly source: string
+  readonly pipeline: string
+  readonly feeds: ReadonlyArray<PullFeed>
+}
+
 export interface ConnectorSpec {
   readonly id: string
   readonly title: string
@@ -40,6 +59,8 @@ export interface ConnectorSpec {
   readonly deadLetterPolicy?: { readonly maxFailures: number; readonly route: "ledger" | "queue" }
   /** Ordered feeds lower to the existing provider-neutral norn.poll/1 extension. */
   readonly poll?: { readonly feeds: ReadonlyArray<{ readonly resourceId: string; readonly recordKeyPath?: string; readonly fanout?: { readonly parentResourceId: string; readonly pathBinding: string; readonly keyPath: string } }> }
+  /** A generic HTTP pull profile; lowers to the norn.pull/1 extension. */
+  readonly pull?: PullProfile
 }
 
 export interface ConnectorDef extends ConnectorSpec {
@@ -60,7 +81,7 @@ export function lowerConnector(def: ConnectorDef, options: EnvelopeOptions):
   const closed = (value: object, allowed: ReadonlyArray<string>, path: string): void => {
     for (const key of Object.keys(value)) if (!allowed.includes(key)) diagnostics.report("NORN-FLOW-LITERAL", `unknown connector member ${path}.${key}`, def.at)
   }
-  closed(def, ["_tag", "at", "id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll"], "connector")
+  closed(def, ["_tag", "at", "id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll", "pull"], "connector")
   const authKeys = def.auth.kind === "none" ? ["kind"] : def.auth.kind === "api_key" ? ["kind", "authId", "placement", "name", "secretRef", "prefix", "format"] : ["kind", "authId", "authorizationUrl", "tokenUrl", "scopes", "clientSecretRef"]
   closed(def.auth, authKeys, "auth")
   if (def.auth.kind === "api_key" && def.auth.format) closed(def.auth.format, def.auth.format.kind === "pair" ? ["kind", "separator"] : ["kind"], "auth.format")
@@ -83,7 +104,7 @@ export function lowerConnector(def: ConnectorDef, options: EnvelopeOptions):
     {
       connectorVersion: "0.1", auth: def.auth, resources: def.resources, mappings: def.mappings,
       cursor: def.cursor, deadLetterPolicy: def.deadLetterPolicy,
-      extensions: def.poll ? { "norn.poll/1": def.poll } : undefined,
+      extensions: def.poll || def.pull ? { ...def.poll ? { "norn.poll/1": def.poll } : {}, ...def.pull ? { "norn.pull/1": def.pull } : {} } : undefined,
     }, options,
   ) }
 }

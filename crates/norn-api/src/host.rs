@@ -9,8 +9,9 @@ use norn_cell::{
     CellError, CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model,
     engine::SqlEngine,
 };
-use norn_ir::RuntimeObject;
-use norn_kernel::{Command, FactEvent};
+use norn_ir::{RuntimeObject, RuntimeValue};
+use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
+use std::ops::{Deref, DerefMut};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
@@ -19,7 +20,35 @@ pub struct DevHost<E: SqlEngine> {
     scope: CellScope,
     pub(crate) authorizer: Box<dyn Authorizer>,
     definitions: RwLock<()>,
-    cell: Mutex<ActionCell<E>>,
+    /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
+    /// it maps source rows under the observation profile.
+    cell: Mutex<Option<ActionCell<E>>>,
+}
+
+/// The locked cell, present whenever a guard exists.
+pub(crate) struct CellGuard<'a, E: SqlEngine>(MutexGuard<'a, Option<ActionCell<E>>>);
+
+impl<E: SqlEngine> Deref for CellGuard<'_, E> {
+    type Target = ActionCell<E>;
+    fn deref(&self) -> &ActionCell<E> {
+        // `cell()` admits only a present cell, and nothing takes it while the guard lives.
+        self.0.as_ref().unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+    }
+}
+
+impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
+    fn deref_mut(&mut self) -> &mut ActionCell<E> {
+        self.0.as_mut().unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+    }
+}
+
+/// What one captured source row came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ingested {
+    /// The inbox id the cell captured the row under.
+    pub observation_id: String,
+    /// What processing did.
+    pub outcome: norn_cell::MappingOutcome,
 }
 impl<E: SqlEngine> DevHost<E> {
     /// Bind an opened store before publishing any read service.
@@ -37,7 +66,7 @@ impl<E: SqlEngine> DevHost<E> {
             scope,
             authorizer: Box::new(DenyAll),
             definitions: RwLock::new(()),
-            cell: Mutex::new(cell),
+            cell: Mutex::new(Some(cell)),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -104,8 +133,51 @@ impl<E: SqlEngine> DevHost<E> {
             .is_ok();
         matches && allowed
     }
-    pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
-        self.cell.lock().map_err(Refusal::host)
+    pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
+        let guard = self.cell.lock().map_err(Refusal::host)?;
+        if guard.is_none() {
+            return Err(Refusal::host("the cell is unavailable"));
+        }
+        Ok(CellGuard(guard))
+    }
+
+    /// Capture source rows and map them through the cell's own mapping path
+    /// (`inject_mapping_bundle`, then `process_mapping_bundle`), under the
+    /// definition epoch. The trusted host's sync calls this; no caller
+    /// supplies facts, and a refused row stays in the inbox as quarantined
+    /// evidence with its reasons. Rows already captured are captured once.
+    /// # Errors
+    /// A row the cell cannot capture (framing or pins it refuses), or a store
+    /// failure; rows before it stay captured and processed.
+    pub fn ingest(
+        &self,
+        rows: &[(Observed<RuntimeValue>, norn_cell::mapping_bundle::MappingInput)],
+    ) -> Result<Vec<Ingested>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let mut slot = self.cell.lock().map_err(Refusal::host)?;
+        let cell = slot.take().ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        let mut observing: norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E> =
+            cell.into_profile();
+        let mut out = Vec::with_capacity(rows.len());
+        let mut failure = None;
+        for (raw, input) in rows {
+            let step = observing.inject_mapping_bundle(raw, input).and_then(|(id, _new)| {
+                let outcome = observing.process_mapping_outcome(&id)?;
+                Ok(Ingested { observation_id: id, outcome })
+            });
+            match step {
+                Ok(ingested) => out.push(ingested),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        *slot = Some(observing.into_profile());
+        match failure {
+            Some(error) => Err(Refusal::host(error)),
+            None => Ok(out),
+        }
     }
 
     /// The active definitions revision, read under the definition epoch, or
