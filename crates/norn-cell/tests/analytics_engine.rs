@@ -143,11 +143,26 @@ fn shaped(
     max_items: u32,
     dimensions: &serde_json::Value,
 ) -> (CellStore, QuestionPlan, QueryContext) {
+    declared(sum, max_items, dimensions, [3, 3])
+}
+
+/// As [`shaped`], with `recovered` declared at `scales[1]` decimal places and
+/// the other decimals at `scales[0]`.
+fn declared(
+    sum: bool,
+    max_items: u32,
+    dimensions: &serde_json::Value,
+    scales: [u64; 2],
+) -> (CellStore, QuestionPlan, QueryContext) {
     let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
-        if property.id.as_str() == "recovered" {
+        let recovered = property.id.as_str() == "recovered";
+        if recovered {
             property.constraints.nullable = true;
+        }
+        if let norn_ir::PropertyType::Decimal { scale, .. } = &mut property.property_type {
+            *scale = norn_ir::WholeNumber(scales[usize::from(recovered)]);
         }
     }
     let mut artifacts: Vec<ArtifactEnvelope> =
@@ -1059,6 +1074,192 @@ mod snapshot {
         ) {
             let (_dir, engine) = engine();
             check(&engine, &history, north_only, &shapes()[shape]);
+        }
+    }
+}
+
+/// The cases the retired in-process SQL path carried, held by the engine:
+/// declared scales 0–7 per operand, signed midpoint rounding, a coefficient
+/// near the bound, zero inputs, a hostile identity and a non-NFC bucket, each
+/// through correction and retraction; and the calendar labels.
+mod scales {
+    use super::{
+        CellStore, Decimal, FactWriteRow, QueryContext, QuestionPlan, RuntimeValue, TYPE, commit,
+        compare, declared, engine,
+    };
+    use std::collections::BTreeMap;
+
+    fn by_metal(scales: [u64; 2], sum: bool) -> (CellStore, QuestionPlan, QueryContext) {
+        declared(
+            sum,
+            100,
+            &serde_json::json!([{"path": {"property": "metal"}}]),
+            scales,
+        )
+    }
+
+    fn row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWriteRow {
+        let exact = |value: i64, scale: u64| {
+            RuntimeValue::from(Decimal::parse(&format!("{value}e-{scale}")).expect("declared"))
+        };
+        FactWriteRow::Put {
+            object_type: TYPE.into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                ("input".into(), exact(input, scales[0])),
+                ("recovered".into(), exact(recovered, scales[1])),
+                ("loss".into(), exact(0, scales[0])),
+                (
+                    "occurred_at".into(),
+                    RuntimeValue::from("2026-10-23T12:00:00Z"),
+                ),
+                ("metal".into(), RuntimeValue::from("e\u{301}")),
+            ]),
+        }
+    }
+
+    #[test]
+    fn rounding_scales_and_hostile_ids_match_exact_after_correction_and_retraction() {
+        let id = "quoted'); DROP TABLE input;--";
+        for (scales, input, recovered) in [
+            ([3, 3], 128, 1i64),
+            ([3, 3], 128, -1),
+            ([3, 3], -128, 1),
+            ([3, 3], -128, -1),
+            ([3, 3], 0, 0),
+            ([3, 3], 1, 9_000_000_000_000_000),
+            ([0, 3], 128, 1),
+            ([6, 0], 3, 1),
+            ([0, 6], 1, -1),
+            ([6, 0], 0, 1),
+        ] {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = by_metal(scales, false);
+            for recovered in [recovered, recovered.checked_neg().expect("bounded sign")] {
+                commit(&mut store, vec![row(id, input, recovered, scales)]);
+                let answer = compare(&store, &engine, &plan, &context).expect("answered");
+                assert_eq!(answer.rows.len(), 1, "{scales:?} {input} {recovered}");
+            }
+            commit(
+                &mut store,
+                vec![FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: id.into(),
+                }],
+            );
+            let answer = compare(&store, &engine, &plan, &context).expect("answered");
+            assert!(answer.rows.is_empty());
+        }
+    }
+
+    /// A declared scale past six: the engine answers exactly as the cell
+    /// does, or refuses as it does.
+    #[test]
+    fn a_scale_past_six_answers_as_the_cell_does() {
+        for sum in [true, false] {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = by_metal([7, 7], sum);
+            compare(&store, &engine, &plan, &context);
+            commit(
+                &mut store,
+                vec![
+                    row("G1", 1_234_567, 7_654_321, [7, 7]),
+                    row("G2", -5, 3, [7, 7]),
+                ],
+            );
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn generated_declared_scales_match_exact_envelopes(
+            scales in (0u64..7, 0u64..7),
+            population in proptest::collection::vec((-1000i64..1000, -1000i64..1000), 1..8),
+            sum in proptest::bool::ANY,
+        ) {
+            let (_dir, engine) = engine();
+            let scales = [scales.0, scales.1];
+            let (mut store, plan, context) = by_metal(scales, sum);
+            let writes = population
+                .iter()
+                .enumerate()
+                .map(|(i, (input, recovered))| row(&format!("G{i}"), *input, *recovered, scales))
+                .collect();
+            commit(&mut store, writes);
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+
+    /// The grain labels the exact engine buckets by equal `DuckDB`'s
+    /// `date_trunc` in UTC, cast to a date: at every month, quarter and year
+    /// boundary of 2024 (one second either side), around the epoch, on a leap
+    /// day, across an ISO week that spans a year end, and at instants swept
+    /// through 2024.
+    #[test]
+    #[allow(clippy::arithmetic_side_effects, reason = "instant sweep fixture")]
+    fn grain_labels_equal_duckdb_date_trunc() {
+        use norn_checker::metric::compute::contribution::period_start;
+        use norn_ir::metric::TimeGrain;
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        let edges = [
+            1_704_067_199,
+            1_704_067_200,
+            1_706_745_599,
+            1_706_745_600,
+            1_709_251_199,
+            1_709_251_200,
+            1_711_929_599,
+            1_711_929_600,
+            1_714_521_599,
+            1_714_521_600,
+            1_717_199_999,
+            1_717_200_000,
+            1_719_791_999,
+            1_719_792_000,
+            1_722_470_399,
+            1_722_470_400,
+            1_725_148_799,
+            1_725_148_800,
+            1_727_740_799,
+            1_727_740_800,
+            1_730_419_199,
+            1_730_419_200,
+            1_733_011_199,
+            1_733_011_200,
+            1_735_689_599,
+            1_735_689_600,
+            -86401,
+            -1,
+            0,
+            951_782_400,
+            951_868_799,
+            4_102_444_799,
+            1_735_516_800,
+            1_735_516_799,
+        ];
+        let sweep = (0..1_500_i64).map(|step| 1_703_462_400 + step * 21_599);
+        for (grain, name) in [
+            (TimeGrain::Day, "day"),
+            (TimeGrain::Week, "week"),
+            (TimeGrain::Month, "month"),
+            (TimeGrain::Quarter, "quarter"),
+            (TimeGrain::Year, "year"),
+        ] {
+            let sql = format!(
+                "SELECT CAST(CAST(date_trunc('{name}', make_timestamp(CAST(? AS BIGINT) * 1000000)) AS DATE) AS VARCHAR)"
+            );
+            for seconds in edges.into_iter().chain(sweep.clone()) {
+                let expected: String = conn
+                    .query_row(&sql, [seconds], |row| row.get(0))
+                    .expect("date_trunc");
+                assert_eq!(
+                    period_start(seconds, grain).expect("label"),
+                    expected,
+                    "{name} at {seconds}"
+                );
+            }
         }
     }
 }

@@ -18,10 +18,6 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "duckdb_question"
-required-features = ["duckdb", "native"]
-
-[[test]]
 name = "analytics_engine"
 required-features = ["duckdb", "native"]
 

@@ -6,8 +6,6 @@ mod historical;
 pub mod ivm;
 /// Exact result membership and native fact evidence.
 pub mod lineage;
-#[cfg(feature = "duckdb")]
-mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
