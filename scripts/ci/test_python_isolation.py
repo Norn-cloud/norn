@@ -81,6 +81,8 @@ class Workflows(unittest.TestCase):
             self.assertTrue(isolation.workflow_errors("w.yml", line), line)
         for line in ("run: python3 -I scripts/x.py", "language: [rust, python, actions]", "# python3 x.py"):
             self.assertEqual(isolation.workflow_errors("w.yml", line), [], line)
+        for line in ("run: python3 -I -X pycache_prefix= scripts/x.py", 'run: python3 -I -X pycache_prefix="" x.py'):
+            self.assertTrue(any("pycache_prefix" in e for e in isolation.workflow_errors("w.yml", line)), line)
 
     def test_the_trusted_runner_invocation_is_pinned(self) -> None:
         for path in isolation.TRUSTED_WORKFLOWS:
@@ -103,7 +105,19 @@ class Runner(unittest.TestCase):
                 ("no -B", text.replace('"-I", "-B", ', '"-I", ')),
                 ("no prefix", text.replace(', "-X", f"pycache_prefix={tempfile.mkdtemp(prefix=\'norn-pycache-\')}"', "")),
                 ("a second interpreter", text + "\nOTHER = [sys.executable, 'x.py']\n"),
-                ("a literal interpreter", text + "\nOTHER = ['python3', 'x.py']\n")):
+                ("a literal interpreter", text + "\nOTHER = ['python3', 'x.py']\n"),
+                ("no child assertion", text.replace('[*PYTHON, "-c", ISOLATED]', '[*PYTHON, "-c", "pass"]')),
+                ("a weaker assertion", text.replace("sys.flags.isolated and ", "")),
+                ("the result ignored", text.replace('    if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:\n'
+                                                    '        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)\n'
+                                                    '        return 1\n',
+                                                    '    subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env)\n')),
+                ("os.system first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                                 '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    os.system("true")\n')),
+                ("check_call first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                                  '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    subprocess.check_call(["true"])\n')),
+                ("not first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                           '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    subprocess.run(["true"])\n'))):
             self.assertTrue(isolation.runner_errors(mutated), label)
 
 
@@ -129,14 +143,33 @@ class ShellGates(unittest.TestCase):
                          "unset PYTHONSAFEPATH", "PYTHONSAFEPATH= python3 x.py", "export -n PYTHONSAFEPATH",
                          "declare +x PYTHONDONTWRITEBYTECODE", "typeset +x PYTHONSAFEPATH",
                          "local PYTHONPYCACHEPREFIX", "PYTHONPYCACHEPREFIX=/tmp/shared python3 x.py",
-                         "python3 -E x.py", '"$upstream/venv/bin/python" -Es x.py'):
+                         "python3 -E x.py", '"$upstream/venv/bin/python" -Es x.py',
+                         "unset ${!PYTHON@}", 'export -n "$name"', "unset `compgen -v PYTHON`",
+                         "python3 -X pycache_prefix= x.py", 'python3 -X pycache_prefix="" x.py',
+                         "python3 -X 'pycache_prefix=' x.py", 'python3 -X "pycache_prefix=" x.py',
+                         'python3 - <<< "$code"', 'python3 - 0<<<"$code"', 'python3 -c "import coverage_manifest"',
+                         "python3 -I x.py", "python3 -IB x.py", '"$v/bin/python" -I -m pip', "python3 -B -I x.py",
+                         "python3 -X dev -I x.py", "python3 -W error -I x.py", "python3 -B -E x.py",
+                         'python3 "-I" x.py', "python3 '-E' x.py", "python3 \"-X\" 'pycache_prefix=' x.py",
+                         'python3 -X pycache_prefix=/tmp/x x.py', '<<<"$code" python3 -', 'python3 - 00<<<"$code"'):
                 self.assertTrue(self.errors(path, text + line + "\n"), line)
             for body in ("import sys\nsys.path.insert(0, 'scripts')\n", "import coverage_manifest\n"):
+                tabbed = body.replace("\n", "\n\t")
                 for heredoc in (f"python3 - <<'PY'\n{body}PY\n", f"python3 - \\\n  a \\\n  b <<'PY'\n{body}PY\n",
-                                f"python3 - <<PY\n{body}PY\n", f'python3 - <<"EOF"\n{body}EOF\n'):
+                                f"python3 - <<PY\n{body}PY\n", f'python3 - <<"EOF"\n{body}EOF\n',
+                                f"python3 - <<-'PY'\n\t{tabbed}PY\n", f"cat <<'PY' | python3 -\n{body}PY\n",
+                                f"python3 - <<'PY'\n{body}PY"):
                     self.assertTrue(self.errors(path, text + heredoc), heredoc)
-            bodies = isolation.HEREDOC.findall(text)
-            self.assertTrue(bodies, path)
+            self.assertTrue(any("never terminates" in e for e in self.errors(path, text + "python3 - <<'PY'\nimport json\n")))
+            # `readonly` alone (no assignment) is refused by its own pattern.
+            self.assertTrue(any("shadowing" in e for e in self.errors(path, text + "readonly PYTHONSAFEPATH\n")))
+            # Every heredoc form the line-based reader's predecessor read is still read.
+            for body in ("import coverage_manifest\n",):
+                for heredoc in (f"python3 - 0<<'PY'\n{body}PY\n", f'"${{PYTHON:-python3}}" - <<\'PY\'\n{body}PY\n',
+                                f"PY=python3; $PY - <<'PY'\n{body}PY\n"):
+                    self.assertTrue(any("neither standard library" in e for e in self.errors(path, text + heredoc)), heredoc)
+            # A heredoc fed to anything else is not read as Python, and its body is skipped.
+            self.assertEqual(self.errors(path, text + "cat <<'TXT'\nimport coverage_manifest\nTXT\n"), [])
             self.assertTrue(self.errors(path, text + "python3 -c 'import sys; sys.path.append(\"x\")'\n"))
 
     def test_the_assertion_refuses_without_isolation(self) -> None:
@@ -146,6 +179,13 @@ class ShellGates(unittest.TestCase):
             env = {**os.environ, **{k: v for k, v in full.items() if k != drop}, **({drop: ""} if drop else {})}
             done = subprocess.run(["bash", "-c", assertion], capture_output=True, env=env)
             self.assertEqual(done.returncode, 0 if drop is None else 1, drop)
+
+
+class Flags(unittest.TestCase):
+    def test_ordinary_invocations_pass(self) -> None:
+        for line in ("python3 -m venv x", 'python3 - "$@" <<\'PY\'', "python3 -c 'import sys'",
+                     'python3 - a b 3<<<"$data" <<\'PY\'', '"$v/bin/python" -m pip install x==1', "python3 -B -W error x.py"):
+            self.assertEqual(isolation.python_flag_errors(line), [], line)
 
 
 class Shadows(unittest.TestCase):
@@ -165,9 +205,17 @@ class GatedPython(unittest.TestCase):
     SOURCE = ('const GATE_DIRECTORIES: [&str; 1] = ["crates/g/"];\n'
               'const GATE_FILES: [&str; 2] = ["scripts/g.py", "scripts/gated2.py"];\n')
 
-    def errors(self, body: str) -> list[str]:
-        with git_tree({"scripts/g.py": body, "scripts/gated2.py": "X = 1\n", "scripts/ungated.py": "X = 1\n"}) as root:
-            return [e for e in isolation.check(Path(root), self.SOURCE) if e.startswith("scripts/g.py")]
+    def errors(self, body: str, ungated: str = "X = 1\n") -> list[str]:
+        with git_tree({"scripts/g.py": body, "scripts/gated2.py": "X = 1\n", "scripts/ungated.py": ungated}) as root:
+            return [e for e in isolation.check(Path(root), self.SOURCE) if e.startswith(("scripts/g.py", "scripts/ungated.py"))]
+
+    def test_every_copy_of_the_loader_is_pinned_even_ungated(self) -> None:
+        helper = isolation.SIBLING_HELPER
+        drifted = helper.replace("dont_inherit=True", "dont_inherit=False")
+        self.assertTrue(any(e.startswith("scripts/ungated.py") and "differs" in e
+                            for e in self.errors("X = 1\n", ungated=drifted)))
+        self.assertTrue(any(e.startswith("scripts/ungated.py") and "pinned `def`" in e
+                            for e in self.errors("X = 1\n", ungated="_sibling = lambda name: None\n")))
 
     def test_loads(self) -> None:
         helper = isolation.SIBLING_HELPER
@@ -188,8 +236,40 @@ class GatedPython(unittest.TestCase):
                  "loads scripts/ungated.py"),
                 ('import runpy\nfrom pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n'
                  'runpy.run_path(str(ROOT / "scripts/ungated.py"))\n', "loads scripts/ungated.py"),
-                ('import runpy\nrunpy.run_path(input())\n', "cannot be checked"),
-                (f'{helper}\nU = _sibling("gated2", somewhere())\n', "cannot be checked")):
+                ('import runpy\nrunpy.run_path(input())\n', "cannot resolve"),
+                (f'{helper}\nU = _sibling("gated2", somewhere())\n', "cannot resolve"),
+                ('import runpy\nfrom pathlib import Path\ndef f():\n    p = Path(__file__).resolve().parent / "ungated.py"\n'
+                 '    runpy.run_path(str(p))\n', "loads scripts/ungated.py"),
+                ('import runpy\ndef g(x):\n    runpy.run_path(x)\n', "cannot resolve"),
+                ('import runpy\nfrom pathlib import Path\nP = Path(__file__).parent / "gated2.py"\nP = Path("x.py")\n'
+                 'runpy.run_path(P)\n', "cannot resolve"),
+                (f'{helper}\nM = _sibling("missing")\n', "not a tracked file"),
+                ("exec(open('scripts/gated2.py').read())\n", "of a file read is refused"),
+                ("from pathlib import Path\nexec(compile(Path('scripts/gated2.py').read_text(), 'x', 'exec'))\n",
+                 "of a file read is refused"),
+                ("from importlib.machinery import SourceFileLoader\n", "dynamic import machinery"),
+                ("import importlib.machinery\nL = importlib.machinery.SourcelessFileLoader('x', 'y')\n", "dynamic import machinery"),
+                ("import importlib\nM = importlib.import_module('ungated')\n", "dynamic import machinery"),
+                ("M = __import__('ungated')\n", "dynamic import machinery"),
+                ("_sibling = lambda name: None\n", "only be bound by the pinned"),
+                ("from runpy import run_path as rp\n", "under another name"),
+                ("import runpy\nr = runpy.run_path\n", "may only be called directly"),
+                ("from importlib.util import spec_from_file_location as s\n", "under another name"),
+                ("import runpy\nlist(map(runpy.run_path, ['x']))\n", "may only be called directly"),
+                ("import importlib\nf = getattr(importlib, 'import_' + 'module')\n", "`getattr` on `importlib`"),
+                ("import runpy\nf = getattr(runpy, 'run_path')\n", "`getattr` on `runpy`"),
+                ("import pkgutil\npkgutil.get_importer('x')\n", "dynamic import machinery"),
+                ("from importlib.machinery import PathFinder\nPathFinder.find_spec('x')\n", "dynamic import machinery"),
+                ("code = 'x = 1'\nexec(code)\n", "of anything but a string literal"),
+                ("eval(input())\n", "of anything but a string literal"),
+                ("globals()['x'] = 1\n", "writing through `globals()`"),
+                ("e = exec\ne('x = 1')\n", "may only be called directly"),
+                ("import builtins\nbuiltins.exec('x = 1')\n", "`builtins` is refused"),
+                ("getattr(builtins, 'exec')('x = 1')\n", "`builtins` is refused"),
+                ("__builtins__['exec']('x = 1')\n", "`builtins` is refused"),
+                ("import runpy\n@runpy.run_path\ndef f():\n    pass\n", "may only be called directly"),
+                ("locals().update(x=1)\n", "writing through `locals()`"),
+                ("from json import loads as _sibling\n", "only be bound by the pinned")):
             self.assertTrue(any(wanted in e for e in self.errors(body)), (body, wanted, self.errors(body)))
 
 
@@ -204,16 +284,15 @@ class SiblingLoader(unittest.TestCase):
             planted.write_text("VALUE = 'bytecode'\n", encoding="utf-8")
             py_compile.compile(str(planted), cfile=str(cache),
                                invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
-            # The pinned loader text itself, run on a directory of its own.
-            pinned: dict = {}
-            exec(isolation.SIBLING_HELPER, pinned)
-            sys.modules["norn_sibling_probe"] = types.ModuleType("norn_sibling_probe")
-            try:
-                module = pinned["_sibling"]("norn_sibling_probe", folder)
-                self.assertEqual(module.VALUE, "source")
-                self.assertIs(pinned["_sibling"]("norn_sibling_probe", folder), module)
-            finally:
-                sys.modules.pop("norn_sibling_probe", None)
+            # The pinned loader text itself, run in a fresh interpreter on a directory of its own,
+            # with a same-named module already registered.
+            probe = isolation.SIBLING_HELPER + (
+                "\nimport sys, types\n"
+                "sys.modules['norn_sibling_probe'] = types.ModuleType('norn_sibling_probe')\n"
+                "first = _sibling('norn_sibling_probe', pathlib.Path(sys.argv[1]))\n"
+                "print(first.VALUE, _sibling('norn_sibling_probe', pathlib.Path(sys.argv[1])) is first)\n")
+            result = run_python(["-c", "import pathlib\n" + probe, str(folder)])
+            self.assertEqual(result.strip(), "source True", result)
 
 
 class PlantedModules(unittest.TestCase):

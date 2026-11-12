@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.invalid_plan",
+  "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

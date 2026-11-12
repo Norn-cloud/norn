@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.join_undeclared",
+  "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
