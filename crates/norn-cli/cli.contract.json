@@ -1,0 +1,270 @@
+{
+  "args": {},
+  "subcommands": {
+    "capabilities": {
+      "args": {
+        "cursor": {
+          "long": "cursor",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        }
+      },
+      "subcommands": {}
+    },
+    "check": {
+      "args": {
+        "artifacts": {
+          "long": "artifacts",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "context": {
+          "long": "context",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        }
+      },
+      "subcommands": {}
+    },
+    "eval": {
+      "args": {
+        "defs": {
+          "long": "defs",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "env": {
+          "long": "env",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "org": {
+          "long": "org",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "rule": {
+          "long": "rule",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "units": {
+          "long": "units",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [
+            "1000000"
+          ],
+          "values": []
+        }
+      },
+      "subcommands": {}
+    },
+    "mcp": {
+      "args": {},
+      "subcommands": {}
+    },
+    "openapi": {
+      "args": {},
+      "subcommands": {}
+    },
+    "remote": {
+      "args": {
+        "dev_actor": {
+          "long": "dev-actor",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "env": {
+          "long": "env",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "org": {
+          "long": "org",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "token_env": {
+          "long": "token-env",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "url": {
+          "long": "url",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        }
+      },
+      "subcommands": {
+        "call": {
+          "args": {
+            "idempotency_key": {
+              "long": "idempotency-key",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "name": {
+              "long": null,
+              "short": null,
+              "aliases": [],
+              "positional": true,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            }
+          },
+          "subcommands": {}
+        },
+        "list": {
+          "args": {},
+          "subcommands": {}
+        }
+      }
+    },
+    "source": {
+      "args": {},
+      "subcommands": {
+        "pull": {
+          "args": {
+            "connector": {
+              "long": "connector",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "crosswalk_env": {
+              "long": "crosswalk-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "extracted_at_ms": {
+              "long": "extracted-at-ms",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            }
+          },
+          "subcommands": {}
+        }
+      }
+    },
+    "source-digest": {
+      "args": {
+        "dir": {
+          "long": null,
+          "short": null,
+          "aliases": [],
+          "positional": true,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        }
+      },
+      "subcommands": {}
+    }
+  },
+  "format": "norn-cli-contract/1"
+}
