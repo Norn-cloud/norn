@@ -10,8 +10,12 @@ const LOCALES = [
   { tag: "ar", dir: "rtl", order: "أمر بيع", status: "الحالة", dependency: "ليس في مجموعة الأدوات" },
 ] as const
 
-/** Wait for the state a screenshot needs: every running colour transition has finished. */
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined))
+/** Wait for the state a screenshot needs: every running colour transition has finished. A looping animation (a spinner) never finishes and is not waited for. */
+const settled = (page: Page) => page.evaluate(() => Promise.all(
+  document.getAnimations()
+    .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+    .map((animation) => animation.finished.catch(() => undefined)),
+).then(() => undefined))
 
 async function shoot(page: Page, name: string) {
   await settled(page)
