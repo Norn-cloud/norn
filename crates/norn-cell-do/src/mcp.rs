@@ -633,11 +633,10 @@ impl<E: SqlEngine> Loopback<'_, E> {
         let mut scoped = self.scope.pairs();
         let optional =
             |scoped: &mut Vec<(&'static str, String)>, key: &'static str, field: &str| {
-                text(arguments, field).map(|value| {
-                    if let Some(value) = value {
-                        scoped.push((key, value));
-                    }
-                })
+                if let Some(value) = text(arguments, field)? {
+                    scoped.push((key, value));
+                }
+                Ok::<(), Refusal>(())
             };
         let object_path = |leaf: &str| -> Result<String, Refusal> {
             Ok(format!(

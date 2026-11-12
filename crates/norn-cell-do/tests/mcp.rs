@@ -69,7 +69,7 @@ fn rpc(cell: &Cell, auth: Option<&str>, message: &Value) -> Response {
     send(cell, "POST", MCP_PATH, SCOPE, auth, &message.to_string())
 }
 
-fn result(cell: &Cell, auth: Option<&str>, method: &str, params: Value) -> Value {
+fn result(cell: &Cell, auth: Option<&str>, method: &str, params: &Value) -> Value {
     let response = rpc(
         cell,
         auth,
@@ -82,18 +82,18 @@ fn result(cell: &Cell, auth: Option<&str>, method: &str, params: Value) -> Value
 }
 
 fn tools(cell: &Cell, auth: Option<&str>) -> Vec<Value> {
-    result(cell, auth, "tools/list", json!({"limit": 100}))["tools"]
+    result(cell, auth, "tools/list", &json!({"limit": 100}))["tools"]
         .as_array()
         .unwrap()
         .clone()
 }
 
-fn call_tool(cell: &Cell, auth: Option<&str>, name: &str, arguments: Value) -> Value {
+fn call_tool(cell: &Cell, auth: Option<&str>, name: &str, arguments: &Value) -> Value {
     result(
         cell,
         auth,
         "tools/call",
-        json!({"name": name, "arguments": arguments}),
+        &json!({"name": name, "arguments": arguments}),
     )
 }
 
@@ -103,6 +103,20 @@ fn direct(cell: &Cell, path: &str, query: &str, auth: Option<&str>) -> (u16, Val
         response.status,
         serde_json::from_str(&response.body).unwrap(),
     )
+}
+
+/// Every object key at any depth, lower-cased.
+fn keys(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                out.push(key.to_lowercase());
+                keys(inner, out);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| keys(item, out)),
+        _ => {}
+    }
 }
 
 #[test]
@@ -117,7 +131,7 @@ fn initialize_negotiates_the_revision_and_declares_the_ui_extension() {
             &cell,
             VIEWER,
             "initialize",
-            json!({"protocolVersion": asked, "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
+            &json!({"protocolVersion": asked, "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
         );
         assert_eq!(init["protocolVersion"], answered);
         assert_eq!(init["capabilities"]["tools"]["listChanged"], false);
@@ -232,18 +246,6 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
         "statement",
         "schema_name",
     ];
-    fn keys(value: &Value, out: &mut Vec<String>) {
-        match value {
-            Value::Object(map) => {
-                for (key, inner) in map {
-                    out.push(key.to_lowercase());
-                    keys(inner, out);
-                }
-            }
-            Value::Array(items) => items.iter().for_each(|item| keys(item, out)),
-            _ => {}
-        }
-    }
     for tool in &listed {
         let mut found = Vec::new();
         keys(&tool["inputSchema"], &mut found);
@@ -276,7 +278,7 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
             auth,
         );
         assert_eq!(status, 200);
-        let called = call_tool(&cell, auth, "norn_answer", json!({"question": QUESTION}));
+        let called = call_tool(&cell, auth, "norn_answer", &json!({"question": QUESTION}));
         assert_eq!(called["isError"], false);
         assert_eq!(called["structuredContent"], answer);
         // The text block is the same document, for hosts without structured content.
@@ -306,13 +308,13 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
             &cell,
             auth,
             "norn_trace_answer",
-            json!({"question": QUESTION, "lineageRef": lineage, "bucket": bucket}),
+            &json!({"question": QUESTION, "lineageRef": lineage, "bucket": bucket}),
         );
         assert_eq!(traced["structuredContent"], trace);
 
         let (_, catalog) = direct(&cell, "/v1/definitions", SCOPE, auth);
         assert_eq!(
-            call_tool(&cell, auth, "norn_catalog", json!({}))["structuredContent"],
+            call_tool(&cell, auth, "norn_catalog", &json!({}))["structuredContent"],
             catalog
         );
     }
@@ -323,7 +325,7 @@ fn refusals_come_back_as_tool_errors_with_the_routes_own_refusal() {
     let cell = cell();
     let (status, refusal) = direct(&cell, "/v1/questions/nope/answer", SCOPE, VIEWER);
     assert_ne!(status, 200);
-    let called = call_tool(&cell, VIEWER, "norn_answer", json!({"question": "nope"}));
+    let called = call_tool(&cell, VIEWER, "norn_answer", &json!({"question": "nope"}));
     assert_eq!(called["isError"], true);
     assert_eq!(called["structuredContent"], refusal);
 
@@ -332,12 +334,12 @@ fn refusals_come_back_as_tool_errors_with_the_routes_own_refusal() {
         &cell,
         VIEWER,
         "norn_query_objects",
-        json!({"type": "demo.Nothing"}),
+        &json!({"type": "demo.Nothing"}),
     );
     assert_eq!(called["isError"], true);
     assert_eq!(called["structuredContent"], refusal);
 
     // A malformed argument is refused before any route runs.
-    let called = call_tool(&cell, VIEWER, "norn_query_objects", json!({"type": [1]}));
+    let called = call_tool(&cell, VIEWER, "norn_query_objects", &json!({"type": [1]}));
     assert_eq!(called["isError"], true);
 }
