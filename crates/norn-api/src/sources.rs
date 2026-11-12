@@ -321,14 +321,12 @@ impl Sources {
         };
         let outcome = match response {
             None if run.pull.is_some() => drain(host, run),
-            None => begin(host, &config, &self.secrets, run, watermarks_known).map(|first| {
-                first.map_or(Next::Done, Next::Request)
+            None => begin(host, &config, &self.secrets, run, watermarks_known)
+                .map(|first| first.map_or(Next::Done, Next::Request)),
+            Some((status, body)) => advance(&config, run, status, body, now_ms).and_then(|after| {
+                run.after = after;
+                drain(host, run)
             }),
-            Some((status, body)) => advance(host, &config, run, status, body, now_ms)
-                .and_then(|after| {
-                    run.after = after;
-                    drain(host, run)
-                }),
         };
         match outcome {
             Ok(Next::Request(request)) => Step::Request(request),
@@ -469,8 +467,7 @@ fn begin<E: SqlEngine>(
     Ok(first.map(|request| http(config, &run.auth, request)))
 }
 
-fn advance<E: SqlEngine>(
-    host: &DevHost<E>,
+fn advance(
     config: &ConnectionConfig,
     run: &mut Run,
     status: u16,
