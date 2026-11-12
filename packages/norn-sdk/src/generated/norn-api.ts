@@ -36,15 +36,19 @@ export interface paths {
         put?: never;
         /**
          * Call one admitted action as the verified caller: it commits, or an
-         *     identical earlier call replays with its original receipt.
+         *     identical earlier call replays with its original receipt. While an
+         *     approval gates the action (APPROVAL-1), a call that would commit parks
+         *     instead, as one open decision, and answers 202 with it; a call that would
+         *     be refused is refused exactly as it would be ungated, and parks nothing.
          *     # Errors
          *     One opaque 403, decided before any storage read, for a missing or
          *     unverified caller, a denied policy, a foreign scope or an unknown action;
          *     the same opaque 403 for every visibility or permission refusal the kernel
          *     decides (an invisible or absent target, a denied policy decision);
          *     409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
-         *     refusal, its detail disclosed only under an explicit diagnostic grant. A
-         *     refusal commits nothing.
+         *     refusal, its detail disclosed only under an explicit diagnostic grant;
+         *     for a gated call whose decision was resolved, 409 `approval.rejected` or
+         *     410 `approval.expired`. A refusal commits nothing.
          */
         post: operations["call_action"];
         delete?: never;
@@ -116,7 +120,13 @@ export interface paths {
         put?: never;
         /**
          * `POST /v1/decisions/{id}:decide`.
-         * @description # Errors
+         * @description For the approval of a parked action call (APPROVAL-1) the decider is
+         *     never the call's requester (#618), and no flow turn runs: the answer is
+         *     recorded, and an approved call then commits through the shared action
+         *     dispatch as its requester ([`AsStarter`] makes the requester the host's
+         *     verified caller for that one call), its authority decided again there.
+         *
+         *     # Errors
          *     In this order: 404 `decision.not_found` (also for a caller who may not
          *     decide it), 409 `decision.resolved`, 410 `decision.expired`, 403
          *     `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
@@ -801,14 +811,29 @@ export interface components {
         };
         /** @description `POST /v1/decisions/{id}:decide` response. */
         Decided: {
+            call?: components["schemas"]["DecidedCall"] | null;
             /** @description The decision. */
             decision: components["schemas"]["DecidedDecision"];
             /** @description Decided now, or replayed. */
             outcome: components["schemas"]["DecideOutcome"];
             /** @description Its commit. */
             receipt: components["schemas"]["DecidedReceipt"];
-            /** @description The run. */
+            /**
+             * @description The run, or for an approval of a direct action call the parked call's
+             *     id with no state.
+             */
             run: components["schemas"]["DecidedRun"];
+        };
+        /**
+         * @description What committing an approved call as its requester answered (APPROVAL-1).
+         *     The approval stands either way: the requester's own retry of the call
+         *     commits it.
+         */
+        DecidedCall: {
+            /** @description The requester's refusal code when it did not. */
+            code?: string | null;
+            /** @description Whether the call committed. */
+            committed: boolean;
         };
         /** @description The decision as decided. */
         DecidedDecision: {
@@ -848,6 +873,17 @@ export interface components {
             /** @description Its lifecycle state. */
             state?: string | null;
         };
+        /** @description The parked action call an approval decides (APPROVAL-1). */
+        DecisionCall: {
+            /** @description The action called. */
+            action: string;
+            /** @description The approval definition that gates it. */
+            definition: string;
+            /** @description The call's admitted input, as its requester sent it. */
+            input: {
+                [key: string]: unknown;
+            };
+        };
         /** @description What the decision is about. Empty in this version. */
         DecisionContext: {
             /** @description The objects the decision concerns. */
@@ -857,6 +893,7 @@ export interface components {
         DecisionDocument: {
             /** @description An agent's recommended option id; a recommendation, never a decision. */
             agentPick?: string | null;
+            call?: components["schemas"]["DecisionCall"] | null;
             /** @description What it is about. */
             context: components["schemas"]["DecisionContext"];
             /**
@@ -1041,6 +1078,12 @@ export interface components {
         };
         /** @description One listed definition, without its payload. */
         DefinitionSummary: {
+            /**
+             * @description For a flow: whether the caller may start a run of it now, decided by
+             *     exactly the gate `POST /v1/runs` applies (an active flow and the host's
+             *     `StartRun` decision). Absent for other kinds.
+             */
+            canStart?: boolean | null;
             /** @description The definition id. */
             id: string;
             /** @description Its kind. */
@@ -10370,6 +10413,23 @@ export interface components {
                 commit: string;
             };
         };
+        /** @description `202`: the call waits for a person's approval; nothing was committed. */
+        PendingAction: {
+            /** @description The decision it waits on. */
+            decision: components["schemas"]["PendingDecision"];
+            /** @description Always `pending`. */
+            outcome: string;
+        };
+        /** @description The decision a parked call waits on. */
+        PendingDecision: {
+            /**
+             * Format: int64
+             * @description When it expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
+            id: string;
+        };
         /**
          * @description Whether the call provisioned the cell or found it provisioned.
          * @enum {string}
@@ -10771,6 +10831,15 @@ export interface operations {
                     "application/json": components["schemas"]["ActionReceipt"];
                 };
             };
+            /** @description An approval gates the action: the call waits for a person's decision, and nothing was committed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingAction"];
+                };
+            };
             /** @description The request was refused as invalid. */
             400: {
                 headers: {
@@ -10789,8 +10858,17 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: a stale pin or a conflicting retry. */
+            /** @description The request was refused: a stale pin, a conflicting retry, or a rejected approval. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The approval the call waited on expired. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

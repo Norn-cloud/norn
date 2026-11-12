@@ -395,6 +395,20 @@ pub(crate) fn installed_flow<E: SqlEngine>(
     })
 }
 
+/// Whether the host lets `actor` start runs of `flow`: the one decision
+/// `POST /v1/runs` makes ([`Operation::StartRun`]), which a flow listing also
+/// reports as `canStart` so a client offers only the starts the cell allows.
+#[must_use]
+pub fn may_start<E: SqlEngine>(host: &DevHost<E>, actor: &str, flow: &str) -> bool {
+    host.authorizer
+        .authorize(&AccessRequest {
+            scope: host.scope(),
+            actor: Some(actor),
+            operation: Operation::StartRun(flow.to_owned()),
+        })
+        .is_ok()
+}
+
 /// `POST /v1/runs`: start a run of an installed flow.
 ///
 /// # Errors
@@ -419,15 +433,11 @@ pub fn start_run<E: SqlEngine>(
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(start_denied)?;
     let epoch = host.definition_read();
-    let authorized = host.authorizer.authorize(&AccessRequest {
-        scope: host.scope(),
-        actor: Some(actor),
-        operation: Operation::StartRun(body.flow.clone()),
-    });
+    let authorized = may_start(host, actor, &body.flow);
     let scoped = host
         .scope()
         .admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() {
+    if !authorized || scoped.is_err() {
         return Err(start_denied());
     }
     let _epoch = epoch?;

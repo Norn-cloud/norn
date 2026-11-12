@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "2d8b24fcf580ed55d8561bd6658a92f271852507333f38428666e09937ad5b19",
+  "bundleDigest": "1f8f5be6b7814192226399055ac733ff6215068a80f410f1e852ffe6b3e60424",
   "sourceRecordRef": {
     "system": "synthetic-erpnext",
     "record": "Party/erpnext/demo/Party/SYN-ERPNEXT-owner"
@@ -12,7 +12,7 @@
   "mappingPin": {
     "artifactId": "erpnext.three.mapping",
     "version": "0.1.0",
-    "sha256": "ddbf31d0eb71c45a8f9be84583b3c1ea4b2151f4e289245425f88fafc024780a"
+    "sha256": "629bb412cde15e3b671f57f000a1dd4a377e0f9d56107262fe39a6031cb52ea9"
   },
   "fieldProvenance": {
     "display_name": {

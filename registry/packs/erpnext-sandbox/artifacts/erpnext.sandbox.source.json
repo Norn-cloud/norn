@@ -306,6 +306,17 @@
         }
       },
       {
+        "dataset": "Warehouse Lot Balance",
+        "name": "modified",
+        "nativeType": "Datetime",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
         "dataset": "Party",
         "name": "name",
         "nativeType": "Data",

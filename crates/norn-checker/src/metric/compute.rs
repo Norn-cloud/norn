@@ -41,6 +41,10 @@ pub struct KeyedSum {
     pub time_property: PropertyId,
     /// Predicates applied to this measure before summation.
     pub filters: Vec<MetricFilter>,
+    /// METRIC-SNAPSHOT-ASOF-1: sum each subject's last version at or before
+    /// each bucket's end, ordered by `time_property` (subject = the root
+    /// object's identity), instead of summing every row in its bucket.
+    pub as_of: bool,
 }
 
 /// QUERY-GRAIN-1: a checked sum or ratio of sums. Construction is through [`admit`].
@@ -83,6 +87,13 @@ impl QuestionPlan {
     #[must_use]
     pub fn definitions(&self) -> &[MetricDefinition] {
         &self.definitions
+    }
+
+    /// METRIC-SNAPSHOT-ASOF-1: whether this plan is a snapshot (as-of) sum,
+    /// executed over each subject's versions by [`contribution::as_of`].
+    #[must_use]
+    pub fn as_of(&self) -> bool {
+        self.sums.iter().any(|sum| sum.as_of)
     }
 
     /// Full-population bound; exceeding it must discard the result.
@@ -185,6 +196,18 @@ pub fn admit(
             lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // METRIC-SNAPSHOT-ASOF-1: one snapshot sum; a week grouping buckets its own time.
+    if sums.iter().any(|sum| sum.as_of)
+        && (sums.len() != 1
+            || question.dimensions.iter().any(|dimension| {
+                dimension.grain.is_some()
+                    && sums
+                        .first()
+                        .is_none_or(|sum| dimension.path.property != sum.time_property)
+            }))
+    {
+        return Err(refuse());
+    }
     let properties = catalog
         .object_type_named(question.object_set.as_str())
         .and_then(Result::ok)
@@ -240,11 +263,20 @@ fn lower_sum(
     {
         return Err(refuse());
     }
+    // METRIC-SNAPSHOT-ASOF-1: the exact engine supports identity subjects only.
+    let as_of = matches!(
+        metric.additivity,
+        norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
+    );
+    if as_of && (!metric.snapshot || !metric.snapshot_groupings.is_empty()) {
+        return Err(refuse());
+    }
     Ok(KeyedSum {
         name: metric.name,
         property: property.clone(),
         time_property: metric.time_dimension.property,
         filters: metric.default_filters,
+        as_of,
     })
 }
 

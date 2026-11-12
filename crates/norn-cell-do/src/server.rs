@@ -17,7 +17,9 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::action_catalog::{ActionCatalogQuery, list_actions};
-use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
+use norn_api::actions::{
+    ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
+};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
@@ -342,6 +344,17 @@ pub fn handle_all<E: SqlEngine>(
     ) {
         return response;
     }
+    // APPROVAL-1: a call an approval holds answers 202, so an action call
+    // keeps its status.
+    if let Some(action) = action_path(request.path) {
+        return respond_with(governed_call(
+            Some(host),
+            questions,
+            actor.as_deref(),
+            (request.method, action, request.query, request.body),
+            request.now,
+        ));
+    }
     respond(route(
         Some(host),
         questions,
@@ -375,9 +388,14 @@ pub fn outside_with<E: SqlEngine>(
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
+    respond_with(result.map(|body| (StatusCode::OK, body)))
+}
+
+/// A route's answer with its status, or its refusal, as the response.
+fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -411,9 +429,7 @@ fn route<E: SqlEngine>(
         "/v1/questions:evaluate" | "/v1/questions:trace" | "/v1/questions:metrics"
     );
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
-    let action = path
-        .strip_prefix("/v1/actions/")
-        .filter(|id| !id.is_empty() && !id.contains('/'));
+    let action = action_path(path);
     // `Route` is the one list of what this host serves; a path it does not
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
@@ -656,9 +672,27 @@ fn governed_action<E: SqlEngine>(
     host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
-    (method, action, query, body): (&str, &str, &str, &str),
+    call: (&str, &str, &str, &str),
     now: u64,
 ) -> Result<String, Refusal> {
+    governed_call(host, questions, actor, call, now).map(|(_, body)| body)
+}
+
+/// The action id of an action call's path, `/v1/actions/{actionId}`.
+fn action_path(path: &str) -> Option<&str> {
+    path.strip_prefix("/v1/actions/")
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// [`governed_action`] with its status: a call an approval holds answers 202
+/// with the decision it waits on (APPROVAL-1).
+fn governed_call<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    (method, action, query, body): (&str, &str, &str, &str),
+    now: u64,
+) -> Result<(StatusCode, String), Refusal> {
     if method != "POST" {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -691,15 +725,10 @@ fn governed_action<E: SqlEngine>(
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
     let request = decode_action_request(body)?;
     let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
-    document_json(&call_action(
-        host,
-        &query,
-        actor,
-        &action,
-        &request,
-        named(runtime),
-        now,
-    )?)
+    match call_action(host, &query, actor, &action, &request, named(runtime), now)? {
+        ActionAnswer::Receipt(receipt) => Ok((StatusCode::OK, document_json(&receipt)?)),
+        ActionAnswer::Pending(pending) => Ok((StatusCode::ACCEPTED, document_json(&pending)?)),
+    }
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
