@@ -1017,9 +1017,10 @@ fn end_state(cell: &Cell) -> Vec<String> {
     for claim in reader.observed_link_claims().expect("claims") {
         state.push(format!("claim {claim:?}"));
     }
-    // Events as a multiset: a page commit appends its records' object events
-    // in page order and then the page's link-claim events, where one by one
-    // interleaves them per record; order inside a commit is commit framing.
+    // Events as a multiset (OBS-PAGE-EQUIV): a page commit appends its
+    // records' object events in page order and then the page's link-claim
+    // events, where one by one interleaves them per record; the ordering
+    // that matters inside a commit is `claims_follow_their_referents`.
     let mut events: Vec<String> = reader
         .ledger(0)
         .expect("ledger")
@@ -1034,6 +1035,45 @@ fn end_state(cell: &Cell) -> Vec<String> {
         }
     }
     state
+}
+
+/// OBS-PAGE-1: within a commit no event precedes an event it depends on: a
+/// link-claim event comes after the object events of both its endpoints
+/// that the same commit creates or changes.
+fn claims_follow_their_referents(cell: &Cell) -> Result<(), String> {
+    let text = |value: &RuntimeValue, path: &[&str]| -> Option<String> {
+        let mut at = value;
+        for step in path {
+            at = at.get(step)?;
+        }
+        at.as_str().map(str::to_owned)
+    };
+    let ledger = cell.store().read().ledger(0).expect("ledger");
+    for (index, entry) in ledger.iter().enumerate() {
+        if text(&entry.event, &["event", "key", "objectType"]).as_deref()
+            != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+        {
+            continue;
+        }
+        for side in ["source_key", "target_key"] {
+            let Some(key) = text(&entry.event, &["event", "values", side]) else {
+                continue;
+            };
+            let later = ledger.iter().enumerate().skip(index + 1).any(|(_, other)| {
+                other.commit_seq == entry.commit_seq
+                    && text(&other.event, &["event", "key", "objectType"]).as_deref()
+                        != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+                    && text(&other.event, &["event", "key", "key"]).as_deref() == Some(key.as_str())
+            });
+            if later {
+                return Err(format!(
+                    "commit {}: claim at {index} precedes an event of {key}",
+                    entry.commit_seq
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -1126,6 +1166,8 @@ proptest::proptest! {
                 }
             }
         }
+        let ordered = claims_follow_their_referents(&paged);
+        proptest::prop_assert!(ordered.is_ok(), "{ordered:?}");
         let (single, paged) = (end_state(&single), end_state(&paged));
         let only = |a: &[String], b: &[String]| -> Vec<String> {
             a.iter().filter(|line| !b.contains(line)).cloned().collect()
