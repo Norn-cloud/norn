@@ -2,8 +2,9 @@
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), the one governed action route,
-//! `POST /v1/actions/{actionId}`, and the run routes (`POST /v1/runs`,
-//! `GET /v1/runs/{id}`).
+//! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`), and the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
