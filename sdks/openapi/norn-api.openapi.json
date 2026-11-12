@@ -1318,6 +1318,256 @@
         ]
       }
     },
+    "/v1/objects/{type}/{id}/findings": {
+      "get": {
+        "tags": [
+          "crate::object_review"
+        ],
+        "summary": "HOST-READ-6: an object's quality findings, including while it is quarantined.",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, withheld or source-withheld\nobject (one 404); a commit between the reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "operationId": "get_object_findings",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object's quality findings, open and resolved, and whether it is quarantined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectFindings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/history": {
+      "get": {
+        "tags": [
+          "crate::object_review"
+        ],
+        "summary": "HOST-READ-6: an object's proven versions, newest first, with what wrote each.",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, withheld or source-withheld\nobject (one 404); a commit between the reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "operationId": "get_object_history",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object's proven versions, newest first, each with its commit and what wrote it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/objects/{type}/{id}/lineage": {
       "get": {
         "tags": [
@@ -1361,6 +1611,17 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "An earlier version of the object (HOST-READ-6). With it, a quarantined object is served to a caller holding Values and Sources on it, and a version a mapping did not write is the same 404.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
             }
           }
         ],
@@ -1696,6 +1957,122 @@
           },
           "500": {
             "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}:quarantined": {
+      "get": {
+        "tags": [
+          "crate::object_review"
+        ],
+        "summary": "HOST-READ-6: the ids of a type's quarantined objects the caller may review,\nso a grid's quarantine count can lead to them.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), a commit while\nthe rows were read (409 `object.snapshot_moved`), or a host failure.",
+        "operationId": "get_quarantined_objects",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The type's quarantined objects whose values the caller may read, with their open finding counts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQuarantinedPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the type is not declared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the rows were read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4199,6 +4576,24 @@
         "enum": [
           "norn/diagnostic@2"
         ]
+      },
+      "NornEvidenceRef": {
+        "type": "object",
+        "description": "One evidence object linked to the subject: where one of its values was read.",
+        "required": [
+          "objectType",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The evidence object's id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The evidence object's type (it implements `norn.SourceEvidence`)."
+          }
+        }
       },
       "NornExplainFormat": {
         "type": "string",
@@ -25750,6 +26145,76 @@
         },
         "additionalProperties": false
       },
+      "NornObjectFindings": {
+        "type": "object",
+        "description": "An object's quality findings (OBS-EVIDENCE-1), open and resolved.",
+        "required": [
+          "objectType",
+          "id",
+          "quarantined",
+          "findings",
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornEvidenceRef"
+            },
+            "description": "The evidence objects linked to it that the caller may read (types\nimplementing `norn.SourceEvidence`), at most [`MAX_EVIDENCE`]. They are\nread at `/v1/objects/{type}/{id}`; a quarantined subject's evidence is\nnot quarantined with it."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrDataQualityFinding"
+            },
+            "description": "Every finding on the object, each pinned to the rule it records; a correction resolves a finding without rewriting it."
+          },
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "quarantined": {
+            "type": "boolean",
+            "description": "Whether an open finding holds the object out of authoritative reads."
+          }
+        }
+      },
+      "NornObjectHistory": {
+        "type": "object",
+        "description": "An object's versions, newest first.",
+        "required": [
+          "objectType",
+          "id",
+          "versions",
+          "truncated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornObjectVersion"
+            },
+            "description": "The versions listed, newest first."
+          }
+        }
+      },
       "NornObjectLinkPage": {
         "type": "object",
         "description": "HOST-READ-4: one page of the links touching an object that the caller may\nsee at both ends (D67); links to rows it cannot see are neither listed nor\ncounted.",
@@ -25970,6 +26435,114 @@
         },
         "additionalProperties": false
       },
+      "NornObjectVersion": {
+        "type": "object",
+        "description": "One proven version of an object.",
+        "required": [
+          "version",
+          "commit",
+          "logicalTime",
+          "writer"
+        ],
+        "properties": {
+          "commit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit (ledger receipt sequence) that wrote it.",
+            "minimum": 0
+          },
+          "logicalTime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit's logical time, in milliseconds.",
+            "minimum": 0
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version number.",
+            "minimum": 0
+          },
+          "writer": {
+            "$ref": "#/components/schemas/NornVersionWriter",
+            "description": "What wrote it."
+          }
+        }
+      },
+      "NornOutlier": {
+        "type": "object",
+        "description": "One row whose value is outside a fence.",
+        "required": [
+          "id",
+          "value"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The row's id."
+          },
+          "value": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          }
+        }
+      },
+      "NornOutliers": {
+        "type": "object",
+        "description": "Tukey's far-out values of one numeric property over the profiled rows:\nthose below `q1 − k·(q3 − q1)` or above `q3 + k·(q3 − q1)`. The quartiles\nare the profile's own nearest-rank quantiles (25 and 75), so the fences\nagree with the quantiles shown, and every number is exact (no float).\nLike the rest of the profile, only rows whose values the caller may read\nare counted or named; past the scan bound (`approximate`) the outliers\ncover only the rows read.",
+        "required": [
+          "method",
+          "k",
+          "q1",
+          "q3",
+          "lowerFence",
+          "upperFence",
+          "count",
+          "examples"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows outside a fence.",
+            "minimum": 0
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornOutlier"
+            },
+            "description": "At most 20 of them, furthest from their fence first, then by id."
+          },
+          "k": {
+            "type": "string",
+            "description": "The multiplier `k`, as an exact decimal (`\"3\"`)."
+          },
+          "lowerFence": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          },
+          "method": {
+            "type": "string",
+            "description": "`tukey_far_out`."
+          },
+          "q1": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          },
+          "q3": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          },
+          "upperFence": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          }
+        }
+      },
       "NornPropertyProfile": {
         "type": "object",
         "description": "The profile of one property over the profiled rows.",
@@ -25982,7 +26555,8 @@
           "min",
           "max",
           "quantiles",
-          "histogram"
+          "histogram",
+          "outliers"
         ],
         "properties": {
           "count": {
@@ -26024,6 +26598,17 @@
             "description": "Rows without one.",
             "minimum": 0
           },
+          "outliers": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornOutliers",
+                "description": "Values far outside the middle half (numeric properties; null for\nevery other kind, and when the quartiles cannot be subtracted exactly)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "property": {
             "type": "string",
             "description": "The property id."
@@ -26053,6 +26638,59 @@
           },
           "value": {
             "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          }
+        }
+      },
+      "NornQuarantinedObject": {
+        "type": "object",
+        "description": "One quarantined object the caller may review.",
+        "required": [
+          "id",
+          "openFindings"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "openFindings": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open findings that hold it out of authoritative reads.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornQuarantinedPage": {
+        "type": "object",
+        "description": "A type's quarantined objects, as the caller may see them.",
+        "required": [
+          "objectType",
+          "items",
+          "approximate",
+          "scanLimit"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the scan bound was reached: the list covers only the rows read."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornQuarantinedObject"
+            },
+            "description": "Quarantined rows whose values the caller may read, in id order. A row\nwhose values are withheld is never named: quarantine is value-level."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concept read."
+          },
+          "scanLimit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row scan bound.",
+            "minimum": 0
           }
         }
       },
@@ -26456,6 +27094,77 @@
             "description": "The property sorted on."
           }
         }
+      },
+      "NornVersionWriter": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A mapping produced the version from a source record.",
+            "required": [
+              "lineage",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mapping"
+                ]
+              },
+              "lineage": {
+                "$ref": "#/components/schemas/NornInstanceSourceProvenance",
+                "description": "The version's source lineage (`/lineage?version=`)."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An admitted action committed the version.",
+            "required": [
+              "actionId",
+              "actor",
+              "input",
+              "kind"
+            ],
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "description": "The action identity."
+              },
+              "actor": {
+                "type": "string",
+                "description": "The verified caller the server attributed the call to."
+              },
+              "input": {
+                "type": "object",
+                "description": "The effective input (caller input plus server derivations); decimals are exact JSON number tokens.",
+                "additionalProperties": true
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "action"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Another writer (an import, a migration or a kernel rule).",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "other"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What wrote one version."
       },
       "NornWorld": {
         "oneOf": [

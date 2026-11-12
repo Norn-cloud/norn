@@ -187,6 +187,14 @@ impl Decimal {
         (sum.checked_sub(other.0) == Some(self.0)).then_some(Self(sum))
     }
 
+    /// The exact difference, or `None` when it cannot be held without rounding.
+    #[must_use]
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        let difference = self.0.checked_sub(other.0)?;
+        // As for a sum: an exact difference adds back to its operand.
+        (difference.checked_add(other.0) == Some(self.0)).then_some(Self(difference))
+    }
+
     /// The value as an `i64`, when it is an integer in range.
     #[must_use]
     pub fn to_i64(&self) -> Option<i64> {
