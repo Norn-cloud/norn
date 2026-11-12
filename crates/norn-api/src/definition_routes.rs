@@ -1354,13 +1354,12 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
-                // The model a restarted host rebuilds from the new set (the
-                // kernel's action types included): never the bare admitted
-                // model, which would drop them (DEFS-REOPEN-1).
-                let model = crate::kernel_set::retained_artifacts(&admitted.canonical_set)
-                    .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
-                    .map_err(Refusal::host)?;
-                crate::host::check_reopens(&model, &admitted.canonical_set)?;
+                // The model a restarted host rebuilds from the new set: with
+                // the kernel's action types on a cell that serves actions,
+                // never the bare admitted model there (DEFS-REOPEN-1).
+                let serving = crate::host::serves_actions(cell.store().model());
+                let model = crate::host::reopen_model(&admitted.canonical_set, serving)?;
+                crate::host::check_reopens(&model, &admitted.canonical_set, serving)?;
                 (
                     model,
                     admitted.canonical_set,
