@@ -227,7 +227,7 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open,
             state,
-            handles: handles(handle_key),
+            handles: handles(handle_key)?,
         })
     }
 
@@ -336,7 +336,14 @@ impl<E: SqlEngine> Tenant<E> {
         } else if request.path == "/v1/access" {
             server::access_outside::<E>(principals, request)
         } else {
-            server::outside::<E>(request)
+            // Served with what a provisioned cell of this host is served
+            // with (its receipt handles, its kinds), so no route branches
+            // on whether the scope has a cell (#1297 r1).
+            let questions = self
+                .handles
+                .as_ref()
+                .map(|handles| -> &dyn AdHocQuestions<E> { handles });
+            server::outside_with::<E>(questions, &self.kinds, request)
         }
     }
 
@@ -433,13 +440,23 @@ impl<E: SqlEngine> Tenant<E> {
     }
 }
 
-/// The receipt handles keyed by `key`, when it is long enough.
-fn handles(key: Option<&[u8]>) -> Option<ReceiptHandles> {
-    key.filter(|key| key.len() >= MIN_HANDLE_KEY_BYTES)
-        .map(|key| ReceiptHandles {
+/// The receipt handles keyed by `key`; none without a key.
+///
+/// # Errors
+/// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to open
+/// rather than serve unkeyed or weakly keyed handles.
+fn handles(key: Option<&[u8]>) -> Result<Option<ReceiptHandles>, SeedError> {
+    match key {
+        None => Ok(None),
+        Some(key) if key.len() < MIN_HANDLE_KEY_BYTES => Err(SeedError(format!(
+            "the lineage key is {} bytes; at least {MIN_HANDLE_KEY_BYTES} are required",
+            key.len()
+        ))),
+        Some(key) => Ok(Some(ReceiptHandles {
             key: key.to_vec(),
             catalog: EffectiveCatalog::default(),
-        })
+        })),
+    }
 }
 
 /// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with

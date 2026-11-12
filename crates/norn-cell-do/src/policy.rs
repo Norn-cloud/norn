@@ -269,10 +269,29 @@ impl ReadPolicy {
             .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
     }
 
+    /// Whether the request's verified principal may read objects of
+    /// `object_type` at all. The kernel's own call records (who called which
+    /// action, with which input and idempotency key) are read by the table's
+    /// definition writers (admin, owner) only: a member or viewer never sees
+    /// another caller's inputs or keys. Every other type follows the grants.
+    fn reads_type(&self, subject: &str, object_type: &str) -> bool {
+        let kernel_record = object_type == norn_kernel::ACTION_CALL_TYPE
+            || object_type == norn_kernel::OWNED_ROWS_TYPE;
+        !kernel_record
+            || self
+                .caller
+                .current()
+                .filter(|caller| caller.subject_id == subject)
+                .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+    }
+
     /// An object read inside an action: the caller's Values grant on the
     /// object's type and id, decided by the read PDP.
     fn action_reads(&self, actor: &str, object_type: &str, id: &str) -> bool {
-        let Some(pdp) = self.pdp_for(actor) else {
+        let Some(pdp) = self
+            .pdp_for(actor)
+            .filter(|_| self.reads_type(actor, object_type))
+        else {
             return false;
         };
         let mut request =
@@ -433,7 +452,11 @@ impl Authorizer for ReadPolicy {
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
-            && request.access.action_id == READ_ACTION;
+            && request.access.action_id == READ_ACTION
+            && self.reads_type(
+                &request.access.principal.subject_id,
+                &request.access.resource.object_type,
+            );
         let allowed = asked
             && self
                 .pdp_for(&request.access.principal.subject_id)
