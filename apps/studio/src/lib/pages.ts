@@ -9,6 +9,8 @@ export const PAGES = {
   "/sources/$concept": "/sources/canon.Item",
   "/sources/$concept/$": "/sources/canon.Item/demo/item/gold",
   "/objects/$type": "/objects/canon.Item",
+  "/transforms": "/transforms",
+  "/transforms/$id": "/transforms/shop.revenue_by_region",
   "/decisions": "/decisions",
   "/runs/$id": "/runs/run_restock_7",
   "/episodes/$id": "/episodes/ep_demo_overridden",

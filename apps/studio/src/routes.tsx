@@ -13,6 +13,7 @@ import { EpisodePage } from "./learning/episode-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
+import { TransformPage, TransformsPage } from "./transforms.tsx"
 import { ToolBindings } from "./tool-bindings.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
 
@@ -24,6 +25,8 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/sources/$concept": ObjectTypePage,
   "/sources/$concept/$": SourcesItemPage,
   "/objects/$type": RecordsPage,
+  "/transforms": TransformsPage,
+  "/transforms/$id": TransformPage,
   "/decisions": DecisionsPage,
   "/runs/$id": RunPage,
   "/episodes/$id": EpisodePage,

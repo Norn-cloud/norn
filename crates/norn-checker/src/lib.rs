@@ -162,6 +162,7 @@ pub mod sealing;
 mod source_commands;
 pub mod source_schema;
 pub mod tool_ports;
+pub mod transform;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod ui_machine;
