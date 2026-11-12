@@ -9,7 +9,7 @@
     "currency": "USD",
     "doc_number": "INV-0041",
     "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
-    "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0041.png",
+    "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0041.png",
     "evidence": [
      {
       "bbox_h": 0.0350,
@@ -18,12 +18,12 @@
       "bbox_y": 0.7100,
       "confidence_bp": 9100,
       "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0041.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0041.png",
       "extractor": "tesseract",
       "extractor_version": "5.3.4+norn-extractor/0.1.0",
       "field": "total",
       "media_type": "image/png",
-      "name": "SCAN-INV-0041/total",
+      "name": "SCAN-INV-0041~total",
       "page": 1,
       "parent": "SCAN-INV-0041",
       "text": "30.50"
@@ -35,12 +35,12 @@
       "bbox_y": 0.4000,
       "confidence_bp": 9400,
       "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0041.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0041.png",
       "extractor": "tesseract",
       "extractor_version": "5.3.4+norn-extractor/0.1.0",
       "field": "lines.1.amount",
       "media_type": "image/png",
-      "name": "SCAN-INV-0041/lines.1.amount",
+      "name": "SCAN-INV-0041~lines.1.amount",
       "page": 1,
       "parent": "SCAN-INV-0041",
       "text": "18.50"
@@ -52,12 +52,12 @@
       "bbox_y": 0.4500,
       "confidence_bp": 9400,
       "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0041.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0041.png",
       "extractor": "tesseract",
       "extractor_version": "5.3.4+norn-extractor/0.1.0",
       "field": "lines.2.amount",
       "media_type": "image/png",
-      "name": "SCAN-INV-0041/lines.2.amount",
+      "name": "SCAN-INV-0041~lines.2.amount",
       "page": 1,
       "parent": "SCAN-INV-0041",
       "text": "12.00"
@@ -74,14 +74,14 @@
       "amount": 18.50,
       "description": "Casting flux",
       "line_no": 1,
-      "name": "SCAN-INV-0041/line/1",
+      "name": "SCAN-INV-0041~line-1",
       "parent": "SCAN-INV-0041"
      },
      {
       "amount": 12.00,
       "description": "Crucible liner",
       "line_no": 2,
-      "name": "SCAN-INV-0041/line/2",
+      "name": "SCAN-INV-0041~line-2",
       "parent": "SCAN-INV-0041"
      }
     ],
@@ -97,7 +97,7 @@
     "currency": "USD",
     "doc_number": "INV-0042",
     "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
-    "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0042.png",
+    "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0042.png",
     "evidence": [
      {
       "bbox_h": 0.0350,
@@ -106,12 +106,12 @@
       "bbox_y": 0.7100,
       "confidence_bp": 9100,
       "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0042.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0042.png",
       "extractor": "legacy-ocr",
       "extractor_version": "4.2 (synthetic export)",
       "field": "total",
       "media_type": "image/png",
-      "name": "SCAN-INV-0042/total",
+      "name": "SCAN-INV-0042~total",
       "page": 1,
       "parent": "SCAN-INV-0042",
       "text": "720"
@@ -123,12 +123,12 @@
       "bbox_y": 0.4000,
       "confidence_bp": 9400,
       "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0042.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0042.png",
       "extractor": "legacy-ocr",
       "extractor_version": "4.2 (synthetic export)",
       "field": "lines.1.amount",
       "media_type": "image/png",
-      "name": "SCAN-INV-0042/lines.1.amount",
+      "name": "SCAN-INV-0042~lines.1.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
       "text": "30.00"
@@ -140,12 +140,12 @@
       "bbox_y": 0.4500,
       "confidence_bp": 9400,
       "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0042.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0042.png",
       "extractor": "legacy-ocr",
       "extractor_version": "4.2 (synthetic export)",
       "field": "lines.2.amount",
       "media_type": "image/png",
-      "name": "SCAN-INV-0042/lines.2.amount",
+      "name": "SCAN-INV-0042~lines.2.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
       "text": "40.00"
@@ -157,12 +157,12 @@
       "bbox_y": 0.5000,
       "confidence_bp": 9400,
       "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-INV-0042.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0042.png",
       "extractor": "legacy-ocr",
       "extractor_version": "4.2 (synthetic export)",
       "field": "lines.3.amount",
       "media_type": "image/png",
-      "name": "SCAN-INV-0042/lines.3.amount",
+      "name": "SCAN-INV-0042~lines.3.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
       "text": "2.00"
@@ -179,21 +179,21 @@
       "amount": 30.00,
       "description": "Gift boxes",
       "line_no": 1,
-      "name": "SCAN-INV-0042/line/1",
+      "name": "SCAN-INV-0042~line-1",
       "parent": "SCAN-INV-0042"
      },
      {
       "amount": 40.00,
       "description": "Tissue paper",
       "line_no": 2,
-      "name": "SCAN-INV-0042/line/2",
+      "name": "SCAN-INV-0042~line-2",
       "parent": "SCAN-INV-0042"
      },
      {
       "amount": 2.00,
       "description": "Courier fee",
       "line_no": 3,
-      "name": "SCAN-INV-0042/line/3",
+      "name": "SCAN-INV-0042~line-3",
       "parent": "SCAN-INV-0042"
      }
     ],
@@ -209,7 +209,7 @@
     "currency": "USD",
     "doc_number": "RPT-0117",
     "document_digest": "508b68bc0b7fd8cd0b1b0a512d12ccfcd1a7b7977c72c25a3e97eec4ec12b71f",
-    "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-RPT-0117.png",
+    "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-RPT-0117.png",
     "evidence": [
      {
       "bbox_h": 0.0350,
@@ -218,12 +218,12 @@
       "bbox_y": 0.7100,
       "confidence_bp": 9100,
       "document_digest": "508b68bc0b7fd8cd0b1b0a512d12ccfcd1a7b7977c72c25a3e97eec4ec12b71f",
-      "document_uri": "s3://norn-alpha-uploads/scans/synthetic/20261115/SCAN-RPT-0117.png",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-RPT-0117.png",
       "extractor": "legacy-ocr",
       "extractor_version": "4.2 (synthetic export)",
       "field": "total",
       "media_type": "image/png",
-      "name": "SCAN-RPT-0117/total",
+      "name": "SCAN-RPT-0117~total",
       "page": 1,
       "parent": "SCAN-RPT-0117",
       "text": "720"

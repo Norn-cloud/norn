@@ -359,6 +359,33 @@ impl QuestionRuntime<NativeEngine> for Disclosure {
     }
 }
 
+/// The host's read mapping: the verified caller and the exact row or collection.
+struct Access;
+impl crate::object_routes::ObjectAccess for Access {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        let mut request = Disclosure.collection_access(scope, actor, capability, object_type)?;
+        if let Some(row) = row {
+            request.resource.object_type.clone_from(&row.object_type);
+            request.resource.id.clone_from(&row.id);
+        }
+        Ok(request)
+    }
+}
+
+fn scope_query() -> crate::scope::ScopeQuery {
+    crate::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    }
+}
+
 fn host(store: CellStore<NativeEngine>) -> DevHost<NativeEngine> {
     let scope = CellScope {
         org_id: "org_demo".into(),
@@ -447,7 +474,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
 
     // Where the total was read survives the quarantine of the document.
     let evidence = reader
-        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-0042/total")
+        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-0042~total")
         .expect("read")
         .expect("total evidence");
     assert_eq!(text(&evidence, "subject_property"), "total");
@@ -460,7 +487,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
             .object(
                 MAIN_WORLD,
                 "docs.DocumentLine",
-                &format!("SCAN-INV-0042/line/{line}"),
+                &format!("SCAN-INV-0042~line-{line}"),
             )
             .expect("read")
             .expect("line");
@@ -507,7 +534,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     let forged = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"forged","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117/total","actor":"user:someone-else"}}"#,
+        r#"{"idempotencyKey":"forged","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~total","actor":"user:someone-else"}}"#,
     );
     assert!(forged.is_err(), "a caller-supplied actor is refused");
 
@@ -515,7 +542,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     let unexplained = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"no-reason","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"","correction_evidence":"SCAN-RPT-0117/total"}}"#,
+        r#"{"idempotencyKey":"no-reason","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"","correction_evidence":"SCAN-RPT-0117~total"}}"#,
     );
     assert!(
         unexplained.is_err(),
@@ -525,7 +552,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"rpt-0117","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.0; the import dropped the decimal point.","correction_evidence":"SCAN-RPT-0117/total"}}"#,
+        r#"{"idempotencyKey":"rpt-0117","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.0; the import dropped the decimal point.","correction_evidence":"SCAN-RPT-0117~total"}}"#,
     )
     .expect("a consistent, explained correction commits");
 
@@ -539,7 +566,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     assert_eq!(text(&corrected, "corrected_by"), STEWARD);
     assert_eq!(
         text(&corrected, "correction_evidence"),
-        "SCAN-RPT-0117/total"
+        "SCAN-RPT-0117~total"
     );
     assert_eq!(
         text(&corrected, "extractor"),
@@ -553,11 +580,92 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         .expect("read")
         .expect("original version");
     assert_eq!(text(&original, "total"), "720");
+    drop(reader);
+    drop(cell);
+
+    // The history shows both values and what wrote each.
+    let history = crate::object_review::get_object_history(
+        &host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-0117",
+        &Access,
+    )
+    .expect("history");
+    assert_eq!(history.versions.len(), 2, "{history:#?}");
+    let (newest, oldest) = (&history.versions[0], &history.versions[1]);
+    match &newest.writer {
+        crate::object_review::NornVersionWriter::Action {
+            action_id,
+            actor,
+            input,
+        } => {
+            assert_eq!(action_id, CORRECT);
+            assert_eq!(actor, STEWARD);
+            assert_eq!(
+                input
+                    .get("correction_reason")
+                    .and_then(RuntimeValue::as_str),
+                Some("The scan reads 72.0; the import dropped the decimal point.")
+            );
+        }
+        other => panic!("the correction is the action's: {other:?}"),
+    }
+    match &oldest.writer {
+        crate::object_review::NornVersionWriter::Mapping { lineage } => {
+            assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping");
+        }
+        other => panic!("the import is the mapping's: {other:?}"),
+    }
+    let value = |version: &crate::object_review::NornObjectVersion| match version
+        .values
+        .as_ref()
+        .and_then(|values| values.get("total"))
+    {
+        Some(RuntimeValue::Number(number)) => number.to_string(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (value(newest).as_str(), value(oldest).as_str()),
+        ("72", "720")
+    );
+    crate::object_review::get_object_lineage_at(
+        &host,
+        &scope_query(),
+        Some(STEWARD),
+        (DOCUMENT, "SCAN-RPT-0117", slipped),
+        &Access,
+    )
+    .expect("the imported version keeps its lineage");
 }
 
 #[test]
 fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let host = host(loaded());
+    let findings = crate::object_review::get_object_findings(
+        &host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-INV-0042",
+        &Access,
+    )
+    .expect("a reviewer reads the findings of a quarantined document");
+    assert!(findings.quarantined);
+    assert_eq!(findings.findings.len(), 1);
+    assert!(
+        crate::object_review::get_object_findings(
+            &host,
+            &scope_query(),
+            Some("user:stranger"),
+            DOCUMENT,
+            "SCAN-INV-0042",
+            &Access,
+        )
+        .is_err(),
+        "a caller without read authority learns nothing"
+    );
     let before = host
         .cell()
         .expect("cell")
@@ -568,7 +676,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let wrong = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"inv-0042-wrong","input":{"id":"SCAN-INV-0042","currency":"USD","total":"70.00","correction_reason":"typo","correction_evidence":"SCAN-INV-0042/total"}}"#,
+        r#"{"idempotencyKey":"inv-0042-wrong","input":{"id":"SCAN-INV-0042","currency":"USD","total":"70.00","correction_reason":"typo","correction_evidence":"SCAN-INV-0042~total"}}"#,
     );
     let refusal = wrong.expect_err("70.00 is not 30.00 + 40.00 + 2.00");
     assert_eq!(refusal.status, 422, "{refusal:?}");
@@ -586,7 +694,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"inv-0042","input":{"id":"SCAN-INV-0042","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.00; the legacy import dropped the decimal point.","correction_evidence":"SCAN-INV-0042/total"}}"#,
+        r#"{"idempotencyKey":"inv-0042","input":{"id":"SCAN-INV-0042","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.00; the legacy import dropped the decimal point.","correction_evidence":"SCAN-INV-0042~total"}}"#,
     )
     .expect("the consistent correction commits");
     let cell = host.cell().expect("cell");

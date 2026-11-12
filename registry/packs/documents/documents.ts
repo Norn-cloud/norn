@@ -32,7 +32,7 @@ export const ScannedDocument = Norn.type({
   implements: [SourceDocument],
   properties: Schema.Struct({
     id: Schema.String, doc_number: Schema.String, kind: Schema.Literals(["receipt", "invoice", "expense_report"]),
-    vendor: Schema.String, issued_on: Norn.date(), currency: Schema.Literals(["USD"]),
+    vendor: Schema.String, issued_on: Schema.NullOr(Norn.date()), currency: Schema.Literals(["USD"]),
     total: Money, lines_total: Schema.NullOr(Money), line_count: Schema.Int,
     document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String,
     extractor: Schema.String, extractor_version: Schema.String,
@@ -85,7 +85,7 @@ export const Source = Norn.sourceSchema({
     { dataset: "Scanned Document", name: "doc_number", ordinal: 1, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Scanned Document", name: "kind", ordinal: 2, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Scanned Document", name: "vendor", ordinal: 3, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
-    { dataset: "Scanned Document", name: "issued_on", ordinal: 4, nativeType: "Date", typeCandidate: { type: "date", origin: "declared" }, required: true },
+    { dataset: "Scanned Document", name: "issued_on", ordinal: 4, nativeType: "Date", typeCandidate: { type: "date", origin: "declared" }, required: false },
     { dataset: "Scanned Document", name: "currency", ordinal: 5, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Scanned Document", name: "total", ordinal: 6, nativeType: "Decimal", typeCandidate: { type: "decimal", origin: "declared" }, required: true },
     { dataset: "Scanned Document", name: "line_count", ordinal: 7, nativeType: "Integer", typeCandidate: { type: "integer", origin: "declared" }, required: true },
@@ -142,7 +142,7 @@ export const Mapping = Norn.mapping({
       properties: [
         { property: "id", value: "input.name" }, { property: "doc_number", value: "input.doc_number" },
         { property: "kind", value: "input.kind" }, { property: "vendor", value: "input.vendor" },
-        { property: "issued_on", value: "date(input.issued_on)" }, { property: "currency", value: "input.currency" },
+        { property: "issued_on", value: "input.issued_on == null ? null : date(input.issued_on)" }, { property: "currency", value: "input.currency" },
         { property: "total", value: "input.total" },
         { property: "lines_total", value: "input.line_count == 0 ? null : sum(map(input.lines, #.amount))" },
         { property: "line_count", value: "input.line_count" },
