@@ -88,6 +88,74 @@ fn emit_target(target: &Path, manifest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Counts of what the import produced, for the run's report.
+fn summary(import: &norn_formats::SchemaImport) -> serde_json::Value {
+    let mut dispositions: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in &import.loss_report.entries {
+        let name = match &entry.disposition {
+            Disposition::Mapped { .. } => "mapped".to_owned(),
+            Disposition::Extension { .. } => "extension".to_owned(),
+            Disposition::Deferred { code, .. } => format!("deferred:{code}"),
+            Disposition::Rejected { code, .. } => format!("rejected:{code}"),
+            Disposition::Dropped { reason, .. } => format!("dropped:{reason:?}"),
+            Disposition::Unexplained => "unexplained".to_owned(),
+        };
+        let slot = dispositions.entry(name).or_default();
+        *slot = slot.saturating_add(1);
+    }
+    let mut diagnostics: BTreeMap<String, usize> = BTreeMap::new();
+    for diagnostic in &import.diagnostics {
+        let slot = diagnostics.entry(diagnostic.code.clone()).or_default();
+        *slot = slot.saturating_add(1);
+    }
+    let schema_counts = import.source_schema.as_ref().map(|schema| {
+        let count = |kind: &str| schema.datasets.iter().filter(|d| format!("{:?}", d.kind).eq_ignore_ascii_case(kind)).count();
+        let constraints: BTreeMap<String, usize> = schema.constraints.iter().fold(BTreeMap::new(), |mut map, c| {
+            let slot = map.entry(format!("{:?}", c.kind)).or_default();
+            *slot = slot.saturating_add(1);
+            map
+        });
+        let extension = schema
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.get(norn_importers::ofbiz::EXTENSION));
+        let length = |member: &str| match extension {
+            Some(JsonValue::Object(object)) => match object.get(member) {
+                Some(JsonValue::Array(items)) => items.len(),
+                Some(JsonValue::Object(map)) => map.len(),
+                Some(
+                    JsonValue::Null
+                    | JsonValue::Bool(_)
+                    | JsonValue::Number(_)
+                    | JsonValue::String(_),
+                )
+                | None => 0,
+            },
+            Some(
+                JsonValue::Null
+                | JsonValue::Bool(_)
+                | JsonValue::Number(_)
+                | JsonValue::String(_)
+                | JsonValue::Array(_),
+            )
+            | None => 0,
+        };
+        json!({
+            "tables": count("table"), "views": count("view"), "fields": schema.fields.len(),
+            "constraints": constraints, "codeSets": schema.code_sets.len(), "lineage": schema.lineage.len(),
+            "lifecycleCandidates": length("lifecycleCandidates"), "codeSetGaps": length("codeSetGaps"),
+            "unresolved": length("unresolved"), "entityGroups": length("entityGroups"),
+        })
+    });
+    json!({
+        "refused": refused(import),
+        "schema": schema_counts,
+        "lossReport": {"elements": import.loss_report.entries.len(), "dispositions": dispositions},
+        "diagnostics": diagnostics,
+        "firstErrors": import.diagnostics.iter().filter(|d| d.severity == norn_ir::DiagnosticSeverity::Error).map(|d| d.message.clone()).take(3).collect::<Vec<_>>(),
+    })
+}
+
 fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<String, String> {
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
@@ -145,70 +213,7 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<St
         let text = import.canonical_json().map_err(|e| e.to_string())?;
         std::fs::write(target, text).map_err(|e| format!("{}: {e}", target.display()))?;
     }
-    let mut dispositions: BTreeMap<String, usize> = BTreeMap::new();
-    for entry in &import.loss_report.entries {
-        let name = match &entry.disposition {
-            Disposition::Mapped { .. } => "mapped".to_owned(),
-            Disposition::Extension { .. } => "extension".to_owned(),
-            Disposition::Deferred { code, .. } => format!("deferred:{code}"),
-            Disposition::Rejected { code, .. } => format!("rejected:{code}"),
-            Disposition::Dropped { reason, .. } => format!("dropped:{reason:?}"),
-            Disposition::Unexplained => "unexplained".to_owned(),
-        };
-        let slot = dispositions.entry(name).or_default();
-        *slot = slot.saturating_add(1);
-    }
-    let mut diagnostics: BTreeMap<String, usize> = BTreeMap::new();
-    for diagnostic in &import.diagnostics {
-        let slot = diagnostics.entry(diagnostic.code.clone()).or_default();
-        *slot = slot.saturating_add(1);
-    }
-    let summary = import.source_schema.as_ref().map(|schema| {
-        let count = |kind: &str| schema.datasets.iter().filter(|d| format!("{:?}", d.kind).eq_ignore_ascii_case(kind)).count();
-        let constraints: BTreeMap<String, usize> = schema.constraints.iter().fold(BTreeMap::new(), |mut map, c| {
-            let slot = map.entry(format!("{:?}", c.kind)).or_default();
-            *slot = slot.saturating_add(1);
-            map
-        });
-        let extension = schema
-            .extensions
-            .as_ref()
-            .and_then(|extensions| extensions.get(norn_importers::ofbiz::EXTENSION));
-        let length = |member: &str| match extension {
-            Some(JsonValue::Object(object)) => match object.get(member) {
-                Some(JsonValue::Array(items)) => items.len(),
-                Some(JsonValue::Object(map)) => map.len(),
-                Some(
-                    JsonValue::Null
-                    | JsonValue::Bool(_)
-                    | JsonValue::Number(_)
-                    | JsonValue::String(_),
-                )
-                | None => 0,
-            },
-            Some(
-                JsonValue::Null
-                | JsonValue::Bool(_)
-                | JsonValue::Number(_)
-                | JsonValue::String(_)
-                | JsonValue::Array(_),
-            )
-            | None => 0,
-        };
-        json!({
-            "tables": count("table"), "views": count("view"), "fields": schema.fields.len(),
-            "constraints": constraints, "codeSets": schema.code_sets.len(), "lineage": schema.lineage.len(),
-            "lifecycleCandidates": length("lifecycleCandidates"), "codeSetGaps": length("codeSetGaps"),
-            "unresolved": length("unresolved"), "entityGroups": length("entityGroups"),
-        })
-    });
-    let report = json!({
-        "refused": refused(&import),
-        "schema": summary,
-        "lossReport": {"elements": import.loss_report.entries.len(), "dispositions": dispositions},
-        "diagnostics": diagnostics,
-        "firstErrors": import.diagnostics.iter().filter(|d| d.severity == norn_ir::DiagnosticSeverity::Error).map(|d| d.message.clone()).take(3).collect::<Vec<_>>(),
-    });
+    let report = summary(&import);
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     if refused(&import) {
         return Err(text);
