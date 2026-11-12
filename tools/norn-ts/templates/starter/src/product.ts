@@ -1,5 +1,5 @@
-import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
+import { Schema } from "effect"
 
 export const Product = Norn.type({
   name: "__NAMESPACE__.Product", title: "Product", version: "0.1.0",

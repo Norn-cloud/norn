@@ -25,6 +25,22 @@ writes its failure, so before merging a gate change, confirm that the latest
 changed.
 After any new push, approve again.
 
+Besides the workflows and the listed gate files, these are gates too, and any
+change needs `/approve-gates`:
+
+- **Anything under `crates/norn-skeleton-guard/`**: a file added, removed or
+  edited, or a mode or file-type change. The crate is the trusted lane's own
+  source, so a merged edit to it would change how every later pull request is
+  judged.
+- **Anything under `.cargo/`**: Cargo reads `.cargo/config.toml` from the
+  working directory and every parent, whatever `--manifest-path` says. A
+  `linker`, `rustc-wrapper` or `[env]` entry there would apply to the trusted
+  build.
+- **`rust-toolchain.toml` and `rust-toolchain`**, including adding one where
+  there is none. rustup reads them from the working directory. The trusted
+  runner sets `RUSTUP_TOOLCHAIN`, which takes precedence, so this gate is
+  defence in depth.
+
 In the merge queue, `Trusted merge group` (which always runs from the default
 branch) writes `trusted-policy` on each group's head commit. A gate-changing
 pull request lands only if the queue's merge leaves its workflows and gate

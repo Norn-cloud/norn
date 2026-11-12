@@ -1044,9 +1044,17 @@ fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
     coverage.assert_covered(&["cell:fault.io_error"]);
 }
 
-/// The crash law can fail: an engine that commits a faulted transaction lets
+/// The law a write surviving its rollback breaks under the suite's fixed seed: a
+/// faulted perform claim that should have rolled back is delivered or executed
+/// anyway. Mutant tests name the law they must break, so a harness panic or an
+/// unrelated law (fault wiring, say) never passes for the mutant being caught.
+const SURVIVING_ROLLBACK_LAW: &str =
+    "law violated: a perform whose claim or result is lost delivered or executed";
+
+/// Crash rollback can fail: an engine that commits a faulted transaction lets
 /// a partial (or whole) write survive the crash, and the law machine finds a
-/// counterexample that arms a fault. It only needs to be caught, not
+/// counterexample that arms a fault; under the suite's seed the surviving
+/// write breaks the perform law (`SURVIVING_ROLLBACK_LAW`). It only needs to be caught, not
 /// minimised, so it takes the one shrink step proptest-state-machine needs.
 #[test]
 fn cell_host_mutant_committing_after_a_fault_is_caught() {
@@ -1063,7 +1071,10 @@ fn cell_host_mutant_committing_after_a_fault_is_caught() {
             .any(|op| matches!(op, CellOp::Faulted(_))),
         "{failure}"
     );
-    assert!(failure.reason.contains("swarm:"), "{failure}");
+    assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
 }
 
 /// The host laws on the Durable Object transaction glue, run natively
@@ -1103,6 +1114,10 @@ fn cell_host_mutant_do_storage_hiding_a_failed_commit_is_caught() {
     )
     .expect_err("a storage that hides a failed commit must fail the laws");
     assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
+    assert!(
         failure.transitions.iter().any(|op| matches!(
             op,
             CellOp::Faulted(faulted) if faulted.plan.kind == FaultKind::CommitFails
@@ -1137,7 +1152,19 @@ fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
             .max_shrink_iters(1),
     )
     .expect_err("a storage that commits on rollback must fail the laws");
-    assert!(!failure.transitions.is_empty(), "{failure}");
+    // Its own law, not a harness panic or another law, on a run that rolled back
+    // a faulted transaction.
+    assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Faulted(_))),
+        "{failure}"
+    );
 }
 
 /// Cases for the responder-fault tests (law 7): file stores, crashes
@@ -1301,6 +1328,13 @@ fn cell_host_mutant_executing_a_redelivered_result_again_is_caught() {
             .max_shrink_iters(1),
     )
     .expect_err("a host that executes a command twice must fail the laws");
+    // Law 5 (refinement): the second execution leaves host state the model never reaches.
+    assert!(
+        failure
+            .reason
+            .contains("host state does not refine the cell model"),
+        "{failure}"
+    );
     assert!(
         failure
             .transitions
