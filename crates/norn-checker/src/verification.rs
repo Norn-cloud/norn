@@ -1065,7 +1065,7 @@ impl LawContext<'_> {
         match &law.response {
             LawResponse::Predicate { expression } => guarded_predicate(
                 expression.as_str(),
-                law.condition.as_ref().map(|condition| condition.as_str()),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 env,
                 artifact,
                 "/payload/response/expression",
@@ -1196,7 +1196,7 @@ impl LawContext<'_> {
         match &law.response {
             LawResponse::Predicate { expression } => guarded_predicate(
                 expression.as_str(),
-                law.condition.as_ref().map(|condition| condition.as_str()),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 env,
                 artifact,
                 "/payload/response/expression",
