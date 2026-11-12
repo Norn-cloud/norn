@@ -140,16 +140,21 @@ pub(crate) fn load(
             let (id, _new) = store
                 .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
                 .map_err(|error| format!("{}: {dataset} row not captured: {error}", snapshot.path.display()))?;
-            captured.push((snapshot.path.display().to_string(), id));
+            let label = record
+                .get("id")
+                .or_else(|| record.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            captured.push((format!("{}: {dataset} {label}", snapshot.path.display()), snapshot.path.display().to_string(), id));
         }
     }
     let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
         SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
     let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-    for (file, id) in &captured {
+    for (row, file, id) in &captured {
         let processed = cell
             .process_mapping_bundle(id)
-            .map_err(|error| format!("{file}: {id} was refused by the mapping: {error}"))?;
+            .map_err(|error| format!("{row} was refused by the mapping: {error}"))?;
         let entry = mapped.entry(file.clone()).or_default();
         entry.0 += 1;
         if processed {
