@@ -493,12 +493,22 @@ fn the_route_refuses_before_any_effect() {
 fn an_mcp_action_tool_calls_the_same_governed_service() {
     let cell = cell();
     let rpc = |auth: &str, message: &Value| {
-        let (status, body) = send_raw(&cell, "POST", "/v1/mcp", SCOPE, Some(auth), &message.to_string());
+        let (status, body) = send_raw(
+            &cell,
+            "POST",
+            "/v1/mcp",
+            SCOPE,
+            Some(auth),
+            &message.to_string(),
+        );
         assert_eq!(status, 200, "{body}");
         serde_json::from_str::<Value>(&body).unwrap()
     };
     let tool_of = |auth: &str| {
-        rpc(auth, &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}}))["result"]["tools"]
+        rpc(
+            auth,
+            &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}}),
+        )["result"]["tools"]
             .as_array()
             .unwrap()
             .iter()
@@ -513,10 +523,13 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
 
     let key = "4b7a2c1e-0000-4000-8000-0000000000aa";
     let call = |auth: &str, id: &str, key: &str| {
-        rpc(auth, &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-            "name": name, "arguments": {"id": id, "input_fine_g": "12", "output_fine_g": "10"},
-            "_meta": {"norn/idempotencyKey": key}
-        }}))
+        rpc(
+            auth,
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": name, "arguments": {"id": id, "input_fine_g": "12", "output_fine_g": "10"},
+                "_meta": {"norn/idempotencyKey": key}
+            }}),
+        )
     };
     let called = call(OPERATOR, "melt-9", key);
     assert_eq!(called["result"]["isError"], false, "{called}");
@@ -529,7 +542,11 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
     assert_eq!(replayed["receipt"], receipt["receipt"]);
 
     // A viewer is refused exactly as a direct call is, or is never offered the tool.
-    let (_, direct) = post(&cell, Some(VIEWER), &melt_body("melt-10", "12", "10", "k-viewer"));
+    let (_, direct) = post(
+        &cell,
+        Some(VIEWER),
+        &melt_body("melt-10", "12", "10", "k-viewer"),
+    );
     if tool_of(VIEWER).is_some() {
         let refused = call(VIEWER, "melt-10", "k-viewer");
         assert_eq!(refused["result"]["isError"], true, "{refused}");

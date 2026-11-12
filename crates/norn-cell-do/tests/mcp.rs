@@ -99,7 +99,10 @@ fn call_tool(cell: &Cell, auth: Option<&str>, name: &str, arguments: Value) -> V
 
 fn direct(cell: &Cell, path: &str, query: &str, auth: Option<&str>) -> (u16, Value) {
     let response = send(cell, "GET", path, query, auth, "");
-    (response.status, serde_json::from_str(&response.body).unwrap())
+    (
+        response.status,
+        serde_json::from_str(&response.body).unwrap(),
+    )
 }
 
 #[test]
@@ -122,7 +125,12 @@ fn initialize_negotiates_the_revision_and_declares_the_ui_extension() {
             init["capabilities"]["extensions"][UI_EXTENSION]["mimeTypes"],
             json!([UI_MIME_TYPE])
         );
-        assert!(init["instructions"].as_str().unwrap().contains("norn_catalog"));
+        assert!(
+            init["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("norn_catalog")
+        );
     }
     // A stateless request needs no prior handshake.
     assert!(!tools(&cell, VIEWER).is_empty());
@@ -166,7 +174,10 @@ fn only_post_from_a_verified_caller_in_the_cells_own_scope_is_served() {
 fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
     let cell = cell();
     let listed = tools(&cell, VIEWER);
-    let names: Vec<&str> = listed.iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = listed
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     for expected in [
         "norn_catalog",
         "norn_query_objects",
@@ -178,21 +189,32 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
         "norn_evaluate",
         "norn_propose_definition",
     ] {
-        assert!(names.contains(&expected), "{expected} missing from {names:?}");
+        assert!(
+            names.contains(&expected),
+            "{expected} missing from {names:?}"
+        );
     }
     // Names both assistants accept as function names.
     assert!(names.iter().all(|name| {
         !name.is_empty()
             && name.len() <= 64
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     }));
     // Types and questions come from the cell, not from this file.
-    let query = listed.iter().find(|tool| tool["name"] == "norn_query_objects").unwrap();
+    let query = listed
+        .iter()
+        .find(|tool| tool["name"] == "norn_query_objects")
+        .unwrap();
     assert_eq!(
         query["inputSchema"]["properties"]["type"]["enum"],
         json!([analytics::TYPE])
     );
-    let answer = listed.iter().find(|tool| tool["name"] == "norn_answer").unwrap();
+    let answer = listed
+        .iter()
+        .find(|tool| tool["name"] == "norn_answer")
+        .unwrap();
     assert_eq!(
         answer["inputSchema"]["properties"]["question"]["enum"],
         json!([QUESTION])
@@ -201,7 +223,15 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
     assert_eq!(answer["_meta"]["openai/outputTemplate"], View::Answer.uri());
     assert_eq!(answer["annotations"]["readOnlyHint"], true);
     // #733: no tool takes or names physical storage, at any depth of its schema.
-    let forbidden = ["sql", "table", "tables", "column", "columns", "statement", "schema_name"];
+    let forbidden = [
+        "sql",
+        "table",
+        "tables",
+        "column",
+        "columns",
+        "statement",
+        "schema_name",
+    ];
     fn keys(value: &Value, out: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
@@ -219,7 +249,9 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
         keys(&tool["inputSchema"], &mut found);
         let name = tool["name"].as_str().unwrap().to_lowercase();
         assert!(
-            forbidden.iter().all(|word| !name.contains(word) && !found.iter().any(|key| key == word)),
+            forbidden
+                .iter()
+                .all(|word| !name.contains(word) && !found.iter().any(|key| key == word)),
             "{name} exposes raw storage"
         );
     }
@@ -252,7 +284,13 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
             serde_json::from_str(called["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(text, answer);
 
-        let bucket = answer["rows"].as_object().unwrap().keys().next().unwrap().clone();
+        let bucket = answer["rows"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
         let lineage = answer["lineageRef"].as_str().unwrap();
         let pins = form_urlencoded::Serializer::new(String::new())
             .append_pair("lineageRef", lineage)
@@ -273,7 +311,10 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
         assert_eq!(traced["structuredContent"], trace);
 
         let (_, catalog) = direct(&cell, "/v1/definitions", SCOPE, auth);
-        assert_eq!(call_tool(&cell, auth, "norn_catalog", json!({}))["structuredContent"], catalog);
+        assert_eq!(
+            call_tool(&cell, auth, "norn_catalog", json!({}))["structuredContent"],
+            catalog
+        );
     }
 }
 
@@ -287,7 +328,12 @@ fn refusals_come_back_as_tool_errors_with_the_routes_own_refusal() {
     assert_eq!(called["structuredContent"], refusal);
 
     let (_, refusal) = direct(&cell, "/v1/objects/demo.Nothing", SCOPE, VIEWER);
-    let called = call_tool(&cell, VIEWER, "norn_query_objects", json!({"type": "demo.Nothing"}));
+    let called = call_tool(
+        &cell,
+        VIEWER,
+        "norn_query_objects",
+        json!({"type": "demo.Nothing"}),
+    );
     assert_eq!(called["isError"], true);
     assert_eq!(called["structuredContent"], refusal);
 

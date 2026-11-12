@@ -315,7 +315,10 @@ impl Session {
             )])),
         );
         let mut result = RuntimeObject::from([
-            ("protocolVersion".into(), RuntimeValue::String((*version).into())),
+            (
+                "protocolVersion".into(),
+                RuntimeValue::String((*version).into()),
+            ),
             ("capabilities".into(), RuntimeValue::Object(capabilities)),
             (
                 "serverInfo".into(),

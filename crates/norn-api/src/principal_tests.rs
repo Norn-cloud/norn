@@ -84,7 +84,12 @@ fn an_assistant_grant_acts_as_its_person_and_never_as_a_service() {
             granted.roles.as_slice(),
             granted.auth_method.as_str()
         ),
-        ("user:u1", ActorKind::User, ["member".to_owned()].as_slice(), "oauth")
+        (
+            "user:u1",
+            ActorKind::User,
+            ["member".to_owned()].as_slice(),
+            "oauth"
+        )
     );
     assert!(resolve(&token(&claims("service", "viewer", "oauth"))).is_err());
 }

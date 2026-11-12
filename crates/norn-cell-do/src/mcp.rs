@@ -235,7 +235,9 @@ impl Catalog {
                 .map(|object_type| object_type.name.as_str().to_owned())
                 .collect()
         };
-        let question_names = questions.map(|runtime| runtime.question_names()).unwrap_or_default();
+        let question_names = questions
+            .map(|runtime| runtime.question_names())
+            .unwrap_or_default();
         let mut tools = generic_tools(&object_types, &question_names, questions.is_some())?;
         let query = ActionQuery {
             org_id: Some(scope.org_id.clone()),
@@ -247,7 +249,10 @@ impl Catalog {
         let version = callable.as_ref().map_or(0, |callable| callable.version);
         let mut actions = BTreeMap::new();
         if questions.is_some() {
-            for (_, action) in callable.map(|callable| callable.actions).unwrap_or_default() {
+            for (_, action) in callable
+                .map(|callable| callable.actions)
+                .unwrap_or_default()
+            {
                 let Ok(mut tool) = norn_projections::mcp::action_tool(&action) else {
                     continue;
                 };
@@ -259,7 +264,11 @@ impl Catalog {
                 );
                 with_view(meta, View::Receipt);
                 tool.name.clone_from(&name);
-                if tool.description.as_ref().is_none_or(|text| text.trim().is_empty()) {
+                if tool
+                    .description
+                    .as_ref()
+                    .is_none_or(|text| text.trim().is_empty())
+                {
                     tool.description = Some(format!(
                         "Call the governed action {}. The workspace's laws and policy decide it: \
                          the answer is a receipt or a refusal with its reason.",
@@ -290,7 +299,13 @@ fn tool_name(action_id: &str, taken: &BTreeMap<String, String>, tools: &[McpTool
     let plain: String = std::iter::once("act_")
         .flat_map(str::chars)
         .chain(action_id.chars())
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let used = |name: &str| taken.contains_key(name) || tools.iter().any(|tool| tool.name == name);
     if plain.len() <= MAX_TOOL_NAME && !used(&plain) {
@@ -623,13 +638,14 @@ impl<E: SqlEngine> Loopback<'_, E> {
             body: String::new(),
         };
         let mut scoped = self.scope.pairs();
-        let optional = |scoped: &mut Vec<(&'static str, String)>, key: &'static str, field: &str| {
-            text(arguments, field).map(|value| {
-                if let Some(value) = value {
-                    scoped.push((key, value));
-                }
-            })
-        };
+        let optional =
+            |scoped: &mut Vec<(&'static str, String)>, key: &'static str, field: &str| {
+                text(arguments, field).map(|value| {
+                    if let Some(value) = value {
+                        scoped.push((key, value));
+                    }
+                })
+            };
         let object_path = |leaf: &str| -> Result<String, Refusal> {
             Ok(format!(
                 "/v1/objects/{}/{}{leaf}",
@@ -676,20 +692,29 @@ impl<E: SqlEngine> Loopback<'_, E> {
             }
             "norn_trace_object" => get(object_path("/lineage")?, scoped),
             "norn_profile_type" => get(
-                format!("/v1/objects/{}:profile", segment(&required(arguments, "type")?)),
+                format!(
+                    "/v1/objects/{}:profile",
+                    segment(&required(arguments, "type")?)
+                ),
                 scoped,
             ),
             "norn_question_catalog" => get("/v1/questions:catalog".into(), scoped),
             "norn_list_metrics" => get("/v1/questions:metrics".into(), scoped),
             "norn_answer" => get(
-                format!("/v1/questions/{}/answer", segment(&required(arguments, "question")?)),
+                format!(
+                    "/v1/questions/{}/answer",
+                    segment(&required(arguments, "question")?)
+                ),
                 scoped,
             ),
             "norn_trace_answer" => {
                 optional(&mut scoped, "lineageRef", "lineageRef")?;
                 optional(&mut scoped, "bucket", "bucket")?;
                 get(
-                    format!("/v1/questions/{}/trace", segment(&required(arguments, "question")?)),
+                    format!(
+                        "/v1/questions/{}/trace",
+                        segment(&required(arguments, "question")?)
+                    ),
                     scoped,
                 )
             }
@@ -707,9 +732,18 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 path: "/v1/questions:trace".into(),
                 query: scoped,
                 body: json_text(&object(vec![
-                    ("question", arguments.get("question").cloned().unwrap_or_default()),
-                    ("lineageRef", RuntimeValue::String(required(arguments, "lineageRef")?)),
-                    ("bucket", RuntimeValue::String(required(arguments, "bucket")?)),
+                    (
+                        "question",
+                        arguments.get("question").cloned().unwrap_or_default(),
+                    ),
+                    (
+                        "lineageRef",
+                        RuntimeValue::String(required(arguments, "lineageRef")?),
+                    ),
+                    (
+                        "bucket",
+                        RuntimeValue::String(required(arguments, "bucket")?),
+                    ),
                 ]))?,
             },
             "norn_propose_definition" => Routed {
@@ -719,7 +753,10 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 body: json_text(&object(vec![
                     ("kind", RuntimeValue::String(required(arguments, "kind")?)),
                     ("id", RuntimeValue::String(required(arguments, "id")?)),
-                    ("payload", arguments.get("payload").cloned().unwrap_or_default()),
+                    (
+                        "payload",
+                        arguments.get("payload").cloned().unwrap_or_default(),
+                    ),
                 ]))?,
             },
             _ => {
@@ -727,11 +764,12 @@ impl<E: SqlEngine> Loopback<'_, E> {
                     .actions
                     .get(name)
                     .ok_or_else(|| Refusal::invalid("unknown tool"))?;
-                let key = if let Some(RuntimeValue::String(key)) = metadata.get("norn/idempotencyKey") {
-                    key.clone()
-                } else {
-                    idempotency_key(action, arguments)?
-                };
+                let key =
+                    if let Some(RuntimeValue::String(key)) = metadata.get("norn/idempotencyKey") {
+                        key.clone()
+                    } else {
+                        idempotency_key(action, arguments)?
+                    };
                 scoped.push(("version", self.version.to_string()));
                 Routed {
                     method: "POST",
@@ -768,7 +806,12 @@ impl<E: SqlEngine> Backend for Loopback<'_, E> {
     ) -> Result<CallOutput, Refusal> {
         let routed = self.route(name, &arguments, &metadata)?;
         let query = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(routed.query.iter().map(|(key, value)| (*key, value.as_str())))
+            .extend_pairs(
+                routed
+                    .query
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_str())),
+            )
             .finish();
         let response = handle_all(
             self.host,
