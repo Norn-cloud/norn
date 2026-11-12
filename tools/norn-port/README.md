@@ -49,6 +49,8 @@ set with the existing checker, prepares one untriggered RuleIR v2 `decide` with 
 and reads `{slice, event}` JSON lines on stdin. Each output is
 `{ok:true, closureDigest, output:{facts,commands,timers}}` or
 `{ok:false, closureDigest, error:REASON}`.
+Every definition must carry the `scope` that `--org` and `--env` name; the
+harness evaluates under org `port-calibration`, environment `offline`.
 Admission failures and broken streams exit nonzero. Evaluation refusals are
 per-input data. Exact decimal literals cross the existing RuntimeValue
 boundary. Budgets are per input (`--units`, default 1,000,000). A closure

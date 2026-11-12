@@ -35,7 +35,10 @@
       ]
     }
   },
-  "scope": {},
+  "scope": {
+    "environmentId": "offline",
+    "orgId": "port-calibration"
+  },
   "provenance": {
     "source": "authoring_sdk",
     "sourcePath": "tools/norn-port/selftest-fixtures/sample.entity.json"
