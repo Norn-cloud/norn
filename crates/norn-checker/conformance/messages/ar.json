@@ -1598,6 +1598,10 @@
       "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
       "review": "needs_review"
     },
+    "object_type.validation.additivity_not_refined": {
+      "message": "الخاصية {$property} تعلن جمعية غير التي يتطلبها {$owner}؛ يجوز للعضو أن يضيف الجمعية حيث لا يعلنها النوع المشار إليه، ولا يجوز أن يغيّر جمعية معلنة",
+      "review": "needs_review"
+    },
     "object_type.validation.computed_key_component": {
       "message": "مكوّن المفتاح {$property} محسوب؛ الهوية تُخزَّن ولا تُشتق",
       "review": "needs_review"
@@ -2024,6 +2028,14 @@
     },
     "property_type.validation.inverted_range": {
       "message": "{$lower} أكبر من {$upper}",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} يعلن الجمعية {$declared}، لكن النوع الذي يشير إليه يعلن {$referenced}؛ موضع الاستخدام يضيف الجمعية فقط إلى نوع لا يعلن أيًّا منها",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} يُحَل إلى نوع {$kind}؛ تُعلَن الجمعية على عدد صحيح أو عشري فقط",
       "review": "needs_review"
     },
     "property_type.validation.ref_cycle": {

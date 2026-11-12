@@ -248,25 +248,7 @@ export class SchemaProjection {
         const modeNode = options.get("rounding")
         const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
         if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
-        const additivityNode = options.get("additivity")
-        let additivity: E.PropertyAdditivity | undefined
-        if (additivityNode !== undefined) {
-          const fields = this.objectLiteral(additivityNode)
-          const kind = this.stringLiteral(fields.get("kind"), additivityNode, "additivity.kind")
-          if (kind === "ratio" && fields.size === 3) {
-            const operand = (field: "numerator" | "denominator"): string => {
-              const node = fields.get(field)
-              const value = this.stringLiteral(node, additivityNode, `additivity.${field}`)
-              if (value.match(/^[a-z][a-z0-9_]*$/)?.[0] !== value) throw new CompileError("NORN-FLOW-LITERAL", `additivity.${field} must be a PropertyId matching [a-z][a-z0-9_]*`, node ?? additivityNode)
-              return value
-            }
-            additivity = { kind, numerator: operand("numerator"), denominator: operand("denominator") }
-          } else if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
-            additivity = kind === "undeclared" ? undefined : { kind }
-          } else {
-            throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", additivityNode)
-          }
-        }
+        const additivity = this.additivity(options.get("additivity"))
         const rounded = (type: E.PropertyType): E.PropertyType => {
           if (type.kind !== "decimal") throw new CompileError("NORN-FLOW-LITERAL", "rounding requires Decimal", call)
           return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }) }
@@ -285,8 +267,12 @@ export class SchemaProjection {
       }
       case "@norn/authoring#Norn.boundDecimal":
         return { kind: "value-type", type: E.boundDecimal(this.stringLiteral(a[0], call, "the decimal binding group")), node: call }
-      case "@norn/authoring#Norn.ref":
-        return { kind: "value-type", type: E.ref(this.stringLiteral(a[0], call, "the property type name")), node: call }
+      case "@norn/authoring#Norn.ref": {
+        const name = this.stringLiteral(a[0], call, "the property type name")
+        const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
+        for (const key of options.keys()) if (key !== "additivity") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.ref option ${key}`, a[1]!)
+        return { kind: "value-type", type: E.ref(name, this.additivity(options.get("additivity"))), node: call }
+      }
       case "@norn/authoring#Norn.timestamp": {
         const timezone = this.stringLiteral(a[0], call, "the timezone policy")
         if (timezone !== "utc" && timezone !== "offset") throw new CompileError("NORN-FLOW-LITERAL", "the timezone policy is \"utc\" or \"offset\"", call)
@@ -297,6 +283,26 @@ export class SchemaProjection {
       default:
         throw projection(`${id ?? call.expression.getText()} is not a schema in the structural subset`, call)
     }
+  }
+
+  /** METRIC-ADDITIVITY-1 / -REF-1: one closed additivity class; `undeclared` is omitted. */
+  private additivity(node: ts.Expression | undefined): E.PropertyAdditivity | undefined {
+    if (node === undefined) return undefined
+    const fields = this.objectLiteral(node)
+    const kind = this.stringLiteral(fields.get("kind"), node, "additivity.kind")
+    if (kind === "ratio" && fields.size === 3) {
+      const operand = (field: "numerator" | "denominator"): string => {
+        const member = fields.get(field)
+        const value = this.stringLiteral(member, node, `additivity.${field}`)
+        if (value.match(/^[a-z][a-z0-9_]*$/)?.[0] !== value) throw new CompileError("NORN-FLOW-LITERAL", `additivity.${field} must be a PropertyId matching [a-z][a-z0-9_]*`, member ?? node)
+        return value
+      }
+      return { kind, numerator: operand("numerator"), denominator: operand("denominator") }
+    }
+    if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
+      return kind === "undeclared" ? undefined : { kind }
+    }
+    throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", node)
   }
 
   private fields(input: ts.Expression, depth: number): StructField[] {

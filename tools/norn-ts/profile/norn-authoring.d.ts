@@ -77,9 +77,12 @@ declare module "@norn/authoring" {
     /**
      * A shared property type by name (EntityIR `ref`): a Norn Core registry
      * value type such as `iso4217.currency_code` or `iso3166.alpha2`, or a
-     * local shared type. The checker resolves the name.
+     * local shared type. The checker resolves the name. `additivity` declares
+     * the aggregation contract at this use site (METRIC-ADDITIVITY-REF-1): it
+     * applies only to an integer or decimal type that declares none itself,
+     * so a flow and a stock can share one value type.
      */
-    function ref<S extends Schema.Top = Schema.String>(name: string): S
+    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity }): S
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String

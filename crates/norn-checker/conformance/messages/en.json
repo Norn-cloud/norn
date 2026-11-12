@@ -1199,6 +1199,9 @@
     "metric.validation.unsupported_semantics": {
       "message": "Calculation requires semantics outside the admitted checker profile."
     },
+    "object_type.validation.additivity_not_refined": {
+      "message": "property {$property} declares an additivity other than the one {$owner} requires; a member may add additivity where the referenced type declares none, never change a declared one"
+    },
     "object_type.validation.computed_key_component": {
       "message": "key component {$property} is computed; identity is stored, not derived"
     },
@@ -1519,6 +1522,12 @@
     },
     "property_type.validation.inverted_range": {
       "message": "{$lower} is greater than {$upper}"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} declares {$declared} additivity, but the type it references declares {$referenced}; a use site may only add additivity to a type that declares none"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} resolves to a {$kind} type; only an integer or decimal declares additivity"
     },
     "property_type.validation.ref_cycle": {
       "message": "ref chain from {$name} returns to itself"
