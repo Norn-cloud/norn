@@ -233,7 +233,12 @@ fn profile_property(
     kind: &'static str,
     values: &[Option<&RuntimeValue>],
 ) -> NornPropertyProfile {
-    let present: Vec<&RuntimeValue> = values.iter().filter_map(|value| *value).collect();
+    // A stored null is absent like a missing value: counted in `nulls`, in no statistic.
+    let present: Vec<&RuntimeValue> = values
+        .iter()
+        .filter_map(|value| *value)
+        .filter(|value| !matches!(value, RuntimeValue::Null))
+        .collect();
     let nulls = values.len().saturating_sub(present.len());
     let distinct: BTreeSet<String> = present.iter().map(|value| format!("{value:?}")).collect();
     let mut out = NornPropertyProfile {
@@ -393,6 +398,54 @@ mod tests {
         assert_eq!(at_rank(&sorted, 100), Some(10));
         assert_eq!(at_rank(&[7_u32], 50), Some(7));
         assert_eq!(at_rank::<u32>(&[], 50), None);
+    }
+
+    /// A nullable column with gaps: nulls are counted, and every statistic is
+    /// over the present values only (a null is never 0, never a distinct
+    /// value, never in a bin), whether it arrives missing or as a stored null.
+    #[test]
+    fn nulls_are_counted_and_excluded_from_every_statistic() {
+        let number = |text: &str| RuntimeValue::Number(norn_ir::Decimal::parse(text).unwrap());
+        let (one, five, nine, null) = (number("1"), number("5"), number("9"), RuntimeValue::Null);
+        let values = [
+            Some(&one),
+            None,
+            Some(&five),
+            Some(&null),
+            Some(&nine),
+            None,
+        ];
+        let profile = profile_property("reading", "numeric", &values);
+        assert_eq!((profile.count, profile.nulls, profile.distinct), (3, 3, 3));
+        assert_eq!(
+            (profile.min, profile.max),
+            (Some(one.clone()), Some(nine.clone()))
+        );
+        assert_eq!(
+            profile
+                .quantiles
+                .iter()
+                .find(|q| q.percent == 50)
+                .map(|q| q.value.clone()),
+            Some(five)
+        );
+        let histogram = profile.histogram.unwrap();
+        assert_eq!(histogram.bins.iter().map(|bin| bin.count).sum::<u64>(), 3);
+        assert!(
+            histogram
+                .bins
+                .iter()
+                .all(|bin| bin.lower != null && bin.upper != null)
+        );
+        // All null: counted, and no statistic at all.
+        let empty = profile_property("reading", "numeric", &[None, Some(&null)]);
+        assert_eq!((empty.count, empty.nulls, empty.distinct), (0, 2, 0));
+        assert!(
+            empty.min.is_none()
+                && empty.max.is_none()
+                && empty.quantiles.is_empty()
+                && empty.histogram.is_none()
+        );
     }
 
     #[test]
