@@ -325,9 +325,9 @@ projects the existing admitted catalog and conservative whole-set writer closure
 Every declaration retains its version and semantic digest. Direct writes and
 bounded read slices remain separate from the conservative writer inventory.
 In a project, `norn explain <action|law|concept> <id>` compiles the
-project's sources and calls the same checker entry point, with the same
-admission input `norn check` builds (candidates, and the installed base in the
-context). An explanation is neither a permission grant nor proof. It writes
+project's sources and calls the same checker entry point, with the input of
+`norn check`'s final pass (candidates; the installed base and the bound flow
+source map in the context), and refuses whatever that pass refuses. An explanation is neither a permission grant nor proof. It writes
 nothing and reads no cell; the project command does evaluate the project's
 modules to compile them, as `norn dev` does. Server consumers must
 supply a complete definition set already authorized for disclosure.
@@ -336,14 +336,22 @@ supply a complete definition set already authorized for disclosure.
 set (a mistyped or ambiguous name) refuses with
 `explain.selector.unknown_subject`, never with a code about laws or bindings.
 
-**EXPLAIN-JSON-1:** `norn explain --json` always prints one `norn/explain@2`
-response. Every entry of its `diagnostics` is `norn/diagnostic@2` with a
-registered code, whatever refused: a checker refusal is the checker's own
-findings (the ones `norn check` reports for those sources); a source that
-does not compile is `cli.compile.source_refused`, one per compiler finding,
-whose message carries the authoring compiler's code and text; a usage or
-setup refusal is its registered `cli.*` code. Project findings add `source`
-(file, line, column). No unregistered code is printed.
+**EXPLAIN-JSON-1:** `norn explain --json` always prints exactly one
+`norn/explain@2` response. Every entry of its `diagnostics` is
+`norn/diagnostic@2` with a registered code, whatever refused: a checker
+refusal is the checker's own findings (the ones `norn check` reports for
+those sources); a source that does not compile is
+`cli.compile.source_refused`, one per compiler finding; bad usage is
+`cli.explain.usage`; input the checker's entry point refuses to read (a
+wording requirement of the wrong shape, input over its size limit) is
+`cli.explain.input_refused`; a missing project or checker is its `cli.*`
+setup code; anything else that goes wrong is `cli.explain.failed`. The
+command has one boundary that turns whatever is thrown into such a response,
+so the rule does not depend on listing the paths. Project findings add
+`source` (file, line, column); a compile finding also adds `compiler`, the
+authoring compiler's own code and its start and end positions. Both are
+optional members beside the published ones. No unregistered code is printed
+as a `code`.
 
 **EXPLAIN-ORIGIN-1:** canonical inheritance paths terminate at the authored
 subject; containment paths retain each pinned containing pack. Authored source
@@ -369,7 +377,8 @@ more than one family is one of a listed few and sits only on codes whose name
 it fits; an integrity mismatch (a hash, a certificate, a receipt, evidence) is
 never repaired by editing the recorded value, and its guidance says to
 regenerate from the source or to obtain the unaltered input again; a code
-with no accurate guidance yet says so in `no_fix`. A variable or command the
+with no accurate guidance yet carries one exact marker sentence as its
+`no_fix`, which no reviewed guidance may resemble. A variable or command the
 guidance names exists in the source.
 **DIAG-PROJECTION-2:** diagnostic advice is emitted by the new projection only;
 historical diagnostics and receipt hashes retain their original serialization.

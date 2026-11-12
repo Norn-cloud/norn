@@ -1,7 +1,7 @@
 [
   {
     "code": "action.validation.command_environment_underivable",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "action.validation.input_enum_not_subset",
@@ -73,7 +73,7 @@
   },
   {
     "code": "artifact_set.action.create_link",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.action.duplicate_action_id",
@@ -101,15 +101,15 @@
   },
   {
     "code": "artifact_set.action.quantity_effect",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.action.target_not_writable",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.action.undeclared_effect_write",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.action.unknown_slice_kind",
@@ -125,11 +125,11 @@
   },
   {
     "code": "artifact_set.action.write_without_effect",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.decision.fact_literal_outside_schema",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.decision.invalid_source_command",
@@ -141,11 +141,11 @@
   },
   {
     "code": "artifact_set.decision.sub_decision_bound",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.decision.sub_decision_target",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.decision.unknown_binding",
@@ -165,7 +165,7 @@
   },
   {
     "code": "artifact_set.expression.environment_underivable",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.flow_source_map.duplicate_flow",
@@ -241,7 +241,7 @@
   },
   {
     "code": "artifact_set.resolution.conflicting_version",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.resolution.dependency_cycle",
@@ -253,7 +253,7 @@
   },
   {
     "code": "artifact_set.resolution.kind_incompatible",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "artifact_set.resolution.kind_mismatch",
@@ -282,6 +282,18 @@
   {
     "code": "cli.compile.source_refused",
     "fix": "Correct the source at the reported file and line; the detail carries the authoring compiler's own finding."
+  },
+  {
+    "code": "cli.explain.failed",
+    "no_fix": "This is a fault in norn explain, not in the project. Report it with the detail; the project's sources are not what needs to change."
+  },
+  {
+    "code": "cli.explain.input_refused",
+    "fix": "Correct the input the detail names. The wording file must hold structured requirements with exactly their declared members, and the definitions, context and wording together must stay under 8 MiB."
+  },
+  {
+    "code": "cli.explain.usage",
+    "fix": "Give a kind (action, law or concept) and the identifier of one declaration. --wording and --locale go together, and the wording file is a JSON array of structured requirements."
   },
   {
     "code": "cli.format.io",
@@ -365,7 +377,7 @@
   },
   {
     "code": "consistency.chase.refused",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.diagnosis.conflict",
@@ -381,19 +393,19 @@
   },
   {
     "code": "consistency.instance.violation",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.mapping.non_total",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.normative.conflict",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.normative.legacy_resolution",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.path_equation.invalid",
@@ -413,7 +425,7 @@
   },
   {
     "code": "consistency.schema.incompatible",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.schema.unpreserved_constraint",
@@ -421,15 +433,15 @@
   },
   {
     "code": "consistency.theory.malformed",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.theory.not_weakly_acyclic",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "consistency.theory.vacuous",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.composition.duplicate_instance",
@@ -457,7 +469,7 @@
   },
   {
     "code": "core.compute.ambiguous_grain",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.compute.unsupported_engine",
@@ -465,7 +477,7 @@
   },
   {
     "code": "core.graph.catalog_write",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.graph.cycle",
@@ -473,11 +485,11 @@
   },
   {
     "code": "core.graph.incomplete_classification",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.graph.role_conflict",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.graph.role_mismatch",
@@ -497,7 +509,7 @@
   },
   {
     "code": "core.laws.unresolved_scope",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.projection.publication_guard",
@@ -509,11 +521,11 @@
   },
   {
     "code": "core.values.inexact",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.values.literal_unit",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "core.values.unit_binding_required",
@@ -529,7 +541,7 @@
   },
   {
     "code": "customization.validation.retired_boundary",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "defined_concept.validation.invalid_payload",
@@ -537,7 +549,7 @@
   },
   {
     "code": "derived.validation.incremental_not_supported",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "derived.validation.invalid_payload",
@@ -545,11 +557,11 @@
   },
   {
     "code": "derived.validation.io_in_view",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "entity.deprecation.v1_payload",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "entity.validation.invalid_mutation_authority",
@@ -569,19 +581,19 @@
   },
   {
     "code": "function.invocation.blank_value",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.fork_perform",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.freshness_shape",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.input_bound",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.manifest_mismatch",
@@ -589,23 +601,23 @@
   },
   {
     "code": "function.invocation.mutable_input",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.non_canonical_text",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.non_scalar_input",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.secret_input",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.invocation.unbounded_command",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.authored_host",
@@ -613,11 +625,11 @@
   },
   {
     "code": "function.manifest.blank_value",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.conflicting_golden_runs",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.dependency_closure_mismatch",
@@ -629,11 +641,11 @@
   },
   {
     "code": "function.manifest.embedded_secret",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.inadmissible_evidence",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.missing_dependency_closure",
@@ -645,11 +657,11 @@
   },
   {
     "code": "function.manifest.mutable_identity",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.non_canonical_text",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.profile_mismatch",
@@ -657,11 +669,11 @@
   },
   {
     "code": "function.manifest.unbounded_resource",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.uncacheable_profile",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.manifest.unsupported_abi",
@@ -669,19 +681,19 @@
   },
   {
     "code": "function.receipt.attempt_out_of_range",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.receipt.blank_value",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.receipt.bound_exceeded",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.receipt.cache_origin",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.receipt.dispatch_mismatch",
@@ -689,7 +701,7 @@
   },
   {
     "code": "function.receipt.non_canonical_text",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.receipt.output_manifest_mismatch",
@@ -697,7 +709,7 @@
   },
   {
     "code": "function.receipt.summary_bound",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "function.validation.invalid_document",
@@ -705,7 +717,7 @@
   },
   {
     "code": "graph_load.validation.excessive_depth",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "graph_load.validation.invalid_shape",
@@ -721,7 +733,7 @@
   },
   {
     "code": "graph_load.validation.n_plus_one_risk",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "graph_load.validation.over_budget",
@@ -769,7 +781,7 @@
   },
   {
     "code": "interface.validation.tenant_interface",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "interface.validation.unknown_link_target",
@@ -801,7 +813,7 @@
   },
   {
     "code": "ir.validation.retired_kind",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ir.validation.unknown_kind",
@@ -925,11 +937,11 @@
   },
   {
     "code": "layout.validation.merge_conflict",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "layout.validation.orphaned_entry",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.account.duplicate",
@@ -941,7 +953,7 @@
   },
   {
     "code": "ledger.account.no_units",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.account.unknown_unit",
@@ -953,7 +965,7 @@
   },
   {
     "code": "ledger.amount.constant_scale_exceeds_result",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.amount.duplicate_parameter_term",
@@ -965,15 +977,15 @@
   },
   {
     "code": "ledger.amount.result_scale_exceeds_unit",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.amount.result_scale_out_of_range",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.amount.term_scale_exceeds_result",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.amount.unknown_parameter",
@@ -1009,11 +1021,11 @@
   },
   {
     "code": "ledger.commit.partial_evidence",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.identifier.empty",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.layer.duplicate",
@@ -1029,7 +1041,7 @@
   },
   {
     "code": "ledger.leg.empty_layer",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.leg.unknown_account",
@@ -1049,15 +1061,15 @@
   },
   {
     "code": "ledger.numeric.non_canonical_integer",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.ontology.empty_artifact_id",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.ontology.empty_artifact_version",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.ontology.invalid_artifact_sha256",
@@ -1065,31 +1077,31 @@
   },
   {
     "code": "ledger.ontology.non_exact_artifact_id",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.ontology.non_exact_artifact_version",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.empty_id",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.no_accounts",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.no_layers",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.no_templates",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.no_units",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.pack.unsupported_ir_version",
@@ -1105,7 +1117,7 @@
   },
   {
     "code": "ledger.parameter.scale_out_of_range",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.posting.certificate_coverage_mismatch",
@@ -1117,7 +1129,7 @@
   },
   {
     "code": "ledger.posting.identity_empty",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.posting.reference_mismatch",
@@ -1137,7 +1149,7 @@
   },
   {
     "code": "ledger.runtime.parameter_out_of_bounds",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.runtime.parameter_scale_mismatch",
@@ -1145,7 +1157,7 @@
   },
   {
     "code": "ledger.runtime.unbalanced",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.runtime.unknown_parameter",
@@ -1165,15 +1177,15 @@
   },
   {
     "code": "ledger.template.too_few_legs",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.template.unbalanced_coefficient",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.template.unbalanced_constant",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.unit.duplicate",
@@ -1185,15 +1197,15 @@
   },
   {
     "code": "ledger.unit.empty_quantity_kind_term",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.unit.empty_unit_term",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.unit.inconsistent_dimension_binding",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.unit.invalid_quantity_kind_term",
@@ -1205,11 +1217,11 @@
   },
   {
     "code": "ledger.unit.scale_out_of_range",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ledger.validation.too_many_diagnostics",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "lifecycle.validation.dead_end_state",
@@ -1325,7 +1337,7 @@
   },
   {
     "code": "mapping.model.interface_not_implemented",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.model.invalid_entitlement_condition",
@@ -1357,7 +1369,7 @@
   },
   {
     "code": "mapping.model.read_only_member",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.model.source_hash_mismatch",
@@ -1369,7 +1381,7 @@
   },
   {
     "code": "mapping.model.unencodable_member",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.model.unknown_dataset",
@@ -1401,7 +1413,7 @@
   },
   {
     "code": "mapping.runtime.evaluation_failed",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.runtime.invalid_key",
@@ -1413,7 +1425,7 @@
   },
   {
     "code": "mapping.runtime.observed_out_of_band",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.validation.duplicate_map",
@@ -1429,7 +1441,7 @@
   },
   {
     "code": "mapping.validation.incomplete_entitlement_snapshot",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "mapping.validation.interface_out_of_scope",
@@ -1461,7 +1473,7 @@
   },
   {
     "code": "mapping.validation.invalid_required_link",
-    "fix": "Declare the missing member at the reported path using the owning definition schema."
+    "fix": "Map the required relationship from a source value that every record has: a record whose key for it evaluates to null cannot satisfy a required link."
   },
   {
     "code": "mapping.validation.lifecycle_rule_shape",
@@ -1493,7 +1505,7 @@
   },
   {
     "code": "metric.validation.fan_out",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "metric.validation.grain_mismatch",
@@ -1501,7 +1513,7 @@
   },
   {
     "code": "metric.validation.import_gap",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "metric.validation.invalid_additivity",
@@ -1545,15 +1557,15 @@
   },
   {
     "code": "metric.validation.mixed_currency",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "metric.validation.ontology_projection",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "metric.validation.partial_path",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "metric.validation.ratio_aggregation",
@@ -1877,7 +1889,7 @@
   },
   {
     "code": "ontology.lint.deep_hierarchy",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.duplicate_definition",
@@ -1885,11 +1897,11 @@
   },
   {
     "code": "ontology.lint.incomplete_provenance",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.mega_object",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.plural_type_name",
@@ -1897,11 +1909,11 @@
   },
   {
     "code": "ontology.lint.redundant_member_prefix",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.source_mirroring",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.unknown_mapping_target",
@@ -1913,19 +1925,19 @@
   },
   {
     "code": "ontology.lint.unmapped_source_field",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.untraceable_provenance",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.versioned_name",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology.lint.weak_relationship",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "ontology_instance.validation.invalid_payload",
@@ -2037,11 +2049,11 @@
   },
   {
     "code": "question.validation.empty_metrics",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.fan_out_rollup",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.invalid_freshness",
@@ -2061,19 +2073,19 @@
   },
   {
     "code": "question.validation.mixed_axis_rollup",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.non_additive_rollup",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.semi_additive_time",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.snapshot_aggregation",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "question.validation.unknown_comparison",
@@ -2085,7 +2097,7 @@
   },
   {
     "code": "relation.validation.v2_relation_is_link",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.invalid_binding",
@@ -2113,7 +2125,7 @@
   },
   {
     "code": "rule.validation.jdm_custom_node_rejected",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_cycle",
@@ -2121,7 +2133,7 @@
   },
   {
     "code": "rule.validation.jdm_dangling_edge",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_duplicate_id",
@@ -2129,11 +2141,11 @@
   },
   {
     "code": "rule.validation.jdm_function_node_rejected",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_hit_policy_rejected",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_invalid_edge",
@@ -2145,19 +2157,19 @@
   },
   {
     "code": "rule.validation.jdm_io_node_count",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_recursive_sub_decision",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_switch_default",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_switch_unconnected_branch",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_unknown_column",
@@ -2169,7 +2181,7 @@
   },
   {
     "code": "rule.validation.jdm_unreachable_node",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "rule.validation.jdm_unresolved_import",
@@ -2193,7 +2205,7 @@
   },
   {
     "code": "sealing.extension_point.contract_violation",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "sealing.extension_point.kind_mismatch",
@@ -2213,15 +2225,15 @@
   },
   {
     "code": "sealing.monotonic.unseal_forbidden",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "sealing.overlay.base_mutation_denied",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "sealing.overlay.sealed_mutation",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "sealing.overlay.tenant_namespace_mismatch",
@@ -2233,11 +2245,11 @@
   },
   {
     "code": "sealing.runtime.capability_denied",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "sealing.upgrade.monotonic_violation",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "setting.validation.invalid_payload",
@@ -2245,7 +2257,7 @@
   },
   {
     "code": "source_schema.validation.blank_value",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "source_schema.validation.constraint_shape",
@@ -2281,15 +2293,15 @@
   },
   {
     "code": "source_schema.validation.profile_counts",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "source_schema.validation.promoted_inference",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "source_schema.validation.sample_bound",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "source_schema.validation.unknown_dataset",
@@ -2305,35 +2317,35 @@
   },
   {
     "code": "widget.interaction.control_without_legal_transition",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.dialog_no_keyboard_close",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.dialog_no_restore_target",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.keyboard_unreachable_control",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.nullable_without_clear",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.unnamed_control",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.interaction.unreachable_page",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
     "code": "widget.validation.invalid_payload",
@@ -2345,6 +2357,6 @@
   },
   {
     "code": "widget.validation.unsafe_action_binding",
-    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   }
 ]

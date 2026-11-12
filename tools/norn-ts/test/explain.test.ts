@@ -12,8 +12,9 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { CHECKER_PKG_ENV } from "../src/checker-abi.ts"
-import { admissionInput, artifactId, checkPack, compilePack, isArtifact } from "../src/pack.ts"
+import { CHECKER_PKG_ENV, type CheckerAbi } from "../src/checker-abi.ts"
+import { explain, FAILED, type ExplainHost } from "../src/explain.ts"
+import { admit, artifactId, compilePack, isArtifact, type PackResult } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -43,7 +44,7 @@ function expectV2(diagnostics: ReadonlyArray<Record<string, unknown>>): void {
     const record = REGISTRY.get(code)
     const guidance = GUIDANCE.get(code)
     if (!record || !guidance) throw new Error(`${code} is not a registered diagnostic code`)
-    expect(Object.keys(diagnostic).filter((key) => key !== "source" && key !== "evidence").sort()).toEqual(V2_KEYS)
+    expect(Object.keys(diagnostic).filter((key) => !["source", "evidence", "compiler"].includes(key)).sort()).toEqual(V2_KEYS)
     expect(diagnostic).toMatchObject({
       format: "norn/diagnostic@2", tier: record.tier, phase: record.tier, severity: record.severity, retryable: false,
       fix: guidance.fix ?? null, no_fix: guidance.no_fix ?? null,
@@ -100,6 +101,11 @@ test.skipIf(!process.env[CHECKER_PKG_ENV])("explain_project_roundtrip: explain, 
     writeFileSync(join(dir, "src/customer.ts"), customer("uuid"))
     const uncompiled = refusedJson(dir, ["explain", "action", "shop.product.add"], 1)
     expect(uncompiled[0]).toMatchObject({ code: "cli.compile.source_refused", source: { file: "src/customer.ts", line: 7 } })
+    // The compiler's own code and whole span are structured members, not only prose.
+    expect(uncompiled[0]!.compiler).toMatchObject({ code: expect.stringMatching(/^NORN-/), start: { line: 7, column: expect.any(Number) }, end: { line: expect.any(Number), column: expect.any(Number) } })
+    expect(uncompiled[0]!.message).toContain(`: ${uncompiled[0]!.compiler.code}: `)
+    // A source error is reported as one with or without the checker package.
+    expect(refusedJson(dir, ["explain", "action", "shop.product.add"], 1, { ...process.env, [CHECKER_PKG_ENV]: "" })[0]).toMatchObject({ code: "cli.compile.source_refused" })
     expect(uncompiled[0]!.message).toStartWith("The project's sources did not compile: ")
     const frame = norn(dir, ["explain", "action", "shop.product.add"])
     expect(frame.status).toBe(1)
@@ -122,6 +128,18 @@ test.skipIf(!process.env[CHECKER_PKG_ENV])("a checker refusal is the checker's o
     const unknown = refusedJson(dir, ["explain", "action", "shop.product.typo"], 1)
     expect(unknown).toHaveLength(1)
     expect(unknown[0]).toMatchObject({ code: "explain.selector.unknown_subject", fix: expect.stringContaining("action, law and concept") })
+
+    // A wording file the entry point refuses: not an array, a requirement of the wrong shape, input over its size limit.
+    const wording = join(root, "wording.json")
+    writeFileSync(wording, "{}")
+    expect(refusedJson(dir, ["explain", "action", "shop.product.add", "--wording", wording, "--locale", "ar"], 2)[0])
+      .toMatchObject({ code: "cli.explain.usage", message: expect.stringContaining("JSON array of structured requirements") })
+    writeFileSync(wording, `[{"x":1}]`)
+    expect(refusedJson(dir, ["explain", "action", "shop.product.add", "--wording", wording, "--locale", "ar"], 1)[0])
+      .toMatchObject({ code: "cli.explain.input_refused", message: expect.stringContaining("options") })
+    writeFileSync(wording, JSON.stringify([{ pad: "a".repeat(9 * 1024 * 1024) }]))
+    expect(refusedJson(dir, ["explain", "action", "shop.product.add", "--wording", wording, "--locale", "ar"], 1)[0])
+      .toMatchObject({ code: "cli.explain.input_refused", message: expect.stringContaining("8 MiB") })
 
     // Sources that compile but the checker refuses: the findings `norn check` reports.
     writeFileSync(join(dir, "src/rule.ts"), refusedByTheChecker)
@@ -147,8 +165,8 @@ test("explain refuses with an actionable code outside a project, on bad usage an
   const root = mkdtempSync(join(tmpdir(), "norn-explain-"))
   try {
     expect(refusedJson(root, ["explain", "action", "x"], 1)[0]).toMatchObject({ code: "cli.project.not_found" })
-    expect(refusedJson(root, ["explain", "widget", "x"], 2)[0]).toMatchObject({ code: "cli.project.usage" })
-    expect(refusedJson(root, ["explain", "law", "x", "--locale", "ar"], 2)[0]).toMatchObject({ code: "cli.project.usage" })
+    expect(refusedJson(root, ["explain", "widget", "x"], 2)[0]).toMatchObject({ code: "cli.explain.usage" })
+    expect(refusedJson(root, ["explain", "law", "x", "--locale", "ar"], 2)[0]).toMatchObject({ code: "cli.explain.usage" })
     expect(norn(root, ["init", join(root, "p"), "--no-install"]).status).toBe(0)
     const missing = refusedJson(join(root, "p"), ["explain", "action", "p.product.add"], 3, { ...process.env, [CHECKER_PKG_ENV]: "" })
     expect(missing[0]).toMatchObject({ code: "cli.setup.checker_unavailable", fix: expect.stringContaining(CHECKER_PKG_ENV) })
@@ -162,35 +180,103 @@ test("explain refuses with an actionable code outside a project, on bad usage an
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
-test.skipIf(!checker)("explain and check give the checker the same input: the installed base is never a candidate", () => {
+/** `explain` in this process with parts of its host replaced; returns the exit status and what it wrote. */
+async function explained(args: string[], host: Partial<ExplainHost>) {
+  let out = ""
+  const status = await explain([...args, "--json"], { write: (text) => { out += text }, ...host })
+  // Exactly one response, whatever happened.
+  expect(out.trimEnd().split("\n")).toHaveLength(1)
+  return { status, response: JSON.parse(out) as { format: string; admitted: boolean; report: any; diagnostics: Array<Record<string, any>> } }
+}
+
+function project(): { root: string; dir: string } {
   const root = mkdtempSync(join(tmpdir(), "norn-explain-"))
+  const dir = join(root, "shop")
+  expect(norn(root, ["init", dir, "--no-install"]).status).toBe(0)
+  return { root, dir }
+}
+
+test("explain is one boundary: whatever is thrown below it is one refused v2 response", async () => {
+  const { root, dir } = project()
   try {
-    const dir = join(root, "shop")
-    expect(norn(root, ["init", dir, "--no-install"]).status).toBe(0)
+    const subject = ["action", "shop.product.add"]
+    const failed = (run: { status: number; response: { format: string; admitted: boolean; report: unknown; diagnostics: Array<Record<string, any>> } }, detail: string) => {
+      expect(run).toMatchObject({ status: 3, response: { format: "norn/explain@2", admitted: false, report: null } })
+      expectV2(run.response.diagnostics)
+      expect(run.response.diagnostics).toHaveLength(1)
+      expect(run.response.diagnostics[0]).toMatchObject({ code: "cli.explain.failed", message: expect.stringContaining(detail) })
+    }
+    // Not an Error, not a ProjectError, thrown from a place no path lists.
+    failed(await explained(subject, { cwd: dir, compile: () => { throw "a thrown string" } }), "a thrown string")
+    failed(await explained(subject, { cwd: dir, compile: () => { throw new TypeError("compiler fell over") } }), "compiler fell over")
+    // A checker whose admission throws, and one whose explain entry point returns nonsense.
+    const broken = (parts: Partial<CheckerAbi>): ExplainHost["load"] => async () => ({
+      checkArtifactSet: () => { throw new RangeError("admission fell over") },
+      explainArtifactSet: () => { throw new Error("unreachable") },
+      version: () => ({}),
+      ...parts,
+    })
+    failed(await explained(subject, { cwd: dir, load: broken({}) }), "admission fell over")
+    // The fallback finding used when the registry itself cannot be read is the registry's entry.
+    expect(FAILED).toMatchObject({ tier: REGISTRY.get("cli.explain.failed")!.tier, severity: REGISTRY.get("cli.explain.failed")!.severity, no_fix: GUIDANCE.get("cli.explain.failed")!.no_fix, fix: null })
+    expectV2([FAILED as unknown as Record<string, unknown>])
+    // A loader that throws is the registered setup refusal, with the reason.
+    const unloaded = await explained(subject, { cwd: dir, load: async () => { throw "no loader" } })
+    expect(unloaded.status).toBe(3)
+    expectV2(unloaded.response.diagnostics)
+    expect(unloaded.response.diagnostics[0]).toMatchObject({ code: "cli.setup.checker_unavailable", message: expect.stringContaining("no loader") })
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}, 120_000)
+
+test.skipIf(!checker)("a checker entry point that throws is a registered refusal, not a stack trace", async () => {
+  const { root, dir } = project()
+  try {
+    const run = await explained(["action", "shop.product.add"], {
+      cwd: dir,
+      load: async () => ({ ...checker!, explainArtifactSet: () => { throw new Error("options: unknown field `x`") } }),
+    })
+    expect(run.status).toBe(1)
+    expectV2(run.response.diagnostics)
+    expect(run.response.diagnostics[0]).toMatchObject({ code: "cli.explain.input_refused", message: expect.stringContaining("unknown field") })
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}, 120_000)
+
+test.skipIf(!checker)("explain gives the checker the input of norn check's final pass: the installed base is never a candidate", async () => {
+  const { root, dir } = project()
+  try {
     const pack = compilePack(join(dir, "src"), { scope: { orgId: "local", environmentId: "dev" }, root: dir })
     if (!pack.ok || !checker?.explainArtifactSet) throw new Error(JSON.stringify(pack))
     const entity = pack.artifacts.find((artifact) => isArtifact(artifact) && artifact.kind === "entity")!
     const action = pack.artifacts.find((artifact) => isArtifact(artifact) && artifact.kind === "action")!
-    const verdicts = (candidates: typeof pack.artifacts, base: typeof pack.artifacts) => {
-      const input = admissionInput(candidates, base)
-      const checked = checkPack(checker!, candidates, base)
-      const explained = checker!.explainArtifactSet!(input.artifacts, input.context, "action", "shop.product.add", { requirements: [] })
-      // One input, one verdict, and for a refusal the same codes.
-      expect(explained.admitted).toBe(checked.admitted)
-      if (!checked.admitted) {
-        expectV2(explained.diagnostics as unknown as Array<Record<string, unknown>>)
-        expect(explained.diagnostics.map((diagnostic) => diagnostic.code).sort())
-          .toEqual(checked.diagnostics.diagnostics.map((diagnostic) => diagnostic.code).sort())
+    // Through `explain` itself, with a compile that yields an installed base, and a checker that records what it is given.
+    const through = async (candidates: typeof pack.artifacts, base: typeof pack.artifacts) => {
+      const compiled: PackResult = { ...pack, artifacts: candidates, baseArtifacts: base }
+      const given: { check: unknown[][]; explain: unknown[][] } = { check: [], explain: [] }
+      const recording: CheckerAbi = {
+        ...checker!,
+        checkArtifactSet: (artifacts, context) => { given.check.push([artifacts, context ?? null]); return checker!.checkArtifactSet(artifacts, context) },
+        explainArtifactSet: (artifacts, context, kind, id, options) => { given.explain.push([artifacts, context ?? null]); return checker!.explainArtifactSet!(artifacts, context, kind, id, options) },
       }
-      return explained
+      const run = await explained(["action", "shop.product.add"], { cwd: dir, compile: () => compiled, load: async () => recording })
+      // Explain's input is exactly the input of the final check `admit` makes, which is what `norn check` runs.
+      expect(given.explain).toHaveLength(1)
+      expect(given.explain[0]).toEqual(given.check.at(-1)!)
+      expect(given.explain[0]).toEqual([candidates, base.length > 0 ? { base } : null])
+      const checked = admit(checker!, compiled as Extract<PackResult, { ok: true }>).report
+      expect(run.response.admitted).toBe(checked.admitted)
+      if (!checked.admitted) {
+        expectV2(run.response.diagnostics)
+        expect(run.response.diagnostics.map((diagnostic) => diagnostic.code).sort()).toEqual(checked.diagnostics.diagnostics.map((diagnostic) => diagnostic.code).sort())
+      }
+      return run
     }
     // The entity installed as base: admitted, and the report says it is not a candidate.
-    const installed = verdicts([action], [entity])
-    expect(installed.admitted).toBe(true)
-    const closure = (installed.report as { closure: { artifacts: Array<{ artifactId: string; candidate: boolean }> } }).closure.artifacts
+    const installed = await through([action], [entity])
+    expect(installed).toMatchObject({ status: 0, response: { admitted: true } })
+    const closure = installed.response.report.closure.artifacts as Array<{ artifactId: string; candidate: boolean }>
     expect(closure.find((artifact) => artifact.artifactId === artifactId(entity))).toMatchObject({ candidate: false })
     expect(closure.find((artifact) => artifact.artifactId === artifactId(action))).toMatchObject({ candidate: true })
     // The same entity as a candidate too: it shadows the installed base, and both refuse.
-    expect(verdicts([action, entity], [entity]).admitted).toBe(false)
+    expect(await through([action, entity], [entity])).toMatchObject({ status: 1, response: { admitted: false } })
   } finally { rmSync(root, { recursive: true, force: true }) }
 }, 120_000)

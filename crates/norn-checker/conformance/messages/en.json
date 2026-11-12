@@ -215,6 +215,15 @@
     "cli.compile.source_refused": {
       "message": "The project's sources did not compile: {$detail}"
     },
+    "cli.explain.failed": {
+      "message": "norn explain could not complete: {$detail}"
+    },
+    "cli.explain.input_refused": {
+      "message": "The checker refused the explain request: {$detail}"
+    },
+    "cli.explain.usage": {
+      "message": "Usage: norn explain KIND ID [--json] [--wording FILE --locale TAG]; KIND is one of `action`, `law`, `concept`"
+    },
     "cli.format.io": {
       "message": "Cannot format sources; check paths and permissions."
     },

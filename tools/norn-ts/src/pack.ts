@@ -212,6 +212,22 @@ export function checkPack(
 }
 
 /**
+ * Admit a compiled pack the way `norn check` does: check it, bind the flow
+ * source map to that check's receipt, and when there is one check again with
+ * it. Returns the final report and the exact input of that final check, which
+ * is also the input `norn explain` gives the checker.
+ */
+export function admit(
+  checker: CheckerAbi,
+  pack: Extract<PackResult, { readonly ok: true }>,
+): { readonly report: CheckResult; readonly input: ReturnType<typeof admissionInput> } {
+  const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
+  const flowSourceMap = pack.flowSourceMap ? finalizeFlowSourceMap(pack.flowSourceMap, pack.flows, checked.receipt) : undefined
+  const input = admissionInput(pack.artifacts, pack.baseArtifacts, flowSourceMap)
+  return { report: flowSourceMap ? checker.checkArtifactSet(input.artifacts, input.context) : checked, input }
+}
+
+/**
  * What the checker is given for a compiled pack: the candidates, and the
  * context that carries the installed base (and the flow source map). `norn
  * check` and `norn explain` both build their input here, so a base artifact is

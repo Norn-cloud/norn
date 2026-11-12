@@ -466,16 +466,32 @@ fn shared_fix_text_is_listed_and_fits_every_code_that_carries_it() {
     }
 }
 
+/// The words that mark a code as being about integrity: a recorded value that
+/// must agree with what it was derived from.
+const INTEGRITY_WORDS: [&str; 7] = [
+    "mismatch",
+    "hash",
+    "digest",
+    "stale",
+    "certificate",
+    "receipt",
+    "evidence",
+];
+
+/// Format errors on a field the author writes by hand (a URI and a hex digest
+/// that must be well formed): correcting the member is the right advice there.
+const INTEGRITY_FORMAT_CODES: [&str; 1] = ["source_schema.validation.invalid_evidence"];
+
 /// An integrity mismatch is never repaired by editing the recorded value, so
-/// no generic sentence may sit on a mismatch, hash or stale-evidence code.
+/// no generic sentence may sit on a code about a mismatch, a hash or digest,
+/// stale state, a certificate, a receipt or evidence.
 #[test]
 fn integrity_codes_carry_no_generic_fix() {
     for entry in REGISTRY {
-        let segment = detail(entry.code);
-        if ["mismatch", "hash", "stale"]
-            .iter()
-            .any(|word| segment.contains(word))
-        {
+        // The category and the detail, as in `ledger.certificate.claim_mismatch`.
+        let subject = entry.code.split_once('.').map_or("", |(_, rest)| rest);
+        let integrity = INTEGRITY_WORDS.iter().any(|word| subject.contains(word));
+        if integrity && !INTEGRITY_FORMAT_CODES.contains(&entry.code) {
             assert!(
                 !SHARED_FIXES
                     .iter()
@@ -499,6 +515,31 @@ fn integrity_codes_carry_no_generic_fix() {
             "{code} must say to regenerate or re-obtain, never to edit: {advice}"
         );
     }
+}
+
+/// The one sentence a code carries when no specific guidance is written for it
+/// yet. It is a marker, not advice: exact, used only as `no_fix`, and no other
+/// guidance may read like it, so a reviewed `no_fix` and the marker cannot blur.
+const NO_GUIDANCE_YET: &str =
+    "No specific guidance is recorded for this code yet; the message and the reported path say what was refused.";
+
+#[test]
+fn the_no_guidance_marker_is_one_exact_sentence() {
+    let mut marked = 0_usize;
+    for entry in REGISTRY {
+        assert_ne!(entry.fix, Some(NO_GUIDANCE_YET), "{}", entry.code);
+        if entry.no_fix == Some(NO_GUIDANCE_YET) {
+            marked = marked.saturating_add(1);
+            continue;
+        }
+        let advice = entry.fix.or(entry.no_fix).expect("guidance");
+        assert!(
+            !advice.contains("No specific guidance") && !advice.contains("from this code alone"),
+            "{} reads like the marker without being it: {advice}",
+            entry.code
+        );
+    }
+    assert!(marked > 0, "the marker is unused");
 }
 
 fn source_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {

@@ -286,6 +286,18 @@
       "message": "تعذّر تصريف مصادر المشروع: {$detail}",
       "review": "needs_review"
     },
+    "cli.explain.failed": {
+      "message": "تعذّر إكمال norn explain: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.input_refused": {
+      "message": "رفض المدقِّق طلب الشرح: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.usage": {
+      "message": "الاستخدام: norn explain KIND ID [--json] [--wording FILE --locale TAG]؛ KIND أحد `action` أو `law` أو `concept`",
+      "review": "needs_review"
+    },
     "cli.format.io": {
       "message": "تعذّر تنسيق المصادر؛ تحقق من المسارات والأذونات.",
       "review": "needs_review"
