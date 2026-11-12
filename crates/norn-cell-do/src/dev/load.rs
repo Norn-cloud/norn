@@ -20,7 +20,10 @@
 //! instance the three-systems source schemas pin). Without the first two, a `synthetic-<system>-three/1`
 //! profile names source `synthetic-<system>` and mapping
 //! `<system>.three.mapping`. Each record's identity is its `id` or `name`.
-//! `incremental` rows are not loaded yet.
+//! A row may carry a `"sourceVersion"` (it orders lexicographically): a
+//! later row with the same identity and a higher version is that record's
+//! next change, committed as its next version (a holding's balance over time).
+//! Without one, a row is the snapshot event at version `1`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,7 +53,8 @@ struct Snapshot {
     source: String,
     mapping: String,
     instance: String,
-    rows: Vec<(String, Value)>,
+    /// Each row's dataset, record and optional source version.
+    rows: Vec<(String, Value, Option<String>)>,
 }
 
 fn snapshot(path: &Path) -> Result<Snapshot, String> {
@@ -94,8 +98,12 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
         .iter()
         .map(|row| {
             let dataset = row.get("dataset").and_then(Value::as_str);
+            let version = row
+                .get("sourceVersion")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             match (dataset, row.get("record")) {
-                (Some(dataset), Some(record)) => Ok((dataset.to_owned(), record.clone())),
+                (Some(dataset), Some(record)) => Ok((dataset.to_owned(), record.clone(), version)),
                 _ => Err(format!(
                     "{}: every snapshot row has a dataset and a record",
                     path.display()
@@ -113,7 +121,12 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
 }
 
 /// The raw observation of one recorded row, as a connector extract writes it.
-fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeValue>, String> {
+fn raw(
+    source: &str,
+    mapping: &str,
+    record: &Value,
+    version: Option<&str>,
+) -> Result<Observed<RuntimeValue>, String> {
     let id = record
         .get("id")
         .or_else(|| record.get("name"))
@@ -137,8 +150,8 @@ fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeVa
             "contract" => "norn.raw_observation/v1",
             "source" => source,
             "source_id" => id,
-            "event_id" => "snapshot",
-            "source_version" => "1",
+            "event_id" => version.unwrap_or("snapshot"),
+            "source_version" => version.unwrap_or("1"),
             "pipeline_version" => mapping,
             "kind" => "upsert",
             "extracted_at" => EXTRACTED_AT_MS,
@@ -172,8 +185,8 @@ pub(crate) fn load(
         let file = snapshot.path.display().to_string();
         let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
-        for (dataset, record) in &snapshot.rows {
-            let observed = raw(&snapshot.source, &snapshot.mapping, record)?;
+        for (dataset, record, version) in &snapshot.rows {
+            let observed = raw(&snapshot.source, &snapshot.mapping, record, version.as_deref())?;
             let identity = observed.provenance.source_id.clone();
             let split = pages.last().is_none_or(|(current, rows)| {
                 current != dataset || rows.len() >= PAGE_ROWS || !seen.insert(identity.clone())
