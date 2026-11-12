@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/kernel-proof-v1/Binding/ReplayProof.lean",
+    "command": "scripts/verify-kernel-binding-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryb1b7fef7ebe0dda6ce86b27b1aa4b1ae6068c04343469d3f63bb134eb42c705d.evidence.proof.entry858ad7b10e53aec8c58f8aa42b3f17b7184721a3d1381ef9bbdc51e3b11fe777.selectors"
+    }
+  }
+}

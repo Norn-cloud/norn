@@ -79,9 +79,43 @@ export interface BuildOptions extends EnvelopeOptions {
   readonly sourceRoot?: string
 }
 
+/**
+ * A flow's display data (the canvas titles): the flow definition kind stores
+ * it as `payload.flow`, beside the artifacts. Display-only; it never changes
+ * what runs.
+ */
+export interface FlowDisplay {
+  readonly id: string
+  readonly version: string
+  readonly title?: string
+  /** Each labelled step, in authoring order. */
+  readonly steps: ReadonlyArray<{ readonly id: string; readonly label: string }>
+}
+
 export type BuildResult =
-  | { readonly ok: true; readonly artifacts: ReadonlyArray<Json>; readonly sourceMap: Json; readonly flowSourceMap?: FlowSourceMapDraft }
+  | { readonly ok: true; readonly artifacts: ReadonlyArray<Json>; readonly sourceMap: Json; readonly flowSourceMap?: FlowSourceMapDraft; readonly flow: FlowDisplay }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<BuildDiagnostic> }
+
+/** Every labelled perform and sleep under `steps`, depth first in authoring order. */
+function stepLabels(steps: ReadonlyArray<Step>): Array<{ readonly id: string; readonly label: string }> {
+  const out: Array<{ readonly id: string; readonly label: string }> = []
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+      return
+    }
+    if (node === null || typeof node !== "object") return
+    const step = node as { readonly _tag?: string; readonly step?: string; readonly label?: string }
+    if ((step._tag === "Perform" || step._tag === "Sleep") && step.step !== undefined && step.label !== undefined) {
+      out.push({ id: step.step, label: step.label })
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key !== "fn" && key !== "input" && key !== "at") visit(value)
+    }
+  }
+  visit(steps)
+  return out
+}
 
 const STEP_ID = /^[a-z][a-z0-9_]*$/
 const FLOW_ID = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/
@@ -233,7 +267,9 @@ class FlowLowering {
     const artifacts = [this.entity(), this.rule()]
     const sourceMap = this.sourceMap()
     const flowSourceMap = this.flowSourceMap()
-    return { ok: true, artifacts, sourceMap, ...(flowSourceMap ? { flowSourceMap } : {}) }
+    const { id, version, title } = this.def.meta
+    const display: FlowDisplay = { id, version, ...(title === undefined ? {} : { title }), steps: stepLabels(this.def.body) }
+    return { ok: true, artifacts, sourceMap, ...(flowSourceMap ? { flowSourceMap } : {}), flow: display }
   }
 
   // ------------------------------------------------------------ validation
@@ -874,7 +910,7 @@ class FlowLowering {
         },
       ],
     }
-    return this.envelope("entity", this.entityId, `${this.def.meta.id} run`, { entityVersion: "2.0", objectType }, [])
+    return this.envelope("entity", this.entityId, `${this.def.meta.title ?? this.def.meta.id} run`, { entityVersion: "2.0", objectType }, [])
   }
 
   private inputSchema(): ObjectSchema {
@@ -1022,7 +1058,7 @@ class FlowLowering {
       graph,
     }
     const dependencies = [{ artifactId: this.entityId, kind: "entity", version: this.def.meta.version, required: true }]
-    return this.envelope("rule", `${this.def.meta.id}.flow.rule`, `${this.def.meta.id} flow`, payload, dependencies)
+    return this.envelope("rule", `${this.def.meta.id}.flow.rule`, this.def.meta.title ?? `${this.def.meta.id} flow`, payload, dependencies)
   }
 
   private sourceMap(): Json {

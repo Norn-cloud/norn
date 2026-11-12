@@ -48,14 +48,21 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "location.Space.entity",
         "party.Brand.entity",
     ];
-    let mut paths: Vec<PathBuf> = ["core", "packs/canon", "packs/erpnext", "packs/shopify"]
-        .into_iter()
-        .flat_map(|dir| {
-            std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
-                .expect("artifact directory")
-                .map(|entry| entry.expect("entry").path())
-        })
-        .collect();
+    // packs/locale-ar labels the model in Arabic; it changes no model or object document.
+    let mut paths: Vec<PathBuf> = [
+        "core",
+        "packs/canon",
+        "packs/erpnext",
+        "packs/shopify",
+        "packs/locale-ar",
+    ]
+    .into_iter()
+    .flat_map(|dir| {
+        std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
+            .expect("artifact directory")
+            .map(|entry| entry.expect("entry").path())
+    })
+    .collect();
     paths.sort();
     paths
         .into_iter()

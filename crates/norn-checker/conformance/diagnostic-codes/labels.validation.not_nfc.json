@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.not_nfc",
+  "message": "a label or description is not in Unicode NFC form",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

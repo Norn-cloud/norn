@@ -1,44 +1,72 @@
 {
-  "registry_version": "norn.verification.obligations.v1",
-  "obligations": [
-    {
-      "id": "INV-CERT-LINEAR-CONSERVATION",
-      "priority": "P0",
-      "statement": "For any reachable sequence of faithful steps over a rational measure, zero weighted delta at every step preserves that measure.",
-      "assumptions": [
-        "Each step realizes its declared weighted delta.",
-        "Every step has zero weighted delta."
-      ],
-      "sourceIssues": [
-        "#711",
-        "#729"
-      ]
-    },
-    {
-      "id": "INV-CERT-IVM-OPERATOR-COMPOSITION",
-      "priority": "P0",
-      "statement": "Two abstract one-step query maintainers satisfying their local Correct equations compose into a one-step maintainer for the composed query.",
-      "assumptions": [
-        "Each local operator satisfies its abstract Correct equation under the supplied state addition functions."
-      ],
-      "sourceIssues": [
-        "#714",
-        "#770"
-      ]
-    },
-    {
-      "id": "INV-CERT-SPECIALISATION",
-      "priority": "P0",
-      "statement": "Conjunctive extensions with no new projected writers preserve base safety invariants.",
-      "assumptions": [
-        "Extension initial states project to admitted base initial states.",
-        "Every extension step projects to a base step.",
-        "Base initialization and each base step preserve the invariant."
-      ],
-      "sourceIssues": [
-        "#713",
-        "#718"
-      ]
-    }
-  ]
+ "registry_version": "norn.verification.obligations.v1",
+ "obligations": [
+  {
+   "id": "INV-CERT-LINEAR-CONSERVATION",
+   "priority": "P0",
+   "statement": "For any reachable sequence of faithful steps over a rational measure, zero weighted delta at every step preserves that measure.",
+   "assumptions": [
+    "Each step realizes its declared weighted delta.",
+    "Every step has zero weighted delta."
+   ],
+   "sourceIssues": [
+    "#711",
+    "#729"
+   ]
+  },
+  {
+   "id": "INV-CERT-IVM-OPERATOR-COMPOSITION",
+   "priority": "P0",
+   "statement": "Two abstract one-step query maintainers satisfying their local Correct equations compose into a one-step maintainer for the composed query.",
+   "assumptions": [
+    "Each local operator satisfies its abstract Correct equation under the supplied state addition functions."
+   ],
+   "sourceIssues": [
+    "#714",
+    "#770"
+   ]
+  },
+  {
+   "id": "INV-CERT-SPECIALISATION",
+   "priority": "P0",
+   "statement": "Conjunctive extensions with no new projected writers preserve base safety invariants.",
+   "assumptions": [
+    "Extension initial states project to admitted base initial states.",
+    "Every extension step projects to a base step.",
+    "Base initialization and each base step preserve the invariant."
+   ],
+   "sourceIssues": [
+    "#713",
+    "#718"
+   ]
+  },
+  {
+   "id": "INV-CERT-LAW-EXCEPTION-SEMANTICS",
+   "priority": "P0",
+   "statement": "A well-formed law exception tree has exactly one stable (defeasible) labelling at every point, the depth-bounded fold with fuel |exceptions| + 1 decides whether the law is lifted under it, and an exception tree never makes a law bind where its bare law does not.",
+   "assumptions": [
+    "Conditions, scope and response are Boolean denotations at a point; expression evaluation and its refusals are outside this claim (#718 P5).",
+    "Well-formed means at most 64 exceptions, unique ids distinct from the law's, and every exception reaches the law by following overrides."
+   ],
+   "sourceIssues": [
+    "#718",
+    "#1187",
+    "#1207"
+   ]
+  },
+  {
+   "id": "INV-CERT-NORM-PRECEDENCE-DECISION",
+   "priority": "P0",
+   "statement": "The extracted norm-precedence decision core admits a declared order only when it is admissible (acyclic declared priority, no cross-layer clash, no defeat of a protected law) and its closure certificate is exact; it accepts a context's resolution only when it is the unique stable survivor set; and every admitted order satisfies downstream-can't-defeat-upstream, strict-layer and overlay preservation. Completeness (every admissible order with the exact closure is admitted, and the true resolution is accepted) is not proved: it is property-tested against the former whole-set oracle (core_decides_exactly_as_the_whole_set_query) on groundings of at most 5 norms and 3 contexts.",
+   "assumptions": [
+    "The grounding (masks, layers, protection flags) handed to the core is the declared catalog's; it is the trusted shell TRUST-NORM-PRECEDENCE-SHELL.",
+    "Charon/Aeneas translate the production MIR faithfully (TRUST-CHARON-AENEAS-AND-CORE-MODELS)."
+   ],
+   "sourceIssues": [
+    "#718",
+    "#737",
+    "#1235"
+   ]
+  }
+ ]
 }

@@ -40,7 +40,7 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
           return (
             <li key={option.id}>
               <button type="button" aria-pressed={active} onClick={() => onSelect(option.id)}
-                className={cn("w-full rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none",
+                className={cn("w-full rounded-lg border bg-card px-3 py-2 text-start text-sm transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none",
                   active ? "border-primary ring-2 ring-primary/20" : selected !== undefined && "opacity-60")}>
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="rounded border px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>

@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod catalog;
+pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
@@ -38,6 +39,7 @@ pub mod error;
 pub mod export;
 mod export_journal;
 pub mod flow_run;
+pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
@@ -68,6 +70,7 @@ pub mod transparency;
 mod write;
 
 pub use error::CellError;
+pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
@@ -88,3 +91,5 @@ pub use store::{
 /// Workers/Durable Objects SQLite adapter (celld and workerd).
 #[cfg(target_arch = "wasm32")]
 pub mod workers;
+
+mod read_envelope;

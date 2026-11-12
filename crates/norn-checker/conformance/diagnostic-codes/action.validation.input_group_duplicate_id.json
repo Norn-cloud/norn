@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_group_duplicate_id",
+  "message": "ActionIR input group id {id} is used twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

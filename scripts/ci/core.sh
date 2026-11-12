@@ -84,8 +84,12 @@ run_phase() {
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/ci/test_implementation_receipts.py
+      python3 scripts/ci/test_contract_diff.py
+      python3 scripts/ci/contract_diff.py --ci
       python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
+      python3 scripts/standards_atlas.py --check
+      python3 scripts/test_standards_atlas.py
       python3 scripts/metrics/test_metrics.py
       cargo xtask ci policy
       cargo xtask ci provenance
@@ -178,10 +182,12 @@ PY
       ;;
     integration)
       cargo build --locked -p norn-cli
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
       cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
+      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"

@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.duplicate_locale",
+  "message": "a label locale appears twice, ignoring case",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

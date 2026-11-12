@@ -8,6 +8,9 @@
     "./tsconfig.authoring.json": "./tsconfig.authoring.json",
     "./schema/norn-project.schema.json": "./schema/norn-project.schema.json"
   },
+  "bin": {
+    "norn": "./src/cli.ts"
+  },
   "private": true,
   "description": "norn-effect/1 authoring profile: pinned effect + TypeScript Compiler API, symbol-resolution checker, conformance/rejection corpus (T7-EFX-1)",
   "license": "Apache-2.0",

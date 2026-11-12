@@ -1749,6 +1749,8 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
+    /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
+    pub(crate) fork: Option<crate::fork::ForkPin>,
 }
 
 #[derive(Clone, Copy)]
@@ -1764,12 +1766,52 @@ struct DefinitionPreflight {
     migration: crate::migration::MigrationPlan,
 }
 
+/// CELL-ID-1: the identity a fresh provisioning binds; never invoked on a retry.
+type ProvisionIdentity<'a> =
+    RefCell<dyn FnMut() -> Result<norn_ir::cell_id::CellId, CellError> + 'a>;
+
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
     Current,
-    Provisioning(&'a str),
+    Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
+}
+
+/// A retained revision rides the governed install without changing the
+/// kernel unless it is a flow: its set, receipt and model are the active ones.
+fn preflight_retained(
+    previous: Option<&InstalledDefinitionSet>,
+    previous_model: &Model,
+    install: &DefinitionInstallContext<'_>,
+    change: &crate::retained::RetainedDefinitionChange,
+) -> Result<(), CellError> {
+    // A retained revision rides the governed install but, unless it is a
+    // flow (an automation that installs into the kernel set), never
+    // changes the kernel: its set and receipt are the active ones, so the
+    // new definitions version has the kernel identity of the one before it
+    // (question pins and historical cutoffs compare that identity).
+    let unchanged = previous.is_some_and(|previous| {
+        previous.canonical_set == install.input.canonical_set
+            && previous.receipt_sha256 == install.input.receipt_sha256
+    });
+    if !unchanged && change.definition.kind != "flow" {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision installs over the active kernel set and receipt, unchanged"
+                .to_owned(),
+        ));
+    }
+    // Nor does it change the model (Fable S6): only a flow installs a new
+    // kernel set, and with it a new projected model.
+    let same_model = install.candidate_model.model_hash() == previous_model.model_hash()
+        && install.candidate_model.ddl_hash() == previous_model.ddl_hash();
+    if !same_model && change.definition.kind != "flow" {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision that is not a flow installs over the active model, unchanged"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn preflight_definition_install<E: SqlEngine>(
@@ -1797,20 +1839,7 @@ fn preflight_definition_install<E: SqlEngine>(
         })
         .transpose()?;
     if let Some(change) = install.retained {
-        // A retained revision rides the governed install but never changes
-        // the kernel: its set and receipt are the active ones, so the new
-        // definitions version has the kernel identity of the one before it
-        // (question pins and historical cutoffs compare that identity).
-        let unchanged = previous.as_ref().is_some_and(|previous| {
-            previous.canonical_set == install.input.canonical_set
-                && previous.receipt_sha256 == install.input.receipt_sha256
-        });
-        if !unchanged {
-            return Err(CellError::DefinitionReceiptInvalid(
-                "a retained revision installs over the active kernel set and receipt, unchanged"
-                    .to_owned(),
-            ));
-        }
+        preflight_retained(previous.as_ref(), previous_model, install, change)?;
         crate::retained::preflight(engine, change)?;
     }
     let (layout, layout_revision) =
@@ -1997,18 +2026,26 @@ impl<E: SqlEngine> CellStore<E> {
     /// engine already contains a store for another format or model;
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
+    /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
+    /// Hosts excluding these functions must use [`Self::from_engine_with_identity_source`]
+    /// or [`Self::from_engine_bound`]. Reopening never invokes the identity source.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
-        Self::init(conn, model)
+        Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
     }
 
     /// Staging only: callers verify the complete retained prefix before replay.
-    pub(crate) fn from_retained_engine(conn: E, model: Model) -> Result<Self, CellError> {
+    /// CELL-ID-1: the staged engine is created under the retained `cell_id`.
+    pub(crate) fn from_retained_engine(
+        conn: E,
+        model: Model,
+        cell_id: &norn_ir::cell_id::CellId,
+    ) -> Result<Self, CellError> {
         if !Self::engine_is_fresh(&conn)? {
             return Err(CellError::HistoricalValueUnproven(
                 "retained replay requires an empty engine".to_owned(),
             ));
         }
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
+        conn.transaction(|| Self::init_schema(&conn, &model, &mut |_| Ok(cell_id.clone())))?;
         Ok(Self::unverified(conn, model))
     }
 
@@ -2023,6 +2060,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// Atomically initialize, bind and install a tenant's first admitted set.
     /// An identical request reopens the initial revision without writing.
     ///
+    /// A fresh engine's logical identity comes from SQLite's `lower`, `hex`,
+    /// and `randomblob` functions. Hosts excluding these functions must use
+    /// [`Self::provision_definitions_with_identity_source`].
+    ///
     /// # Errors
     /// Store failures roll back all schema and data. A changed request, scope,
     /// or invalid retained history refuses. Identical retries reopen the current model.
@@ -2032,11 +2073,40 @@ impl<E: SqlEngine> CellStore<E> {
         input: &InstalledDefinitionInput,
         scope: &str,
     ) -> Result<Self, CellError> {
+        Self::provision_definitions_with_identity_source(
+            conn,
+            model,
+            input,
+            scope,
+            crate::cell_identity::generate,
+        )
+    }
+
+    /// [`Self::provision_definitions`] with an injectable identity source.
+    /// CELL-ID-1: `source` is called only when the engine is fresh, inside the
+    /// provisioning transaction; a retry reopens the bound identity without
+    /// calling it. Callers that expect one identity check it with
+    /// [`Self::require_cell_id`].
+    ///
+    /// # Errors
+    /// As [`Self::provision_definitions`], plus an identity source failure,
+    /// which rolls the provisioning back.
+    pub fn provision_definitions_with_identity_source(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
+        // FORK-PIN-1: a fork reopened through provisioning stays a fork.
+        if !Self::engine_is_fresh(&store.conn)? {
+            store.fork = crate::fork::load_pin(&store.conn)?;
+        }
         if let Some(active) = Self::read_active_definitions(&store.conn)? {
             let installation = store
-                .export_record(active.commit_seq)?
+                .local_export_record(active.commit_seq)?
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
@@ -2056,18 +2126,23 @@ impl<E: SqlEngine> CellStore<E> {
             expected_version: Some(0),
             retained: None,
         };
+        let fresh_identity = RefCell::new(|| source(&store.conn));
         store
             .commit_guarded_inner(
                 &batch,
                 Some(installation),
                 None,
-                CommitOrigin::Provisioning(&identity),
+                CommitOrigin::Provisioning(&identity, &fresh_identity),
                 |_reader| Ok::<(), CellError>(()),
                 &mut |_point| Ok(()),
             )
             .map_err(|error| match error {
                 GuardedError::Guard(error) | GuardedError::Store(error) => error,
             })?;
+        if store.fork.is_some() {
+            let head = store.verified_head()?.commits;
+            store.refuse_pin_past(head)?;
+        }
         Ok(store)
     }
 
@@ -2148,10 +2223,32 @@ impl<E: SqlEngine> CellStore<E> {
             source_disputes: RefCell::default(),
             mapping_plans: RefCell::default(),
             quantity_boundary: Cell::new(None),
+            fork: None,
         }
     }
 
-    fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
+    /// FORK-PIN-1: a fork over `engine`, whose contents equal this store's
+    /// at its verified head plus `pin`. Verification state is inherited:
+    /// the [`crate::fork::ForkEngine`] contract guarantees equal contents.
+    pub(crate) fn forked(&self, engine: E, pin: crate::fork::ForkPin) -> Self {
+        let mut store = Self::unverified(engine, self.model.clone());
+        store.verified.replace(self.verified.borrow().clone());
+        store.quantity_boundary.set(self.quantity_boundary.get());
+        store
+            .candidate_validator
+            .set(self.candidate_validator.get());
+        store
+            .transparency
+            .replace(self.transparency.borrow().clone());
+        store.fork = Some(pin);
+        store
+    }
+
+    fn init_schema(
+        conn: &E,
+        model: &Model,
+        source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<(), CellError> {
         validate_store_format(conn)?;
         for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
             conn.execute_batch(statement)?;
@@ -2175,6 +2272,12 @@ impl<E: SqlEngine> CellStore<E> {
         match (meta("format")?, meta("ddl_hash")?) {
             (None, None) => {
                 let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                let cell_id = source(conn)?;
+                conn.execute(&insert, params!["binding:cell_id", cell_id.as_str()])?;
+                conn.execute(
+                    &insert,
+                    params!["binding:cell_identity_format", crate::cell_identity::FORMAT],
+                )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
             }
@@ -2209,15 +2312,25 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(())
     }
 
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
+    /// Open with an injectable identity source, called only for a fresh store.
+    /// CELL-ID-1: existing identities and legacy unqualified histories are retained.
+    ///
+    /// # Errors
+    /// Store admission or identity source failure.
+    pub fn from_engine_with_identity_source(
+        conn: E,
+        model: Model,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
         model.validate_identity_profile()?;
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
-        let store = Self::unverified(conn, model);
+        conn.transaction(|| Self::init_schema(&conn, &model, &mut source))?;
+        let mut store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
         let (head, boundary) = store.conn.transaction(|| {
+            crate::cell_identity::verify_history(&store.conn)?;
             let verified = store
                 .read()
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
@@ -2231,7 +2344,24 @@ impl<E: SqlEngine> CellStore<E> {
         store
             .transparency
             .replace(crate::transparency::load(&store.conn)?);
+        store.fork = crate::fork::load_pin(&store.conn)?;
+        let head = store.verified.borrow().commits;
+        store.refuse_pin_past(head)?;
         Ok(store)
+    }
+
+    /// FORK-PIN-1: a fork's base is never past its store's head.
+    fn refuse_pin_past(&self, head_commits: u64) -> Result<(), CellError> {
+        if self
+            .fork
+            .as_ref()
+            .is_some_and(|pin| pin.base.commits > head_commits)
+        {
+            return Err(CellError::Encoding(
+                "fork pin: the base is past the store's head".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     #[allow(
@@ -2262,12 +2392,12 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self.export_record(version.commit_seq)?.ok_or_else(|| {
-                    CellError::LedgerCorrupt {
+                let record = self
+                    .local_export_record(version.commit_seq)?
+                    .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: version.commit_seq,
                         reason: "installed definitions have no typed export record".to_owned(),
-                    }
-                })?;
+                    })?;
                 let installation =
                     record
                         .definition_install
@@ -2375,11 +2505,28 @@ impl<E: SqlEngine> CellStore<E> {
     /// Bind the file to `value` under the identity key `key` (for example
     /// the tenant scope it serves): recorded on first use, and checked on
     /// every later open, so a file is never served under another identity.
+    /// Logical cell keys only validate an existing versioned binding; they
+    /// cannot add an identity or format marker to a legacy file.
     ///
     /// # Errors
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        if key == crate::cell_identity::FORMAT_KEY {
+            if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
+                return Ok(());
+            }
+            return Err(CellError::BindingMismatch {
+                key: key.to_owned(),
+                expected: crate::cell_identity::FORMAT.to_owned(),
+                found: value.to_owned(),
+            });
+        }
+        if key == crate::cell_identity::KEY {
+            let id = norn_ir::cell_id::CellId::try_from(value.to_owned())
+                .map_err(|reason| CellError::Encoding(reason.to_owned()))?;
+            return self.require_cell_id(&id);
+        }
         let meta_key = format!("binding:{key}");
         self.conn.transaction(|| -> Result<(), CellError> {
             let found: Option<String> = self.conn.query_optional(
@@ -2592,25 +2739,27 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
-    /// Install one retained (non-kernel) definition revision through the
-    /// governed definitions install: the kernel set, receipt and model in
-    /// `input` must be the active ones, unchanged; the commit appends the
-    /// revision, a new definitions version and its ledger event atomically.
-    /// The revision is compare-and-set on the id's current revision.
+    /// Install one retained definition revision through the governed
+    /// definitions install: the commit installs `input`'s kernel set and
+    /// receipt with `candidate_model` (the active ones, unchanged, for a
+    /// definition that is not a kernel artifact; a flow's admitted set and
+    /// projected model otherwise), and appends the revision, a new
+    /// definitions version and its ledger event atomically. The revision is
+    /// compare-and-set on the id's current revision.
     ///
     /// # Errors
     ///
     /// A definitions-version or retained-revision conflict, or a store error.
     pub fn install_retained_definition(
         &mut self,
+        candidate_model: Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
         scope: &str,
         change: &crate::retained::RetainedDefinitionChange,
     ) -> Result<InstalledDefinitionSet, CellError> {
-        let model = self.model.clone();
         self.install_definitions_from_origin(
-            model,
+            candidate_model,
             input,
             expected_version,
             scope,
@@ -2703,12 +2852,24 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
+        if batch
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, EffectRow::ClaimPerform { .. }))
+        {
+            self.refuse_perform_in_fork()?;
+        }
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
-            if let CommitOrigin::Provisioning(identity) = origin {
+            if let CommitOrigin::Provisioning(identity, fresh_identity) = origin {
                 if Self::engine_is_fresh(&self.conn)? {
-                    Self::init_schema(&self.conn, &self.model)?;
+                    Self::init_schema(&self.conn, &self.model, &mut |_| {
+                        let mut source = fresh_identity.try_borrow_mut().map_err(|error| {
+                            CellError::Engine(format!("cell identity source re-entered: {error}"))
+                        })?;
+                        (*source)()
+                    })?;
                     for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
                         self.conn.execute(
                             &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
@@ -2732,6 +2893,7 @@ impl<E: SqlEngine> CellStore<E> {
                         || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
+                    crate::cell_identity::verify_history(&self.conn)?;
                     let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
@@ -2749,7 +2911,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(_) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
                 crate::migration::apply_model_migration(
                     &self.conn,
@@ -3071,9 +3233,21 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     ///
-    /// SQL engine errors.
+    /// `core.world.perform_forbidden` in a fork (WORLD-ISOLATE-1); SQL engine
+    /// errors otherwise.
     pub fn record_performed(
         &mut self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        self.refuse_perform_in_fork()?;
+        self.record_head_result(command_id, generation, outcome)
+    }
+
+    /// Record `outcome` as the head command's result when it has none.
+    pub(crate) fn record_head_result(
+        &self,
         command_id: &str,
         generation: u64,
         outcome: &Value,
@@ -3142,7 +3316,7 @@ impl<E: SqlEngine> CellStore<E> {
             generation,
             head.commit_seq,
         )?;
-        let outcome = match self.export_record(head.commit_seq)? {
+        let outcome = match self.local_export_record(head.commit_seq)? {
             Some(record) => crate::payload_storage::encode_result(
                 &self.conn,
                 &record.batch.scope,
@@ -3362,6 +3536,7 @@ mod identity_history_tests {
         let current = Model::from_snapshot(&snapshot(1)).expect("current model");
         let mut template = CellStore::open_in_memory(current.clone()).expect("template");
         template.commit(&batch(vec![])).expect("template receipt");
+        let cell_id = template.cell_id().expect("cell id").expect("bound cell id");
         let template = template.export_record(1).expect("export").expect("record");
         let retained =
             Model::from_retained_snapshot(&snapshot(steps)).expect("retained projection");
@@ -3369,6 +3544,7 @@ mod identity_history_tests {
         let mut store = CellStore::from_retained_engine(
             NativeEngine::open(path, StoreOptions::default()).expect("engine"),
             retained,
+            &cell_id,
         )
         .expect("fresh staging engine");
         store.bind("scope", "s").expect("scope");
@@ -3393,6 +3569,57 @@ mod identity_history_tests {
             .install_definitions(current.clone(), definition_input(&current), Some(0), "s")
             .expect("current admission after removing the collision");
         (store, current)
+    }
+
+    /// FORK-PIN-1 (Fable S1): provisioning a fork's engine again (the
+    /// identical-request reopen path) keeps the pin, and the reopened fork
+    /// still refuses to perform.
+    #[test]
+    fn a_fork_reopened_through_provisioning_keeps_its_pin() {
+        let current = Model::from_snapshot(&snapshot(1)).expect("current model");
+        let input = definition_input(&current);
+        let main = CellStore::provision_definitions(
+            NativeEngine::open_in_memory().expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning");
+        let base = main.verified_head().expect("head");
+        let fork = main.fork("what-if", &base).expect("forks");
+        let pin = fork.fork_pin().cloned();
+        let mut reopened =
+            CellStore::provision_definitions(fork.conn, current, &input, "s").expect("reopens");
+        assert_eq!(reopened.fork_pin(), pin.as_ref());
+        assert!(pin.is_some());
+        assert!(matches!(
+            reopened.record_performed("c", 0, &Value::Null),
+            Err(CellError::WorldPerformForbidden)
+        ));
+    }
+
+    /// FORK-PIN-1: provisioning refuses a fork whose pinned base is past
+    /// its store's head, as `open` does.
+    #[test]
+    fn provisioning_refuses_a_fork_pinned_past_its_head() {
+        let current = Model::from_snapshot(&snapshot(1)).expect("current model");
+        let input = definition_input(&current);
+        let main = CellStore::provision_definitions(
+            NativeEngine::open_in_memory().expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning");
+        let base = main.verified_head().expect("head");
+        let fork = main.fork("what-if", &base).expect("forks");
+        let mut pin = fork.fork_pin().cloned().expect("pin");
+        pin.base.commits += 1;
+        crate::fork::write_pin(&fork.conn, &pin).expect("rewrites the pin");
+        assert!(matches!(
+            CellStore::provision_definitions(fork.conn, current, &input, "s"),
+            Err(CellError::Encoding(message)) if message.contains("past the store's head")
+        ));
     }
 
     #[test]
@@ -3513,7 +3740,15 @@ mod identity_history_tests {
                 &target,
                 current.clone(),
                 "s",
-                &BTreeMap::from([("scope".into(), "s".into())]),
+                // CELL-ID-RESTORE: restore names the source's logical identity.
+                &BTreeMap::from([
+                    ("scope".into(), "s".into()),
+                    ("cell_id".into(), records[0].bindings["cell_id"].clone()),
+                    (
+                        "cell_identity_format".into(),
+                        crate::cell_identity::FORMAT.into(),
+                    ),
+                ]),
                 StoreOptions::default(),
             )
             .await

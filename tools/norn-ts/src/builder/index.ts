@@ -24,3 +24,4 @@ export * as OP from "./ontology-pack.ts"
 export * as PL from "./pack-link.ts"
 
 export * as Q from "./question.ts"
+export * as LB from "./labels.ts"

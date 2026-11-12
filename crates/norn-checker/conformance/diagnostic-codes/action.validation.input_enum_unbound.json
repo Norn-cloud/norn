@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_enum_unbound",
+  "message": "ActionIR input {field} declares an enum but writes no enum property",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

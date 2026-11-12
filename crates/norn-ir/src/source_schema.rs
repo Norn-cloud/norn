@@ -118,6 +118,13 @@ pub struct SourceIdentity {
     pub version: Option<String>,
 }
 
+/// The adapter name the generic XML Schema reader (`norn-formats`) declares.
+/// Its output must carry its `OntologySource` admission under
+/// [`XSD_READER_EXTENSION`]; the checker refuses it otherwise.
+pub const XSD_READER_ADAPTER: &str = "norn.formats.xsd";
+/// The extension slot holding the XML Schema reader's source graph and admission.
+pub const XSD_READER_EXTENSION: &str = "norn.formats.xsd/0.1.0";
+
 /// The adapter that produced a document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

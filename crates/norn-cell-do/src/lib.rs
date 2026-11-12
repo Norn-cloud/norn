@@ -12,8 +12,12 @@
 //!   `AccessIR` policy compiled against the cell model's Cedar projection.
 //! - [`seed`]: the public three-systems demo cell, provisioned idempotently.
 //! - [`server`]: read-only fetch dispatch over `norn_api`'s shared services.
+//! - `dev` (native only): `norn-dev-host`, the developer loop over a
+//!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 
 pub mod analytics;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod dev;
 pub mod policy;
 pub mod principal;
 pub mod seed;

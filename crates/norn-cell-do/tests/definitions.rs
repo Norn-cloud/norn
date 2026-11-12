@@ -1,7 +1,9 @@
 //! Retained definitions (dashboards, agents) end to end through the fetch
 //! dispatch: admit is side-effect free, install and retire append a version
 //! through the governed definitions install, reads need only Population, and
-//! every denied request gets the one opaque 403.
+//! every denied request gets the one opaque 403. The refusals Studio's
+//! question-save stand-in serves are pinned in
+//! `apps/studio/test/fixtures/definition-call.json`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -32,6 +34,8 @@ const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The host secret the cell's lineage handle key derives from.
 const HANDLE_KEY: [u8; 32] = [5; 32];
+/// The refusal documents Studio's stand-in (`apps/studio/e2e/question-save.e2e.ts`) serves.
+const FIXTURE: &str = include_str!("../../../apps/studio/test/fixtures/definition-call.json");
 
 /// The keyed receipt handle a reader without whole-world Values sees: the
 /// cell derives its handle key from the host secret and its scope.
@@ -48,8 +52,22 @@ struct Cell {
 }
 
 fn cell(kinds: DefinitionKinds) -> Cell {
+    cell_on(NativeEngine::open_in_memory().unwrap(), kinds)
+}
+
+fn cell_on(engine: NativeEngine, kinds: DefinitionKinds) -> Cell {
+    cell_seeded(engine, kinds, |_, _| {})
+}
+
+/// A cell whose store `seed` writes to before any route serves it.
+fn cell_seeded(
+    engine: NativeEngine,
+    kinds: DefinitionKinds,
+    seed: impl FnOnce(&mut norn_cell::CellStore<NativeEngine>, &str),
+) -> Cell {
     let scope = analytics::analytics_scope();
-    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let mut opened = analytics::provision(engine, &scope).unwrap();
+    seed(&mut opened.store, &scope.key());
     let policy =
         ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
@@ -683,6 +701,47 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
     assert_eq!(first["signoff"]["restatementSha256"], json!(right));
 }
 
+/// The served response is the fixture's document `name`, with the status the
+/// fixture's `status` member pins for it.
+fn served(fixture: &Value, name: &str, (status, document): &(u16, Value)) {
+    assert_eq!(
+        Some(u64::from(*status)),
+        fixture["status"][name].as_u64(),
+        "{name}: {document}"
+    );
+    assert_eq!(document, &fixture[name], "{name}");
+}
+
+/// Every refusal Studio's question-save stand-in serves, as the definitions
+/// routes serve it. The stand-in imports these documents, substituting only
+/// the mismatch's restatement and digest, which the cell recomputes from the
+/// caller's own payload.
+#[test]
+fn studio_definition_refusals_match_the_client_contract() {
+    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let body = json!({
+        "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed"),
+        "signoff": { "restatementSha256": sha256("something else") },
+    });
+    let unverifiable = cell(DefinitionKinds::default());
+    served(
+        &fixture,
+        "signoffUnavailable",
+        &post(&unverifiable, "/v1/definitions:install", ADMIN, &body),
+    );
+    let cell = cell(DefinitionKinds::default().with_restater(stub_restate));
+    served(
+        &fixture,
+        "signoffMismatch",
+        &post(&cell, "/v1/definitions:install", ADMIN, &body),
+    );
+    served(
+        &fixture,
+        "notFound",
+        &get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER),
+    );
+}
+
 #[test]
 fn the_checker_restatement_signs_off_saved_questions_and_dashboards() {
     // The worker's generator: the checker's words, which Studio also shows.
@@ -1107,6 +1166,785 @@ fn admit_and_get_return_the_recomputed_restatement() {
             bare["restatementSha256"].clone()
         ),
         (Value::Null, Value::Null)
+    );
+}
+
+/// `lowerFlow`'s golden output (tools/norn-ts' vertical fixture), scoped to
+/// this cell as `lowerFlow` would scope it with the cell's scope option.
+const LOWERED: &str =
+    include_str!("../../../tools/norn-ts/fixtures/vertical/route-message.ir.json");
+const FLOW_ID: &str = "crm.route_message";
+const TOOL: &str = "norn.classify.whatsapp-intent";
+
+fn lowered() -> Vec<Value> {
+    let mut artifacts: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_demo", "environmentId": "analytics" });
+    }
+    artifacts
+}
+
+fn flow_body(id: &str, artifacts: &[Value], expected: Option<u64>) -> Value {
+    let mut body = json!({ "kind": "flow", "id": id,
+        "payload": { "flow": { "id": FLOW_ID, "version": "1.0.0" }, "artifacts": artifacts } });
+    if let Some(expected) = expected {
+        body["expectedVersion"] = json!(expected);
+    }
+    body
+}
+
+/// Install `body`, signing the server's words for a flow the cell admits
+/// (a flow is never installed unsigned). A refused admission installs
+/// unsigned, so the install returns the same refusal.
+fn install_flow(cell: &Cell, body: &Value) -> (u16, Value) {
+    let mut body = body.clone();
+    if body["kind"] == json!("flow") && body.get("signoff").is_none() {
+        // Admit takes no expectedVersion.
+        let mut admit = body.clone();
+        admit.as_object_mut().unwrap().remove("expectedVersion");
+        let (_, admitted) = post(cell, "/v1/definitions:admit", ADMIN, &admit);
+        if let Some(digest) = admitted["restatementSha256"].as_str() {
+            body["signoff"] = json!({ "restatementSha256": digest });
+        }
+    }
+    post(cell, "/v1/definitions:install", ADMIN, &body)
+}
+
+/// A cell whose flows install: roles, and the checker's restatement.
+fn flow_kinds() -> DefinitionKinds {
+    DefinitionKinds::default()
+        .with_roles(ROLES)
+        .with_restater(norn_api::definition_routes::checker_restatement)
+}
+
+fn codes_of(refused: &Value) -> Vec<String> {
+    pointers(refused)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+}
+
+#[test]
+fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
+    let cell = cell(flow_kinds());
+    // Its one perform names a tool nothing binds yet.
+    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(status, 422, "{refused}");
+    let unknown = pointers(&refused);
+    assert!(!unknown.is_empty(), "{refused}");
+    for (code, pointer) in &unknown {
+        assert_eq!(code, "definition.flow_function_unknown");
+        assert!(
+            pointer.starts_with("/artifacts/1/payload/graph/nodes/"),
+            "{unknown:?}"
+        );
+    }
+
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(
+        installed["flow"],
+        json!({ "flowId": FLOW_ID, "version": "1.0.0", "ruleArtifactId": "crm.route_message.flow.rule", "runType": "crm.RouteMessageRun" })
+    );
+    // The artifacts are in the active kernel set, verbatim, for the driver.
+    let (_, catalog) = get(&cell, "/v1/definitions", "", VIEWER);
+    let ids: Vec<&str> = catalog["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["artifactId"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&"crm.route_message.flow.rule") && ids.contains(&"crm.RouteMessageRun.entity"),
+        "{ids:?}"
+    );
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["flow"], installed["flow"]);
+    assert_eq!(
+        document["restatement"],
+        json!(
+            "Automation \"crm.route_message\" (version 1.0.0).\nIt runs when a run of it is started.\n1. classify: calls norn.classify.whatsapp-intent at version 1."
+        )
+    );
+
+    // `uses` reports the pinned version, from the same extraction the install checked.
+    let (_, page) = get(
+        &cell,
+        "/v1/definitions:list",
+        &format!("&kind=flow&uses={TOOL}"),
+        VIEWER,
+    );
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["items"][0]["pinnedVersion"], json!("1"));
+    let rule = lowered()
+        .into_iter()
+        .find(|a| a["kind"] == json!("rule"))
+        .unwrap();
+    let pairs: Vec<(String, String)> = norn_checker::flow_performs::perform_refs(&rule["payload"])
+        .unwrap()
+        .into_iter()
+        .filter_map(|perform| perform.name)
+        .collect();
+    assert!(!pairs.is_empty());
+    assert!(
+        pairs
+            .iter()
+            .all(|pair| *pair == (TOOL.to_owned(), "1".to_owned())),
+        "{pairs:?}"
+    );
+    let (_, none) = get(
+        &cell,
+        "/v1/definitions:list",
+        "&kind=flow&uses=studio.binding.other",
+        VIEWER,
+    );
+    assert_eq!(none["items"], json!([]));
+    assert_eq!(
+        get(
+            &cell,
+            "/v1/definitions:list",
+            &format!("&kind=dashboard&uses={TOOL}"),
+            VIEWER
+        )
+        .0,
+        400
+    );
+
+    // Editing the tool moves its version; the pinned flow no longer installs until re-pinned.
+    assert_eq!(
+        install_binding(
+            &cell,
+            TOOL,
+            &binding("Intent v2", "member", &json!({})),
+            Some(1)
+        )
+        .0,
+        200
+    );
+    let (status, stale) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), Some(1)));
+    assert_eq!(status, 422, "{stale}");
+    assert!(
+        codes_of(&stale)
+            .iter()
+            .all(|code| code == "definition.flow_function_unknown"),
+        "{stale}"
+    );
+
+    // Retiring keeps the artifacts and is refused while runs cannot be ruled out.
+    let retire = json!({ "expectedVersion": 1 });
+    let (status, live) = post(
+        &cell,
+        &format!("/v1/definitions/{FLOW_ID}:retire"),
+        ADMIN,
+        &retire,
+    );
+    assert_eq!(
+        (status, live["code"].clone()),
+        (409, json!("definition.flow_runs_live")),
+        "{live}"
+    );
+}
+
+#[test]
+fn a_registered_builtin_resolves_a_perform() {
+    fn resolve(function: &str, version: u32) -> bool {
+        function == TOOL && version == 1
+    }
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_builtins(resolve)
+            .with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(status, 200, "{installed}");
+}
+
+#[test]
+fn a_flow_owns_exactly_its_two_lowered_artifacts() {
+    let cell = cell(flow_kinds());
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let admit = |body: &Value| post(&cell, "/v1/definitions:admit", ADMIN, body).1;
+    // The definition id is flow.id.
+    assert_eq!(
+        codes_of(&admit(&flow_body("crm.other_flow", &lowered(), None))),
+        ["definition.flow_id_mismatch"]
+    );
+    // An artifact it does not own, or an action, is refused.
+    let mut foreign = lowered();
+    let mut extra = foreign[0].clone();
+    extra["artifactId"] = json!("crm.Other.entity");
+    foreign.push(extra);
+    let found = admit(&flow_body(FLOW_ID, &foreign, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_artifact_foreign".to_owned()),
+        "{found}"
+    );
+    let mut declared = lowered();
+    declared.push(
+        serde_json::from_str(include_str!(
+            "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+        ))
+        .unwrap(),
+    );
+    let found = admit(&flow_body(FLOW_ID, &declared, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_action_declared".to_owned()),
+        "{found}"
+    );
+    // An artifact scoped outside the cell is refused.
+    let foreign_scope: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
+    let found = admit(&flow_body(FLOW_ID, &foreign_scope, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_scope_conflict".to_owned()),
+        "{found}"
+    );
+    // A computed function name cannot be resolved before it runs.
+    let computed: Vec<Value> = serde_json::from_str(
+        &serde_json::to_string(&lowered())
+            .unwrap()
+            .replace(&format!("function: '{TOOL}'"), "function: input.fn"),
+    )
+    .unwrap();
+    let found = admit(&flow_body(FLOW_ID, &computed, None));
+    assert!(
+        !codes_of(&found).is_empty()
+            && codes_of(&found)
+                .iter()
+                .all(|code| code == "definition.flow_function_unknown"),
+        "{found}"
+    );
+    assert!(
+        found["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a literal")
+    );
+    // Only the rule and the Run entity: dropping either is a shape refusal.
+    let found = admit(&flow_body(FLOW_ID, &lowered()[..1], None));
+    assert_eq!(
+        codes_of(&found),
+        ["definition.flow_shape_invalid"],
+        "{found}"
+    );
+}
+
+/// The decide rule of `artifacts`, with its every `commands` cell replaced.
+fn with_commands(mut artifacts: Vec<Value>, cell: &str) -> Vec<Value> {
+    for artifact in &mut artifacts {
+        if artifact["kind"] != json!("rule") {
+            continue;
+        }
+        for node in artifact["payload"]["graph"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+        {
+            if node["type"] != json!("decisionTableNode") {
+                continue;
+            }
+            for rule in node["content"]["rules"].as_array_mut().unwrap() {
+                if rule.get("o_commands").is_some() {
+                    rule["o_commands"] = json!(cell);
+                }
+            }
+        }
+    }
+    artifacts
+}
+
+/// Sol S1: a command record constructed without fixed literals is refused,
+/// so neither the install check nor `uses=` can miss the call it makes.
+#[test]
+fn constructed_command_records_are_refused() {
+    let cell = cell(flow_kinds());
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    for constructed in [
+        "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
+        "[event.command]",
+        "event.commands",
+        // Fable B1: duplicate keys (the VM keeps the first) and a bracketed
+        // identifier key (evaluated, not a literal name).
+        "[{kind: 'perform', runId: key, step: 's', function: 'x.y', functionVersion: '1', input: {}, kind: 'timer'}]",
+        "[{kind: 'perform', runId: key, step: 's', function: 'payments.charge', functionVersion: '1', input: {}, function: 'norn.decision'}]",
+        "[{kind: 'timer', runId: key, step: 's', function: 'x.y', functionVersion: '1', input: {}, [k]: 'perform'}]",
+    ] {
+        let (status, refused) = install_flow(
+            &cell,
+            &flow_body(FLOW_ID, &with_commands(lowered(), constructed), None),
+        );
+        assert_eq!(status, 422, "{constructed}: {refused}");
+        assert!(
+            codes_of(&refused).contains(&"definition.flow_command_unverifiable".to_owned()),
+            "{constructed}: {refused}"
+        );
+    }
+}
+
+/// Sol S1 (round 2): a second output column whose field the engine
+/// normalises onto `commands` (padded, or a nested path) would overwrite the
+/// checked column at run time, so the install refuses it.
+#[test]
+fn a_second_writer_to_commands_is_refused() {
+    let cell = cell(flow_kinds());
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    for field in [" commands ", "commands.0"] {
+        let mut artifacts = lowered();
+        for artifact in &mut artifacts {
+            if artifact["kind"] != json!("rule") {
+                continue;
+            }
+            for node in artifact["payload"]["graph"]["nodes"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if node["type"] != json!("decisionTableNode") {
+                    continue;
+                }
+                node["content"]["outputs"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({ "id": "o_shadow", "name": "shadow", "field": field }));
+                for rule in node["content"]["rules"].as_array_mut().unwrap() {
+                    rule["o_shadow"] = json!(
+                        "[{kind: 'perform', runId: key, step: 's', function: 'norn.uninstalled', functionVersion: '1', input: {}}]"
+                    );
+                }
+            }
+        }
+        let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &artifacts, None));
+        assert_eq!(status, 422, "{field:?}: {refused}");
+        assert!(
+            codes_of(&refused).contains(&"definition.flow_command_unverifiable".to_owned()),
+            "{field:?}: {refused}"
+        );
+    }
+}
+
+/// Sol S2: the performs are re-resolved under the write lock, so a function
+/// that resolved at validation but not at commit refuses the install. The
+/// route validates and commits in one call, so the change in between is
+/// simulated by a resolver that stops resolving after the validation pass.
+#[test]
+fn performs_are_re_resolved_under_the_write_lock() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static VALIDATION_CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn vanishing(function: &str, version: u32) -> bool {
+        function == TOOL
+            && version == 1
+            && CALLS.fetch_add(1, Ordering::SeqCst) < VALIDATION_CALLS.load(Ordering::SeqCst)
+    }
+    let rule = lowered()
+        .into_iter()
+        .find(|a| a["kind"] == json!("rule"))
+        .unwrap();
+    let performs = norn_checker::flow_performs::perform_refs(&rule["payload"])
+        .unwrap()
+        .len();
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_builtins(vanishing)
+            .with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    // Sign while every function resolves, then count only the install.
+    VALIDATION_CALLS.store(usize::MAX, Ordering::SeqCst);
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    CALLS.store(0, Ordering::SeqCst);
+    VALIDATION_CALLS.store(performs, Ordering::SeqCst);
+    let (status, refused) = install_flow(&cell, &body);
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        codes_of(&refused)
+            .iter()
+            .all(|code| code == "definition.flow_function_unknown"),
+        "{refused}"
+    );
+    assert!(
+        refused["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no longer installed"),
+        "{refused}"
+    );
+    // Nothing was installed.
+    assert_eq!(
+        get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER).0,
+        404
+    );
+}
+
+/// Sol S3: an id in the trusted base's reserved namespace is refused for
+/// every kind, so no submitted artifact can be classified as trusted.
+#[test]
+fn reserved_namespaces_are_refused() {
+    let cell = cell(flow_kinds());
+    let mut core = flow_body("core.example", &lowered(), None);
+    core["payload"]["flow"]["id"] = json!("core.example");
+    for body in [
+        core,
+        json!({ "kind": "binding", "id": "std.tool", "payload": binding("T", "member", &json!({})) }),
+        json!({ "kind": "dashboard", "id": "core.dashboard", "payload": dashboard("A") }),
+    ] {
+        let (status, refused) = install_flow(&cell, &body);
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (400, json!("definition.id_reserved")),
+            "{refused}"
+        );
+    }
+    // Fable S5 (D84): reads and retirements are not new ids. A reserved id
+    // is looked up like any other: absent here, so 404, never id_reserved.
+    assert_eq!(
+        get(&cell, "/v1/definitions/core.dashboard", "", VIEWER).0,
+        404
+    );
+    assert_eq!(
+        post(
+            &cell,
+            "/v1/definitions/core.dashboard:retire",
+            ADMIN,
+            &json!({ "expectedVersion": 1 })
+        )
+        .0,
+        404
+    );
+}
+
+/// Fable round two (D84): a retained definition that already holds a
+/// reserved id (from before the namespace was reserved) stays readable,
+/// revisable and retirable through the routes. Only new ids are refused.
+#[test]
+fn an_existing_reserved_definition_is_read_revised_and_retired() {
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    const ID: &str = "core.dashboard";
+    let cell = cell_seeded(
+        NativeEngine::open_in_memory().unwrap(),
+        DefinitionKinds::default(),
+        |store, scope| {
+            let active = store.read().installed_definitions(None).unwrap().unwrap();
+            let payload = String::from_utf8(
+                norn_ir::RuntimeValue::from_json(dashboard("Core"))
+                    .unwrap()
+                    .canonical_json()
+                    .unwrap(),
+            )
+            .unwrap();
+            let change = RetainedDefinitionChange {
+                definition: RetainedDefinition {
+                    kind: "dashboard".to_owned(),
+                    id: ID.to_owned(),
+                    revision: 1,
+                    lifecycle: RetainedLifecycle::Active,
+                    title: "Core".to_owned(),
+                    payload_sha256: payload_sha256(&payload),
+                    payload,
+                    signoff: None,
+                },
+                expected_revision: None,
+            };
+            let input = norn_cell::InstalledDefinitionInput {
+                canonical_set: active.canonical_set.clone(),
+                registry: active.registry.clone(),
+                receipt_sha256: active.receipt_sha256.clone(),
+                admission_receipt: active.admission_receipt.clone(),
+                readmission: None,
+                diff: json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                installed_at: active.installed_at,
+                layout: None,
+            };
+            let model = store.model().clone();
+            store
+                .install_retained_definition(model, &input, Some(active.version), scope, &change)
+                .unwrap();
+        },
+    );
+    let path = format!("/v1/definitions/{ID}");
+    let (status, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(status, 200, "{document}");
+    assert_eq!(document["version"], json!(1), "{document}");
+    assert_eq!(document["payload"], dashboard("Core"), "{document}");
+
+    // A new revision of the existing id installs over it.
+    let (status, revised) = install(&cell, ID, &dashboard("Core, revised"), Some(1));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
+    let (_, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(
+        document["payload"],
+        dashboard("Core, revised"),
+        "{document}"
+    );
+
+    let (status, retired) = post(
+        &cell,
+        &format!("{path}:retire"),
+        ADMIN,
+        &json!({ "expectedVersion": 2 }),
+    );
+    assert_eq!(status, 200, "{retired}");
+    assert_eq!(retired["version"], json!(3), "{retired}");
+    let (_, document) = get(&cell, &path, "", VIEWER);
+    assert_eq!(document["lifecycle"], json!("retired"), "{document}");
+
+    // A different reserved id is still a new id, so still refused.
+    let (status, refused) = install(&cell, "core.other", &dashboard("Other"), None);
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (400, json!("definition.id_reserved")),
+        "{refused}"
+    );
+}
+
+/// Sol S4: two flow ids that derive the same Run type cannot overwrite each
+/// other's artifacts; only a flow's own previous revision is replaced.
+#[test]
+fn colliding_flow_artifacts_are_refused() {
+    let cell = cell(flow_kinds());
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    assert_eq!(
+        install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None)).0,
+        200
+    );
+    // `crm.route__message` derives the same `crm.RouteMessageRun.entity`.
+    let twin = "crm.route__message";
+    let mut artifacts = lowered();
+    for artifact in &mut artifacts {
+        if artifact["kind"] == json!("rule") {
+            artifact["artifactId"] = json!(format!("{twin}.flow.rule"));
+        }
+    }
+    let mut body = flow_body(twin, &artifacts, None);
+    body["payload"]["flow"]["id"] = json!(twin);
+    let (status, refused) = install_flow(&cell, &body);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(
+        codes_of(&refused),
+        ["definition.flow_artifact_conflict"],
+        "{refused}"
+    );
+    // The first flow's own reinstall still replaces its artifacts.
+    assert_eq!(
+        install_flow(&cell, &flow_body(FLOW_ID, &lowered(), Some(1))).0,
+        200
+    );
+}
+
+/// A cell whose active set gained a flow (and its Run type) reopens with
+/// the model of that set, and reopening writes nothing.
+#[test]
+fn a_cell_with_an_installed_flow_reopens_unchanged() {
+    let directory =
+        std::env::temp_dir().join(format!("norn-defs-flow-reopen-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    {
+        let cell = cell_on(open(), flow_kinds());
+        assert_eq!(
+            install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+            200
+        );
+        assert_eq!(
+            install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None)).0,
+            200
+        );
+    }
+    let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    let head = reopened.store.verified_head().unwrap().commits;
+    let active = reopened
+        .store
+        .read()
+        .installed_definitions(None)
+        .unwrap()
+        .unwrap();
+    assert!(active.canonical_set.contains("crm.route_message.flow.rule"));
+    assert!(
+        reopened
+            .store
+            .model()
+            .object_types()
+            .any(|object_type| object_type.name.as_str() == "crm.RouteMessageRun")
+    );
+    drop(reopened);
+    let again = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    assert_eq!(
+        again.store.verified_head().unwrap().commits,
+        head,
+        "reopening writes nothing"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+/// A flow carries `lowerFlow`'s display data in `payload.flow`: its title
+/// names it in listings and in the flow summary, its step labels travel with
+/// the payload, and bad labels are typed refusals.
+#[test]
+fn a_flow_carries_its_title_and_step_labels() {
+    let cell = cell(flow_kinds());
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    body["payload"]["flow"]["title"] = json!("Route a WhatsApp message");
+    body["payload"]["flow"]["steps"] =
+        json!([{ "id": "classify", "label": "Classify the intent" }]);
+    let (status, installed) = install_flow(&cell, &body);
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(
+        installed["flow"]["title"],
+        json!("Route a WhatsApp message")
+    );
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["flow"]["title"], json!("Route a WhatsApp message"));
+    assert_eq!(
+        document["payload"]["flow"]["steps"][0]["label"],
+        json!("Classify the intent")
+    );
+    let (_, page) = get(&cell, "/v1/definitions:list", "&kind=flow", VIEWER);
+    assert_eq!(page["items"][0]["title"], json!("Route a WhatsApp message"));
+    for (flow_edit, expected) in [
+        (
+            json!({ "title": "" }),
+            ("definition.flow_label_invalid", "/flow/title"),
+        ),
+        (
+            json!({ "steps": [{ "id": "classify", "label": "two\nlines" }] }),
+            ("definition.flow_label_invalid", "/flow/steps/0/label"),
+        ),
+        (
+            json!({ "steps": [{ "id": "a", "label": "A" }, { "id": "a", "label": "B" }] }),
+            ("definition.flow_shape_invalid", "/flow/steps/1"),
+        ),
+        (
+            json!({ "owner": "x" }),
+            ("definition.flow_shape_invalid", "/flow/owner"),
+        ),
+    ] {
+        let mut body = flow_body(FLOW_ID, &lowered(), None);
+        for (key, value) in flow_edit.as_object().unwrap() {
+            body["payload"]["flow"][key.as_str()] = value.clone();
+        }
+        let (_, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert!(
+            pointers(&refused).contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} in {refused}"
+        );
+    }
+}
+
+/// D59 for flows: the server restates a flow from its IR, `:admit` and `GET`
+/// return the words, and a signed install must sign exactly them.
+#[test]
+fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
+    let cell = cell(
+        DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let mut body = flow_body(FLOW_ID, &lowered(), None);
+    body["payload"]["flow"]["title"] = json!("Route a WhatsApp message");
+    body["payload"]["flow"]["steps"] =
+        json!([{ "id": "classify", "label": "Classify the intent" }]);
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    let words = admitted["restatement"].as_str().unwrap().to_owned();
+    assert_eq!(
+        words,
+        "Automation \"Route a WhatsApp message\" (version 1.0.0).\nIt runs when a run of it is started.\n1. Classify the intent: calls norn.classify.whatsapp-intent at version 1."
+    );
+    assert_eq!(admitted["restatementSha256"], json!(sha256(&words)));
+
+    // Fable S7: unsigned, a flow this cell can restate is refused.
+    let (status, unsigned) = post(&cell, "/v1/definitions:install", ADMIN, &body);
+    assert_eq!(
+        (status, unsigned["code"].clone()),
+        (422, json!("definition.signoff_required")),
+        "{unsigned}"
+    );
+    // A sign-off of other words is refused with the server's own words.
+    let mut wrong = body.clone();
+    wrong["signoff"] = json!({ "restatementSha256": sha256("something else") });
+    let (status, refused) = install_flow(&cell, &wrong);
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (422, json!("definition.signoff_mismatch")),
+        "{refused}"
+    );
+    assert_eq!(refused["restatement"], json!(words));
+    // Signing those words installs; GET recomputes the same and records the signer.
+    let mut signed = body;
+    signed["signoff"] = json!({ "restatementSha256": sha256(&words) });
+    let (status, installed) = install_flow(&cell, &signed);
+    assert_eq!(status, 200, "{installed}");
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["restatement"], json!(words));
+    assert_eq!(
+        document["signoff"]["restatementSha256"],
+        json!(sha256(&words))
+    );
+    assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+
+    // A cell that cannot restate a flow cannot install one: fail closed.
+    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&bare, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let (status, refused) = install_flow(&bare, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(
+        (status, refused["code"].clone()),
+        (422, json!("definition.signoff_unavailable")),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_decision_step_restates_as_asking_a_person() {
+    let decision: Vec<Value> = serde_json::from_str(
+        &serde_json::to_string(&lowered())
+            .unwrap()
+            .replace(&format!("function: '{TOOL}'"), "function: 'norn.decision'"),
+    )
+    .unwrap();
+    let payload = json!({ "flow": { "id": FLOW_ID, "version": "1.0.0" }, "artifacts": decision });
+    let words = norn_api::flow_definitions::restate(&payload.to_string()).unwrap();
+    assert!(
+        words.ends_with("1. classify: asks a person to decide, and waits for their decision."),
+        "{words}"
+    );
+    assert!(
+        words.starts_with("Automation \"crm.route_message\" (version 1.0.0)."),
+        "{words}"
+    );
+    // Deterministic: the same payload restates the same.
+    assert_eq!(
+        norn_api::flow_definitions::restate(&payload.to_string()).unwrap(),
+        words
     );
 }
 

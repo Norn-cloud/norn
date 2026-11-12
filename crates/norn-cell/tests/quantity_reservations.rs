@@ -999,15 +999,26 @@ async fn reopen_restore_replay_preserve_heads_holds_history_and_receipts() {
     );
     drop(reopened);
     let restored_path = dir.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &restored_path,
-        model(),
-        "tenant/dev",
-        &BTreeMap::from([("scope".into(), "tenant/dev".into())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".into(), "tenant/dev".into())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &restored_path,
+            model(),
+            "tenant/dev",
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore");
     let mut restored =
         CellStore::open(&restored_path, model(), StoreOptions::default()).expect("restored");
@@ -2598,15 +2609,26 @@ async fn post_atomic_partitions_refusal_retry_reopen_restore() {
         CommitOutcome::Replayed(_)
     ));
     let restored = dir.path().join("restore.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &restored,
-        model(),
-        "tenant/dev",
-        &BTreeMap::from([("scope".into(), "tenant/dev".into())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".into(), "tenant/dev".into())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &restored,
+            model(),
+            "tenant/dev",
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("POST-GROUP-REPLAY");
     let restored = CellStore::open(&restored, model(), StoreOptions::default()).expect("restored");
     assert_eq!(expected, restored.read().dump().expect("restored state"));

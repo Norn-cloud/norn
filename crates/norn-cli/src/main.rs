@@ -1,5 +1,7 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
+#[cfg(test)]
+mod cli_contract;
 mod eval;
 mod mcp;
 mod remote;

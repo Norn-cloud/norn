@@ -1,0 +1,10 @@
+{
+  "order": 2,
+  "value": {
+    "artifact": "verification/semantics-v1/Checker/Certificates/AlgebraReference.lean",
+    "command": "scripts/verify-checker-certificates-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.proof.entry4b32b41bb31627bd8e6fab2fc201b29a46eb1ef2a0d476ae7ddf323702292132.selectors"
+    }
+  }
+}
