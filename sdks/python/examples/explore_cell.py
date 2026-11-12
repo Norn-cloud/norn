@@ -21,8 +21,8 @@ from pathlib import Path
 import pandas as pd
 
 from norn_client import AuthenticatedClient
-from norn_client.api.definitions import get_defs
-from norn_client.api.objects import get_object_links, get_object_query
+from norn_client.api.definitions import get_definitions_catalog
+from norn_client.api.objects import get_object_links, query_objects
 from norn_client.models import Refusal
 
 project = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
@@ -55,7 +55,7 @@ def ok(answer):
 # One admitted revision: every artifact the checker admitted, by kind.
 
 # %%
-catalog = ok(get_defs.sync(client=client, **where))
+catalog = ok(get_definitions_catalog.sync(client=client, **where))
 artifacts = pd.DataFrame(
     [
         {"kind": item.additional_properties.get("kind"), "id": item.additional_properties.get("artifactId")}
@@ -77,7 +77,7 @@ def objects(object_type: str) -> pd.DataFrame:
     rows, after = [], None
     while True:
         page = ok(
-            get_object_query.sync(object_type, client=client, limit=200, **where, **({"after": after} if after else {}))
+            query_objects.sync(object_type, client=client, limit=200, **where, **({"after": after} if after else {}))
         )
         for record in page.records:
             values = record.values.to_dict() if record.values else {}
