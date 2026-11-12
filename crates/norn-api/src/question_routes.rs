@@ -810,7 +810,7 @@ pub fn list_metrics<E: SqlEngine>(
             NornMetricSummary {
                 name: definition.name.clone(),
                 label: definition.label.clone(),
-                kind: serde_json::to_value(&definition.metric_type)
+                kind: serde_json::to_value(definition.metric_type)
                     .ok()
                     .and_then(|kind| kind.as_str().map(str::to_owned))
                     .unwrap_or_default(),
