@@ -209,6 +209,13 @@ fn row_values_schema() -> utoipa::openapi::schema::Object {
     )
 }
 
+fn compiled_artifact_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The `derived` artifact the query declares, as an artifact envelope; null when refused.",
+        true,
+    )
+}
+
 fn not_found() -> Refusal {
     Refusal::new(
         StatusCode::NOT_FOUND,
@@ -585,7 +592,7 @@ pub struct NornCompiledTransform {
     /// The checker admits the lowered plan against the installed definitions.
     pub admitted: bool,
     /// The `derived` artifact the query declares; null when refused.
-    #[schema(required = true, nullable = true, value_type = Object)]
+    #[schema(required = true, schema_with = compiled_artifact_schema)]
     pub artifact: Option<serde_json::Value>,
     /// The admitted plan; null when refused.
     #[schema(required = true, nullable = true)]
