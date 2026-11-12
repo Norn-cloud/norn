@@ -4187,6 +4187,13 @@
           "updatedAtMs"
         ],
         "properties": {
+          "canStart": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "For a flow: whether this caller may start a run of it, decided by\nthe same gate `POST /v1/runs` applies. Absent for other kinds; a start\nis decided again at the call."
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
