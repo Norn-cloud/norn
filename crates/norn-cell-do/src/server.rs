@@ -132,6 +132,9 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// The MLflow-compatible tracking routes under
+    /// `/v1/tracking/{orgId}/{environmentId}/api/2.0/mlflow/` ([`crate::tracking`]).
+    Tracking => ("POST", "/v1/tracking/{orgId}/{environmentId}/api/2.0/mlflow/{endpoint}"),
 }
 
 impl Route {
@@ -169,6 +172,9 @@ impl Route {
                 (Some(_), Some("lineage")) => Self::ObjectLineage,
                 (Some(_), Some(_)) => return None,
             });
+        }
+        if path.starts_with("/v1/tracking/") {
+            return Some(Self::Tracking);
         }
         path.strip_prefix("/v1/actions/")
             .filter(|id| !id.is_empty() && !id.contains('/'))
@@ -240,6 +246,22 @@ pub fn handle_all<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let served = Route::of(path).is_some_and(|route| route != Route::Access);
+    // MLflow clients read MLflow's error shape, so the tracking routes answer
+    // in it, after the same principal resolution as every other route.
+    if let (Some(rest), Some(Route::Tracking)) = (path.strip_prefix("/v1/tracking/"), Route::of(path)) {
+        return crate::tracking::handle(
+            host,
+            questions,
+            &crate::tracking::TrackingRequest {
+                actor,
+                method,
+                rest,
+                query,
+                body,
+                now,
+            },
+        );
+    }
     let result = if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,

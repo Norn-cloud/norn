@@ -1,0 +1,2 @@
+# The real MLflow tracking client (Apache-2.0), pinned; requirements.txt holds the hashes.
+mlflow-skinny==3.18.0

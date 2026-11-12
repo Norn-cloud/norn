@@ -22,5 +22,6 @@ pub mod policy;
 pub mod principal;
 pub mod seed;
 pub mod server;
+pub mod tracking;
 #[cfg(target_arch = "wasm32")]
 mod wasm;

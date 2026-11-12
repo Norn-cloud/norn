@@ -333,6 +333,9 @@ const UNDOCUMENTED: &[server::Route] = &[
     // the dev host and `server::handle` refuse it. Its document types live in
     // this crate, outside the generated contract.
     server::Route::Access,
+    // MLflow's tracking REST API, served in MLflow's own shape: its contract
+    // is MLflow's (documented at mlflow.org) and the tracking pack's README.
+    server::Route::Tracking,
 ];
 
 /// The route's path template with every `{parameter}` filled by `x`.
