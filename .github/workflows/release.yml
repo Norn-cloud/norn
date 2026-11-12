@@ -105,7 +105,8 @@ jobs:
           HOME=$home bun add --global "$PWD/dist/tarball/release/norn-cli-$VERSION.tgz"
           line=$(HOME=$home "$home/.bun/bin/norn" --version)
           echo "$line"
-          [ "$line" = "norn $VERSION ($(git rev-parse HEAD))" ]
+          # The CLI prints the commit's first 12 characters (src/build-info.ts versionLine).
+          [ "$line" = "norn $VERSION ($(git rev-parse HEAD | cut -c1-12))" ]
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat dist/tarball/release/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
