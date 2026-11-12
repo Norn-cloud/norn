@@ -117,7 +117,12 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
                 )
                 .expect("UTF8"),
                 registry: vec![],
-                receipt_sha256: "synthetic-mapped-links".into(),
+                // A well-formed digest, so the cell's history exports.
+                receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                    b"norn.test.receipt\0",
+                    &"synthetic-mapped-links",
+                )
+                .expect("receipt digest"),
                 admission_receipt: None,
                 readmission: None,
                 diff: json!({}),
