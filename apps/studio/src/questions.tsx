@@ -27,7 +27,7 @@ import { AnswerView, RefusedNote } from "./answer-view.tsx"
 import { RunQuestion } from "./run.tsx"
 import type { QuestionCatalog } from "./builder.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
+import { metricHeading, metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { readProfile } from "./lib/profile.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
@@ -46,9 +46,9 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
     example: { irVersion: "0.1", calendar: "iso_utc", freshness: { kind: "live", maxAgeMs: 60_000 } },
     declarations: { metrics: [], objectType: objectType ?? { name: metric.objectType, properties: [] } },
   }
-  const what = metric.kind === "simple" && metric.expression !== null ? `Total ${metric.expression.replaceAll("_", " ")}` : metric.label
+  const what = metricHeading(metric, window?.grain)
   return (
-    <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
+    <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
       action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span> : undefined}>
       <Well className="space-y-3 p-4">
         {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
