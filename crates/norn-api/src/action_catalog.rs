@@ -19,6 +19,8 @@ use crate::{
 use norn_cell::engine::SqlEngine;
 use norn_ir::{ActionEffectProgram, ActionRoot, ActionUiEffect, ArtifactEnvelope};
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::Type;
+use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
 use utoipa::{IntoParams, ToSchema};
 
 /// The retained actions one actor may call in one definitions revision.
@@ -126,7 +128,7 @@ pub struct NornActionSummary {
     /// The input field that names the target object.
     pub object_id_field: String,
     /// The admitted input schema, in the action's closed input dialect.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = input_schema_schema)]
     pub input_schema: serde_json::Value,
     /// The effects a caller must handle.
     pub ui_effects: NornActionUiEffects,
@@ -140,6 +142,19 @@ pub struct NornActionCatalog {
     pub definitions_version: u64,
     /// The callable actions an effect program can run, ordered by identity.
     pub items: Vec<NornActionSummary>,
+}
+
+// `schema_with` replaces the field's schema, doc comment included, so the
+// helper restates it. The input schema is a JSON Schema object whose members
+// this document does not enumerate, so it says so (`additionalProperties`).
+fn input_schema_schema() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Type(Type::Object))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(
+            "The admitted input schema, in the action's closed input dialect.",
+        ))
+        .build()
 }
 
 fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
@@ -207,7 +222,7 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
 ///
 /// # Errors
 /// As [`callable_actions`]; `host.error` when a retained action cannot be projected.
-#[utoipa::path(get, path = "/v1/actions", params(ActionCatalogQuery), responses((status = 200, description = "The actions the caller may call now. Each call is still decided when it is made.", body = NornActionCatalog), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(get, path = "/v1/actions", operation_id = "list_actions", tag = "crate::actions", params(ActionCatalogQuery), responses((status = 200, description = "The actions the caller may call now. Each call is still decided when it is made.", body = NornActionCatalog), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn list_actions<E: SqlEngine>(
     host: &DevHost<E>,
     query: &ActionCatalogQuery,
