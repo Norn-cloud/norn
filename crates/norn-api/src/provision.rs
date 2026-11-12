@@ -2,25 +2,25 @@
 //! `POST /v1/cell:provision`.
 //!
 //! One service for every network host. A host supplies its own storage
-//! engine, its compiled-in [`TrustedBase`] and its server policy; this module
+//! engine, its compiled-in [`TrustedBase`](crate::provision::TrustedBase) and its server policy; this module
 //! decides nothing about who the caller is.
 //!
-//! - **Authority** is the host's [`Authorizer`] deciding
-//!   [`Operation::ProvisionCell`] for the verified actor on the physical
-//!   scope ([`authorize`]). A cell that does not exist yet has no definitions,
+//! - **Authority** is the host's [`Authorizer`](crate::authz::Authorizer) deciding
+//!   [`Operation::ProvisionCell`](crate::authz::Operation::ProvisionCell) for the verified actor on the physical
+//!   scope ([`authorize`](crate::provision::authorize)). A cell that does not exist yet has no definitions,
 //!   so this one decision cannot come from the cell's own policy.
-//! - **The submission is untrusted** ([`admit_submission`]). It carries no
-//!   artifact in a reserved namespace ([`kernel_set::is_reserved`]): the host
+//! - **The submission is untrusted** ([`admit_submission`](crate::provision::admit_submission)). It carries no
+//!   artifact in a reserved namespace ([`kernel_set::is_reserved`](crate::kernel_set::is_reserved)): the host
 //!   prepends its own base and admits the tenant's artifacts as candidates
 //!   against it, so base membership never depends on a name or on bytes the
 //!   client sent. The submission names the base it was authored against by
 //!   digest; another digest refuses and states the host's.
-//!   [`kernel_set::admit_kernel_set`] trusts reserved names and is for
+//!   [`kernel_set::admit_kernel_set`](crate::kernel_set::admit_kernel_set) trusts reserved names and is for
 //!   compiled-in seeds and the local dev host only; this path never calls it.
-//! - **The write is atomic** ([`provision_cell`]): HOST-PROVISION-ATOMIC,
+//! - **The write is atomic** ([`provision_cell`](crate::provision::provision_cell)): HOST-PROVISION-ATOMIC,
 //!   `CellStore::provision_definitions`. A failure leaves a fresh engine.
 //! - **A retry** of a provisioned cell is answered from its first installed
-//!   revision ([`replay`]): the same submission replays without writing, a
+//!   revision ([`replay`](crate::provision::replay)): the same submission replays without writing, a
 //!   different one refuses.
 
 use std::collections::BTreeSet;
