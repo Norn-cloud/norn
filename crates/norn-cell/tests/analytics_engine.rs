@@ -488,9 +488,24 @@ proptest::proptest! {
 /// `cargo test --release -p norn-cell --features duckdb --test analytics_engine -- --ignored --nocapture`.
 #[test]
 #[ignore = "a 1M-row measurement, run on Boat in release"]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    clippy::print_stdout,
+    clippy::too_many_lines,
+    reason = "a measurement prints rates of whole counts"
+)]
 fn bulk_path_measurements() {
     use std::time::Instant;
-    let (_dir, engine) = engine();
+    let threads: u32 = std::env::var("NORN_BENCH_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let dir = tempfile::tempdir().expect("engine dir");
+    let engine = Engine::new(Settings {
+        root: dir.path().to_path_buf(),
+        memory_limit: "512MB".into(),
+        threads,
+    })
+    .expect("engine");
+    println!("threads {threads}, memory_limit 512MB");
     let (_store, plan, _context) = by_metal(false, 100);
     let rows: usize = std::env::var("NORN_BENCH_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(1_000_000);
     let mut lines = Vec::with_capacity(rows + 1);

@@ -22,7 +22,7 @@ use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MembershipDigest, MirrorRow, ProfileRequest, ProfileResponse,
+    MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse,
     Source, SyncRequest, TableSchema, TenantId, Test, Value, hex,
 };
 
@@ -238,28 +238,44 @@ impl Engine {
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
-            let population: u64 = scope.count(conn, &Frag::raw("TRUE"))?;
-            if let Source::Mirror { scope: cell, .. } = &request.source {
-                let other = Frag::bind("\":scope\" <> ?", Sql::Text(cell.clone()));
-                if scope.count(conn, &other)? > 0 {
-                    return Err(refusal(STALE, "a row of another scope"));
-                }
-                if scope.count(conn, &Frag::raw(ident(":bad")))? > 0 {
-                    return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
-                }
+            let (cell, bad) = match &request.source {
+                Source::Mirror { scope, .. } => (
+                    Frag::bind("\":scope\" <> ?", Sql::Text(scope.clone())),
+                    Frag::raw(ident(":bad")),
+                ),
+                Source::Dataset { .. } => (Frag::raw("FALSE"), Frag::raw("FALSE")),
+            };
+            let checks = Frag::fmt(
+                &format!(
+                    "SELECT count(*), count(*) FILTER (WHERE {{}}), count(*) FILTER (WHERE {{}}) FROM {} WHERE {{}}",
+                    scope.table
+                ),
+                &[&cell, &bad, &scope.all],
+            );
+            let mut statement = db(conn.prepare(&checks.text))?;
+            let (population, other, bad): (u64, u64, u64) = db(statement.query_row(
+                params_from_iter(checks.params),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ))?;
+            if other > 0 {
+                return Err(refusal(STALE, "a row of another scope"));
+            }
+            if bad > 0 {
+                return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
             }
             let excluded = scope.excluded_present(conn)?;
             let projection = Projection::build(&request.query, &scope)?;
-            let refused: u64 = projection.count(conn, "refuse")?;
-            if refused > 0 {
-                return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));
-            }
-            let inline = population <= request.inline_members;
-            let buckets = projection.buckets(conn, inline)?;
+            let answered = projection.materialize(conn).and_then(|()| {
+                if query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE refuse"))? > 0 {
+                    return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));
+                }
+                projection.buckets(conn, population <= request.inline_members)
+            });
+            let _dropped = conn.execute_batch("DROP TABLE IF EXISTS \":p\"");
             Ok(EvaluateResponse {
                 population,
                 excluded,
-                buckets,
+                buckets: answered?,
             })
         })
     }
@@ -697,15 +713,6 @@ impl Scope {
             .ok_or_else(|| refusal(UNSUPPORTED, format!("no column {id}")))
     }
 
-    /// Rows of the whole source (exclusions included) matching `condition`.
-    fn count(&self, conn: &Connection, condition: &Frag) -> Outcome<u64> {
-        let sql = Frag::fmt(
-            &format!("SELECT count(*) FROM {} WHERE {{}} AND ({{}})", self.table),
-            &[&self.all, condition],
-        );
-        query_u64(conn, &sql)
-    }
-
     fn excluded_present(&self, conn: &Connection) -> Outcome<Vec<String>> {
         if self.excluded.is_empty() {
             return Ok(Vec::new());
@@ -953,13 +960,6 @@ impl Projection {
         Ok(Self { sql, arity, group })
     }
 
-    fn count(&self, conn: &Connection, flag: &str) -> Outcome<u64> {
-        query_u64(
-            conn,
-            &Frag::fmt(&format!("SELECT count(*) FROM ({{}}) AS x WHERE {flag}"), &[&self.sql]),
-        )
-    }
-
     fn group_key(&self, row: &duckdb::Row<'_>, index: usize) -> duckdb::Result<GroupKey> {
         Ok(match self.group {
             GroupKind::None => GroupKey::Null,
@@ -988,6 +988,27 @@ impl Projection {
             .join(", ")
     }
 
+    /// Materialize the projection once as `":p"` for the answer's passes.
+    fn materialize(&self, conn: &Connection) -> Outcome<()> {
+        let sql = Frag::fmt("CREATE OR REPLACE TEMP TABLE \":p\" AS {}", &[&self.sql]);
+        let mut statement = db(conn.prepare(&sql.text))?;
+        db(statement.execute(params_from_iter(sql.params)))?;
+        Ok(())
+    }
+
+    /// MEMBERSHIP-DIGEST-1's line for one member, in SQL.
+    fn member_line(&self) -> String {
+        let amounts = (0..self.arity).fold(String::new(), |mut out, k| {
+            out.push_str(" || ',' || COALESCE(CAST(a");
+            out.push_str(&k.to_string());
+            out.push_str(" AS VARCHAR), '')");
+            out
+        });
+        format!("CAST(strlen(id) AS VARCHAR) || ':' || id || ',' || CAST(v AS VARCHAR){amounts} || ';'")
+    }
+
+    /// Per bucket of the materialized projection: totals, magnitudes, null
+    /// counts, count and digest, and the members when `inline`.
     fn buckets(&self, conn: &Connection, inline: bool) -> Outcome<Vec<BucketTotals>> {
         let mut aggregates = Vec::new();
         for k in 0..self.arity {
@@ -995,22 +1016,21 @@ impl Projection {
             aggregates.push(format!("CAST(COALESCE(sum(abs(CAST(a{k} AS HUGEINT))), 0) AS VARCHAR)"));
             aggregates.push(format!("CAST(sum(n{k}) AS UBIGINT)"));
         }
-        let sql = Frag::fmt(
-            &format!(
-                "SELECT arg_min(r, id) AS rep, count(*) AS c, {} FROM ({{}}) AS x WHERE contributes GROUP BY g ORDER BY g NULLS FIRST",
-                aggregates.join(", ")
-            ),
-            &[&self.sql],
+        let sql = format!(
+            "SELECT arg_min(r, id) AS rep, count(*) AS c, sha256(string_agg({}, '' ORDER BY id)) AS digest, {} FROM \":p\" WHERE contributes GROUP BY g ORDER BY g NULLS FIRST",
+            self.member_line(),
+            aggregates.join(", ")
         );
-        let mut statement = db(conn.prepare(&sql.text))?;
+        let mut statement = db(conn.prepare(&sql))?;
         let arity = self.arity;
-        let rows = db(statement.query_map(params_from_iter(sql.params.clone()), |row| {
+        let rows = db(statement.query_map([], |row| {
             let group = self.group_key(row, 0)?;
             let count: u64 = row.get(1)?;
+            let digest: String = row.get(2)?;
             let mut totals = Vec::with_capacity(arity);
             let mut magnitude = Vec::with_capacity(arity);
             let mut nulls = Vec::with_capacity(arity);
-            let mut column = 2;
+            let mut column = 3;
             for _ in 0..arity {
                 totals.push(row.get::<_, String>(column)?);
                 magnitude.push(row.get::<_, String>(column.saturating_add(1))?);
@@ -1023,22 +1043,20 @@ impl Projection {
                 magnitude,
                 nulls,
                 count,
-                digest: String::new(),
+                digest,
                 members: inline.then(Vec::new),
             })
         }))?;
         let mut buckets: Vec<BucketTotals> = db(rows.collect())?;
-        // Members in bucket then identity order: the digests, and inline members.
-        let sql = Frag::fmt(
-            &format!(
-                "SELECT dense_rank() OVER (ORDER BY g NULLS FIRST) AS gk, id, v, {} FROM ({{}}) AS x WHERE contributes ORDER BY gk, id",
-                self.amounts()
-            ),
-            &[&self.sql],
+        if !inline {
+            return Ok(buckets);
+        }
+        let sql = format!(
+            "SELECT dense_rank() OVER (ORDER BY g NULLS FIRST) AS gk, id, v, {} FROM \":p\" WHERE contributes ORDER BY gk, id",
+            self.amounts()
         );
-        let mut statement = db(conn.prepare(&sql.text))?;
-        let mut rows = db(statement.query(params_from_iter(sql.params.clone())))?;
-        let mut digests = vec![MembershipDigest::default(); buckets.len()];
+        let mut statement = db(conn.prepare(&sql))?;
+        let mut rows = db(statement.query([]))?;
         while let Some(row) = db(rows.next())? {
             let gk: u64 = db(row.get(0))?;
             let index = usize::try_from(gk.saturating_sub(1)).unwrap_or(usize::MAX);
@@ -1049,16 +1067,11 @@ impl Projection {
                     .map(|k| row.get::<_, Option<i64>>(k.saturating_add(3)))
                     .collect::<Result<_, _>>())?,
             };
-            digests
+            buckets
                 .get_mut(index)
+                .and_then(|b| b.members.as_mut())
                 .ok_or_else(|| refusal("core.analytics.engine", "a member outside its bucket"))?
-                .push(&member);
-            if let Some(Some(members)) = buckets.get_mut(index).map(|b| b.members.as_mut()) {
-                members.push(member);
-            }
-        }
-        for (bucket, digest) in buckets.iter_mut().zip(digests) {
-            bucket.digest = digest.finish();
+                .push(member);
         }
         Ok(buckets)
     }
@@ -1131,12 +1144,15 @@ const DATE_SHAPE: &str = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
 /// The reason a present text value is not of `kind`, or SQL NULL when it is.
 fn reason_sql(kind: ColumnKind, v: &str) -> String {
     match kind {
+        // Digits with at most a sign, then an exact cast: no pattern match per row.
         ColumnKind::Integer => format!(
-            "CASE WHEN regexp_full_match({v}, '[+-]?[0-9]{{1,38}}') THEN NULL ELSE 'core.bulk.not_integer' END"
+            "CASE WHEN translate({v}, '0123456789', '') IN ('', '-', '+') AND TRY_CAST({v} AS DECIMAL(38,0)) IS NOT NULL THEN NULL ELSE 'core.bulk.not_integer' END"
         ),
+        // Digits around at most one point, with at most a sign; more
+        // fractional digits than the scale is refused, never rounded.
         ColumnKind::Decimal { scale } => format!(
-            "CASE WHEN NOT regexp_full_match({v}, '[+-]?[0-9]+(\\.[0-9]+)?') THEN 'core.bulk.not_decimal' \
-             WHEN length(regexp_extract({v}, '\\.([0-9]+)$', 1)) > {scale} THEN 'core.bulk.scale_exceeded' \
+            "CASE WHEN translate({v}, '0123456789', '') NOT IN ('', '.', '-', '+', '-.', '+.') OR ltrim({v}, '+-') LIKE '.%' OR {v} LIKE '%.' THEN 'core.bulk.not_decimal' \
+             WHEN strpos({v}, '.') > 0 AND strlen({v}) - strpos({v}, '.') > {scale} THEN 'core.bulk.scale_exceeded' \
              WHEN TRY_CAST({v} AS DECIMAL(38,{scale})) IS NULL THEN 'core.bulk.not_decimal' ELSE NULL END"
         ),
         ColumnKind::Boolean => format!(

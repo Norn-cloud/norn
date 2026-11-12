@@ -590,30 +590,26 @@ pub struct EngineRefusal {
     pub detail: String,
 }
 
-/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity order, encoded
-/// as its identity length (u32 LE) and bytes, its version (u64 LE) and per
-/// operand `0` (absent) or `1` followed by the coefficient (i64 LE).
+/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity (byte) order,
+/// each written as `<identity bytes>:<identity>,<version>` then
+/// `,<coefficient>` per operand (empty when absent), then `;`. The length
+/// prefix makes the encoding unambiguous whatever an identity contains, and
+/// the engine computes the same bytes in SQL.
 #[derive(Clone, Default)]
 pub struct MembershipDigest(Sha256);
 
 impl MembershipDigest {
     /// Absorb the next member; callers feed members in identity order.
     pub fn push(&mut self, member: &MemberRow) {
-        let id = member.id.as_bytes();
-        // Identities are bounded far below 4 GiB by the cell's own limits.
-        let len = u32::try_from(id.len()).unwrap_or(u32::MAX);
-        self.0.update(len.to_le_bytes());
-        self.0.update(id);
-        self.0.update(member.version.to_le_bytes());
+        let mut line = format!("{}:{},{}", member.id.len(), member.id, member.version);
         for amount in &member.amounts {
-            match amount {
-                None => self.0.update([0]),
-                Some(n) => {
-                    self.0.update([1]);
-                    self.0.update(n.to_le_bytes());
-                }
+            line.push(',');
+            if let Some(n) = amount {
+                line.push_str(&n.to_string());
             }
         }
+        line.push(';');
+        self.0.update(line.as_bytes());
     }
 
     /// The hex digest.
