@@ -1640,7 +1640,7 @@ impl ReceiptBody {
     clippy::trivially_copy_pass_by_ref,
     reason = "serde skip_serializing_if requires a reference predicate"
 )]
-const fn is_zero(value: &u64) -> bool {
+pub(crate) const fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 

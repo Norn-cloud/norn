@@ -1575,7 +1575,7 @@
       "review": "needs_review"
     },
     "metric.validation.partial_path": {
-      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "message": "مُدخلات العملة والسعر تتطلب مسارات كاملة.",
       "review": "needs_review"
     },
     "metric.validation.ratio_aggregation": {

@@ -37,7 +37,9 @@ pub mod codes {
     pub const IMPORT_GAP: &str = "metric.validation.import_gap";
     /// Metric currency must match the amount type's authoritative currency source.
     pub const CURRENCY_SOURCE_MISMATCH: &str = "metric.validation.currency_source_mismatch";
-    /// Mandatory time, currency and rate inputs require total paths.
+    /// Currency and rate inputs require total paths. A time path may be
+    /// partial: rows it does not reach are skipped and counted
+    /// (METRIC-GRAIN-LINK-1).
     pub const PARTIAL_PATH: &str = "metric.validation.partial_path";
     /// Overlapping fan-out buckets cannot be rolled up as scalars.
     pub const FAN_OUT_ROLLUP: &str = "question.validation.fan_out_rollup";
@@ -829,12 +831,16 @@ impl<'a> Checker<'a> {
     fn time_and_filters(&mut self, metric: &BoundMetric, root: &str, at: &str) {
         if let Some(path) = self.path(root, &metric.time_dimension, &format!("{at}/timeDimension"))
         {
-            if path.fan_out || path.properties.iter().any(|p| !is_time(p) || p.nullable) {
+            // METRIC-SNAPSHOT-ASOF-1: a snapshot keeps its own valid time.
+            let linked_snapshot = metric.snapshot && !metric.time_dimension.links.is_empty();
+            if path.fan_out
+                || linked_snapshot
+                || path.properties.iter().any(|p| !is_time(p) || p.nullable)
+            {
                 self.reject(codes::INVALID_TIME, &format!("{at}/timeDimension"));
             }
-            if path.partial {
-                self.reject(codes::PARTIAL_PATH, &format!("{at}/timeDimension"));
-            }
+            // METRIC-GRAIN-LINK-1: rows an optional link does not reach have no
+            // time; they are skipped and counted, never refused or invented.
         }
         for (index, grouping) in metric.snapshot_groupings.iter().enumerate() {
             let grouping_at = format!(
