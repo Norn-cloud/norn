@@ -1,18 +1,35 @@
 version: 2
+# One grouped pull request per ecosystem per week (#513): Dependabot cannot refresh the
+# provenance records (.github/ci/provenance) or the pins in verification/coverage-v1/validate.py,
+# so each update needs one lane commit; a group makes that one commit per ecosystem.
+# The skeleton guard's own lockfile (crates/norn-skeleton-guard/Cargo.lock, a separate,
+# gated workspace) is deliberately not listed: its updates are gate pull requests.
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /tools/norn-ts
     schedule:
       interval: weekly
+    groups:
+      norn-ts:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /packages/norn-sdk
     schedule:
       interval: weekly
+    groups:
+      norn-sdk:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
