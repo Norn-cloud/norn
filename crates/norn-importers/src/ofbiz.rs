@@ -1178,7 +1178,10 @@ impl<'a> Build<'a> {
         Value::Object(groups)
     }
 
-    #[allow(clippy::too_many_lines, reason = "one pass over every view's members and definition parts")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass over every view's members and definition parts"
+    )]
     fn views(&mut self, files: &'a [(OfbizFile<'a>, Element)]) {
         let views: Vec<&Element> = files
             .iter()

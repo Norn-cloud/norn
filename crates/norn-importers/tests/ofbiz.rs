@@ -215,7 +215,8 @@ fn field_descriptors_carry_what_a_mapping_proposer_needs() {
         ["GENERAL", "SUB"]
     );
     // Status bindings are typed gaps that keep what is known.
-    let extension = schema.extensions.as_ref().unwrap().get(EXTENSION).unwrap();
+    let extension =
+        serde_json::to_value(schema.extensions.as_ref().unwrap().get(EXTENSION).unwrap()).unwrap();
     let gap = extension["codeSetGaps"]
         .as_array()
         .unwrap()
