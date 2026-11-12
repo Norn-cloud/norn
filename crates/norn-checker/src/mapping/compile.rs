@@ -54,7 +54,9 @@ use norn_ir::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::{MappingModel, check_mapping, codes, input_fields, mapping_key};
+use super::{
+    MappingModel, check_mapping, codes, input_fields, input_fields_with_children, mapping_key,
+};
 use crate::lint::coverage::{
     IgnoredSourceField, MappingCoverage, MemberCoverage, MemberRef, MemberStatus, SourceRef,
 };
@@ -785,7 +787,8 @@ fn compile_map(
     let (entity_id, entity_version) = model
         .entity_artifact(object_type.as_str())
         .ok_or_else(unresolved)?;
-    let input_types = input_fields(source, &map.source.dataset).ok_or_else(unresolved)?;
+    let input_types =
+        input_fields_with_children(source, &map.source.dataset).ok_or_else(unresolved)?;
     let compile = |expression: &norn_ir::ZenExpression| {
         Expression::compile(expression.as_str()).map_err(|failure| {
             Box::new(error(
@@ -3051,6 +3054,14 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         (Some(Json::Number(number)), Type::Number | Type::Decimal { .. }) => number_value(number),
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
         (Some(value), Type::Json) => any_value(value),
+        // A declared child table: its rows are records the checker typed
+        // statically; each row is converted exactly, as opaque JSON was.
+        (Some(Json::Array(rows)), Type::List(row)) => rows
+            .iter()
+            .map(|item| conform(Some(item), row))
+            .collect::<Result<_, _>>()
+            .map(Value::Array),
+        (Some(value @ Json::Object(_)), Type::Record(_)) => any_value(value),
         (Some(value), ty) => Err(format!("{value:?} does not conform to {ty:?}")),
     }
 }
