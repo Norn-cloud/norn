@@ -1307,7 +1307,7 @@ fn obs_page_members_trace_under_the_default_budget() {
     }
     let input = input.expect("input");
     for (id, _) in cell
-        .inject_mapping_page(&raws, &input)
+        .inject_mapping_page(&lines, &input)
         .expect("capture")
         .pages
     {
