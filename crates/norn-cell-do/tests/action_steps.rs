@@ -38,6 +38,10 @@ use norn_kernel::{
 use serde_json::{Value, json};
 
 #[path = "../../norn-api/tests/support/action_cell.rs"]
+#[allow(
+    dead_code,
+    reason = "the shared fixture module serves the action tests too"
+)]
 mod action_cell;
 use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, melt_store};
 
@@ -374,15 +378,15 @@ fn install(cell: &Cell) {
 
 /// Start `run` as `starter`, then have the approver approve it.
 fn start_and_approve(cell: &Cell, starter: Option<&str>, run: &str) -> Value {
-    let (status, started) = call(
+    let (status, opened) = call(
         cell,
         "POST",
         "/v1/runs",
         starter,
         &json!({ "flow": FLOW_ID, "runId": run }).to_string(),
     );
-    assert_eq!(status, 201, "{started}");
-    assert_eq!(started["state"], json!("awaiting_perform_ask_review"));
+    assert_eq!(status, 201, "{opened}");
+    assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
     let (_, page) = call(cell, "GET", "/v1/decisions", APPROVER, "");
     assert_eq!(page["total"], json!(1), "{page}");
     let id = page["items"][0]["id"].as_str().unwrap().to_owned();
