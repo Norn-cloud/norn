@@ -123,16 +123,49 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if input.get("observationId").and_then(RuntimeValue::as_str) != Some(observation_id) {
             return Err(invalid());
         }
-        let observed: norn_kernel::Observed<RuntimeValue> =
+        let mut observed: norn_kernel::Observed<RuntimeValue> =
             norn_ir::runtime::decode(input.get("observed").ok_or_else(invalid)?)
                 .map_err(CellError::Encoding)?;
+        if observed.id.0 != *observation_id {
+            return Err(invalid());
+        }
+        if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+            // OBS-PAGE-1: the member whose bundle maps this object, among the
+            // members the page commit consumed (retained in its input).
+            let members: Vec<crate::PendingObservation> =
+                norn_ir::runtime::decode(input.get("members").ok_or_else(invalid)?)
+                    .map_err(CellError::Encoding)?;
+            let mut found = None;
+            for member in members {
+                let candidate: norn_kernel::Observed<RuntimeValue> =
+                    norn_ir::runtime::decode(&member.observed).map_err(CellError::Encoding)?;
+                let maps = candidate
+                    .input
+                    .get("records")
+                    .and_then(RuntimeValue::as_array)
+                    .is_some_and(|records| {
+                        records.iter().any(|r| {
+                            r.get("key").and_then(RuntimeValue::as_str) == Some(instance.id.as_str())
+                                && r.get("objectType").and_then(RuntimeValue::as_str)
+                                    == Some(instance.object_type.as_str())
+                        })
+                    });
+                if maps {
+                    if candidate.id.0 != member.observation_id {
+                        return Err(invalid());
+                    }
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            observed = found.ok_or_else(invalid)?;
+        }
         if observed.input.get("artifactPins").is_none() {
             return Ok(None);
         }
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-        if observed.id.0 != *observation_id
-            || *observation_id != format!("mapping-bundle:{}", bundle.digest)
+        if observed.id.0 != format!("mapping-bundle:{}", bundle.digest)
             || receipt.body.definitions_version != bundle.definitions_version
         {
             return Err(invalid());

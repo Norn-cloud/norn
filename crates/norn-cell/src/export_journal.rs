@@ -69,14 +69,22 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     match consumed {
         Consumption::Observation { observation_id } => {
             let pending = reader
-                .pending_observations()?
-                .into_iter()
-                .find(|row| row.observation_id == *observation_id)
+                .pending_observation(observation_id)?
                 .ok_or_else(not_pending)?;
+            let members = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                let mut members = Vec::new();
+                for id in crate::mapping_page::members(&pending.observed)? {
+                    members.extend(reader.pending_observation(&id)?);
+                }
+                members
+            } else {
+                Vec::new()
+            };
             preimage(&ConsumedInput::Observation {
                 position: pending.position,
                 observation_id: pending.observation_id,
                 observed: pending.observed,
+                members,
             })
         }
         Consumption::Result {
@@ -123,6 +131,10 @@ pub(crate) enum ConsumedInput {
         position: u64,
         observation_id: String,
         observed: Value,
+        /// OBS-PAGE-1: a page's members this commit consumes with it, in page
+        /// order; absent for every other delivery.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        members: Vec<crate::PendingObservation>,
     },
     Result {
         position: u64,

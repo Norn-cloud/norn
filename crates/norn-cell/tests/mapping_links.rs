@@ -929,3 +929,185 @@ proptest::proptest! {
         }
     }
 }
+
+/// A raw erpnext row at a fixed delivery clock, as a connector extract writes it.
+fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
+    let record = &row["record"];
+    let alias = record["name"].as_str().expect("source alias").to_owned();
+    let payload = RuntimeValue::from_json(record.clone()).expect("payload");
+    let digest = norn_ir::canonical::HashProfile::Norn1
+        .hash_json(serde_json::to_string(&payload).expect("json"))
+        .expect("digest");
+    let source = "synthetic-erpnext".to_owned();
+    let raw = Observed {
+        id: ObservationId(format!("delivery-{event}-{alias}")),
+        provenance: norn_kernel::Provenance {
+            source: source.clone(),
+            source_id: alias.clone(),
+            mapping_version: "synthetic/1".into(),
+            observed_at: norn_kernel::LogicalTime::from_millis(1_793_702_400_000),
+        },
+        input: norn_ir::runtime_object! {
+            "contract"=>"norn.raw_observation/v1", "source"=>source, "source_id"=>alias,
+            "event_id"=>event, "source_version"=>event, "pipeline_version"=>"synthetic/1", "kind"=>"upsert", "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
+        },
+    };
+    let input = MappingInput {
+        mapping: "erpnext.three.mapping".into(),
+        dataset: row["dataset"].as_str().expect("dataset").into(),
+        connector_instance: "demo".into(),
+        partition: "snapshot".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+    };
+    (raw, input)
+}
+
+/// The committed end state OBS-PAGE-EQUIV compares: every canonical object
+/// with its version, values and source lineage; links; link claims; the
+/// ledger's events in order; and the pending (quarantined) source rows.
+/// Page rows themselves are delivery framing and are left out.
+fn end_state(cell: &Cell) -> Vec<String> {
+    let reader = cell.store().read();
+    let mut state = Vec::new();
+    let budget = || {
+        norn_cell::reactive::DecodeBudget::new(&norn_cell::reactive::ReactiveLimits {
+            max_scan: 10_000,
+            max_candidate_bytes_per_commit: 100_000_000,
+            ..norn_cell::reactive::ReactiveLimits::from_profile(
+                &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+            )
+        })
+    };
+    for ty in [
+        "canon.Item",
+        "canon.Party",
+        "canon.PartyRole",
+        "canon.Holding",
+        "canon.OrderLine",
+    ] {
+        let page = reader
+            .authoritative_page(MAIN_WORLD, ty, None, 1_000)
+            .expect("page");
+        state.push(format!("{ty} quarantine {}", page.quarantine_count));
+        for record in page.records {
+            let object = reader
+                .object(MAIN_WORLD, ty, &record.id)
+                .expect("object")
+                .expect("present");
+            let fact = norn_ir::FactRef::new(ty, &object.id, object.version);
+            let lineage = reader
+                .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
+                .expect("lineage");
+            state.push(format!(
+                "{ty} {} v{} {:?} {:?}",
+                object.id, object.version, object.values, lineage
+            ));
+        }
+    }
+    for link in graph(cell) {
+        state.push(format!("link {link:?}"));
+    }
+    for claim in reader.observed_link_claims().expect("claims") {
+        state.push(format!("claim {claim:?}"));
+    }
+    for entry in reader.ledger(0).expect("ledger") {
+        state.push(format!("event {}", entry.event));
+    }
+    for pending in reader.pending_observations().expect("pending") {
+        if !pending.observation_id.starts_with("mapping-page:") {
+            state.push(format!("pending {}", pending.observation_id));
+        }
+    }
+    state
+}
+
+#[test]
+fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("framing.sqlite"));
+    let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
+    let (first, input) = raw_of(&rows[0], "1");
+    let (again, _) = raw_of(&rows[0], "2");
+    let (other, _) = raw_of(&rows[1], "1");
+    assert!(
+        cell.inject_mapping_page(&[first, other, again], &input)
+            .is_err()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("pending")
+            .is_empty(),
+        "a refused page captures nothing"
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    /// OBS-PAGE-EQUIV: consuming pages equals consuming their records one by
+    /// one in page order, over committed end state (objects with versions,
+    /// values and lineage; links; claims; events; quarantine), modulo commit
+    /// count. Batches are split before a repeated identity, as a host does,
+    /// so identities repeat across pages; generated rows mix intra-page links
+    /// in both orders (orders before or after their holdings and parties),
+    /// re-pointed claims, cleared parties and older redeliveries.
+    #[test]
+    fn obs_page_equiv_pages_equal_one_by_one(
+        many in proptest::bool::ANY,
+        batches in proptest::collection::vec(
+            proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..9),
+            1..4,
+        ),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let open = |name: &str| {
+            let path = directory.path().join(name);
+            if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) }
+        };
+        let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
+        let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
+        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
+        for batch in batches {
+            // Split before a repeated row identity, and per dataset (a page
+            // reads one dataset).
+            let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
+            let mut seen = BTreeSet::new();
+            for (row, party, version) in batch {
+                let mut row = rows[usize::from(row)].clone();
+                let record = row["record"].as_object_mut().expect("record");
+                let party = parties[usize::from(party)];
+                if record.contains_key("provider_ref") && party != "clear" {
+                    record.insert("provider_ref".into(), json!(party));
+                }
+                if many && record.contains_key("owner_ref") {
+                    record.insert("owner_ref".into(), json!(party));
+                }
+                let (raw, input) = raw_of(&row, &version.to_string());
+                let identity = raw.provenance.source_id.clone();
+                let split = pages.last().is_none_or(|page| {
+                    !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
+                });
+                if split {
+                    seen = BTreeSet::from([identity]);
+                    pages.push(Vec::new());
+                }
+                pages.last_mut().expect("page").push((raw, input));
+            }
+            for page in pages {
+                for (raw, input) in &page {
+                    let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
+                    single.process_mapping_outcome(&id).expect("one by one");
+                }
+                let raws: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
+                let ids = paged
+                    .inject_mapping_page(&raws, &page[0].1)
+                    .expect("page capture");
+                for (id, _) in ids {
+                    paged.process_mapping_page(&id).expect("page");
+                }
+            }
+        }
+        proptest::prop_assert_eq!(end_state(&single), end_state(&paged));
+    }
+}
