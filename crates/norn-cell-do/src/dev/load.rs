@@ -186,7 +186,12 @@ pub(crate) fn load(
         let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for (dataset, record, version) in &snapshot.rows {
-            let observed = raw(&snapshot.source, &snapshot.mapping, record, version.as_deref())?;
+            let observed = raw(
+                &snapshot.source,
+                &snapshot.mapping,
+                record,
+                version.as_deref(),
+            )?;
             let identity = observed.provenance.source_id.clone();
             let split = pages.last().is_none_or(|(current, rows)| {
                 current != dataset || rows.len() >= PAGE_ROWS || !seen.insert(identity.clone())

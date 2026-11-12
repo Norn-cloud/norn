@@ -50,7 +50,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let bundles = [bundle];
         let reader = self.store().read();
         for bundle in &bundles {
-            reader.prepare_mapping_records(bundle, &catalog, &turn, &mut commit, &mut authorization)?;
+            reader.prepare_mapping_records(
+                bundle,
+                &catalog,
+                &turn,
+                &mut commit,
+                &mut authorization,
+            )?;
         }
         reader.prepare_mapping_links(&bundles, &catalog, &turn, &mut commit, &mut authorization)?;
         authorization
@@ -144,7 +150,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// the source event is neither in conflict nor disputed.
     pub(crate) fn check_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
         self.recheck_mapping_bundle(bundle)?;
-        if self.installed_definitions(None)?.map(|d| d.version) != Some(bundle.definitions_version) {
+        if self.installed_definitions(None)?.map(|d| d.version) != Some(bundle.definitions_version)
+        {
             return Err(CellError::MappingBundleMismatch);
         }
         if self.mapping_conflict(bundle)?.is_some() || self.mapping_event_is_disputed(bundle)? {

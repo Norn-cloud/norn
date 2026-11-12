@@ -1025,7 +1025,10 @@ fn end_state(cell: &Cell) -> Vec<String> {
 fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup(&directory.path().join("framing.sqlite"));
-    let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
     let (first, input) = raw_of(&rows[0], "1");
     let (again, _) = raw_of(&rows[0], "2");
     let (other, _) = raw_of(&rows[1], "1");

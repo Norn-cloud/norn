@@ -1765,7 +1765,10 @@ where
                     .check_mapping_bundle(bundle)
                     .map_err(CommitError::Host)?;
             }
-            if let Some(Consumed::Observation { id: ObservationId(observation_id) }) = &commit.consumes {
+            if let Some(Consumed::Observation {
+                id: ObservationId(observation_id),
+            }) = &commit.consumes
+            {
                 // OBS-PAGE-1: a page commit applies exactly its still-pending
                 // members, in page order; a bundle commit exactly its bundle.
                 let applied: Vec<String> = mapped
@@ -2139,7 +2142,7 @@ where
             &[],
             &[],
             &[],
-            None,
+            &[],
             None,
         )
     }

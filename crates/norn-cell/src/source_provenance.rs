@@ -145,7 +145,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     .and_then(RuntimeValue::as_array)
                     .is_some_and(|records| {
                         records.iter().any(|r| {
-                            r.get("key").and_then(RuntimeValue::as_str) == Some(instance.id.as_str())
+                            r.get("key").and_then(RuntimeValue::as_str)
+                                == Some(instance.id.as_str())
                                 && r.get("objectType").and_then(RuntimeValue::as_str)
                                     == Some(instance.object_type.as_str())
                         })

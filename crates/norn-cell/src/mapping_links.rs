@@ -340,7 +340,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
         let model = CommitModel::new(&catalog);
-        let plan = self.link_plan_over(bundles, commit, model, &self.plan_scope(bundles, model)?)?;
+        let plan =
+            self.link_plan_over(bundles, commit, model, &self.plan_scope(bundles, model)?)?;
         // Equivalence check for the narrowed scope (tests turn it on): the same
         // plan over the wide scope, every record and claim key at both ends.
         if WIDE_SCOPE_CHECK.load(std::sync::atomic::Ordering::Relaxed) {

@@ -33,14 +33,16 @@ pub(crate) const PAGE_PREFIX: &str = "mapping-page:";
 const PAGE_CONTRACT: &str = "norn.mapping_page/v1";
 
 /// The member bundle ids a page row names, in page order.
-pub(crate) fn members(observed: &serde_json::Value) -> Result<Vec<String>, CellError> {
-    let input = observed.get("input").ok_or(CellError::MappingBundleMismatch)?;
-    if input.get("contract").and_then(serde_json::Value::as_str) != Some(PAGE_CONTRACT) {
+pub(crate) fn members(observed: &RuntimeValue) -> Result<Vec<String>, CellError> {
+    let input = observed
+        .get("input")
+        .ok_or(CellError::MappingBundleMismatch)?;
+    if input.get("contract").and_then(RuntimeValue::as_str) != Some(PAGE_CONTRACT) {
         return Err(CellError::MappingBundleMismatch);
     }
     input
         .get("members")
-        .and_then(serde_json::Value::as_array)
+        .and_then(RuntimeValue::as_array)
         .ok_or(CellError::MappingBundleMismatch)?
         .iter()
         .map(|member| {
@@ -165,7 +167,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// page) are skipped: each record is consumed once.
     pub(crate) fn pending_page_members(
         &self,
-        page: &serde_json::Value,
+        page: &RuntimeValue,
     ) -> Result<Vec<(String, MappingBundle)>, CellError> {
         let mut pending = Vec::new();
         for id in members(page)? {
@@ -202,7 +204,10 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         if observed.id.0 != page_id {
             return Err(CellError::MappingBundleMismatch);
         }
-        let members = self.store().read().pending_page_members(&pending.observed)?;
+        let members = self
+            .store()
+            .read()
+            .pending_page_members(&pending.observed)?;
         match self.commit_page(&observed, &members) {
             Ok(()) => {
                 return Ok(Some(
@@ -255,9 +260,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let bundles: Vec<MappingBundle> = members.iter().map(|(_, b)| b.clone()).collect();
         for bundle in &bundles {
             self.store().read().check_mapping_bundle(bundle)?;
-            self.store()
-                .read()
-                .prepare_mapping_records(bundle, &catalog, &turn, &mut commit, &mut authorization)?;
+            self.store().read().prepare_mapping_records(
+                bundle,
+                &catalog,
+                &turn,
+                &mut commit,
+                &mut authorization,
+            )?;
         }
         if !bundles.is_empty() {
             self.store().read().prepare_mapping_links(

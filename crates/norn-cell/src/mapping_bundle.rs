@@ -413,7 +413,8 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        self.conn.transaction(|| self.capture_mapping_bundle(raw, input))
+        self.conn
+            .transaction(|| self.capture_mapping_bundle(raw, input))
     }
 
     /// [`Self::inject_mapping_bundle`] inside the caller's transaction.
