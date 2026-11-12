@@ -246,7 +246,8 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser"])
+        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -262,6 +263,18 @@ class AffectedPlanTests(unittest.TestCase):
                 plan = self.plan("--affected", base)
                 self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
                                  {k: v for k, v in self.full.items() if k != "reason"})
+
+    def test_duckdb_runs_when_norn_cell_is_reached_not_only_changed(self):
+        # norn-kernel is upstream of norn-cell, so a kernel-only change reaches it and plans the
+        # DuckDB phase; norn-api is not, so an api-only change does not (#1206).
+        for path, planned in (("crates/norn-kernel/src/lib.rs", True), ("crates/norn-api/src/lib.rs", False)):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertNotIn("norn-cell", plan["reason"])
+                self.assertEqual("duckdb" in plan["phase"], planned, plan["phase"])
 
     def test_an_affected_rust_change_plans_rest_shards(self):
         # Only a plan that reaches no package drops its rest shards; a Rust change keeps them.
