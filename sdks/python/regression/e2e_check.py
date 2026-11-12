@@ -24,6 +24,11 @@ checks = cell.rows("stats.AssumptionCheck")
 assert list(specs["spec"]) == [first.spec["spec"]], specs
 assert len(checks) == len(first.checks) and set(checks["spec"]) == {first.spec["spec"]}
 assert set(checks["status"]) <= {"pass", "warn", "fail", "not_applicable"}
+# Absence is a typed null, never "": a check without a p-value reads back as null.
+vif = checks[checks["test"] == "variance inflation factor"]
+assert len(vif) == 3 and vif["p_value"].isna().all(), vif[["test", "p_value"]]
+assert checks[checks["test"] == "Breusch-Pagan (LM)"]["p_value"].notna().all()
+assert not (checks["p_value"] == "").any()
 
 # Rerunning on the same revision replays: the same checks and the same receipts, nothing new.
 again = check_regression("lab.Sample", **args)
@@ -38,16 +43,23 @@ assert later.spec["dataset_revision"] != first.spec["dataset_revision"] and late
 assert len(cell.rows("stats.ModelSpec")) == 2
 # One click in Studio: a queued request, run by the worker through the same governed actions.
 import subprocess  # noqa: E402
+# As Studio's form submits: only the person's choices; Norn derives status, spec and error.
 cell.call("stats.checkrequest.submit", {"request": "rq-demo-1", "object_type": "lab.Sample", "target": "y", "features": "x1,x2",
-                                        "order_field": "t", "status": "queued", "spec": "", "error": ""}, "rq-demo-1")
+                                        "order_field": "t"}, "rq-demo-1")
 cell.call("stats.checkrequest.submit", {"request": "rq-demo-2", "object_type": "lab.Sample", "target": "y", "features": "nope",
-                                        "order_field": "", "status": "queued", "spec": "", "error": ""}, "rq-demo-2")
+                                        "order_field": None}, "rq-demo-2")
 subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
 requests = cell.rows("stats.CheckRequest").set_index("request")
 assert requests.loc["rq-demo-1", "status"] == "done", requests
 spec = requests.loc["rq-demo-1", "spec"]
 assert spec in set(cell.rows("stats.ModelSpec")["spec"])
 assert requests.loc["rq-demo-2", "status"] == "failed" and "nope" in requests.loc["rq-demo-2", "error"], requests
+assert requests.loc["rq-demo-2", "spec"] is None or requests.loc["rq-demo-2", "spec"] != requests.loc["rq-demo-2", "spec"], requests  # null, not ""
+assert requests.loc["rq-demo-1", "error"] is None or requests.loc["rq-demo-1", "error"] != requests.loc["rq-demo-1", "error"], requests
+# The done request links to its spec ("result"), so Studio can follow request → spec → checks.
+from norn_client.api.objects import get_object_links  # noqa: E402
+links = get_object_links.sync("stats.CheckRequest", "rq-demo-1", client=cell.client, **cell.where)
+assert any(edge.to_dict().get("link") == "result" for edge in links.items), [edge.to_dict() for edge in links.items]
 # A second pass finds nothing queued.
 subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
 assert len(cell.rows("stats.CheckRequest")) == 2

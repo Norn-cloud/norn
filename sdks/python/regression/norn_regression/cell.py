@@ -122,12 +122,11 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
             "order_field": order, "dataset_revision": dataset, "rows": int(len(rows)), "rows_used": int(plots["n"]),
             "method": environment(), "summary": summary(checks)}
     result = RegressionChecks(spec, checks, plots)
-    # The definitions have no nullable members: an absent value is recorded as "".
-    present = lambda values: {key: "" if value is None else value for key, value in values.items()}  # noqa: E731
-    result.receipts.append(cell.call("stats.modelspec.record", present(spec), spec_id)["receipt"]["receiptHash"])
+    # An absent value (no order field, no p-value) is recorded as null: the properties are nullable.
+    result.receipts.append(cell.call("stats.modelspec.record", spec, spec_id)["receipt"]["receiptHash"])
     for index, check in enumerate(checks):
         values = {"check": f"{spec_id}-{index:02d}", "spec": spec_id, "assumption": check.assumption, "test": check.test,
                   "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": check.p_value,
                   "threshold": check.threshold, "threshold_source": check.threshold_source, "remediation": check.remediation}
-        result.receipts.append(cell.call("stats.assumptioncheck.record", present(values), values["check"])["receipt"]["receiptHash"])
+        result.receipts.append(cell.call("stats.assumptioncheck.record", values, values["check"])["receipt"]["receiptHash"])
     return result

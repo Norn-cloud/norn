@@ -821,3 +821,39 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
         BTreeSet::from(["demo/party/custodian".into()])
     );
 }
+
+/// A source field that is absent in a row (`null`), mapped onto a nullable
+/// property, is stored as no value and reads back as null: not "", not 0, and
+/// the row is not quarantined. `canon.OrderLine.unit` is nullable and mapped
+/// from `input.unit`; `currency` is mapped from the literal `null`.
+#[test]
+fn a_null_source_field_lands_as_null_on_a_nullable_property() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("nulls.sqlite"));
+    let source = fixture("erpnext");
+    for row in source["snapshot"].as_array().expect("rows") {
+        let mut row = row.clone();
+        if row["dataset"] == "Sales Order Item" {
+            row["record"]["unit"] = Value::Null;
+        }
+        capture(&mut cell, "erpnext", &row, "snapshot");
+    }
+    assert_eq!(count_snapshot(&cell), (10, 0), "every row captured, none quarantined");
+    let line = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.OrderLine", "demo/order/1/line/1")
+        .expect("read")
+        .expect("order line");
+    for property in ["unit", "currency"] {
+        let value = line.values.get(property);
+        assert!(
+            value.is_none_or(|value| matches!(value, RuntimeValue::Null)),
+            "{property} reads back as null, got {value:?}"
+        );
+    }
+    assert!(
+        line.values.get("quantity").is_some_and(|value| !matches!(value, RuntimeValue::Null)),
+        "present values are untouched"
+    );
+}
