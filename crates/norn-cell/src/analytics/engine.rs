@@ -1027,7 +1027,7 @@ impl Projection {
                 "SELECT *, {} AS \":q\", {} AS \":qr\" FROM ({}) AS pk",
                 &[&question.holds, &question.refuse, &pick],
             );
-            (base, q.clone(), vec![Frag::raw("\":qr\"")], Some(untimed))
+            (base, q, vec![Frag::raw("\":qr\"")], Some(untimed))
         } else {
             // The base layer evaluates the question's filters once per row.
             let base = Frag::fmt(

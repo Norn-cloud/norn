@@ -883,7 +883,9 @@ mod snapshot {
     use norn_cell::compute::QueryContext;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
     use norn_checker::metric::compute::QuestionPlan;
-    use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
+    use norn_ir::{
+        ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
+    };
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -956,14 +958,25 @@ mod snapshot {
             "freshness": {"kind": "live", "maxAgeMs": 5000},
         }))
         .expect("question");
-        let plan = space.admit(&question, 100).expect("admitted snapshot question");
+        let plan = space
+            .admit(&question, 100)
+            .expect("admitted snapshot question");
         assert!(plan.as_of());
         let model = Model::from_definitions(&[object_type()], &[]).expect("model");
         (CellStore::open_in_memory(model).expect("cell"), plan)
     }
 
-    fn put(store: &mut CellStore, tick: u64, key: &str, quantity: Option<i64>, at: &str, location: &str) {
-        let quantity = quantity.map_or(V::Null, |q| V::from(Decimal::parse(&q.to_string()).expect("exact")));
+    fn put(
+        store: &mut CellStore,
+        tick: u64,
+        key: &str,
+        quantity: Option<i64>,
+        at: &str,
+        location: &str,
+    ) {
+        let quantity = quantity.map_or(V::Null, |q| {
+            V::from(Decimal::parse(&q.to_string()).expect("exact"))
+        });
         store
             .commit(&CommitBatch {
                 world: WORLD.into(),
@@ -992,11 +1005,23 @@ mod snapshot {
         ]
     }
 
-    fn check(engine: &Engine, history: &[(usize, Option<i64>, usize, bool)], north_only: bool, shape: &serde_json::Value) {
+    fn check(
+        engine: &Engine,
+        history: &[(usize, Option<i64>, usize, bool)],
+        north_only: bool,
+        shape: &serde_json::Value,
+    ) {
         let (mut store, plan) = plan(north_only, shape);
         for (tick, (subject, quantity, at, north)) in (1u64..).zip(history) {
             let location = if *north { "north" } else { "south" };
-            put(&mut store, tick, &format!("s{subject}"), *quantity, INSTANTS[*at], location);
+            put(
+                &mut store,
+                tick,
+                &format!("s{subject}"),
+                *quantity,
+                INSTANTS[*at],
+                location,
+            );
         }
         compare(&store, engine, &plan, &context());
     }
