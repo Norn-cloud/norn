@@ -106,7 +106,7 @@ export function ValidationPanel({ issues, title = "The server found problems", d
         {issues.map((issue, index) => (
           <li key={`${issue.code}:${index}`}>
             {issue.field === null ? <span>{issue.message}</span>
-              : <button type="button" className="text-left underline decoration-dotted underline-offset-4 hover:text-foreground" onClick={() => jump(issue.field as string)}>{issue.message}</button>}
+              : <button type="button" className="text-start underline decoration-dotted underline-offset-4 hover:text-foreground" onClick={() => jump(issue.field as string)}>{issue.message}</button>}
           </li>
         ))}
       </ul>

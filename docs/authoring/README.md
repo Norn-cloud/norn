@@ -65,6 +65,24 @@ export const Holding = Norn.type({
 
 Use `Norn.decimal(scale, { unit })` for exact quantities and `{ currency: "currencyProperty" }` for money bound to a sibling currency property. Specify scale, rounding, overflow and zero-division behavior for computations. `Norn.ref` names a shared **value type**, not an object reference. Object references belong in `links`; do not store `Customer.ref` or `Scrap.many` as scalar props.
 
+### Labels in any language (CURRENT)
+
+Ids stay language-neutral; people read labels. `Norn.type`, `Norn.interfaceType`, `Norn.action`, `Norn.decision` and `Norn.law` take `label` and `localizedDescription` as maps from BCP 47 tag to text, and types also take `propertyLabels` and `valueLabels` (enum property → stored value → label). `needsReview` lists the locales whose text was proposed, for example machine-translated, and still needs a person's review.
+
+```ts
+export const Invoice = Norn.type({
+  name: "sales.Invoice", title: "Invoice", version: "1.0.0",
+  label: { en: "Invoice", ar: "فاتورة" },
+  properties: Schema.Struct({ id: Schema.String, status: Schema.Literals(["draft", "posted"]) }),
+  propertyLabels: { id: { en: "Invoice number", ar: "رقم الفاتورة" } },
+  valueLabels: { status: { draft: { en: "Draft", ar: "مسودة" }, posted: { en: "Posted", ar: "مُرحّلة" } } },
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+```
+
+The compiler emits these labels as a separate `labels` artifact (`sales.Invoice.entity.labels`), never inside the type, so adding or fixing a translation changes no artifact hash, model hash or receipt (LABEL-LOCALE-1, [core 08](../spec/core/08-worlds-projections.md#localized-definition-labels)). A tenant or locale pack labels types another layer owns with `Norn.labels({ id, title, version, types: { "canon.Holding": { label: { ar: "رصيد مخزون" }, properties: { … }, values: { … } } } })` (see `registry/packs/locale-ar`); its labels replace the installed ones for the same target and locale. `requiredLocales` lists the locales the layer serves, and every definition with no label in one is listed as a warning. Labels may not contain bidi control characters, because renderers isolate ids, codes and numbers themselves.
+
 ## How to write a Norn app
 
 1. Read the decision record, the relevant core file from the index, and the named acceptance scenarios. State the invariant, governing container and atomic boundary before choosing syntax.

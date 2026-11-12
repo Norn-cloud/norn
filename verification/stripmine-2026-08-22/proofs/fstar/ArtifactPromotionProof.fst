@@ -6,6 +6,7 @@ let authority_bearing (kind: t_ArtifactKind) : bool =
   match kind with
   | ArtifactKind_Entity
   | ArtifactKind_DefinedConcept
+  | ArtifactKind_Labels
   | ArtifactKind_Relation
   | ArtifactKind_Action
   | ArtifactKind_Rule
@@ -51,9 +52,9 @@ let expected_direct_write
   not (authority_bearing kind && grants_runtime_authority lifecycle)
 
 /// Exact total truth table for the hax-extracted production predicate over the
-/// current closed ArtifactKind (15 variants) and ArtifactLifecycle (7 variants)
+/// current closed ArtifactKind (16 variants) and ArtifactLifecycle (7 variants)
 /// representations. SourceSchema is evidence-only and is not authority-bearing;
-/// Mapping and DefinedConcept are authority-bearing. A future enum variant must re-extract and
+/// Mapping, DefinedConcept and Labels are authority-bearing. A future enum variant must re-extract and
 /// re-check this theorem rather than falling outside a precondition.
 let direct_artifact_write_truth_table
   (kind: t_ArtifactKind)

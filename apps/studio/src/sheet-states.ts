@@ -39,4 +39,7 @@ export const SHEET: readonly SheetState[] = [
   { component: "CanvasPage", id: "page/loading", note: "Reading definitions is a status line in the panel, not a blank page." },
   { component: "CanvasPage", id: "page/error", note: "A failed read names the error in an alert." },
   { component: "CanvasPage", id: "page/no-lifecycles", note: "No lifecycle declared: the shared empty state." },
+  { component: "FactsTable", id: "locale/facts", note: "Facts and enum values in the reader's language from a labels artifact; a fact without a label keeps its id in words, marked lang=en; Technical ids isolated." },
+  { component: "CodedMessage", id: "locale/message", note: "A coded checker message from the catalog; artifact ids, versions and a +20 phone number stay isolated inside Arabic text." },
+  { component: "CanvasFrame", id: "locale/problems", note: "Problems list in the reader's language; codes stay as sent." },
 ]

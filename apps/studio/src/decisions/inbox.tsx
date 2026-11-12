@@ -76,7 +76,7 @@ export function DecisionsPage() {
         {open.map((d) => (
           <li key={d.id}>
             <button type="button" onClick={() => choose(d.id)}
-              className={cn("grid w-full gap-1.5 rounded-node border border-node-border bg-card p-4 text-left shadow-[var(--node-highlight),var(--elevation-node)] transition-shadow hover:shadow-[var(--node-highlight),var(--elevation-node-hover)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+              className={cn("grid w-full gap-1.5 rounded-node border border-node-border bg-card p-4 text-start shadow-[var(--node-highlight),var(--elevation-node)] transition-shadow hover:shadow-[var(--node-highlight),var(--elevation-node-hover)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                 selected?.id === d.id && "ring-2 ring-primary/40")}>
               <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                 <span>{flowTitle(d)} · {stepTitle(d)}</span><span className="flex-1" />

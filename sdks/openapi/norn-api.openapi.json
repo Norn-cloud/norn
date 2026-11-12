@@ -1885,6 +1885,9 @@
           },
           {
             "$ref": "#/components/schemas/NornArtifactEnvelopeDefinedConcept"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeLabels"
           }
         ],
         "title": "NornArtifactEnvelope",
@@ -1899,6 +1902,7 @@
             "defined_concept": "#/components/schemas/NornArtifactEnvelopeDefinedConcept",
             "derived": "#/components/schemas/NornArtifactEnvelopeDerived",
             "entity": "#/components/schemas/NornArtifactEnvelopeEntity",
+            "labels": "#/components/schemas/NornArtifactEnvelopeLabels",
             "law": "#/components/schemas/NornArtifactEnvelopeLaw",
             "mapping": "#/components/schemas/NornArtifactEnvelopeMapping",
             "policy": "#/components/schemas/NornArtifactEnvelopePolicy",
@@ -2139,6 +2143,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeEntity"
+      },
+      "NornArtifactEnvelopeLabels": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "labels"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrLabelsPayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeLabels"
       },
       "NornArtifactEnvelopeLaw": {
         "allOf": [
@@ -4720,6 +4750,13 @@
             "description": "Pure classification over existing base identities.",
             "enum": [
               "defined_concept"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Localized labels for definitions; never part of a definition's\nidentity ([`labels`]).",
+            "enum": [
+              "labels"
             ]
           }
         ]
@@ -10750,6 +10787,282 @@
         },
         "additionalProperties": false
       },
+      "NornIrLabelEntry": {
+        "type": "object",
+        "description": "Labels for one target.",
+        "required": [
+          "target",
+          "label"
+        ],
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrLocaleText"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longer human-readable description per BCP 47 tag."
+          },
+          "label": {
+            "$ref": "#/components/schemas/NornIrLocaleText",
+            "description": "Short human-readable name per BCP 47 tag; at least one, none blank."
+          },
+          "review": {
+            "$ref": "#/components/schemas/NornIrLabelEntryPropertyReview"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrLabelTarget",
+            "description": "The labelled definition."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelEntryPropertyReview": {
+        "type": "object",
+        "description": "Review state per BCP 47 tag; a tag that is not listed is reviewed.\nEvery listed tag must have a label.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrLabelReview"
+        }
+      },
+      "NornIrLabelReview": {
+        "type": "string",
+        "description": "Review state of one locale's label and description.",
+        "enum": [
+          "needs_review",
+          "reviewed"
+        ],
+        "x-enumDescriptions": [
+          "Proposed (for example machine-translated) and not yet reviewed by a\nperson. Rendered, but listed for review.",
+          "Reviewed by a person. The default when a locale has no review entry."
+        ]
+      },
+      "NornIrLabelTarget": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLabelTargetOneOf6"
+          }
+        ],
+        "description": "The canonical definition a label describes, by its language-neutral id."
+      },
+      "NornIrLabelTargetOneOf0": {
+        "type": "object",
+        "description": "An object type or interface, by qualified name (`sales.Invoice`).",
+        "required": [
+          "kind",
+          "objectType"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "objectType"
+            ]
+          },
+          "objectType": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf1": {
+        "type": "object",
+        "description": "A property of an object type or interface.",
+        "required": [
+          "kind",
+          "objectType",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "property"
+            ]
+          },
+          "objectType": {
+            "type": "string"
+          },
+          "property": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf2": {
+        "type": "object",
+        "description": "One declared value of an `enum` property (inline or through `ref`).",
+        "required": [
+          "kind",
+          "objectType",
+          "property",
+          "value"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "enumValue"
+            ]
+          },
+          "objectType": {
+            "type": "string"
+          },
+          "property": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf3": {
+        "type": "object",
+        "description": "An action, by `actionId`.",
+        "required": [
+          "kind",
+          "actionId"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "action"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf4": {
+        "type": "object",
+        "description": "A rule, by `ruleId`.",
+        "required": [
+          "kind",
+          "ruleId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "rule"
+            ]
+          },
+          "ruleId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf5": {
+        "type": "object",
+        "description": "A law, by `id`.",
+        "required": [
+          "kind",
+          "lawId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "law"
+            ]
+          },
+          "lawId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelTargetOneOf6": {
+        "type": "object",
+        "description": "A page of a widget UX contract.",
+        "required": [
+          "kind",
+          "widgetId",
+          "pageId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "page"
+            ]
+          },
+          "pageId": {
+            "type": "string"
+          },
+          "widgetId": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelsPayload": {
+        "type": "object",
+        "description": "Localized presentation labels for definitions ([`labels`]).",
+        "required": [
+          "labelsVersion",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLabelEntry"
+            },
+            "description": "One entry per target, each target at most once."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/NornIrLabelsPayloadPropertyExtensions"
+          },
+          "labelsVersion": {
+            "type": "string",
+            "description": "The form selector; always `0.1`.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "requiredLocales": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The locales this layer serves (a tenant's or a locale pack's): every\ndefinition the artifact set and the installed base declare should\nhave a label in each. Missing ones are listed by a warning\n(`labels.lint.missing_label`), never refused. Omitted when empty."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLabelsPayloadPropertyExtensions": {
+        "type": "object",
+        "description": "Reserved versioned extension slots, as on other artifact roots.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
       "NornIrLawException": {
         "type": "object",
         "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
@@ -14245,6 +14558,13 @@
             "description": "Scoped temporal law.",
             "enum": [
               "law"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Localized labels; a downstream pack may label upstream definitions.",
+            "enum": [
+              "labels"
             ]
           }
         ],

@@ -24,6 +24,7 @@ import * as OP from "../builder/ontology-pack.ts"
 import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
+import * as LB from "../builder/labels.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
 import * as Q from "../builder/question.ts"
@@ -79,7 +80,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
 }
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -103,6 +104,10 @@ const SOURCE_SCHEMA = "@norn/authoring#Norn.sourceSchema"
 const ONTOLOGY_PACK = "@norn/authoring#Norn.ontologyPack"
 const PACK_LINK = "@norn/authoring#Norn.packLink"
 const MARKINGS = "@norn/authoring#Norn.markings"
+/** Label members every labelled definition accepts (LABEL-LOCALE-1). */
+const LABEL_MEMBERS = ["label", "localizedDescription", "needsReview"] as const
+/** Label members of object types and interfaces. */
+const MEMBER_LABEL_MEMBERS = ["propertyLabels", "valueLabels"] as const
 const TYPE = "@norn/authoring#Norn.type"
 const INTERFACE = "@norn/authoring#Norn.interfaceType"
 const ACTION = "@norn/authoring#Norn.action"
@@ -111,9 +116,10 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const LABELS = "@norn/authoring#Norn.labels"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -174,6 +180,18 @@ function lowerEach<T>(
   return files.map((file) => results.get(resolve(file))!)
 }
 
+/** A definition's labels as its `<artifact id>.labels` artifact; never part of the definition's own artifact. */
+function labelsArtifact(def: Definition, artifact: Json, options: EnvelopeOptions): Json | undefined {
+  const target: LB.LabelTarget | undefined =
+    def._tag === "ObjectType" || def._tag === "Interface" ? { kind: "objectType", objectType: def.name }
+    : def._tag === "Action" ? { kind: "action", actionId: def.id }
+    : def._tag === "Decision" ? { kind: "rule", ruleId: def.id }
+    : def._tag === "Law" ? { kind: "law", lawId: def.law.id }
+    : undefined
+  if (target === undefined) return undefined
+  return LB.lowerLabels(artifact as unknown as LB.LabelOwner, LB.labelEntries(target, def as LB.Localized & LB.MemberLabels), options)
+}
+
 /**
  * Compile the ontology definitions of each root module in one shared Program.
  * `options` may vary per root (envelope provenance names each module).
@@ -205,9 +223,12 @@ export function compileDefinitionFiles(
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
+        : def._tag === "Labels" ? LB.lowerCatalog(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
         artifacts.push(built.artifact)
+        const labels = labelsArtifact(def, built.artifact, envelopeOptions)
+        if (labels !== undefined) artifacts.push(labels)
         if ("at" in def && def.at) compiler.sourceMap.push({ artifactId: (built.artifact as { artifactId: string }).artifactId, pointer: "", at: def.at })
       }
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
@@ -331,6 +352,7 @@ class DefinitionCompiler {
           : id === CONNECTOR ? this.connector(init)
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
+          : id === LABELS ? this.labels(init)
           : this.decision(init)
         this.expansion.assert(def)
         out.push(def)
@@ -509,6 +531,30 @@ class DefinitionCompiler {
     throw new CompileError("NORN-FLOW-LITERAL", "role must be thing or happening", node)
   }
 
+  private localeText(node: ts.Expression): LB.LocaleText {
+    return Object.fromEntries([...this.record(node)].map(([tag, text]) => [tag, this.string(text)]))
+  }
+
+  /** `label`, `localizedDescription` and `needsReview` (LABEL-LOCALE-1). */
+  private localized(members: Members): LB.Localized {
+    const label = members.get("label"), description = members.get("localizedDescription"), review = members.get("needsReview")
+    if (description && !label) throw new CompileError("NORN-FLOW-LITERAL", "localizedDescription needs a label: a description is shown under its label, in the same locales", description)
+    return {
+      ...(label ? { label: this.localeText(label) } : {}),
+      ...(description ? { localizedDescription: this.localeText(description) } : {}),
+      ...(review ? { needsReview: this.strings(review) } : {}),
+    }
+  }
+
+  /** `propertyLabels` and `valueLabels`, keyed by a declared property. */
+  private memberLabels(members: Members, properties: ReadonlyArray<string>): LB.MemberLabels {
+    const propertyLabels = members.get("propertyLabels"), valueLabels = members.get("valueLabels")
+    return {
+      ...(propertyLabels ? { propertyLabels: Object.fromEntries([...this.closedRecord(propertyLabels, properties, [])].map(([id, text]) => [id, this.localeText(text)])) } : {}),
+      ...(valueLabels ? { valueLabels: Object.fromEntries([...this.closedRecord(valueLabels, properties, [])].map(([id, values]) => [id, Object.fromEntries([...this.record(values)].map(([value, text]) => [value, this.localeText(text)]))])) } : {}),
+    }
+  }
+
   private propertyMarkings(members: Members, properties: ReadonlyArray<string>): Map<string, ReadonlyArray<string>> {
     const out = new Map<string, ReadonlyArray<string>>()
     const node = members.get("propertyMarkings")
@@ -590,6 +636,7 @@ class DefinitionCompiler {
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
       "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
+      ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS,
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
@@ -597,6 +644,8 @@ class DefinitionCompiler {
     const linksNode = members.get("links")
     return E.interfaceType({
       ...rest,
+      ...this.localized(members),
+      ...this.memberLabels(members, projected.map((p) => p.id)),
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
       links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
@@ -627,7 +676,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations"])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -645,6 +694,8 @@ class DefinitionCompiler {
     const lifecyclesNode = members.get("lifecycles")
     return E.objectType({
       ...rest,
+      ...this.localized(members),
+      ...this.memberLabels(members, projected.map((p) => p.id)),
       ...(extendsNode ? { extends: this.typeName(extendsNode, OBJECT_TYPES) } : {}),
       properties: projected.map((p) => {
         const value = defaults.get(p.id)
@@ -717,7 +768,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -728,6 +779,7 @@ class DefinitionCompiler {
     const effectNode = members.get("effect"), compensation = members.get("compensation")
     const description = members.get("description"), ledgerCategory = members.get("ledgerCategory")
     return A.action({
+      ...this.localized(members),
       id: this.string(need("id")),
       title: this.string(need("title")),
       version: this.string(need("version")),
@@ -904,7 +956,7 @@ class DefinitionCompiler {
   }
 
   private decision(call: ts.CallExpression): R.DecisionDef {
-    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph"])
+    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1071,13 +1123,37 @@ class DefinitionCompiler {
     return { ...(kind === undefined ? {} : {kind}), artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
   }
 
+  /** A standalone labels catalog (`Norn.labels`); targets are checked by the Rust checker. */
+  private labels(call: ts.CallExpression): LB.LabelsDef {
+    const members = this.meta(call, ["id", "title", "version", "requiredLocales", "needsReview", "types", "actions"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const types = members.get("types"), actions = members.get("actions"), required = members.get("requiredLocales"), review = members.get("needsReview")
+    return LB.catalog({
+      id: this.string(need("id")),
+      title: this.string(need("title")),
+      version: this.string(need("version")),
+      ...(required ? { requiredLocales: this.strings(required) } : {}),
+      ...(review ? { needsReview: this.strings(review) } : {}),
+      ...(types ? { types: Object.fromEntries([...this.record(types)].map(([name, node]) => {
+        const m = this.closedRecord(node, ["label", "localizedDescription", "needsReview", "properties", "values"], [])
+        const properties = m.get("properties"), values = m.get("values")
+        return [name, {
+          ...this.localized(m),
+          ...(properties ? { properties: Object.fromEntries([...this.record(properties)].map(([id, text]) => [id, this.localeText(text)])) } : {}),
+          ...(values ? { values: Object.fromEntries([...this.record(values)].map(([id, byValue]) => [id, Object.fromEntries([...this.record(byValue)].map(([value, text]) => [value, this.localeText(text)]))])) } : {}),
+        }]
+      })) } : {}),
+      ...(actions ? { actions: Object.fromEntries([...this.record(actions)].map(([actionId, node]) => [actionId, this.localized(this.closedRecord(node, ["label", "localizedDescription", "needsReview"], []))])) } : {}),
+    })
+  }
+
   private law(call: ts.CallExpression): L.LawDef {
     const first = call.arguments[0] && this.deref(call.arguments[0])
     if (first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) return this.lawV2(call)
-    const members = this.meta(call, ["id", "title", "version", "law", "dependencies"])
+    const members = this.meta(call, ["id", "title", "version", "law", "dependencies", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const id = this.string(need("id"))
-    return L.law({ id, title: this.string(need("title")), version: this.string(need("version")), law: this.lawBody(need("law"), id) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"] })
+    return L.law({ id, title: this.string(need("title")), version: this.string(need("version")), law: this.lawBody(need("law"), id) as unknown as L.LawIR, dependencies: this.json(need("dependencies")) as unknown as L.LawDef["dependencies"], ...this.localized(members) })
   }
 
   /**

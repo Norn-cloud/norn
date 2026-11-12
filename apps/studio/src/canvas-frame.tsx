@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
+import { CodedMessage } from "@/components/coded-message"
+import { Iso } from "@/components/iso"
+import { keysText } from "@/components/keys"
 import { focusCss, type Bundle } from "./lib/canvas/focus.ts"
 import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
@@ -291,9 +294,9 @@ function Frame(props: CanvasFrameProps) {
         {issues.length === 0 && <p className="text-meta text-muted-foreground">No problems in this definition.</p>}
         {issues.map((issue, index) => (
           <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
-            className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-left text-meta enabled:hover:bg-muted">
-            <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" />{issue.code}</span>
-            <span className="block">{issue.message}</span>
+            className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-start text-meta enabled:hover:bg-muted">
+            <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" /><Iso>{issue.code}</Iso></span>
+            <CodedMessage code={issue.code} message={issue.message} block />
             <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
           </button>
         ))}
@@ -351,13 +354,13 @@ function Frame(props: CanvasFrameProps) {
                 <div role="toolbar" aria-label="Canvas actions" className="flex w-max flex-nowrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
                   {props.palette(editing)}
                   <Sep />
-                  <Button size="sm" variant="ghost" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
-                  <Button size="sm" variant="ghost" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-                  <Button size="sm" variant="ghost" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-                  {props.tidy && <Button size="sm" variant="ghost" aria-label="Tidy up" title="Tidy up: lay the whole graph out again (⇧⌘L)" onClick={tidyUp}><LayoutGrid /></Button>}
+                  <Button size="sm" variant="ghost" aria-label="Duplicate" title={`Duplicate (${keysText("⌘D")})`} disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
+                  <Button size="sm" variant="ghost" aria-label="Undo" title={`Undo (${keysText("⌘Z")})`} disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
+                  <Button size="sm" variant="ghost" aria-label="Redo" title={`Redo (${keysText("⌘⇧Z")})`} disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+                  {props.tidy && <Button size="sm" variant="ghost" aria-label="Tidy up" title={`Tidy up: lay the whole graph out again (${keysText("⇧⌘L")})`} onClick={tidyUp}><LayoutGrid /></Button>}
                   <Button size="sm" variant="ghost" aria-label="Minimap" aria-pressed={map} title={map ? "Hide the minimap" : "Show the minimap"} className={cn(map && "bg-muted")} onClick={() => setMap((on) => !on)}><MapIcon /></Button>
                   <Sep />
-                  <Button size="sm" variant="ghost" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
+                  <Button size="sm" variant="ghost" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
                   {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
                   <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
                 </div>
@@ -427,8 +430,8 @@ export function Unavailable({ reason, children, className }: { readonly reason: 
 export function IssueCard({ issue }: { readonly issue: Issue }) {
   return (
     <div className="space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-meta">
-      <div className="font-mono text-xs text-destructive">{issue.code}</div>
-      <div>{issue.message}</div>
+      <div className="font-mono text-xs text-destructive"><Iso>{issue.code}</Iso></div>
+      <CodedMessage code={issue.code} message={issue.message} block />
     </div>
   )
 }
