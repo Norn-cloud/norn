@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { CHECKER_PKG_ENV } from "../src/checker-abi.ts"
-import { admissionInput, checkPack, compilePack } from "../src/pack.ts"
+import { admissionInput, artifactId, checkPack, compilePack, isArtifact } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -169,8 +169,8 @@ test.skipIf(!checker)("explain and check give the checker the same input: the in
     expect(norn(root, ["init", dir, "--no-install"]).status).toBe(0)
     const pack = compilePack(join(dir, "src"), { scope: { orgId: "local", environmentId: "dev" }, root: dir })
     if (!pack.ok || !checker?.explainArtifactSet) throw new Error(JSON.stringify(pack))
-    const entity = pack.artifacts.find((artifact) => (artifact as { kind: string }).kind === "entity")!
-    const action = pack.artifacts.find((artifact) => (artifact as { kind: string }).kind === "action")!
+    const entity = pack.artifacts.find((artifact) => isArtifact(artifact) && artifact.kind === "entity")!
+    const action = pack.artifacts.find((artifact) => isArtifact(artifact) && artifact.kind === "action")!
     const verdicts = (candidates: typeof pack.artifacts, base: typeof pack.artifacts) => {
       const input = admissionInput(candidates, base)
       const checked = checkPack(checker!, candidates, base)
@@ -188,8 +188,8 @@ test.skipIf(!checker)("explain and check give the checker the same input: the in
     const installed = verdicts([action], [entity])
     expect(installed.admitted).toBe(true)
     const closure = (installed.report as { closure: { artifacts: Array<{ artifactId: string; candidate: boolean }> } }).closure.artifacts
-    expect(closure.find((artifact) => artifact.artifactId === (entity as { artifactId: string }).artifactId)).toMatchObject({ candidate: false })
-    expect(closure.find((artifact) => artifact.artifactId === (action as { artifactId: string }).artifactId)).toMatchObject({ candidate: true })
+    expect(closure.find((artifact) => artifact.artifactId === artifactId(entity))).toMatchObject({ candidate: false })
+    expect(closure.find((artifact) => artifact.artifactId === artifactId(action))).toMatchObject({ candidate: true })
     // The same entity as a candidate too: it shadows the installed base, and both refuse.
     expect(verdicts([action, entity], [entity]).admitted).toBe(false)
   } finally { rmSync(root, { recursive: true, force: true }) }

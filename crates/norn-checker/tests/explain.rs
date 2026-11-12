@@ -167,10 +167,10 @@ fn unknown_subject_has_its_own_code_and_exactly_that_codes_guidance() {
 
 #[test]
 fn every_v2_finding_carries_the_guidance_registered_for_its_own_code() {
-    // An inadmissible set: the findings are the checker's own, projected as v2.
-    // The laws without the entities they are about.
-    let broken: Vec<ArtifactEnvelope> =
-        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).unwrap();
+    // The findings are the checker's own, projected as v2.
+    // Every declaration twice: an inadmissible set.
+    let mut broken = pool();
+    broken.extend(pool());
     let errors = explain(
         &broken,
         &EntityArtifactSetContext {
