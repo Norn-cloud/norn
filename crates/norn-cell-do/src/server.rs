@@ -21,6 +21,7 @@ use norn_api::definition_routes::{
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
+use norn_api::object_review::{get_object_findings, get_object_history, get_object_lineage_at};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
@@ -124,6 +125,10 @@ routes! {
     ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
     /// `GET /v1/objects/{type}/{id}/lineage`.
     ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
+    /// `GET /v1/objects/{type}/{id}/findings`.
+    ObjectFindings => ("GET", "/v1/objects/{type}/{id}/findings"),
+    /// `GET /v1/objects/{type}/{id}/history`.
+    ObjectHistory => ("GET", "/v1/objects/{type}/{id}/history"),
     /// `GET /v1/questions/{question}/answer`.
     QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
     /// `GET /v1/questions/{question}/trace`.
@@ -167,6 +172,8 @@ impl Route {
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
                 (Some(_), Some("lineage")) => Self::ObjectLineage,
+                (Some(_), Some("findings")) => Self::ObjectFindings,
+                (Some(_), Some("history")) => Self::ObjectHistory,
                 (Some(_), Some(_)) => return None,
             });
         }
@@ -408,7 +415,8 @@ fn governed_action<E: SqlEngine>(
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
-/// id, and for an id an optional `links` or `lineage` leaf. No segment is empty.
+/// id, and for an id an optional `links`, `lineage`, `findings` or `history`
+/// leaf. No segment is empty.
 fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     let mut segments = rest.split('/');
     let kind = segments.next().filter(|kind| !kind.is_empty())?;
@@ -416,7 +424,7 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     let leaf = segments.next();
     if segments.next().is_some()
         || id.is_some_and(str::is_empty)
-        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage"))
+        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage" | "findings" | "history"))
     {
         return None;
     }
@@ -474,18 +482,58 @@ fn objects<E: SqlEngine>(
             &CellObjectAccess,
         )?);
     }
-    if let (Some(id), Some(_lineage)) = (id, leaf) {
+    if let (Some(id), Some(leaf @ ("findings" | "history"))) = (id, leaf) {
         let fields = parse(query, &["orgId", "environmentId"])?;
         let scope = ScopeQuery {
             org_id: fields.get("orgId").cloned(),
             environment_id: fields.get("environmentId").cloned(),
         };
+        let id = decoded(id)?;
+        return if leaf == "findings" {
+            document_json(&get_object_findings(
+                host,
+                &scope,
+                actor,
+                &object_type,
+                &id,
+                &CellObjectAccess,
+            )?)
+        } else {
+            document_json(&get_object_history(
+                host,
+                &scope,
+                actor,
+                &object_type,
+                &id,
+                &CellObjectAccess,
+            )?)
+        };
+    }
+    if let (Some(id), Some(_lineage)) = (id, leaf) {
+        let fields = parse(query, &["orgId", "environmentId", "version"])?;
+        let scope = ScopeQuery {
+            org_id: fields.get("orgId").cloned(),
+            environment_id: fields.get("environmentId").cloned(),
+        };
+        let id = decoded(id)?;
+        if let Some(version) = fields.get("version") {
+            let version = version
+                .parse::<u64>()
+                .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
+            return document_json(&get_object_lineage_at(
+                host,
+                &scope,
+                actor,
+                (&object_type, &id, version),
+                &CellObjectAccess,
+            )?);
+        }
         return document_json(&get_object_lineage(
             host,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &CellObjectAccess,
         )?);
     }

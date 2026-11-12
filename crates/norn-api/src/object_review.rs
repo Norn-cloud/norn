@@ -22,6 +22,10 @@ use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 use norn_ir::{DataQualityFinding, FactRef, RuntimeValue};
 use serde::Serialize;
 use utoipa::ToSchema;
+use utoipa::openapi::Ref;
+use utoipa::openapi::schema::{
+    AdditionalProperties, ArrayBuilder, Object, ObjectBuilder, SchemaType,
+};
 
 use crate::authz::ReadCapability::{Population, Sources, Values};
 use crate::host::DevHost;
@@ -44,7 +48,7 @@ pub struct NornObjectFindings {
     pub quarantined: bool,
     /// Every finding on the object, each pinned to the rule it records; a
     /// correction resolves a finding without rewriting it.
-    #[schema(value_type = Vec<Object>)]
+    #[schema(schema_with = findings_schema)]
     pub findings: Vec<DataQualityFinding>,
 }
 
@@ -56,7 +60,7 @@ pub enum NornVersionWriter {
     #[serde(rename_all = "camelCase")]
     Mapping {
         /// The version's source lineage (`/lineage?version=`).
-        #[schema(value_type = Object)]
+        #[schema(schema_with = lineage_schema)]
         lineage: InstanceSourceProvenance,
     },
     /// An admitted action committed the version.
@@ -67,7 +71,7 @@ pub enum NornVersionWriter {
         /// The verified caller the server attributed the call to.
         actor: String,
         /// The effective input (caller input plus server derivations).
-        #[schema(value_type = Object)]
+        #[schema(schema_with = free_form)]
         input: RuntimeValue,
     },
     /// Another writer (an import, a migration or a kernel rule).
@@ -84,8 +88,8 @@ pub struct NornObjectVersion {
     pub commit: u64,
     /// The commit's logical time, in milliseconds.
     pub logical_time: u64,
-    /// Every stored property by property id; absent for a tombstone.
-    #[schema(value_type = Object, nullable = true)]
+    /// Every stored property by property id; null for a tombstone.
+    #[schema(schema_with = values_schema)]
     pub values: Option<BTreeMap<String, RuntimeValue>>,
     /// What wrote it.
     pub writer: NornVersionWriter,
@@ -103,6 +107,47 @@ pub struct NornObjectHistory {
     pub versions: Vec<NornObjectVersion>,
     /// True when older versions exist beyond [`MAX_HISTORY_VERSIONS`].
     pub truncated: bool,
+}
+
+// `schema_with` replaces the field's schema, doc comment included, so each
+// helper restates its field's description.
+fn findings_schema() -> utoipa::openapi::schema::Array {
+    ArrayBuilder::new()
+        .items(Ref::from_schema_name("NornIrDataQualityFinding"))
+        .description(Some(
+            "Every finding on the object, each pinned to the rule it records; a correction resolves a finding without rewriting it.",
+        ))
+        .build()
+}
+
+fn lineage_schema() -> Ref {
+    Ref::builder()
+        .ref_location_from_schema_name("NornInstanceSourceProvenance")
+        .description(Some("The version's source lineage (`/lineage?version=`)."))
+        .build()
+}
+
+fn free_form() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Type(utoipa::openapi::Type::Object))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(
+            "The effective input (caller input plus server derivations); decimals are exact JSON number tokens.",
+        ))
+        .build()
+}
+
+fn values_schema() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::from_iter([
+            utoipa::openapi::Type::Object,
+            utoipa::openapi::Type::Null,
+        ]))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(
+            "Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens.",
+        ))
+        .build()
 }
 
 /// The raw row, when the caller holds Population, Values and Sources on it.
@@ -139,6 +184,7 @@ fn reviewable<E: SqlEngine>(
 /// A denied gate (the opaque 403); an absent, withheld or source-withheld
 /// object (one 404); a commit between the reads (409 `object.snapshot_moved`);
 /// or a host failure.
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/findings", operation_id = "get_object_findings", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's quality findings, open and resolved, and whether it is quarantined.", body = NornObjectFindings), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
 pub fn get_object_findings<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -246,6 +292,7 @@ fn version_entry<E: SqlEngine>(
 /// A denied gate (the opaque 403); an absent, withheld or source-withheld
 /// object (one 404); a commit between the reads (409 `object.snapshot_moved`);
 /// or a host failure.
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
 pub fn get_object_history<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
