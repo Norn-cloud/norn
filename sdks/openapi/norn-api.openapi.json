@@ -148,7 +148,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}": {
@@ -249,7 +254,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}:retire": {
@@ -369,7 +379,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:admit": {
@@ -470,7 +485,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:install": {
@@ -581,7 +601,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:list": {
@@ -699,7 +724,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/answer": {
@@ -808,7 +838,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/trace": {
@@ -935,7 +970,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:evaluate": {
@@ -1036,7 +1076,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:trace": {
@@ -1137,7 +1182,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     }
   },
@@ -23272,6 +23322,13 @@
           }
         },
         "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "hostToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The host token for this cell, sent as `Authorization: Bearer <token>`. A published host issues a short-lived signed token for one organization and environment; the local development host prints a session token when it starts. A request without a valid token is refused with 403 `authz.denied`."
       }
     }
   }
