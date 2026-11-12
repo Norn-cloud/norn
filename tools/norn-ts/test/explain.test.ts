@@ -102,8 +102,14 @@ test.skipIf(!process.env[CHECKER_PKG_ENV])("explain_project_roundtrip: explain, 
     const uncompiled = refusedJson(dir, ["explain", "action", "shop.product.add"], 1)
     expect(uncompiled[0]).toMatchObject({ code: "cli.compile.source_refused", source: { file: "src/customer.ts", line: 7 } })
     // The compiler's own code and whole span are structured members, not only prose.
-    expect(uncompiled[0]!.compiler).toMatchObject({ code: expect.stringMatching(/^NORN-/), start: { line: 7, column: expect.any(Number) }, end: { line: expect.any(Number), column: expect.any(Number) } })
-    expect(uncompiled[0]!.message).toContain(`: ${uncompiled[0]!.compiler.code}: `)
+    // Plain assertions on the values: `toMatchObject` with an asymmetric matcher
+    // leaves the matcher in the object it was given.
+    const compiler = uncompiled[0]!.compiler as { code: string; start: { line: number; column: number }; end: { line: number; column: number } }
+    expect(compiler.code).toMatch(/^NORN-[A-Z-]+$/)
+    expect(compiler.start.line).toBe(7)
+    expect([compiler.start.column, compiler.end.line, compiler.end.column].every((value) => Number.isInteger(value) && value >= 1)).toBe(true)
+    expect(compiler.end.line > compiler.start.line || compiler.end.column >= compiler.start.column).toBe(true)
+    expect(uncompiled[0]!.message).toContain(`: ${compiler.code}: `)
     // A source error is reported as one with or without the checker package.
     expect(refusedJson(dir, ["explain", "action", "shop.product.add"], 1, { ...process.env, [CHECKER_PKG_ENV]: "" })[0]).toMatchObject({ code: "cli.compile.source_refused" })
     expect(uncompiled[0]!.message).toStartWith("The project's sources did not compile: ")
