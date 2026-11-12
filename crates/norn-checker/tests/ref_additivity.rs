@@ -255,7 +255,8 @@ fn question(space: &norn_checker::metric::derive::MetricSpace, shape: [&str; 2])
         match how {
             "grouped" => dimensions.push(json!({"path": {"property": source}})),
             "eq" | "ne" => {
-                filters.push(json!({"path": {"property": source}, "operator": how, "value": value}));
+                filters
+                    .push(json!({"path": {"property": source}, "operator": how, "value": value}));
             }
             _ => {}
         }
