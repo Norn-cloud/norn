@@ -93,7 +93,7 @@
           },
           {
             "property": "issued_on",
-            "value": "date(input.issued_on)"
+            "value": "input.issued_on == null ? null : date(input.issued_on)"
           },
           {
             "property": "currency",

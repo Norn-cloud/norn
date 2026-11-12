@@ -169,7 +169,7 @@
         "name": "issued_on",
         "nativeType": "Date",
         "ordinal": 4,
-        "required": true,
+        "required": false,
         "typeCandidate": {
           "origin": "declared",
           "type": "date"
