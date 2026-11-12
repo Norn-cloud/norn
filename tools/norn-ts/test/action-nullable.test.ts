@@ -57,10 +57,19 @@ test("Schema.NullOr of a plain scalar is a nullable action input and a nullable 
   expect(Object.fromEntries(properties.map((p) => [p.id, p.constraints?.nullable ?? false]))).toEqual({ reading: false, note: true, count: true, seen: true })
 }, 60_000)
 
-test("anything else nullable on an action is refused with the reason", () => {
-  for (const field of ["kind: Schema.NullOr(Schema.Literals([\"a\", \"b\"]))", "amount: Schema.NullOr(Norn.decimal(2))", "tags: Schema.NullOr(Schema.Array(Schema.String))"]) {
-    const run = compile("note: Schema.String", field)
-    expect(run.status, field).toBe(1)
-    expect(run.out, field).toContain("an action's absent value is a nullable plain scalar")
-  }
-}, 120_000)
+test("a nullable literal set and a nullable decimal carry their enum and nornType beside null", () => {
+  const run = compile("kind: Schema.NullOr(Schema.Literals([\"a\", \"b\"])), amount: Schema.NullOr(Norn.decimal(2))")
+  expect(run.status).toBe(0)
+  const input = artifact(run.out, "app.reading.record.action").inputSchema
+  expect(input.properties.kind).toEqual({ type: ["string", "null"], enum: ["a", "b"] })
+  expect(input.properties.amount.type).toEqual(["number", "null"])
+  expect(input.properties.amount.nornType).toMatchObject({ kind: "decimal", scale: 2 })
+  const properties = artifact(run.out, "app.Reading.entity").objectType.properties as Array<{ id: string; constraints?: { nullable?: boolean } }>
+  expect(properties.filter((p) => p.constraints?.nullable).map((p) => p.id).sort()).toEqual(["amount", "kind"])
+}, 60_000)
+
+test("a nullable struct or array on an action is refused with the reason", () => {
+  const run = compile("note: Schema.String", "tags: Schema.NullOr(Schema.Array(Schema.String))")
+  expect(run.status).toBe(1)
+  expect(run.out).toContain("an action's absent value is a nullable scalar")
+}, 60_000)

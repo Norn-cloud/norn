@@ -21,6 +21,8 @@ assert first.status == "fail"
 
 # Recorded in the cell, linked to the spec, with receipts.
 specs = cell.rows("stats.ModelSpec")
+# The dev host has no analytical engine: the record says the checks read the paged route.
+assert first.spec["read_path"] == "paged" and set(specs["read_path"]) == {"paged"}, specs
 checks = cell.rows("stats.AssumptionCheck")
 assert list(specs["spec"]) == [first.spec["spec"]], specs
 assert len(checks) == len(first.checks) and set(checks["spec"]) == {first.spec["spec"]}
