@@ -321,6 +321,16 @@ impl Refusal {
         } else {
             return Self::host(error);
         };
+        if code == "core.projection.answer_moved" {
+            let mut refusal = Self::new(
+                StatusCode::CONFLICT,
+                code,
+                "the data changed since this answer",
+                "ask the question again for a fresh answer and its trace",
+            );
+            refusal.retryable = true;
+            return refusal;
+        }
         if code == "core.compute.bound_exceeded" {
             return Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
