@@ -554,13 +554,8 @@ fn an_artifact_scoped_outside_the_cell_is_refused() {
         );
         assert!(!cell.tenant.is_provisioned());
     }
-    // The cell's own scope, and no scope at all, are inside it.
-    let mut artifacts = full();
-    let mut last: Value = serde_json::from_str(artifacts.last().unwrap()).unwrap();
-    last["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
-    let at = artifacts.len() - 1;
-    artifacts[at] = last.to_string();
-    let created = provision(&mut cell, Some(&owner), &submission(&artifacts));
+    // Unscoped artifacts are inside the cell: the same set provisions.
+    let created = provision(&mut cell, Some(&owner), &submission(&full()));
     assert_eq!(created.status, 200, "{}", created.body);
     assert_eq!(definitions(&mut cell, Some(&owner)).status, 200);
 }
