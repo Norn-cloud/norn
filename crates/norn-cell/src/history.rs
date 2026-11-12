@@ -1,6 +1,7 @@
 //! Store-owned immutable value proofs and explicit export replay into a fresh store.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,17 @@ pub(crate) struct HistoryRead<'r, 'c, S: SqlEngine> {
     reader: &'r StoreReader<'c, S>,
     receipts: BTreeMap<u64, Receipt>,
 }
+/// Most receipts [`VerifiedReceipts`] keeps for one read revision.
+const VERIFIED_RECEIPTS: usize = 1_024;
+
+/// Receipts whose body hash was checked at one connection read revision; a
+/// disposable read cache, valid only while that revision is unchanged.
+#[derive(Debug, Default)]
+pub(crate) struct VerifiedReceipts {
+    revision: Option<(u64, u64)>,
+    receipts: BTreeMap<u64, Arc<Receipt>>,
+}
+
 impl<S: SqlEngine> HistoryRead<'_, '_, S> {
     fn receipt(
         &mut self,
@@ -322,13 +334,44 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 Err(unproven_snapshot())
             };
         }
-        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
-        if hash_json(&receipt.body)? != receipt.hash
-            || !fact_receipt_matches(&snapshot, &hash, &receipt)
-        {
+        let receipt = self.verified_receipt_at(commit)?;
+        if !fact_receipt_matches(&snapshot, &hash, &receipt) {
             return Err(unproven_snapshot());
         }
         Ok(snapshot)
+    }
+
+    /// The receipt at `commit`, its body hash checked. A commit that writes
+    /// many facts is read once per fact proven from it; the check is reused
+    /// while the connection's read revision is unchanged (no write between),
+    /// as the dispute index is, so proving N facts of one commit hashes its
+    /// receipt once rather than N times.
+    fn verified_receipt_at(&self, commit: u64) -> Result<Arc<Receipt>, CellError> {
+        let revision = self.conn.read_cache_revision()?;
+        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision) {
+            let cache = cache.borrow();
+            if cache.revision == Some(revision)
+                && let Some(receipt) = cache.receipts.get(&commit)
+            {
+                return Ok(Arc::clone(receipt));
+            }
+        }
+        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash {
+            return Err(unproven_snapshot());
+        }
+        let receipt = Arc::new(receipt);
+        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision)
+            && self.conn.read_cache_revision()? == Some(revision)
+        {
+            let mut cache = cache.borrow_mut();
+            if cache.revision != Some(revision) || cache.receipts.len() >= VERIFIED_RECEIPTS {
+                cache.revision = Some(revision);
+                cache.receipts.clear();
+            }
+            cache.receipts.insert(commit, Arc::clone(&receipt));
+        }
+        Ok(receipt)
     }
 
     /// Authenticate the receipt that emitted one exact committed fact version.
