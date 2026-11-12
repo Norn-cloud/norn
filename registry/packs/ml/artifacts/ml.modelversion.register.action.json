@@ -1,0 +1,166 @@
+{
+  "artifactId": "ml.modelversion.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a model version",
+  "namespace": "ml",
+  "payload": {
+    "access": {
+      "artifactId": "ml.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "ml.modelversion.register",
+    "createLinks": [
+      {
+        "link": "trained_by",
+        "targetIdField": "training_run",
+        "targetType": "tracking.Run"
+      },
+      {
+        "link": "evaluated_by",
+        "targetIdField": "evaluation_run",
+        "targetType": "tracking.Run"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "ml.ModelVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "version_id",
+      "objectKind": "ml.ModelVersion",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_sha256": {
+          "type": "string"
+        },
+        "artifact_size": {
+          "type": "integer"
+        },
+        "artifact_uri": {
+          "type": "string"
+        },
+        "contracts_passed": {
+          "type": "boolean"
+        },
+        "evaluation_revision": {
+          "type": "string"
+        },
+        "evaluation_run": {
+          "type": "string"
+        },
+        "input_revision": {
+          "type": "string"
+        },
+        "input_type": {
+          "type": "string"
+        },
+        "metric_name": {
+          "type": "string"
+        },
+        "metric_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 9
+          },
+          "type": "number"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "pinned_dataset_revision": {
+          "type": "string"
+        },
+        "training_run": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id",
+        "model_id",
+        "version",
+        "training_run",
+        "evaluation_run",
+        "artifact_uri",
+        "artifact_sha256",
+        "artifact_size",
+        "input_type",
+        "input_revision",
+        "pinned_dataset_revision",
+        "evaluation_revision",
+        "metric_name",
+        "metric_value",
+        "contracts_passed"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.training.status == \"FINISHED\" and slice.evaluation.status == \"FINISHED\""
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "training_run"
+          }
+        },
+        "name": "training",
+        "objectType": "tracking.Run"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "evaluation_run"
+          }
+        },
+        "name": "evaluation",
+        "objectType": "tracking.Run"
+      }
+    ],
+    "title": "Register a model version",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "ml.ModelVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.modelversion.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

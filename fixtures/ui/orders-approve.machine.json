@@ -1,0 +1,218 @@
+{
+  "machineVersion": "0.1",
+  "initialStateId": "browsing",
+  "fields": [
+    {
+      "fieldId": "lastCode",
+      "type": "text",
+      "required": false
+    }
+  ],
+  "events": [
+    {
+      "eventId": "approve",
+      "source": {
+        "kind": "user",
+        "nodeId": "approve-action-node"
+      }
+    },
+    {
+      "eventId": "cancel",
+      "source": {
+        "kind": "user",
+        "nodeId": "approve-action-node"
+      }
+    },
+    {
+      "eventId": "dismiss",
+      "source": {
+        "kind": "user",
+        "nodeId": "orders-list-node"
+      }
+    },
+    {
+      "eventId": "accepted",
+      "source": {
+        "kind": "outcome",
+        "outcome": "accepted"
+      }
+    },
+    {
+      "eventId": "refused",
+      "source": {
+        "kind": "outcome",
+        "outcome": "refused"
+      }
+    },
+    {
+      "eventId": "approval",
+      "source": {
+        "kind": "outcome",
+        "outcome": "pending_approval"
+      }
+    },
+    {
+      "eventId": "network",
+      "source": {
+        "kind": "outcome",
+        "outcome": "network_failure"
+      }
+    },
+    {
+      "eventId": "timeout",
+      "source": {
+        "kind": "outcome",
+        "outcome": "timeout"
+      }
+    },
+    {
+      "eventId": "cancelled",
+      "source": {
+        "kind": "outcome",
+        "outcome": "cancelled"
+      }
+    }
+  ],
+  "states": [
+    {
+      "stateId": "browsing",
+      "role": "idle"
+    },
+    {
+      "stateId": "approving",
+      "role": "pending",
+      "deadlineMs": 15000,
+      "awaits": {
+        "kind": "action",
+        "bindingId": "approve"
+      }
+    },
+    {
+      "stateId": "awaiting-approval",
+      "role": "idle"
+    },
+    {
+      "stateId": "refused",
+      "role": "error"
+    },
+    {
+      "stateId": "failed",
+      "role": "error"
+    }
+  ],
+  "transitions": [
+    {
+      "transitionId": "approve",
+      "from": "browsing",
+      "on": "approve",
+      "target": "approving",
+      "effects": [
+        {
+          "kind": "start",
+          "call": {
+            "kind": "action",
+            "bindingId": "approve"
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "cancel",
+      "from": "approving",
+      "on": "cancel",
+      "target": "approving",
+      "effects": [
+        {
+          "kind": "cancel"
+        }
+      ]
+    },
+    {
+      "transitionId": "on-accepted",
+      "from": "approving",
+      "on": "accepted",
+      "target": "browsing"
+    },
+    {
+      "transitionId": "on-refused",
+      "from": "approving",
+      "on": "refused",
+      "target": "refused",
+      "assign": {
+        "lastCode": "input.event.code"
+      }
+    },
+    {
+      "transitionId": "on-approval",
+      "from": "approving",
+      "on": "approval",
+      "target": "awaiting-approval"
+    },
+    {
+      "transitionId": "on-network",
+      "from": "approving",
+      "on": "network",
+      "target": "failed"
+    },
+    {
+      "transitionId": "on-timeout",
+      "from": "approving",
+      "on": "timeout",
+      "target": "failed"
+    },
+    {
+      "transitionId": "on-cancelled",
+      "from": "approving",
+      "on": "cancelled",
+      "target": "browsing"
+    },
+    {
+      "transitionId": "approval-seen",
+      "from": "awaiting-approval",
+      "on": "dismiss",
+      "target": "browsing"
+    },
+    {
+      "transitionId": "retry-refused",
+      "from": "refused",
+      "on": "approve",
+      "target": "approving",
+      "effects": [
+        {
+          "kind": "start",
+          "call": {
+            "kind": "action",
+            "bindingId": "approve"
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "retry-failed",
+      "from": "failed",
+      "on": "approve",
+      "target": "approving",
+      "effects": [
+        {
+          "kind": "start",
+          "call": {
+            "kind": "action",
+            "bindingId": "approve"
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "dismiss-refused",
+      "from": "refused",
+      "on": "dismiss",
+      "target": "browsing"
+    },
+    {
+      "transitionId": "dismiss-failed",
+      "from": "failed",
+      "on": "dismiss",
+      "target": "browsing"
+    }
+  ]
+}

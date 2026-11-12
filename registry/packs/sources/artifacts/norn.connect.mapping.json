@@ -24,6 +24,12 @@
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
+    },
+    {
+      "artifactId": "source.Upload.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
     }
   ],
   "irVersion": "0.1",
@@ -212,11 +218,73 @@
           "entity": "source.SyncRun.entity",
           "interface": "source.Synced.interface"
         }
+      },
+      {
+        "id": "upload",
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.id"
+          },
+          {
+            "property": "upload_id",
+            "value": "input.upload_id"
+          },
+          {
+            "property": "store",
+            "value": "input.store"
+          },
+          {
+            "property": "uri",
+            "value": "input.uri"
+          },
+          {
+            "property": "sha256",
+            "value": "input.sha256"
+          },
+          {
+            "property": "size",
+            "value": "input.size"
+          },
+          {
+            "property": "content_type",
+            "value": "input.content_type"
+          },
+          {
+            "property": "file_name",
+            "value": "input.file_name"
+          },
+          {
+            "property": "format",
+            "value": "input.format"
+          },
+          {
+            "property": "columns",
+            "value": "input.columns"
+          },
+          {
+            "property": "owner",
+            "value": "input.owner"
+          },
+          {
+            "property": "completed_at",
+            "value": "timestamp(input.completed_at)"
+          }
+        ],
+        "source": {
+          "dataset": "upload"
+        },
+        "sourceRecord": "'norn-connect/cell/upload/' + input.id",
+        "subject": "input.id",
+        "target": {
+          "entity": "source.Upload.entity",
+          "interface": "source.Synced.interface"
+        }
       }
     ],
     "source": {
       "schemaId": "norn.connect.source",
-      "sha256": "77e210d14cdde9ecfc6844d4a41c23270f55227df4c4257db17788a94b704ae9",
+      "sha256": "3dba3f7839bedd02f62ece31aec12c6b6c3ab406a3f94ab75ddb2e110a96301b",
       "version": "0.1.0"
     }
   },

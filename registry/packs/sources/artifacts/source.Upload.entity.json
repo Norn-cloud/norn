@@ -1,0 +1,123 @@
+{
+  "artifactId": "source.Upload.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Completed upload",
+  "namespace": "source",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "source.Synced"
+      ],
+      "name": "source.Upload",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "upload_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "uploads"
+              },
+              {
+                "value": "documents"
+              }
+            ]
+          }
+        },
+        {
+          "id": "uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sha256",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "size",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "content_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "file_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "format",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "csv"
+              },
+              {
+                "value": "other"
+              }
+            ]
+          }
+        },
+        {
+          "id": "columns",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "owner",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "completed_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.Upload.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -4083,3 +4083,264 @@ fn a_nullable_form_input_must_stay_clearable() {
         "{found:?}"
     );
 }
+
+// UI-MACHINE-1 / UI-VIEW-1: the page machine and the page's place in the UI ontology.
+
+fn machine_widget(machine: Value) -> Value {
+    let mut widget = widget();
+    let page = &mut widget["payload"]["ux"]["pages"][0];
+    page["machine"] = machine;
+    page["view"] = json!({
+        "kind": "collection",
+        "subject": { "kind": "object_type", "object": { "id": "commerce.Order.entity", "version": "0.1.0" } }
+    });
+    page["root"]["children"][0]["behaviors"] = json!(["selection", "roving_focus"]);
+    widget
+}
+
+/// The approve flow on the orders page: every outcome of the call is handled, errors recover, a
+/// cancel is a request whose outcome follows. The same document drives `@norn/demo-ui`'s machine tests.
+fn approve_machine() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../fixtures/ui/orders-approve.machine.json"
+    ))
+    .expect("machine fixture should be JSON")
+}
+
+fn ui_codes(widget: Value) -> Vec<(String, String)> {
+    widget_findings(widget)
+        .into_iter()
+        .filter(|finding| {
+            finding.code.as_str().starts_with("widget.machine.")
+                || finding.code.as_str().starts_with("widget.view.")
+        })
+        .map(|finding| (finding.code.as_str().to_owned(), finding.message))
+        .collect()
+}
+
+fn assert_ui_code(widget: Value, code: &str, message_part: &str) {
+    let found = ui_codes(widget);
+    assert!(
+        found
+            .iter()
+            .any(|(found, message)| found == code && message.contains(message_part)),
+        "expected {code} containing {message_part:?}; got {found:#?}"
+    );
+}
+
+fn edit(mut machine: Value, change: impl FnOnce(&mut Value)) -> Value {
+    change(&mut machine);
+    machine_widget(machine)
+}
+
+fn drop_transition(machine: &mut Value, id: &str) {
+    machine["transitions"]
+        .as_array_mut()
+        .expect("transitions")
+        .retain(|transition| transition["transitionId"] != id);
+}
+
+#[test]
+fn a_page_machine_that_handles_every_outcome_is_admitted() {
+    let found = ui_codes(machine_widget(approve_machine()));
+    assert!(found.is_empty(), "expected no UI findings; got {found:#?}");
+}
+
+#[test]
+fn the_renderer_catalog_is_derived_from_the_page() {
+    let widget = envelope(machine_widget(approve_machine()));
+    let norn_ir::ArtifactPayload::Widget(payload) = &widget.payload else {
+        panic!("widget payload");
+    };
+    let ux: norn_ir::WidgetUx = serde_json::from_value(
+        serde_json::to_value(payload.ux.as_value().expect("ux")).expect("ux"),
+    )
+    .expect("typed ux");
+    let catalog = ux.renderer_capabilities();
+    for capability in [
+        "view:collection",
+        "component:list",
+        "behavior:selection",
+        "behavior:roving_focus",
+        "effect:start:action",
+        "effect:cancel",
+        "event:user",
+        "outcome:pending_approval",
+    ] {
+        assert!(
+            catalog.contains(capability),
+            "{capability} missing from {catalog:?}"
+        );
+    }
+}
+
+#[test]
+fn a_pending_state_must_handle_every_outcome_its_call_can_have() {
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "on-timeout")),
+        "widget.machine.pending_outcome_uncovered",
+        "timeout",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "on-approval")),
+        "widget.machine.pending_outcome_uncovered",
+        "pending_approval",
+    );
+    // A cancel offered makes `cancelled` a possible outcome.
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "on-cancelled")),
+        "widget.machine.pending_outcome_uncovered",
+        "cancelled",
+    );
+    // A guarded transition refines; it does not cover.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"][3]["guard"] = json!("input.event.retryable");
+        }),
+        "widget.machine.pending_outcome_uncovered",
+        "refused:permission",
+    );
+    // An action never sees its answer move.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["events"][5]["source"]["outcome"] = json!("answer_moved");
+        }),
+        "widget.machine.outcome_impossible",
+        "answer_moved",
+    );
+}
+
+#[test]
+fn nothing_in_a_page_machine_is_absorbing() {
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "approval-seen")),
+        "widget.machine.absorbing_state",
+        "awaiting-approval",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["states"][0]["role"] = json!("pending");
+        }),
+        "widget.machine.initial_not_idle",
+        "browsing",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "on-approval")),
+        "widget.machine.unreachable_state",
+        "awaiting-approval",
+    );
+    // An error state that only data can leave has no recovery a person drives.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["events"]
+                .as_array_mut()
+                .expect("events")
+                .push(json!({ "eventId": "orders-changed", "source": { "kind": "subscription", "bindingId": "orders" } }));
+            drop_transition(m, "retry-failed");
+            m["transitions"][11]["on"] = json!("orders-changed");
+        }),
+        "widget.machine.error_without_recovery",
+        "failed",
+    );
+}
+
+#[test]
+fn a_call_in_flight_is_started_on_entry_and_left_only_by_its_outcome() {
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"]
+                .as_array_mut()
+                .expect("transitions")
+                .push(json!({ "transitionId": "walk-away", "from": "approving", "on": "dismiss", "target": "browsing" }));
+        }),
+        "widget.machine.pending_abandoned",
+        "approving",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"][0]["effects"] = json!([]);
+        }),
+        "widget.machine.pending_entered_without_start",
+        "approving",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"][2]["effects"] =
+                json!([{ "kind": "start", "call": { "kind": "action", "bindingId": "approve" } }]);
+        }),
+        "widget.machine.start_without_pending",
+        "browsing",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["states"][1]
+                .as_object_mut()
+                .expect("state")
+                .remove("deadlineMs");
+        }),
+        "widget.machine.pending_without_deadline",
+        "approving",
+    );
+}
+
+#[test]
+fn a_loop_needs_an_input_and_an_event_one_transition() {
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["events"]
+                .as_array_mut()
+                .expect("events")
+                .push(json!({ "eventId": "tick", "source": { "kind": "timer", "afterMs": 1000 } }));
+            m["transitions"]
+                .as_array_mut()
+                .expect("transitions")
+                .push(json!({ "transitionId": "poll", "from": "browsing", "on": "tick", "target": "browsing" }));
+        }),
+        "widget.machine.input_free_cycle",
+        "browsing",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"]
+                .as_array_mut()
+                .expect("transitions")
+                .push(json!({ "transitionId": "again", "from": "refused", "on": "dismiss", "target": "browsing" }));
+        }),
+        "widget.machine.nondeterministic",
+        "dismiss",
+    );
+}
+
+#[test]
+fn guards_and_assignments_are_typed() {
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"][3]["assign"] = json!({ "lastCode": "input.event.retryable" });
+        }),
+        "widget.machine.invalid_expression",
+        "type-check",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["transitions"][3]["assign"] = json!({ "missing": "input.event.code" });
+        }),
+        "widget.machine.unknown_reference",
+        "missing",
+    );
+}
+
+#[test]
+fn a_view_presents_a_bound_subject_with_fitting_behaviours() {
+    let mut widget = machine_widget(approve_machine());
+    widget["payload"]["ux"]["pages"][0]["view"]["kind"] = json!("form");
+    assert_ui_code(widget, "widget.view.subject_mismatch", "Form");
+
+    let mut widget = machine_widget(approve_machine());
+    widget["payload"]["ux"]["pages"][0]["view"]["subject"]["object"]["id"] =
+        json!("crm.Invoice.entity");
+    assert_ui_code(widget, "widget.view.subject_unbound", "neither read");
+
+    let mut widget = machine_widget(approve_machine());
+    widget["payload"]["ux"]["pages"][0]["root"]["behaviors"] = json!(["selection"]);
+    assert_ui_code(widget, "widget.view.behavior_unfit", "orders-page");
+}

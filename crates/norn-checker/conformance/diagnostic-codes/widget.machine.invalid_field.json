@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.invalid_field",
+  "message": "a page machine field or payload member has a missing or ill-typed initial value: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
