@@ -832,3 +832,33 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
     );
     assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
 }
+
+/// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)
+/// holds its connection only for the lease; then a claim takes it over.
+#[test]
+fn an_abandoned_run_releases_its_connection_after_the_lease() {
+    use norn_api::sources::RUN_LEASE_MS;
+    let mut sources = sources();
+    let first = sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", 1_000)
+        .expect("claimed");
+    assert!(matches!(
+        sources.claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS - 1
+        ),
+        Err(ClaimError::Running)
+    ));
+    let second = sources
+        .claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS,
+        )
+        .expect("taken over");
+    assert_ne!(first, second);
+    assert!(sources.running("odoo.sandbox"));
+}
