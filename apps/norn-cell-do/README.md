@@ -25,8 +25,14 @@ POST /v1/cell:provision?orgId=<org>&environmentId=<environment>
   `owner`). A cell that does not exist has no definitions, so this one
   authority is the host's; everything after it is the cell's own policy.
   Anyone else gets the opaque 403, and nothing is written.
+- **Where:** only in a declared environment. `NORN_TENANT_ENVIRONMENTS`
+  (Worker configuration, comma-separated, default `dev,prod`) names them; a
+  scope naming any other environment never reaches a cell of its own (the demo
+  cell's opaque denial answers it). An organization has at most one cell per
+  declared environment.
 - **What is submitted:** the tenant's own artifacts, at most 1 MiB. None may be
-  in a reserved namespace (`core.`, `std.`): the host prepends the trusted base
+  in a reserved namespace (`core.`, `std.`), and none may be scoped outside
+  the cell (another environment or organization): the host prepends the trusted base
   it was built with (`registry/core/artifacts`) and admits the tenant's
   artifacts as candidates against it with the shared checker. `baseSha256`
   names the base the set was authored against; another digest is refused with
@@ -54,13 +60,18 @@ differ says so in its own policy.
 
 Refusal codes this adds: `cell.not_provisioned` (404), `cell.provision_conflict`
 (409), `cell.base_mismatch` (409), `cell.reserved_artifact` (400),
-`cell.provision_refused` (422, with the checker's findings).
+`cell.provision_refused` (422, with the checker's findings, or
+`cell.scope_conflict` findings at each artifact scoped outside the cell).
 
-Known limit: any caller can make the router instantiate the object of a scope
-it names. A vacant object writes nothing and holds no store; opening it costs
-one JWKS document, and cold opens in one isolate share a document for a
-minute. The cost an attacker can impose is object instantiations; rate
-limiting them belongs at the edge.
+Known limits:
+- Any caller can make the router instantiate the object of a scope in a
+  declared environment. A vacant object writes nothing and holds no store;
+  opening it costs one JWKS document, and cold opens in one isolate share a
+  document for a minute. Rate limiting them belongs at the edge.
+- An organization's owner can create one stored cell per declared environment
+  (up to 1 MiB of admitted definitions plus data); stored cells are bounded by
+  organizations × declared environments. If every sign-up creates an
+  organization, every user is an owner: invite-only sign-up bounds that.
 
 Build into a directory outside the checkout, then smoke it:
 

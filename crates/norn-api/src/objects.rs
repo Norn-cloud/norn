@@ -88,7 +88,7 @@ pub struct NornQueriedRecord {
     #[schema(required = true, nullable = true)]
     pub version: Option<u64>,
     /// Every stored property by property id; null when the row is withheld.
-    #[schema(required = true, nullable = true, value_type = Option<Object>)]
+    #[schema(required = true, schema_with = nullable_values_schema)]
     pub values: Option<BTreeMap<String, RuntimeValue>>,
     /// The caller holds Population but not Values on this row.
     pub withheld: bool,
@@ -104,8 +104,29 @@ pub struct NornQueriedRecord {
 pub struct NornSortKey {
     /// The property sorted on.
     pub property: String,
-    /// `asc` or `desc`.
-    pub direction: String,
+    /// The sort direction.
+    pub direction: NornSortDirection,
+}
+
+/// A sort direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NornSortDirection {
+    /// Ascending.
+    Asc,
+    /// Descending.
+    Desc,
+}
+
+impl NornSortDirection {
+    /// The wire name: `asc` or `desc`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Asc => "asc",
+            Self::Desc => "desc",
+        }
+    }
 }
 
 /// The sort and filter a page actually applied.
@@ -115,7 +136,7 @@ pub struct NornAppliedQuery {
     /// The applied sort keys, before the id tie-break; empty means scan order.
     pub sort: Vec<NornSortKey>,
     /// The applied filter, normalized; null without one.
-    #[schema(required = true, nullable = true, value_type = Option<Object>)]
+    #[schema(required = true, schema_with = applied_filter_schema)]
     pub filter: Option<serde_json::Value>,
 }
 
@@ -144,7 +165,9 @@ pub struct NornObjectQueryPage {
     /// The cursor for the next page; null at the end.
     #[schema(required = true, nullable = true)]
     pub next: Option<String>,
-    /// The matching rows, under the same visibility as the list.
+    /// The matching rows, under the same visibility as the list. Present on a
+    /// first page, and on every page of a sorted or filtered query; null on the
+    /// continuation pages of an unsorted, unfiltered listing.
     #[schema(required = true, nullable = true)]
     pub total: Option<NornQueryTotal>,
 }
@@ -264,12 +287,40 @@ pub struct NornInstanceSourceProvenance {
 // `schema_with` replaces the field's schema, doc comment included, so each
 // helper restates its field's description.
 fn values_schema() -> Object {
+    free_form(
+        "Every stored property by property id; decimals are exact JSON number tokens.",
+        false,
+    )
+}
+
+fn nullable_values_schema() -> Object {
+    free_form(
+        "Every stored property by property id; decimals are exact JSON number tokens. Null \
+         when the row is withheld.",
+        true,
+    )
+}
+
+fn applied_filter_schema() -> Object {
+    free_form(
+        "The applied filter, normalized (`{\"all\":[clause, ...]}`); null without one.",
+        true,
+    )
+}
+
+/// A JSON object whose members this document does not enumerate. Every such
+/// object says so with `additionalProperties: true`, so a generated client
+/// types its members as unknown values rather than as no members at all.
+pub(crate) fn free_form(description: &str, nullable: bool) -> Object {
+    let object = utoipa::openapi::Type::Object;
     ObjectBuilder::new()
-        .schema_type(SchemaType::Type(utoipa::openapi::Type::Object))
+        .schema_type(if nullable {
+            SchemaType::from_iter([object, utoipa::openapi::Type::Null])
+        } else {
+            SchemaType::Type(object)
+        })
         .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(
-            "Every stored property by property id; decimals are exact JSON number tokens.",
-        ))
+        .description(Some(description))
         .build()
 }
 
