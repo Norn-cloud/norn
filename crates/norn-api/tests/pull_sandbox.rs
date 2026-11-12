@@ -863,8 +863,8 @@ fn an_abandoned_run_releases_its_connection_after_the_lease() {
     assert!(sources.running("odoo.sandbox"));
 }
 
-/// SYNC-PAGE-1: a host's `pageSize` replaces every feed's page size, within
-/// the cell's page bound.
+/// SYNC-PAGE-1: a host's `pageSize` replaces every feed's request size,
+/// within the pull's item bound.
 #[test]
 fn a_host_page_size_sets_every_feeds_page() {
     let config = |size: u32| {
@@ -873,7 +873,7 @@ fn a_host_page_size_sets_every_feeds_page() {
             &format!(r#""headers": {{"X-Frappe-Site-Name": "frontend"}}, "pageSize": {size}}}"#),
         )
     };
-    for refused in [0, 501] {
+    for refused in [0, 1001] {
         assert!(
             Sources::new(&config(refused), BTreeMap::new()).is_err(),
             "{refused}"

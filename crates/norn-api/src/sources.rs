@@ -67,9 +67,12 @@ pub struct ConnectionConfig {
     /// Minutes between scheduled syncs; `0` turns scheduling off.
     #[serde(default = "default_every")]
     pub every_minutes: u32,
-    /// Rows per source page for every feed, in place of the connector's
-    /// (SYNC-PAGE-1): a host tunes how much one page commit carries without
-    /// a new definitions version. At most [`PAGE_ROWS`](crate::host::PAGE_ROWS).
+    /// Rows per source request for every feed, in place of the connector's
+    /// (SYNC-PAGE-1): a host tunes how many requests a sync makes without a
+    /// new definitions version. At most the pull's item bound
+    /// ([`Limits`](crate::pull::Limits)); the cell still maps and commits
+    /// what a request returns in its own pages
+    /// ([`PAGE_ROWS`](crate::host::PAGE_ROWS)).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u32>,
 }
@@ -246,7 +249,7 @@ impl Sources {
                     connection.id
                 ));
             }
-            let bound = u32::try_from(crate::host::PAGE_ROWS).unwrap_or(u32::MAX);
+            let bound = u32::try_from(Limits::default().max_items).unwrap_or(u32::MAX);
             if connection
                 .page_size
                 .is_some_and(|size| size == 0 || size > bound)
