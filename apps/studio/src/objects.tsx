@@ -126,7 +126,7 @@ export function ObjectPage() {
             <Panel icon={KeyRound} label="Access"><Well>
               {data.object.origin === "live"
                 ? <Empty icon={KeyRound} action={null}>The cell decided this read for your account; it does not publish the decision and its policy for one record yet.</Empty>
-                : <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
+                : <Empty icon={KeyRound} action={null}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
             </Well></Panel>
           </TabsContent>
         </Tabs>

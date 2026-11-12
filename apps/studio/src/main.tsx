@@ -1,7 +1,7 @@
 import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { ChartLine, Database, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
@@ -26,7 +26,6 @@ const SECTIONS: readonly Section[] = [
   { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
-  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
 ]
 
 /**
