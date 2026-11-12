@@ -14,12 +14,15 @@
 //!   derives, for the dev host and a hosted cell alike.
 //! - [`seed`]: the public three-systems demo cell, provisioned idempotently.
 //! - [`server`]: read-only fetch dispatch over `norn_api`'s shared services.
+//! - [`mcp`]: `POST /v1/mcp`, the cell's catalog as MCP tools whose calls
+//!   re-enter [`server`] as the same caller.
 //! - `dev` (native only): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 
 pub mod analytics;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
+pub mod mcp;
 pub mod policy;
 pub mod principal;
 pub mod questions;

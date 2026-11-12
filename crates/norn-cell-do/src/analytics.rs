@@ -344,6 +344,10 @@ impl DemoQuestions {
 }
 
 impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
+    fn question_names(&self) -> Vec<String> {
+        vec![QUESTION.to_owned()]
+    }
+
     fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal> {
         if question == QUESTION {
             Ok(self.plan.clone())
