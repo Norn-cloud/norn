@@ -742,6 +742,7 @@ fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
@@ -842,7 +843,8 @@ fn artifact_removal(artifact: &ArtifactEnvelope, out: &mut Vec<Narrowing>) {
         | ArtifactKind::SourceSchema
         | ArtifactKind::Law
         | ArtifactKind::DefinedConcept
-        | ArtifactKind::Labels => {}
+        | ArtifactKind::Labels
+        | ArtifactKind::Model => {}
     }
 }
 
