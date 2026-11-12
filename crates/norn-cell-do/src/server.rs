@@ -2,7 +2,8 @@
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `POST /v1/actions/{actionId}`; and `POST /v1/mcp`, whose tools call these
+//! same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -112,6 +113,10 @@ pub fn handle_all<E: SqlEngine>(
         now,
         body,
     } = *request;
+    // MCP resolves its caller per tool call, through these same routes.
+    if path == crate::mcp::MCP_PATH {
+        return crate::mcp::serve(host, principals, questions, kinds, request);
+    }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);

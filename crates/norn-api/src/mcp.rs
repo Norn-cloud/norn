@@ -25,11 +25,17 @@ pub trait Backend {
         metadata: RuntimeObject,
     ) -> Result<CallOutput, Refusal>;
 }
+/// MCP revisions this boundary speaks, newest first. `initialize` answers
+/// with the client's revision when it is listed here, else the newest.
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
+
 /// One connection over a fixed, authorized catalog snapshot.
 pub struct Session {
     tools: Vec<McpTool>,
     digest: String,
     initialized: bool,
+    capabilities: RuntimeObject,
+    instructions: Option<String>,
 }
 #[derive(Deserialize)]
 struct Request {
@@ -144,7 +150,31 @@ impl Session {
             tools,
             digest,
             initialized: false,
+            capabilities: RuntimeObject::new(),
+            instructions: None,
         })
+    }
+    /// A stateless Streamable HTTP request: each POST is answered on its own
+    /// over the catalog the server rebuilt for it, so no handshake state is
+    /// carried between requests. The transport checks `MCP-Protocol-Version`.
+    #[must_use]
+    pub fn stateless(mut self) -> Self {
+        self.initialized = true;
+        self
+    }
+    /// Capabilities the server declares beside `tools` (for example
+    /// `resources`, or an `extensions` map); `tools` itself stays the catalog's.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: RuntimeObject) -> Self {
+        self.capabilities = capabilities;
+        self.capabilities.remove("tools");
+        self
+    }
+    /// Plain-language guidance `initialize` returns for the model.
+    #[must_use]
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
     }
     /// Handle one bounded JSON-RPC message without converting exact arguments through floats.
     /// Notifications never execute a tool. No transport-side authorization is inferred.
@@ -264,22 +294,47 @@ impl Session {
         .map(Some)
     }
     fn initialize(&mut self, id: RuntimeValue, protocol: Option<&str>) -> Result<String, Refusal> {
-        if protocol.is_none_or(|version| version.trim().is_empty()) {
+        let Some(requested) = protocol.filter(|version| !version.trim().is_empty()) else {
             return protocol_error(
                 id,
                 -32602,
                 Refusal::invalid("provide an MCP protocolVersion"),
             );
-        }
+        };
         self.initialized = true;
-        response(
-            id,
-            "result",
-            encode(&serde_json::json!({
-                "protocolVersion":"2025-11-25", "capabilities":{"tools":{"listChanged":false}},
-                "serverInfo":{"name":"norn","version":env!("CARGO_PKG_VERSION")}
-            }))?,
-        )
+        let version = PROTOCOL_VERSIONS
+            .iter()
+            .find(|supported| **supported == requested)
+            .unwrap_or(&PROTOCOL_VERSIONS[0]);
+        let mut capabilities = self.capabilities.clone();
+        capabilities.insert(
+            "tools".into(),
+            RuntimeValue::Object(RuntimeObject::from([(
+                "listChanged".into(),
+                RuntimeValue::Bool(false),
+            )])),
+        );
+        let mut result = RuntimeObject::from([
+            ("protocolVersion".into(), RuntimeValue::String((*version).into())),
+            ("capabilities".into(), RuntimeValue::Object(capabilities)),
+            (
+                "serverInfo".into(),
+                RuntimeValue::Object(RuntimeObject::from([
+                    ("name".into(), RuntimeValue::String("norn".into())),
+                    (
+                        "version".into(),
+                        RuntimeValue::String(env!("CARGO_PKG_VERSION").into()),
+                    ),
+                ])),
+            ),
+        ]);
+        if let Some(instructions) = &self.instructions {
+            result.insert(
+                "instructions".into(),
+                RuntimeValue::String(instructions.clone()),
+            );
+        }
+        response(id, "result", RuntimeValue::Object(result))
     }
     /// Read the same bounded catalog snapshot used by MCP discovery.
     /// MCP-CATALOG-1: human services and MCP share tool IR, digests and cursors.

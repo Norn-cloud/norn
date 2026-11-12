@@ -41,6 +41,12 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// # Errors
     /// Unknown or no-longer-admitted declarations refuse.
     fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal>;
+    /// The names [`Self::plan`] resolves, for catalogs that list them (an
+    /// agent's tool schema). Naming a question grants nothing: every answer
+    /// and trace is still authorized. The default lists none.
+    fn question_names(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Resolve the current frontier under the held definition epoch and cell lock.
     /// # Errors
     /// Unavailable or unauthenticated dependencies refuse rather than being fabricated.
