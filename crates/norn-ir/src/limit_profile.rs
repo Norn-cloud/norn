@@ -88,6 +88,9 @@ pub struct ResourceLimitProfile {
 pub struct QuestionLimits {
     /// Maximum source records one evaluation of a question may scan.
     pub max_scanned_records: u32,
+    /// Maximum stored bytes those records may decode to: the scan's memory
+    /// bound.
+    pub max_scanned_bytes: u64,
 }
 
 impl QuestionLimits {
@@ -95,11 +98,15 @@ impl QuestionLimits {
     /// exact engine (see the PR that introduced it for the measurement).
     pub const DEFAULT: Self = Self {
         max_scanned_records: QUESTION_MAX_SCANNED_RECORDS,
+        max_scanned_bytes: QUESTION_MAX_SCANNED_BYTES,
     };
 }
 
 /// [`QuestionLimits::DEFAULT`]'s scan bound.
 const QUESTION_MAX_SCANNED_RECORDS: u32 = 1_000_000;
+
+/// [`QuestionLimits::DEFAULT`]'s decoded-bytes bound.
+const QUESTION_MAX_SCANNED_BYTES: u64 = 1024 * MIB;
 
 // The ruling's floor: an analytical question scans at least 100,000 records.
 const _: () = assert!(QUESTION_MAX_SCANNED_RECORDS >= 100_000);
@@ -345,10 +352,13 @@ impl ResourceLimitProfile {
         if let (Some(question), JsonValue::Object(fields)) = (question, &mut value) {
             fields.insert(
                 "question".to_owned(),
-                object([(
-                    "max_scanned_records",
-                    number(u64::from(question.max_scanned_records)),
-                )]),
+                object([
+                    (
+                        "max_scanned_records",
+                        number(u64::from(question.max_scanned_records)),
+                    ),
+                    ("max_scanned_bytes", number(question.max_scanned_bytes)),
+                ]),
             );
         }
         value

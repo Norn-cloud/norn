@@ -327,7 +327,16 @@ impl<E: SqlEngine> CellStore<E> {
             let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
-            let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+            // A question scans under its own bound (ruling 2026-11-12), not
+            // the bound on records a slice returns.
+            let profile = ResourceLimitProfile::norn_limits_v1();
+            let question = profile.question_limits();
+            let limits = ReactiveLimits {
+                max_scan: usize::try_from(question.max_scanned_records)
+                    .map_err(|_bound| refused("core.compute.bound_exceeded"))?,
+                max_candidate_bytes_per_commit: question.max_scanned_bytes,
+                ..ReactiveLimits::from_profile(&profile)
+            };
             let mut budget = DecodeBudget::new(&limits);
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
