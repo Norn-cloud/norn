@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.sql_unsupported",
+  "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
