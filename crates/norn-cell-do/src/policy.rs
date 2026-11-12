@@ -382,7 +382,7 @@ impl Authorizer for ReadPolicy {
             // The gate: a verified member of the cell's organization, and an
             // action the scope's policy governs. The kernel callback below
             // decides the call itself, per target.
-            Operation::CallAction(action_id) => request.actor.is_some_and(|actor| {
+            Operation::CallAction(ref action_id) => request.actor.is_some_and(|actor| {
                 self.member(actor).is_some()
                     && self
                         .action_policy()

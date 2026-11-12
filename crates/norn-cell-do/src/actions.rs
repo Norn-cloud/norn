@@ -57,7 +57,8 @@ impl std::fmt::Debug for ActionPolicy {
 
 /// The payload of `artifact`, decoded as `T`.
 fn payload<T: serde::de::DeserializeOwned>(artifact: &ArtifactEnvelope) -> Result<T, SeedError> {
-    serde_json::from_value(artifact.payload.to_json_value())
+    serde_json::to_value(artifact.payload.to_json_value())
+        .and_then(serde_json::from_value)
         .map_err(|error| SeedError(format!("{}: {error}", artifact.artifact_id)))
 }
 
