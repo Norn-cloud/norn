@@ -52,7 +52,7 @@ struct Derived {
 /// A new revision is derived again on its first question; nothing is cached
 /// across revisions.
 pub struct DerivedQuestions {
-    handle_key: [u8; 32],
+    handle_key: Vec<u8>,
     scope: CellScope,
     label: String,
     cache: Mutex<Option<Arc<Derived>>>,
@@ -64,11 +64,23 @@ impl DerivedQuestions {
     #[must_use]
     pub fn new(handle_key: [u8; 32], scope: CellScope) -> Self {
         Self {
-            handle_key,
+            handle_key: handle_key.to_vec(),
             scope,
             label: "dev".into(),
             cache: Mutex::new(None),
         }
+    }
+
+    /// [`Self::new`] keyed by a host secret of any length of at least 32
+    /// bytes (a stage's `NORN_LINEAGE_KEY`); none for a shorter one.
+    #[must_use]
+    pub fn keyed(handle_key: &[u8], scope: CellScope) -> Option<Self> {
+        (handle_key.len() >= 32).then(|| Self {
+            handle_key: handle_key.to_vec(),
+            scope,
+            label: "dev".into(),
+            cache: Mutex::new(None),
+        })
     }
 
     /// Label the answer frontier's population and mapping pins with `label`

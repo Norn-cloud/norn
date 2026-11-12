@@ -13,6 +13,8 @@
 //!   `PUT` the browser sends the bytes to.
 //! - `/v1/uploads/{id}:complete`: the cell reads the object, records its URI
 //!   and SHA-256 and profiles it.
+//! - `/v1/uploads/{id}:define`: [`LoadRequest`]; installs the generated
+//!   definitions only, for a loader that writes the rows itself.
 //! - `/v1/uploads/{id}:load`: [`LoadRequest`]; installs and loads.
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
@@ -108,6 +110,8 @@ enum Waiting {
         request: LoadRequest,
         actor: String,
         started_ms: u64,
+        /// `false` for `:define`: install the definitions, write no rows.
+        rows: bool,
     },
 }
 
@@ -199,6 +203,7 @@ enum Route<'a> {
     Sync(&'a str),
     Begin,
     Complete(&'a str),
+    Define(&'a str),
     Load(&'a str),
     Read,
     Observations,
@@ -225,6 +230,7 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
     match verb {
         "complete" => Some(Route::Complete(id)),
+        "define" => Some(Route::Define(id)),
         "load" => Some(Route::Load(id)),
         _ => None,
     }
@@ -392,7 +398,9 @@ impl Connect {
         let actor = principals.resolve(request.authorization, request.now);
         let target = match &route {
             Route::Sync(id) => (*id).to_owned(),
-            Route::Begin | Route::Complete(_) | Route::Load(_) | Route::Read => "upload".to_owned(),
+            Route::Begin | Route::Complete(_) | Route::Define(_) | Route::Load(_) | Route::Read => {
+                "upload".to_owned()
+            }
             Route::Observations => "observations".to_owned(),
         };
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
@@ -429,18 +437,24 @@ impl Connect {
             Route::Complete(id) => self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
                 Waiting::Complete { upload }
             }),
-            Route::Load(id) => match serde_json::from_str::<LoadRequest>(request.body) {
-                Ok(load) => {
-                    let actor = actor.clone();
-                    self.fetch_object((id, &host.scope().key()), now_ms, |upload| Waiting::Load {
-                        upload,
-                        request: load,
-                        actor,
-                        started_ms: now_ms,
-                    })
+            Route::Define(id) | Route::Load(id) => {
+                match serde_json::from_str::<LoadRequest>(request.body) {
+                    Ok(load) => {
+                        let actor = actor.clone();
+                        let rows = matches!(route, Route::Load(_));
+                        self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
+                            Waiting::Load {
+                                upload,
+                                request: load,
+                                actor,
+                                started_ms: now_ms,
+                                rows,
+                            }
+                        })
+                    }
+                    Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
                 }
-                Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
-            },
+            }
             Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
             Route::Observations => Routed::reply(load_observations(host, request.body)),
         })
@@ -627,9 +641,10 @@ impl Connect {
                 request,
                 actor,
                 started_ms,
+                rows,
             } => self.load(
                 host,
-                &upload,
+                (&upload, rows),
                 &request,
                 &actor,
                 body,
@@ -683,7 +698,7 @@ impl Connect {
     fn load<E: SqlEngine>(
         &mut self,
         host: &DevHost<E>,
-        id: &str,
+        (id, rows): (&str, bool),
         request: &LoadRequest,
         actor: &str,
         body: &[u8],
@@ -728,6 +743,15 @@ impl Connect {
             Ok(version) => version,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
+        if !rows {
+            return json_response(
+                200,
+                &json!({
+                    "objectType": generated.object_type, "definitionsVersion": version,
+                    "sourceSchema": generated.source_schema, "mapping": generated.mapping,
+                }),
+            );
+        }
         let loaded = match uploads::load_rows(host, &generated, &table, &upload.uri, sha256, now_ms)
         {
             Ok(loaded) => loaded,
@@ -847,6 +871,10 @@ mod tests {
         assert!(matches!(
             route_of("/v1/uploads/abc:load"),
             Some(Route::Load("abc"))
+        ));
+        assert!(matches!(
+            route_of("/v1/uploads/abc:define"),
+            Some(Route::Define("abc"))
         ));
         for other in [
             "/v1/sources/a/b:sync",

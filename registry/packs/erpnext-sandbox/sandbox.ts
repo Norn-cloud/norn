@@ -142,6 +142,14 @@ export const SandboxSource = Norn.sourceSchema({
       typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
+    {
+      dataset: "Warehouse Lot Balance",
+      name: "modified",
+      ordinal: 12,
+      nativeType: "Datetime",
+      typeCandidate: {type: "string", origin: "declared"},
+      required: true
+    },
     {dataset: "Party", name: "name", ordinal: 0, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Party",
@@ -248,7 +256,7 @@ export const SandboxMapping = Norn.mapping({
   id: "erpnext.sandbox.mapping",
   title: "ERPNext sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "21fcae139208fef42c7e10329a303d80484a1d870ffc169760c1427eb04f1834"},
+  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "90cf3626ae746b1411899cbfbb52e59f489c7119f0d03ec820bbda3bd1e57e98"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [
@@ -273,6 +281,10 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        // Frappe's `modified` ("YYYY-MM-DD HH:MM:SS.ffffff", the site's UTC time) to the day: the mapping
+        // profile cannot rebuild the time of day, every snapshot grain is at least a day, and same-day
+        // changes keep their order by version (this feed commits in `modified` order).
+        {property: "observed_at", value: "timestamp(take(input.modified, 10) + 'T00:00:00Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},
@@ -442,7 +454,8 @@ export const SandboxConnector = Norn.connector({
           custodian_ref: "/custodian_ref",
           stock_cost: "/stock_cost",
           cost_currency: "/cost_currency",
-          valuation_method: "/valuation_method"
+          valuation_method: "/valuation_method",
+          modified: "/modified"
         },
         initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       },

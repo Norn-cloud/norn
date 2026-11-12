@@ -153,6 +153,10 @@
             "value": "input.quantity"
           },
           {
+            "property": "observed_at",
+            "value": "timestamp(take(input.modified, 10) + 'T00:00:00Z')"
+          },
+          {
             "property": "unit",
             "value": "input.unit"
           },
@@ -319,7 +323,7 @@
     ],
     "source": {
       "schemaId": "erpnext.sandbox.source",
-      "sha256": "21fcae139208fef42c7e10329a303d80484a1d870ffc169760c1427eb04f1834",
+      "sha256": "90cf3626ae746b1411899cbfbb52e59f489c7119f0d03ec820bbda3bd1e57e98",
       "version": "0.1.0"
     }
   },

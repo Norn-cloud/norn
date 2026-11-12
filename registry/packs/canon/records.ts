@@ -31,6 +31,8 @@ export const Holding = Norn.type({
     resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
+    // When the source observed this balance (valid time; METRIC-SNAPSHOT-ASOF-1 orders a holding's versions by it).
+    observed_at: Norn.ref("iso8601.timestamp"),
     location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
     cost_currency: Schema.NullOr(Schema.String),
   }),

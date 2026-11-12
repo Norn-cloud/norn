@@ -342,6 +342,7 @@ const UNDOCUMENTED: &[server::Route] = &[
     server::Route::UploadRead,
     server::Route::UploadComplete,
     server::Route::UploadLoad,
+    server::Route::UploadDefine,
     server::Route::ObservationsLoad,
 ];
 

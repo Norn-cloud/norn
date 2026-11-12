@@ -146,13 +146,14 @@ impl<E: SqlEngine> DevHost<E> {
     }
 
     /// Capture source rows and map them through the cell's own mapping path,
-    /// under the definition epoch. Consecutive rows of one mapping input
-    /// travel as one page (OBS-PAGE-1): split before a repeated record
-    /// identity and at [`PAGE_ROWS`], each page captured, then consumed in
-    /// one commit, exactly as the rows one by one. The trusted host's sync and
-    /// loads call this; no caller supplies facts, and a refused row stays in
-    /// the inbox as quarantined evidence with its reasons. Rows already
-    /// captured are captured once.
+    /// under the definition epoch, in OBS-PAGE-1 pages: consecutive rows with
+    /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
+    /// split at [`PAGE_ROWS`] and before a repeated source record, are
+    /// captured by `inject_mapping_page` and committed by
+    /// `process_mapping_page`. The trusted host's sync calls this; no caller
+    /// supplies facts, and a refused row stays in the inbox as quarantined
+    /// evidence with its reasons. Rows already captured are captured once.
+    /// Returns one outcome per row.
     /// # Errors
     /// A page the cell cannot capture (framing or pins it refuses), or a
     /// store failure; pages before it stay captured and processed.
@@ -175,21 +176,15 @@ impl<E: SqlEngine> DevHost<E> {
             E,
         > = cell.into_profile();
         let mut out = Vec::with_capacity(rows.len());
-        let mut failure = None;
-        for page in pages(rows) {
-            match ingest_page(&mut observing, page) {
-                Ok(ingested) => out.extend(ingested),
-                Err(error) => {
-                    failure = Some(error);
-                    break;
-                }
+        let mut result = Ok(());
+        for (input, page) in pages(rows) {
+            result = ingest_page(&mut observing, &page, input, &mut out);
+            if result.is_err() {
+                break;
             }
         }
         *slot = Some(observing.into_profile());
-        match failure {
-            Some(error) => Err(Refusal::host(error)),
-            None => Ok(out),
-        }
+        result.map(|()| out).map_err(Refusal::host)
     }
 
     /// One artifact of the active definitions, as its JSON envelope. For the
@@ -314,70 +309,153 @@ impl<E: SqlEngine> DevHost<E> {
     }
 }
 
-/// Rows per page a host delivers (OBS-PAGE-1 hosts default to 500).
+/// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
 pub const PAGE_ROWS: usize = 500;
 
-type SourceRow = (
-    Observed<RuntimeValue>,
-    norn_cell::mapping_bundle::MappingInput,
-);
-
-/// Consecutive rows of one mapping input, split before a repeated record
-/// identity (connector instance, partition, source, source id) and at
-/// [`PAGE_ROWS`]: a repeat is the next page, so it applies after the first.
-fn pages(rows: &[SourceRow]) -> Vec<&[SourceRow]> {
-    let mut pages = Vec::new();
-    let mut start = 0_usize;
+/// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
+/// [`PAGE_ROWS`] and before a source record the page already carries.
+fn pages(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> Vec<(
+    &norn_cell::mapping_bundle::MappingInput,
+    Vec<Observed<RuntimeValue>>,
+)> {
+    let mut pages: Vec<(
+        &norn_cell::mapping_bundle::MappingInput,
+        Vec<Observed<RuntimeValue>>,
+    )> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for (index, (raw, input)) in rows.iter().enumerate() {
-        let identity = (
-            raw.input.get("source").and_then(RuntimeValue::as_str),
-            raw.input.get("source_id").and_then(RuntimeValue::as_str),
-        );
-        let split = index > start
-            && (rows.get(start).is_some_and(|(_, first)| first != input)
-                || index.saturating_sub(start) >= PAGE_ROWS
-                || seen.contains(&identity));
+    for (raw, input) in rows {
+        let identity = raw.provenance.source_id.clone();
+        let split = pages.last().is_none_or(|(current, page)| {
+            *current != input || page.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+        });
         if split {
-            pages.extend(rows.get(start..index));
-            start = index;
-            seen.clear();
+            seen = std::collections::BTreeSet::from([identity]);
+            pages.push((input, Vec::new()));
         }
-        seen.insert(identity);
+        if let Some((_, page)) = pages.last_mut() {
+            page.push(raw.clone());
+        }
     }
-    pages.extend(rows.get(start..).filter(|rest| !rest.is_empty()));
     pages
 }
 
-/// Capture one page, consume its page rows, and give each row's outcome.
+/// Capture and commit one page, one outcome per row into `out`. A page over
+/// the cell's byte bound is halved. A row the page did not report (captured
+/// as a finding, or a page an earlier sync consumed) is processed on its own,
+/// as one-by-one delivery would.
 fn ingest_page<E: SqlEngine>(
     cell: &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
-    page: &[SourceRow],
-) -> Result<Vec<Ingested>, norn_cell::CellError> {
-    let Some((_, input)) = page.first() else {
-        return Ok(Vec::new());
+    page: &[Observed<RuntimeValue>],
+    input: &norn_cell::mapping_bundle::MappingInput,
+    out: &mut Vec<Ingested>,
+) -> Result<(), CellError> {
+    let captured = match cell.inject_mapping_page(page, input) {
+        Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
+            let (first, second) = page.split_at(page.len() / 2);
+            ingest_page(cell, first, input, out)?;
+            return ingest_page(cell, second, input, out);
+        }
+        other => other?,
     };
-    let raws: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
-    let captured = cell.inject_mapping_page(&raws, input)?;
+    // Each member this page consumed has its outcome; any other record (a
+    // conflict or identity finding, or a row consumed before) answers as it
+    // does one by one. One outcome per row, in row order.
     let mut outcomes = std::collections::BTreeMap::new();
     for (id, _new) in &captured.pages {
         outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
     }
-    captured
-        .records
-        .into_iter()
-        .map(|id| {
-            // A member this page consumed has its outcome; any other record
-            // (a conflict or identity finding, or a row consumed before)
-            // answers as it does one by one.
-            let outcome = match outcomes.remove(&id) {
-                Some(outcome) => outcome,
-                None => cell.process_mapping_outcome(&id)?,
-            };
-            Ok(Ingested {
-                observation_id: id,
-                outcome,
+    for id in captured.records {
+        let outcome = match outcomes.remove(&id) {
+            Some(outcome) => outcome,
+            None => cell.process_mapping_outcome(&id)?,
+        };
+        out.push(Ingested {
+            observation_id: id,
+            outcome,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "page framing scenarios"
+)]
+mod page_tests {
+    use super::*;
+    use crate::pull::{PullProfile, Row, observation};
+    use norn_cell::mapping_bundle::MappingInput;
+
+    fn row(id: &str) -> Observed<RuntimeValue> {
+        let profile = PullProfile {
+            source: "erpnext".into(),
+            pipeline: "norn-pull/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let row = Row {
+            dataset: "items".into(),
+            source_id: id.into(),
+            version: "1".into(),
+            payload: RuntimeValue::Object(std::collections::BTreeMap::new()),
+        };
+        observation(&profile, &row, 0).expect("sealed")
+    }
+
+    fn input(dataset: &str) -> MappingInput {
+        MappingInput {
+            mapping: "erpnext.sandbox.mapping".into(),
+            dataset: dataset.into(),
+            connector_instance: "sandbox".into(),
+            partition: dataset.into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T00:00:00.000Z".into()),
+        }
+    }
+
+    /// OBS-PAGE-1 framing: a page is one mapping input, at most `PAGE_ROWS`
+    /// rows, and never carries one source record twice.
+    #[test]
+    fn pages_split_at_the_bound_a_new_input_and_a_repeated_record() {
+        let (items, bins) = (input("items"), input("bins"));
+        let many: Vec<_> = (0..1_200)
+            .map(|n| (row(&format!("r{n}")), items.clone()))
+            .collect();
+        let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
+        assert_eq!(sizes, [500, 500, 200]);
+
+        let mixed = vec![
+            (row("x"), items.clone()),
+            (row("y"), items.clone()),
+            (row("x"), items.clone()),
+            (row("z"), bins),
+            (row("z"), items),
+        ];
+        let framed: Vec<(String, Vec<String>)> = pages(&mixed)
+            .into_iter()
+            .map(|(input, page)| {
+                (
+                    input.dataset.clone(),
+                    page.iter()
+                        .map(|raw| raw.provenance.source_id.clone())
+                        .collect(),
+                )
             })
-        })
-        .collect()
+            .collect();
+        assert_eq!(
+            framed,
+            [
+                ("items".to_owned(), vec!["x".to_owned(), "y".to_owned()]),
+                ("items".to_owned(), vec!["x".to_owned()]),
+                ("bins".to_owned(), vec!["z".to_owned()]),
+                ("items".to_owned(), vec!["z".to_owned()]),
+            ]
+        );
+    }
 }

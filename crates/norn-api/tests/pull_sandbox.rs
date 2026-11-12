@@ -390,7 +390,7 @@ fn sync(
     loop {
         match step {
             Step::Done(summary) => return (summary, sent),
-            // SYNC-YIELD-1: rows map a few at a time between the host's turns.
+            // SYNC-YIELD-1: rows map a page at a time between the host's turns.
             Step::Continue => step = sources.step(host, id, None, now_ms),
             Step::Request(request) => {
                 let feed = profile
@@ -594,6 +594,46 @@ fn a_refused_read_fails_the_run_and_says_why() {
     assert!(!sources.running("odoo.sandbox"));
 }
 
+/// UPLOAD-MEASURE-1 and UPLOAD-KEY-1 through admission: a type with
+/// additive measures and a unique key installs (as `:define` does) and its
+/// rows land.
+#[test]
+fn an_uploaded_type_with_measures_and_a_key_is_admitted() {
+    use norn_api::uploads::{
+        ColumnChoice, ColumnKind, LoadRequest, generate, install, load_rows, parse_csv, sha256_hex,
+    };
+    let host = host();
+    let csv = "SKU,Units,Price\nA-1,3,1.50\nA-2,4,2.25\n";
+    let uri = "s3://uploads/demo/stock.csv";
+    let table = parse_csv(csv).expect("parsed");
+    let sha = sha256_hex(csv.as_bytes());
+    let measure = |id: &str, kind| ColumnChoice {
+        id: id.into(),
+        kind,
+        include: true,
+        measure: true,
+    };
+    let request = LoadRequest {
+        type_name: "Stock".into(),
+        columns: vec![
+            measure("units", ColumnKind::Integer),
+            measure("price", ColumnKind::Decimal),
+        ],
+        key: vec!["sku".into()],
+        sha256: None,
+    };
+    let generated =
+        generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").expect("generated");
+    let version = install(&host, &generated, 2).expect("installed");
+    assert!(version > 1);
+    let loaded = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("loaded");
+    assert_eq!(
+        (loaded.rows_landed, loaded.rows_quarantined),
+        (2, 0),
+        "{loaded:#?}"
+    );
+}
+
 /// UPLOAD-NULL-1 end to end: an empty cell lands as null on a nullable
 /// property (its source field `required: false`), every row once, with
 /// lineage to the object and row.
@@ -608,6 +648,7 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let request = LoadRequest {
         type_name: "Sales".into(),
         columns: vec![],
+        key: vec![],
         sha256: None,
     };
     let generated =
@@ -645,4 +686,20 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
             .iter()
             .all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_)))
     );
+}
+
+/// SYNC-INSTANCE-1 and SYNC-URL-1: configuration the cell refuses before
+/// any sync, a connection claiming the cell's own instance or a plain-HTTP
+/// public base URL.
+#[test]
+fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
+    let one = |instance: &str, base: &str| {
+        format!(
+            r#"[{{"id": "x", "system": "erpnext", "label": "X", "connector": "c", "mapping": "m", "instance": "{instance}", "baseUrl": "{base}"}}]"#
+        )
+    };
+    let refused = |config: String| Sources::new(&config, BTreeMap::new()).expect_err("refused");
+    assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
+    assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
+    assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
 }

@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
-    DimensionPath, MeasureAggregate, MetricAdditivity, MetricAggregationParams, MetricNorn,
-    MetricType, MetricTypeParams, TimeGrain,
+    AdditivityAxis, DimensionPath, FilterOperator, MeasureAggregate, MetricAdditivity,
+    MetricAggregationParams, MetricNorn, MetricType, MetricTypeParams, NonAdditiveDimension,
+    QuestionDimension, Reaggregate, TimeGrain, WindowChoice,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
@@ -43,8 +44,9 @@ pub struct MetricCandidate {
     /// Conservation evidence, when the law supplies term additivity.
     pub conservation: Vec<ConservationSource>,
     /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit.
-    /// A question selecting this candidate groups by each, or fixes it with
-    /// an `eq` filter (`eq null` included), or admission refuses `mixed_unit`.
+    /// [`MetricSpace::admit`] groups by each one a question neither groups by
+    /// nor fixes with an `eq` filter (`eq null` included); a question admitted
+    /// any other way that leaves one free refuses `mixed_unit`.
     pub unit_partition: Vec<DimensionPath>,
 }
 
@@ -99,12 +101,34 @@ impl MetricSpace {
                 pending.extend(definition.type_params.denominator.as_deref());
             }
         }
+        // METRIC-UNIT-PARTITION-1: group by each unit source the question leaves free.
+        let mut question = question.clone();
+        for path in self
+            .candidates
+            .iter()
+            .filter(|candidate| selected.contains(candidate.definition.name.as_str()))
+            .flat_map(|candidate| &candidate.unit_partition)
+        {
+            let fixed = question
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.path == path)
+                || question.filters.iter().any(|filter| {
+                    &filter.path == path && matches!(filter.operator, FilterOperator::Eq)
+                });
+            if !fixed && question.dimensions.len() < compute::MAX_GROUP_BY {
+                question.dimensions.push(QuestionDimension {
+                    path: path.clone(),
+                    grain: None,
+                });
+            }
+        }
         let definitions: Vec<_> = selected
             .into_iter()
             .filter_map(|name| by_name.get(name))
             .map(|definition| (**definition).clone())
             .collect();
-        compute::admit(&definitions, question, &self.catalog, max_items)
+        compute::admit(&definitions, &question, &self.catalog, max_items)
     }
 }
 
@@ -265,6 +289,16 @@ fn candidates_at_time(
             | PropertyAdditivity::NonAdditive {}
             | PropertyAdditivity::Ratio { .. } => false,
         };
+        if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {}) {
+            let mut generated = candidate(
+                snapshot(object, &property.id, time_path),
+                dimensions,
+                Vec::new(),
+            );
+            generated.unit_partition = unit_partition(object, &[&property.id]);
+            candidates.push(generated);
+            continue;
+        }
         if !additive {
             continue;
         }
@@ -551,6 +585,40 @@ fn sum(
             incremental: None,
         },
     }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1: a balance's value as of each period's end, summed
+/// across subjects and never over time.
+fn snapshot(
+    object: &EffectiveObjectType,
+    property: &PropertyId,
+    time: &DimensionPath,
+) -> MetricDefinition {
+    let mut definition = sum(object, property, time, &[]);
+    definition.name = format!(
+        "analysis.object_{}.{}.as_of_{}",
+        encoded_name(object.name.as_str()),
+        property.as_str(),
+        time.property.as_str()
+    );
+    definition.label = format!(
+        "{}, as of {}; last value per {} at each period's end",
+        property.as_str(),
+        time.property.as_str(),
+        object.name.as_str()
+    );
+    if let Some(params) = definition.type_params.metric_aggregation_params.as_mut() {
+        params.non_additive_dimension = Some(NonAdditiveDimension {
+            name: params.agg_time_dimension.clone(),
+            window_choice: WindowChoice::Max,
+            window_groupings: Vec::new(),
+        });
+    }
+    definition.norn.additivity = MetricAdditivity::SemiAdditive {
+        over: AdditivityAxis::Time,
+        aggregate: Reaggregate::Last,
+    };
+    definition
 }
 
 fn encoded_name(name: &str) -> String {
@@ -1117,9 +1185,18 @@ mod ontology_derived_measures {
             else {
                 panic!("input quantity")
             };
+            let balance = matches!(class, PropertyAdditivity::SemiAdditive {});
             *additivity = class;
             artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
-            assert!(space(&artifacts).candidates().is_empty());
+            let space = space(&artifacts);
+            // A balance yields only its as-of snapshots (METRIC-SNAPSHOT-ASOF-1), never a sum or ratio.
+            assert_eq!(!space.candidates().is_empty(), balance);
+            assert!(space.candidates().iter().all(|candidate| {
+                matches!(
+                    candidate.definition.norn.additivity,
+                    MetricAdditivity::SemiAdditive { .. }
+                ) && candidate.definition.type_params.expr.as_deref() == Some("input")
+            }));
         }
     }
 

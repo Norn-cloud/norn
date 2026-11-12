@@ -56,7 +56,8 @@
         "custodian_ref": "demo/party/custodian",
         "stock_cost": 9000,
         "cost_currency": "USD",
-        "valuation_method": "moving_average"
+        "valuation_method": "moving_average",
+        "modified": "2026-11-01T00:00:00Z"
       }
     },
     {
@@ -73,7 +74,8 @@
         "custodian_ref": "demo/party/custodian",
         "stock_cost": 9000,
         "cost_currency": "USD",
-        "valuation_method": "moving_average"
+        "valuation_method": "moving_average",
+        "modified": "2026-11-01T00:00:00Z"
       }
     },
     {
@@ -141,7 +143,8 @@
         "custodian_ref": "demo/party/custodian",
         "stock_cost": 8100,
         "cost_currency": "USD",
-        "valuation_method": "moving_average"
+        "valuation_method": "moving_average",
+        "modified": "2026-11-01T00:00:00Z"
       }
     },
     {

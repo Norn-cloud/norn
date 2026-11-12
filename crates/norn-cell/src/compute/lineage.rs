@@ -201,7 +201,16 @@ impl<E: SqlEngine> CellStore<E> {
                 let mut contributions = Vec::with_capacity(row.members.len());
                 let reader = self.read();
                 for (id, member) in &row.members {
-                    let (_, value) = snapshot.contributions.get(id).ok_or_else(incomplete)?;
+                    let (_, value) = snapshot
+                        .contributions
+                        .get(id)
+                        .and_then(|entries| {
+                            entries.iter().find(|(version, value)| {
+                                *version == member.version
+                                    && super::bucket_key(value).is_ok_and(|key| key == bucket)
+                            })
+                        })
+                        .ok_or_else(incomplete)?;
                     totals.adjust(value, false)?;
                     let evidence = reader
                         .fact_version_evidence_with_budget(
