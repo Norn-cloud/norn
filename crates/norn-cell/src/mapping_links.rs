@@ -196,6 +196,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 |row| row.get(0),
             )?
             .ok_or(CellError::MappingBundleMismatch)?;
+        // A row whose exact text rechecked under the verified install gives
+        // the same result again (MAPPING-PLAN-1's byte-equal reuse).
+        if let Some(cache) = self.mapping_plans
+            && let Some((seen, bundle)) = cache.borrow().claims.get(id)
+            && *seen == encoded
+        {
+            return Ok(bundle.clone());
+        }
         let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
@@ -203,6 +211,15 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             return Err(CellError::MappingBundleMismatch);
         }
         self.recheck_mapping_bundle(&bundle)?;
+        if let Some(cache) = self.mapping_plans {
+            let mut cache = cache.borrow_mut();
+            if cache.claims.len() >= crate::mapping_bundle::MAX_CACHED_CLAIM_BUNDLES {
+                cache.claims.clear();
+            }
+            cache
+                .claims
+                .insert(id.to_owned(), (encoded, bundle.clone()));
+        }
         Ok(bundle)
     }
 
