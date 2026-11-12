@@ -1,0 +1,12 @@
+{
+  "sourceId": "source.test.synthetic-document",
+  "releaseId": "1.0",
+  "releasedAt": "2026-10-21",
+  "retrievedAt": "2026-10-21",
+  "canonicalUrl": "https://example.test/synthetic-document/1.0",
+  "license": "Apache-2.0",
+  "redistribution": "reference_only",
+  "importMode": "map_only",
+  "importer": {"name": "norn.formats.xsd", "version": "0.1.0"},
+  "files": []
+}

@@ -1,0 +1,287 @@
+{
+  "atlasVersion": 1,
+  "domain": "agriculture",
+  "entries": [
+    {
+      "id": "adapt-framework-model",
+      "name": "Legacy ADAPT .NET object-model toolkit",
+      "publisher": "AgGateway ADAPT contributors",
+      "kind": "standard",
+      "domains": [
+        "agriculture"
+      ],
+      "version": "3.1.0",
+      "versionDate": "2024-03-22",
+      "versionBasis": "GitHub release v3.1.0 published_at 2024-03-22T21:31:02Z; no claim it shares the ADAPT Standard's release series.",
+      "licence": {
+        "spdx": "EPL-1.0",
+        "text": "EPL-1.0",
+        "status": "verified",
+        "basis": "Versioned LICENSE is EPL 1.0 with source/notice obligations for distributed covered code. Third-party ADAPT plugins are independently licensed.",
+        "termsUrl": "https://raw.githubusercontent.com/AgGateway-ADAPT/ADAPT/v3.1.0/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://github.com/AgGateway-ADAPT/ADAPT/releases/tag/v3.1.0",
+      "evidenceUrls": [
+        "https://github.com/AgGateway-ADAPT/ADAPT",
+        "https://github.com/AgGateway-ADAPT/ADAPT/releases/tag/v3.1.0",
+        "https://raw.githubusercontent.com/AgGateway-ADAPT/ADAPT/v3.1.0/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Historical farm object-model evidence, not an admitted extraction path or Norn execution dependency.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "adapt-standard",
+      "name": "AgGateway ADAPT Standard root and data-type schemas",
+      "publisher": "AgGateway Corporation",
+      "kind": "standard",
+      "domains": [
+        "agriculture"
+      ],
+      "version": "2.0.2",
+      "versionDate": "2025-08-06",
+      "versionBasis": "GitHub release 2.0.2 published_at 2025-08-06T17:30:47Z; root schema $id is https://adaptstandard.org/root/2.0.2.",
+      "licence": {
+        "spdx": "MIT",
+        "text": "MIT",
+        "status": "verified",
+        "basis": "Selected release LICENSE is MIT, requiring copyright and permission notice preservation; distinct from the older EPL toolkit.",
+        "termsUrl": "https://raw.githubusercontent.com/AgGateway-ADAPT/Standard/2.0.2/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/AgGateway-ADAPT/Standard/2.0.2/adapt-root-schema.json",
+      "evidenceUrls": [
+        "https://github.com/AgGateway-ADAPT/Standard/releases/tag/2.0.2",
+        "https://raw.githubusercontent.com/AgGateway-ADAPT/Standard/2.0.2/adapt-root-schema.json",
+        "https://raw.githubusercontent.com/AgGateway-ADAPT/Standard/2.0.2/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Field operations, equipment, inputs, catalog and transactional documents remain agriculture-specific models.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "agrovoc-fao-languages",
+      "name": "AGROVOC agricultural concepts: six FAO-language content scope",
+      "publisher": "FAO and AGROVOC editorial community",
+      "kind": "ontology",
+      "domains": [
+        "agriculture"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Rolling latestAgrovoc download returned ZIP bytes; exact release/version was not verified. Website news dates are not dataset release dates.",
+      "licence": {
+        "spdx": "CC-BY-3.0-IGO",
+        "text": "CC-BY-3.0-IGO (English, French, Spanish, Arabic, Russian and Chinese content only, per FAO policy)",
+        "status": "verified",
+        "basis": "FAO's access page and FAQ explicitly grant CC BY IGO 3.0 for the six named languages, including attribution and change indication. Other language rights remain separate.",
+        "termsUrl": "https://aims.fao.org/standards/agrovoc/access-agrovoc",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "SKOS",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://agrovoc.fao.org/latestAgrovoc/agrovoc_core.rdf.zip",
+      "evidenceUrls": [
+        "https://aims.fao.org/standards/agrovoc/access-agrovoc",
+        "https://aims.fao.org/standards/agrovoc/faq",
+        "https://agrovoc.fao.org/latestAgrovoc/agrovoc_core.rdf.zip"
+      ],
+      "norn": {
+        "overlap": "Agricultural concepts and multilingual labels are sector classification/enrichment, not general Core types.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "This entry identifies a content scope inside a multilingual distribution, not a verified prefiltered download. Confirm actual snapshot notices and attribution before extracting or redistributing. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "agrovoc-other-languages",
+      "name": "AGROVOC additional language contributions and mixed bulk rights",
+      "publisher": "Contributing language institutions coordinated by FAO",
+      "kind": "ontology",
+      "domains": [
+        "agriculture"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Same verified rolling bulk URL; exact release remains unverified and is not inferred from the check date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "FAO policy explicitly separates other-language copyright ownership; no uniform redistribution grant for all contributions or the mixed corpus was verified.",
+        "termsUrl": "https://aims.fao.org/standards/agrovoc/access-agrovoc",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "SKOS",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://agrovoc.fao.org/latestAgrovoc/agrovoc_core.rdf.zip",
+      "evidenceUrls": [
+        "https://aims.fao.org/standards/agrovoc/access-agrovoc",
+        "https://aims.fao.org/standards/agrovoc/faq",
+        "https://agrovoc.fao.org/latestAgrovoc/agrovoc_core.rdf.zip"
+      ],
+      "norn": {
+        "overlap": "Additional labels and concept metadata are source-owned enrichment only.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "isobus-ddi",
+      "name": "ISOBUS ISO 11783-11 process-data dictionary",
+      "publisher": "ISO / ISOBUS online data-dictionary maintainers",
+      "kind": "code-list",
+      "domains": [
+        "agriculture"
+      ],
+      "version": "2026101901",
+      "versionDate": null,
+      "versionBasis": "Homepage and actual TXT header both report Version: 2026101901; this identifier is not converted into an unverified release date.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Actual TXT header explicitly prohibits network reproduction without an ISO licence; no such licence established.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.isobus.net/isobus/exports/completeTXT",
+      "evidenceUrls": [
+        "https://www.isobus.net/isobus/",
+        "https://www.isobus.net/isobus/exports/completeTXT",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "Agricultural process-data identifiers, units and resolutions; sector code list with restricted redistribution.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "isobus-parameters",
+      "name": "ISOBUS ISO 11783-1/7/12 parameter exports",
+      "publisher": "ISO / ISOBUS online data-dictionary maintainers",
+      "kind": "code-list",
+      "domains": [
+        "agriculture"
+      ],
+      "version": "2025092601",
+      "versionDate": null,
+      "versionBasis": "Homepage parameter section reports 2025092601 independently of DDI dictionary version 2026101901; publication date unverified.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No specific open grant for parameter export verified; do not infer rights from the public CSV link or from unrelated ADAPT MIT terms.",
+        "termsUrl": "https://www.iso.org/copyright.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.isobus.net/isobus/attachments/isoExport_csv.zip",
+      "evidenceUrls": [
+        "https://www.isobus.net/isobus/",
+        "https://www.isobus.net/isobus/attachments/isoExport_csv.zip",
+        "https://www.iso.org/copyright.html"
+      ],
+      "norn": {
+        "overlap": "Manufacturer/device classes and network parameter identifiers are sector codes, not business semantics.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}
