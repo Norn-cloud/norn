@@ -579,3 +579,39 @@ fn a_refused_read_fails_the_run_and_says_why() {
     );
     assert!(!sources.running("odoo.sandbox"));
 }
+
+/// UPLOAD-NULL-1 end to end: an empty cell lands as null on a nullable
+/// property (its source field `required: false`), every row once, with
+/// lineage to the object and row.
+#[test]
+fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
+    use norn_api::uploads::{LoadRequest, generate, install, load_rows, parse_csv, sha256_hex};
+    let host = host();
+    let csv = "Region,Units,Price,Shipped at\nnorth,3,1.50,2026-01-01T00:00:00Z\nsouth,,2,\n";
+    let uri = "s3://uploads/demo/sales.csv";
+    let table = parse_csv(csv).expect("parsed");
+    let sha = sha256_hex(csv.as_bytes());
+    let request = LoadRequest {
+        type_name: "Sales".into(),
+        columns: vec![],
+    };
+    let generated =
+        generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").expect("generated");
+    let version = install(&host, &generated, 2).expect("installed");
+    assert!(version > 1);
+    let loaded = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("loaded");
+    assert_eq!((loaded.rows_read, loaded.rows_landed, loaded.rows_quarantined), (2, 2, 0), "{loaded:#?}");
+    let second = host
+        .host_object("upload.Sales", &format!("{uri}#row=2"))
+        .expect("read")
+        .expect("row 2");
+    assert_eq!(second.get("units"), Some(&RuntimeValue::Null));
+    assert_eq!(second.get("shipped_at"), Some(&RuntimeValue::Null));
+    assert_eq!(second.get("region").and_then(RuntimeValue::as_str), Some("south"));
+    // Loading the same object again lands nothing new.
+    let again = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("reloaded");
+    assert_eq!(again.rows_landed, 2);
+    // The sandbox mappings keep working on the extended definitions.
+    let (rows, _) = pull("odoo", BTreeMap::new());
+    assert!(host.ingest(&rows).expect("ingested").iter().all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_))));
+}

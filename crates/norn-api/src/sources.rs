@@ -80,6 +80,8 @@ pub enum Trigger {
     Schedule,
     /// A person asked for it.
     Manual,
+    /// A person loaded an uploaded file.
+    Upload,
 }
 
 impl Trigger {
@@ -87,6 +89,7 @@ impl Trigger {
         match self {
             Self::Schedule => "schedule",
             Self::Manual => "manual",
+            Self::Upload => "upload",
         }
     }
 }
@@ -579,6 +582,71 @@ pub fn rfc3339(ms: u64) -> String {
             || "1970-01-01T00:00:00.000Z".to_owned(),
             |t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         )
+}
+
+/// One upload's load, as reported (SYNC-REPORT-1).
+#[derive(Debug, Clone)]
+pub struct UploadRun<'a> {
+    /// The connection id, e.g. `upload.sales`.
+    pub id: &'a str,
+    /// The display name (the file name).
+    pub label: &'a str,
+    /// The object's URI.
+    pub uri: &'a str,
+    /// The object's SHA-256.
+    pub sha256: &'a str,
+    /// The generated mapping.
+    pub mapping: &'a str,
+    /// Who loaded it.
+    pub actor: &'a str,
+    /// When the load started and ended.
+    pub started_ms: u64,
+    /// When it ended.
+    pub ended_ms: u64,
+    /// Rows read, landed and quarantined, and why.
+    pub counts: (u64, u64, u64),
+    /// Quarantine reasons by code.
+    pub reasons: BTreeMap<String, u64>,
+}
+
+/// Report an upload's load as a connection of system `upload` and its run.
+pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
+    let config = ConnectionConfig {
+        id: upload.id.to_owned(),
+        system: "upload".to_owned(),
+        label: upload.label.to_owned(),
+        connector: String::new(),
+        mapping: upload.mapping.to_owned(),
+        instance: "s3".to_owned(),
+        base_url: upload.uri.to_owned(),
+        headers: BTreeMap::new(),
+        every_minutes: 0,
+    };
+    let (read, landed, quarantined) = upload.counts;
+    let run = Run {
+        id: format!("{}/{}", upload.id, upload.started_ms),
+        trigger: Trigger::Upload,
+        actor: upload.actor.to_owned(),
+        started_ms: upload.started_ms,
+        pull: None,
+        auth: Vec::new(),
+        watermark_from: "{}".to_owned(),
+        read,
+        landed,
+        quarantined,
+        reasons: upload.reasons.clone(),
+    };
+    let summary = RunSummary {
+        run: run.id.clone(),
+        outcome: if quarantined > 0 { "partial" } else { "ok" },
+        rows_read: read,
+        rows_landed: landed,
+        rows_quarantined: quarantined,
+        quarantine_reasons: upload.reasons.clone(),
+        error: None,
+    };
+    let watermark = serde_json::json!({"sha256": upload.sha256, "rows": read}).to_string();
+    report(host, &config, &run, &summary, &watermark, Some(upload.ended_ms));
 }
 
 /// SYNC-REPORT-1: the run, as the cell's own observations. A cell without

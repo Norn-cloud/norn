@@ -608,12 +608,21 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
         let id = item
             .pointer(&feed.id_path)
             .ok_or_else(|| shape(format!("an item has no id at {}", feed.id_path)))?;
-        let source_id = scalar_text(id)
-            .ok_or_else(|| shape(format!("the id at {} is not text or a number", feed.id_path)))?;
+        let source_id = scalar_text(id).ok_or_else(|| {
+            shape(format!(
+                "the id at {} is not text or a number",
+                feed.id_path
+            ))
+        })?;
         let version = item
             .pointer(&feed.version_path)
             .and_then(RuntimeValue::as_str)
-            .ok_or_else(|| shape(format!("an item has no version text at {}", feed.version_path)))?
+            .ok_or_else(|| {
+                shape(format!(
+                    "an item has no version text at {}",
+                    feed.version_path
+                ))
+            })?
             .to_owned();
         let payload = feed
             .fields

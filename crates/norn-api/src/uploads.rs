@@ -47,7 +47,7 @@ pub struct S3Config {
     pub endpoint: String,
     /// The bucket.
     pub bucket: String,
-    /// The SigV4 region (`auto` for R2).
+    /// The `SigV4` region (`auto` for R2).
     pub region: String,
     access_key_id: String,
     secret_access_key: String,
@@ -101,7 +101,7 @@ impl S3Config {
         format!("s3://{}/{key}", self.bucket)
     }
 
-    /// A SigV4 query-signed URL for `method` on `key`, valid for
+    /// A `SigV4` query-signed URL for `method` on `key`, valid for
     /// `expires` seconds from `now_ms` (path-style addressing).
     #[must_use]
     pub fn presign(&self, method: &str, key: &str, now_ms: u64, expires: u32) -> String {
@@ -117,7 +117,9 @@ impl S3Config {
             now_ms,
             expires,
         })
-        .map_or_else(String::new, |query| format!("{}{path}?{query}", self.endpoint))
+        .map_or_else(String::new, |query| {
+            format!("{}{path}?{query}", self.endpoint)
+        })
     }
 }
 
@@ -132,7 +134,7 @@ struct Presign<'a> {
     expires: u32,
 }
 
-/// The signed query string (SigV4, `UNSIGNED-PAYLOAD`, only `host` signed).
+/// The signed query string (`SigV4`, `UNSIGNED-PAYLOAD`, only `host` signed).
 fn presign(p: &Presign<'_>) -> Option<String> {
     let at = chrono::DateTime::from_timestamp_millis(i64::try_from(p.now_ms).ok()?)?;
     let stamp = at.format("%Y%m%dT%H%M%SZ").to_string();
@@ -140,7 +142,10 @@ fn presign(p: &Presign<'_>) -> Option<String> {
     let scope = format!("{date}/{}/s3/aws4_request", p.region);
     let mut query = BTreeMap::from([
         ("X-Amz-Algorithm".to_owned(), "AWS4-HMAC-SHA256".to_owned()),
-        ("X-Amz-Credential".to_owned(), format!("{}/{scope}", p.access_key_id)),
+        (
+            "X-Amz-Credential".to_owned(),
+            format!("{}/{scope}", p.access_key_id),
+        ),
         ("X-Amz-Date".to_owned(), stamp.clone()),
         ("X-Amz-Expires".to_owned(), p.expires.to_string()),
         ("X-Amz-SignedHeaders".to_owned(), "host".to_owned()),
@@ -158,11 +163,17 @@ fn presign(p: &Presign<'_>) -> Option<String> {
         "AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{}",
         hex(&Sha256::digest(request.as_bytes()))
     );
-    let mut key = hmac(format!("AWS4{}", p.secret_access_key).as_bytes(), date.as_bytes());
+    let mut key = hmac(
+        format!("AWS4{}", p.secret_access_key).as_bytes(),
+        date.as_bytes(),
+    );
     for part in [p.region, "s3", "aws4_request"] {
         key = hmac(&key, part.as_bytes());
     }
-    query.insert("X-Amz-Signature".to_owned(), hex(&hmac(&key, to_sign.as_bytes())));
+    query.insert(
+        "X-Amz-Signature".to_owned(),
+        hex(&hmac(&key, to_sign.as_bytes())),
+    );
     Some(
         query
             .iter()
@@ -201,11 +212,14 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// URI-encode per SigV4: unreserved characters stay; `/` stays when asked.
+/// URI-encode per `SigV4`: unreserved characters stay; `/` stays when asked.
 fn encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') || (keep_slash && byte == b'/') {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~')
+            || (keep_slash && byte == b'/')
+        {
             out.push(char::from(byte));
         } else {
             let _written = write!(out, "%{byte:02X}");
@@ -318,7 +332,11 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
             ));
         }
         let mut cells = Vec::with_capacity(columns.len());
-        for ((value, column), seen) in record.into_iter().zip(columns.iter_mut()).zip(present.iter_mut()) {
+        for ((value, column), seen) in record
+            .into_iter()
+            .zip(columns.iter_mut())
+            .zip(present.iter_mut())
+        {
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 column.nullable = true;
@@ -326,13 +344,22 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
                 cells.push(None);
                 continue;
             }
-            column.inferred = if *seen { widen(column.inferred, trimmed) } else { classify(trimmed) };
+            column.inferred = if *seen {
+                widen(column.inferred, trimmed)
+            } else {
+                classify(trimmed)
+            };
             *seen = true;
             if column.samples.len() < 3 {
                 column.samples.push(trimmed.to_owned());
             }
-            if let Some((_, fraction)) = trimmed.split_once('.').filter(|_| number(trimmed).is_some()) {
-                column.scale = column.scale.max(u32::try_from(fraction.len()).unwrap_or(12).min(12));
+            if let Some((_, fraction)) = trimmed
+                .split_once('.')
+                .filter(|_| number(trimmed).is_some())
+            {
+                column.scale = column
+                    .scale
+                    .max(u32::try_from(fraction.len()).unwrap_or(12).min(12));
             }
             cells.push(Some(trimmed.to_owned()));
         }
@@ -404,14 +431,20 @@ fn records(text: &str) -> Result<Vec<Vec<String>>, String> {
 
 /// A plain JSON number: optional sign, digits, at most one point, no exponent.
 fn number(value: &str) -> Option<norn_ir::Decimal> {
-    let plain = value.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.'));
+    let plain = value
+        .bytes()
+        .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.'));
     plain.then(|| norn_ir::Decimal::parse(value).ok()).flatten()
 }
 
 /// The kind of a column's first present value.
 fn classify(value: &str) -> ColumnKind {
     if number(value).is_some() {
-        if value.contains('.') { ColumnKind::Decimal } else { ColumnKind::Integer }
+        if value.contains('.') {
+            ColumnKind::Decimal
+        } else {
+            ColumnKind::Integer
+        }
     } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
         ColumnKind::Boolean
     } else if chrono::DateTime::parse_from_rfc3339(value).is_ok() {
@@ -425,12 +458,22 @@ fn classify(value: &str) -> ColumnKind {
 fn widen(kind: ColumnKind, value: &str) -> ColumnKind {
     match (kind, classify(value)) {
         (ColumnKind::Integer, ColumnKind::Integer) => ColumnKind::Integer,
-        (ColumnKind::Integer | ColumnKind::Decimal, ColumnKind::Integer | ColumnKind::Decimal) => ColumnKind::Decimal,
+        (ColumnKind::Integer | ColumnKind::Decimal, ColumnKind::Integer | ColumnKind::Decimal) => {
+            ColumnKind::Decimal
+        }
         (ColumnKind::Boolean, ColumnKind::Boolean) => ColumnKind::Boolean,
         (ColumnKind::Datetime, ColumnKind::Datetime) => ColumnKind::Datetime,
         (
-            ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Datetime | ColumnKind::Text,
-            ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Datetime | ColumnKind::Text,
+            ColumnKind::Integer
+            | ColumnKind::Decimal
+            | ColumnKind::Boolean
+            | ColumnKind::Datetime
+            | ColumnKind::Text,
+            ColumnKind::Integer
+            | ColumnKind::Decimal
+            | ColumnKind::Boolean
+            | ColumnKind::Datetime
+            | ColumnKind::Text,
         ) => ColumnKind::Text,
     }
 }
@@ -439,7 +482,13 @@ fn unique_id(name: &str, seen: &mut BTreeSet<String>) -> String {
     let mut id: String = name
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
     id = id.trim_matches('_').to_owned();
     while id.contains("__") {
@@ -449,7 +498,7 @@ fn unique_id(name: &str, seen: &mut BTreeSet<String>) -> String {
         id = format!("c_{id}");
     }
     if id == "row_id" {
-        id = "row_id_column".to_owned();
+        "row_id_column".clone_into(&mut id);
     }
     id.truncate(60);
     let mut candidate = id.clone();
@@ -530,7 +579,10 @@ pub fn generate(
     }
     let choices: BTreeMap<&str, &ColumnChoice> =
         request.columns.iter().map(|c| (c.id.as_str(), c)).collect();
-    if let Some(unknown) = choices.keys().find(|id| !table.columns.iter().any(|c| c.id == **id)) {
+    if let Some(unknown) = choices
+        .keys()
+        .find(|id| !table.columns.iter().any(|c| c.id == **id))
+    {
         return Err(format!("no column {unknown}"));
     }
     let columns: Vec<(Column, ColumnKind)> = table
@@ -553,18 +605,24 @@ pub fn generate(
             "name": title, "namespace": "upload", "payload": payload, "provenance": {"source": "system"}, "scope": {}, "version": "0.1.0"})
     };
     let interface_envelope = envelope(base(
-        &format!("{interface}.interface"), "entity", &format!("{name} rows"),
+        &format!("{interface}.interface"),
+        "entity",
+        &format!("{name} rows"),
         json!({"entityVersion": "2.0", "interface": {"name": interface, "properties": [{"id": "row_id", "type": {"kind": "text"}}]}}),
         json!([]),
     ))?;
     let entity = envelope(base(
-        &format!("{object_type}.entity"), "entity", &format!("{name} (uploaded)"),
+        &format!("{object_type}.entity"),
+        "entity",
+        &format!("{name} (uploaded)"),
         json!({"entityVersion": "2.0", "objectType": {"identity": [{"name": "primary", "properties": ["row_id"]}],
             "implements": [interface], "links": [], "name": object_type, "properties": properties}}),
         json!([]),
     ))?;
     let source = envelope(base(
-        &source_schema, "source_schema", &format!("{name} upload"),
+        &source_schema,
+        "source_schema",
+        &format!("{name} upload"),
         json!({"format": "norn.source-schema/1", "source": {"system": UPLOAD_SOURCE, "instance": "s3", "version": "csv/1"},
             "observedAt": observed_at, "adapter": {"name": "norn-upload", "version": "1"},
             "rawMetadata": {"uri": uri, "sha256": sha256},
@@ -572,9 +630,13 @@ pub fn generate(
             "constraints": [{"id": "row_id", "kind": "primary_key", "dataset": "rows", "fields": ["row_id"], "origin": "declared"}]}),
         json!([]),
     ))?;
-    let pin = norn_checker::ArtifactRef::of(&source).map_err(|e| e.to_string())?.sha256;
+    let pin = norn_checker::ArtifactRef::of(&source)
+        .map_err(|e| e.to_string())?
+        .sha256;
     let mapping_envelope = envelope(base(
-        &mapping, "mapping", &format!("{name} rows to {object_type}"),
+        &mapping,
+        "mapping",
+        &format!("{name} rows to {object_type}"),
         json!({"format": "norn.mapping/1", "extensions": {"norn.mapping.generic/1.0.0": {"parity": "unqualified"}},
             "source": {"schemaId": source_schema, "version": "0.1.0", "sha256": pin},
             "interfaces": [format!("{interface}.interface")],
@@ -606,12 +668,16 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
         ColumnKind::Text => json!({"kind": "text"}),
     };
     let mut properties = vec![json!({"id": "row_id", "type": {"kind": "text"}})];
-    let mut fields = vec![json!({"dataset": "rows", "name": "row_id", "ordinal": 0, "nativeType": "csv.row", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true})];
+    let mut fields = vec![
+        json!({"dataset": "rows", "name": "row_id", "ordinal": 0, "nativeType": "csv.row", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true}),
+    ];
     let mut map_properties = vec![json!({"property": "row_id", "value": "input.row_id"})];
     for (ordinal, (column, kind)) in (1_u32..).zip(columns) {
         let mut property = json!({"id": column.id, "type": property_type(*kind, column.scale)});
         if column.nullable {
-            property["constraints"] = json!({"nullable": true});
+            if let Some(object) = property.as_object_mut() {
+                object.insert("constraints".to_owned(), json!({"nullable": true}));
+            }
         }
         properties.push(property);
         fields.push(json!({"dataset": "rows", "name": column.id, "ordinal": ordinal, "nativeType": "csv",
@@ -620,7 +686,10 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
         let value = match (kind, column.nullable) {
             (ColumnKind::Datetime, true) => format!("{input} == null ? null : timestamp({input})"),
             (ColumnKind::Datetime, false) => format!("timestamp({input})"),
-            (ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text, _) => input,
+            (
+                ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text,
+                _,
+            ) => input,
         };
         map_properties.push(json!({"property": column.id, "value": value}));
     }
@@ -632,26 +701,38 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
 ///
 /// # Errors
 /// The checker's refusal (its diagnostics in the message) or a store failure.
-pub fn install<E: SqlEngine>(host: &DevHost<E>, generated: &Generated, installed_at: u64) -> Result<u64, String> {
+pub fn install<E: SqlEngine>(
+    host: &DevHost<E>,
+    generated: &Generated,
+    installed_at: u64,
+) -> Result<u64, String> {
     let active = host
         .active_definitions()
         .map_err(|r| r.message)?
         .ok_or("the cell has no definitions to extend")?;
     let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
-    let ours: BTreeSet<&str> = generated.artifacts.iter().map(|a| a.artifact_id.as_str()).collect();
-    let mut artifacts: Vec<ArtifactEnvelope> = crate::kernel_set::retained_artifacts(&active.canonical_set)?
-        .into_iter()
-        .filter(|a| !ours.contains(a.artifact_id.as_str()))
+    let ours: BTreeSet<&str> = generated
+        .artifacts
+        .iter()
+        .map(|a| a.artifact_id.as_str())
         .collect();
+    let mut artifacts: Vec<ArtifactEnvelope> =
+        crate::kernel_set::retained_artifacts(&active.canonical_set)?
+            .into_iter()
+            .filter(|a| !ours.contains(a.artifact_id.as_str()))
+            .collect();
     artifacts.extend(generated.artifacts.iter().cloned());
-    let admitted = crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(|refusal| match refusal {
-        crate::kernel_set::KernelRefusal::Refused(findings) => findings
-            .iter()
-            .map(|f| format!("{}: {}", f.code, f.message))
-            .collect::<Vec<_>>()
-            .join("; "),
-        crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
-    })?;
+    let admitted =
+        crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(|refusal| {
+            match refusal {
+                crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                    .iter()
+                    .map(|f| format!("{}: {}", f.code, f.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+            }
+        })?;
     let installed = host
         .install_definitions(
             admitted.model,
@@ -720,7 +801,8 @@ pub fn load_rows<E: SqlEngine>(
         for (offset, cells) in chunk.iter().enumerate() {
             let number = chunk_start.saturating_add(offset).saturating_add(1);
             let row_id = format!("{uri}#row={number}");
-            let mut payload = BTreeMap::from([("row_id".to_owned(), RuntimeValue::String(row_id.clone()))]);
+            let mut payload =
+                BTreeMap::from([("row_id".to_owned(), RuntimeValue::String(row_id.clone()))]);
             for ((column, kind), index) in generated.columns.iter().zip(&indices) {
                 let cell = index.and_then(|i| cells.get(i)).cloned().flatten();
                 payload.insert(column.id.clone(), typed(cell.as_deref(), *kind));
@@ -743,7 +825,9 @@ pub fn load_rows<E: SqlEngine>(
                 },
             ));
         }
-        loaded.rows_read = loaded.rows_read.saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
+        loaded.rows_read = loaded
+            .rows_read
+            .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
             match ingested.outcome {
                 MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
@@ -785,11 +869,15 @@ fn typed(cell: Option<&str>, kind: ColumnKind) -> RuntimeValue {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "upload scenarios")]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "upload scenarios"
+)]
 mod tests {
     use super::*;
 
-    /// The AWS SigV4 query-auth example (`GET /test.txt`, 2013-05-24, us-east-1).
+    /// The AWS `SigV4` query-auth example (`GET /test.txt`, 2013-05-24, us-east-1).
     #[test]
     fn presign_matches_the_published_sigv4_example() {
         let query = presign(&Presign {
@@ -804,7 +892,9 @@ mod tests {
         })
         .expect("signed");
         assert!(
-            query.ends_with("X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"),
+            query.ends_with(
+                "X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
+            ),
             "{query}"
         );
     }
@@ -812,7 +902,12 @@ mod tests {
     #[test]
     fn presigned_urls_are_path_style_on_the_configured_endpoint() {
         let s3 = S3Config::fixed("https://store.example", "uploads", "auto", "id", "secret");
-        let url = s3.presign("PUT", "uploads/org/env/u1/sales 2026.csv", 1_794_484_800_000, URL_SECONDS);
+        let url = s3.presign(
+            "PUT",
+            "uploads/org/env/u1/sales 2026.csv",
+            1_794_484_800_000,
+            URL_SECONDS,
+        );
         assert!(url.starts_with("https://store.example/uploads/uploads/org/env/u1/sales%202026.csv?X-Amz-Algorithm=AWS4-HMAC-SHA256&"), "{url}");
         assert!(url.contains("X-Amz-Expires=900"));
         assert_eq!(s3.uri("k"), "s3://uploads/k");
@@ -821,19 +916,32 @@ mod tests {
     #[test]
     fn empty_cells_are_absent_and_typing_ignores_them() {
         let table = parse_csv("Price,Qty,When,Note,Flag\r\n1.5,3,2026-01-01T00:00:00Z,\"a, b\",true\r\n,4,,\"\",false\r\n2,,2026-02-01T00:00:00Z,x,\n").expect("parsed");
-        let kinds: Vec<_> = table.columns.iter().map(|c| (c.id.as_str(), c.inferred, c.nullable, c.null_count)).collect();
-        assert_eq!(kinds, [
-            ("price", ColumnKind::Decimal, true, 1),
-            ("qty", ColumnKind::Integer, true, 1),
-            ("when", ColumnKind::Datetime, true, 1),
-            ("note", ColumnKind::Text, true, 1),
-            ("flag", ColumnKind::Boolean, true, 1),
-        ]);
+        let kinds: Vec<_> = table
+            .columns
+            .iter()
+            .map(|c| (c.id.as_str(), c.inferred, c.nullable, c.null_count))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("price", ColumnKind::Decimal, true, 1),
+                ("qty", ColumnKind::Integer, true, 1),
+                ("when", ColumnKind::Datetime, true, 1),
+                ("note", ColumnKind::Text, true, 1),
+                ("flag", ColumnKind::Boolean, true, 1),
+            ]
+        );
         assert_eq!(table.rows[0][3].as_deref(), Some("a, b"));
         assert_eq!(table.rows[1][0], None);
-        assert_eq!(typed(Some("1.50"), ColumnKind::Decimal), RuntimeValue::from_json_text("1.50").expect("n"));
+        assert_eq!(
+            typed(Some("1.50"), ColumnKind::Decimal),
+            RuntimeValue::from_json_text("1.50").expect("n")
+        );
         assert_eq!(typed(None, ColumnKind::Integer), RuntimeValue::Null);
-        assert_eq!(typed(Some("NA"), ColumnKind::Integer), RuntimeValue::String("NA".into()));
+        assert_eq!(
+            typed(Some("NA"), ColumnKind::Integer),
+            RuntimeValue::String("NA".into())
+        );
     }
 
     #[test]
@@ -847,7 +955,10 @@ mod tests {
         let table = parse_csv("x,y\n1,2.5\n").expect("parsed");
         let generated = generate(
             &table,
-            &LoadRequest { type_name: "Points".into(), columns: vec![] },
+            &LoadRequest {
+                type_name: "Points".into(),
+                columns: vec![],
+            },
             "s3://uploads/k.csv",
             &sha256_hex(b"x,y\n1,2.5\n"),
             "2026-11-12T12:00:00.000Z",
@@ -857,8 +968,21 @@ mod tests {
         assert_eq!(generated.artifacts.len(), 4);
         let source = &generated.artifacts[2];
         let pin = norn_checker::ArtifactRef::of(source).expect("pin").sha256;
-        let mapping = serde_json::to_value(generated.artifacts[3].payload.to_json_value()).expect("payload");
+        let mapping =
+            serde_json::to_value(generated.artifacts[3].payload.to_json_value()).expect("payload");
         assert_eq!(mapping["source"]["sha256"], pin);
-        assert!(generate(&table, &LoadRequest { type_name: "lower".into(), columns: vec![] }, "u", "h", "t").is_err());
+        assert!(
+            generate(
+                &table,
+                &LoadRequest {
+                    type_name: "lower".into(),
+                    columns: vec![]
+                },
+                "u",
+                "h",
+                "t"
+            )
+            .is_err()
+        );
     }
 }
