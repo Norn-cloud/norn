@@ -390,7 +390,7 @@ fn sync(
     loop {
         match step {
             Step::Done(summary) => return (summary, sent),
-            // SYNC-YIELD-1: rows map a few at a time between the host's turns.
+            // SYNC-YIELD-1: rows map a page at a time between the host's turns.
             Step::Continue => step = sources.step(host, id, None, now_ms),
             Step::Request(request) => {
                 let feed = profile
