@@ -829,13 +829,12 @@ impl<'a> Checker<'a> {
     }
 
     fn time_and_filters(&mut self, metric: &BoundMetric, root: &str, at: &str) {
+        // METRIC-GRAIN-LINK-1: a partial time path is admitted; rows an optional
+        // link does not reach have no time and are skipped and counted.
         if let Some(path) = self.path(root, &metric.time_dimension, &format!("{at}/timeDimension"))
+            && (path.fan_out || path.properties.iter().any(|p| !is_time(p) || p.nullable))
         {
-            if path.fan_out || path.properties.iter().any(|p| !is_time(p) || p.nullable) {
-                self.reject(codes::INVALID_TIME, &format!("{at}/timeDimension"));
-            }
-            // METRIC-GRAIN-LINK-1: rows an optional link does not reach have no
-            // time; they are skipped and counted, never refused or invented.
+            self.reject(codes::INVALID_TIME, &format!("{at}/timeDimension"));
         }
         for (index, grouping) in metric.snapshot_groupings.iter().enumerate() {
             let grouping_at = format!(
