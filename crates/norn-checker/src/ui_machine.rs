@@ -100,6 +100,9 @@ const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
 /// One concrete way an awaited call ends: an outcome, and for `refused` its category.
 type OutcomeValue = (WidgetCallOutcome, Option<WidgetRefusalCategory>);
 
+/// Outcome value to the unguarded transitions that take it: `(index, specific)`.
+type Covered = BTreeMap<OutcomeValue, Vec<(usize, bool)>>;
+
 /// State graph keyed by state id.
 type Graph<'m> = BTreeMap<&'m str, BTreeSet<&'m str>>;
 
@@ -365,7 +368,7 @@ struct Facts<'m> {
     /// `state` to outcome value to unguarded transitions: `(index, specific)`, where `specific`
     /// marks an event that names the refusal category. A specific transition takes precedence over
     /// a catch-all one, so only two of the same specificity conflict.
-    covered: BTreeMap<&'m str, BTreeMap<OutcomeValue, Vec<(usize, bool)>>>,
+    covered: BTreeMap<&'m str, Covered>,
 }
 
 struct MachineChecker<'m> {

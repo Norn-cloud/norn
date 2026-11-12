@@ -546,7 +546,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 }
                 ActionSurface::Form(form_id.clone())
             }
-            WidgetComponent::Dialog { .. } => surface.clone(),
+            // A control only raises page machine events; `ui_machine` checks its uses.
+            WidgetComponent::Dialog { .. } | WidgetComponent::Control { .. } => surface.clone(),
             WidgetComponent::Form { form_id } => {
                 self.add_page_use(Usage::Form(form_id.clone()), page_id);
                 self.rendered_forms
@@ -575,8 +576,6 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 self.add_surface_use(Usage::Navigation(item_id.clone()), surface);
                 surface.clone()
             }
-            // A control only raises page machine events; `ui_machine` checks its uses.
-            WidgetComponent::Control { .. } => surface.clone(),
             WidgetComponent::Composition {
                 widget,
                 page_id: source_page,
