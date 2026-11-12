@@ -260,6 +260,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}/{id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: an object's quality findings, including while it is quarantined.
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
+         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
+         *     or a host failure.
+         */
+        get: operations["get_object_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: an object's proven versions, newest first, with what wrote each.
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
+         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
+         *     or a host failure.
+         */
+        get: operations["get_object_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}/{id}/lineage": {
         parameters: {
             query?: never;
@@ -324,6 +370,29 @@ export interface paths {
          *     (409 `object.snapshot_moved`, `retryable`), or a host failure.
          */
         get: operations["get_object_profile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}:quarantined": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-6: the ids of a type's quarantined objects the caller may review,
+         *     so a grid's quarantine count can lead to them.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), a commit while
+         *     the rows were read (409 `object.snapshot_moved`), or a host failure.
+         */
+        get: operations["get_quarantined_objects"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1273,6 +1342,13 @@ export interface components {
          * @enum {string}
          */
         NornDiagnosticFormat: "norn/diagnostic@2";
+        /** @description One evidence object linked to the subject: where one of its values was read. */
+        NornEvidenceRef: {
+            /** @description The evidence object's id. */
+            id: string;
+            /** @description The evidence object's type (it implements `norn.SourceEvidence`). */
+            objectType: string;
+        };
         /**
          * @description Explain projection version.
          * @enum {string}
@@ -9417,6 +9493,35 @@ export interface components {
             /** @description Revalidated exact result at its original frontier. */
             result: components["schemas"]["NornQueryResult"];
         };
+        /** @description An object's quality findings (OBS-EVIDENCE-1), open and resolved. */
+        NornObjectFindings: {
+            /**
+             * @description The evidence objects linked to it that the caller may read (types
+             *     implementing `norn.SourceEvidence`), at most [`MAX_EVIDENCE`]. They are
+             *     read at `/v1/objects/{type}/{id}`; a quarantined subject's evidence is
+             *     not quarantined with it.
+             */
+            evidence: components["schemas"]["NornEvidenceRef"][];
+            /** @description Every finding on the object, each pinned to the rule it records; a correction resolves a finding without rewriting it. */
+            findings: components["schemas"]["NornIrDataQualityFinding"][];
+            /** @description The object id. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description Whether an open finding holds the object out of authoritative reads. */
+            quarantined: boolean;
+        };
+        /** @description An object's versions, newest first. */
+        NornObjectHistory: {
+            /** @description The object id. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]. */
+            truncated: boolean;
+            /** @description The versions listed, newest first. */
+            versions: components["schemas"]["NornObjectVersion"][];
+        };
         /**
          * @description HOST-READ-4: one page of the links touching an object that the caller may
          *     see at both ends (D67); links to rows it cannot see are neither listed nor
@@ -9516,6 +9621,67 @@ export interface components {
              */
             version: number;
         };
+        /** @description One proven version of an object. */
+        NornObjectVersion: {
+            /**
+             * Format: int64
+             * @description The commit (ledger receipt sequence) that wrote it.
+             */
+            commit: number;
+            /**
+             * Format: int64
+             * @description The commit's logical time, in milliseconds.
+             */
+            logicalTime: number;
+            /** @description Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens. */
+            values?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Format: int64
+             * @description The version number.
+             */
+            version: number;
+            /** @description What wrote it. */
+            writer: components["schemas"]["NornVersionWriter"];
+        };
+        /** @description One row whose value is outside a fence. */
+        NornOutlier: {
+            /** @description The row's id. */
+            id: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            value: unknown;
+        };
+        /**
+         * @description Tukey's far-out values of one numeric property over the profiled rows:
+         *     those below `q1 − k·(q3 − q1)` or above `q3 + k·(q3 − q1)`. The quartiles
+         *     are the profile's own nearest-rank quantiles (25 and 75), so the fences
+         *     agree with the quantiles shown, and every number is exact (no float).
+         *     Like the rest of the profile, only rows whose values the caller may read
+         *     are counted or named; past the scan bound (`approximate`) the outliers
+         *     cover only the rows read.
+         */
+        NornOutliers: {
+            /**
+             * Format: int64
+             * @description Rows outside a fence.
+             */
+            count: number;
+            /** @description At most 20 of them, furthest from their fence first, then by id. */
+            examples: components["schemas"]["NornOutlier"][];
+            /** @description The multiplier `k`, as an exact decimal (`"3"`). */
+            k: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            lowerFence: unknown;
+            /** @description `tukey_far_out`. */
+            method: string;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            q1: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            q3: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            upperFence: unknown;
+        };
         /** @description The profile of one property over the profiled rows. */
         NornPropertyProfile: {
             /**
@@ -9540,6 +9706,7 @@ export interface components {
              * @description Rows without one.
              */
             nulls: number;
+            outliers: components["schemas"]["NornOutliers"] | null;
             /** @description The property id. */
             property: string;
             /** @description Quantiles by nearest rank (numeric and temporal properties). */
@@ -9554,6 +9721,33 @@ export interface components {
             percent: number;
             /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
             value: unknown;
+        };
+        /** @description One quarantined object the caller may review. */
+        NornQuarantinedObject: {
+            /** @description The object id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Open findings that hold it out of authoritative reads.
+             */
+            openFindings: number;
+        };
+        /** @description A type's quarantined objects, as the caller may see them. */
+        NornQuarantinedPage: {
+            /** @description True when the scan bound was reached: the list covers only the rows read. */
+            approximate: boolean;
+            /**
+             * @description Quarantined rows whose values the caller may read, in id order. A row
+             *     whose values are withheld is never named: quarantine is value-level.
+             */
+            items: components["schemas"]["NornQuarantinedObject"][];
+            /** @description The concept read. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description The row scan bound.
+             */
+            scanLimit: number;
         };
         /**
          * @description One object as a grid query shows it (HOST-READ-3, D67). A row the caller
@@ -9737,6 +9931,27 @@ export interface components {
             direction: components["schemas"]["NornSortDirection"];
             /** @description The property sorted on. */
             property: string;
+        };
+        /** @description What wrote one version. */
+        NornVersionWriter: {
+            /** @enum {string} */
+            kind: "mapping";
+            /** @description The version's source lineage (`/lineage?version=`). */
+            lineage: components["schemas"]["NornInstanceSourceProvenance"];
+        } | {
+            /** @description The action identity. */
+            actionId: string;
+            /** @description The verified caller the server attributed the call to. */
+            actor: string;
+            /** @description The effective input (caller input plus server derivations); decimals are exact JSON number tokens. */
+            input: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            kind: "action";
+        } | {
+            /** @enum {string} */
+            kind: "other";
         };
         /** @description An execution world. */
         NornWorld: "main" | {
@@ -10725,6 +10940,174 @@ export interface operations {
             };
         };
     };
+    get_object_findings: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object's quality findings, open and resolved, and whether it is quarantined. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectFindings"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_history: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object's proven versions, newest first, each with its commit and what wrote it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectHistory"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_object_lineage: {
         parameters: {
             query: {
@@ -10732,6 +11115,8 @@ export interface operations {
                 orgId: string;
                 /** @description Environment (required). */
                 environmentId: string;
+                /** @description An earlier version of the object (HOST-READ-6). With it, a quarantined object is served to a caller holding Values and Sources on it, and a version a mapping did not write is the same 404. */
+                version?: number;
             };
             header?: never;
             path: {
@@ -10966,6 +11351,88 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_quarantined_objects: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The type's quarantined objects whose values the caller may read, with their open finding counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQuarantinedPage"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, or a path segment that is not UTF-8 once decoded. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the type is not declared. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed while the rows were read. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,0 +1,64 @@
+{
+  "artifactId": "docs.SourceDocumentLine.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Extracted document line",
+  "namespace": "docs",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "One printed line of an extracted document.",
+      "name": "docs.SourceDocumentLine",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "line_no",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "description",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "USD"
+              }
+            ]
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.SourceDocumentLine.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

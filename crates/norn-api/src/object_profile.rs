@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::engine::SqlEngine;
-use norn_ir::{PropertyType, RuntimeValue};
+use norn_ir::{Decimal, PropertyType, RuntimeValue};
 use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Object, Schema, SchemaType};
@@ -32,6 +32,11 @@ use crate::{
 const NUMERIC_BINS: usize = 10;
 /// A temporal histogram counts per day up to this many days, else per month.
 const MAX_DAY_BINS: usize = 62;
+/// Tukey's far-out multiplier: a value further than this many interquartile
+/// ranges outside the quartiles is an outlier.
+const OUTLIER_K: u8 = 3;
+/// Most outlier rows one property profile names.
+const MAX_OUTLIER_EXAMPLES: usize = 20;
 /// The quantiles reported, in percent.
 const QUANTILES: [u32; 5] = [0, 25, 50, 75, 100];
 
@@ -84,6 +89,53 @@ pub struct NornPropertyProfile {
     /// The distribution (numeric and temporal properties).
     #[schema(required = true, nullable = true)]
     pub histogram: Option<NornHistogram>,
+    /// Values far outside the middle half (numeric properties; null for
+    /// every other kind, and when the quartiles cannot be subtracted exactly).
+    #[schema(required = true, nullable = true)]
+    pub outliers: Option<NornOutliers>,
+}
+
+/// Tukey's far-out values of one numeric property over the profiled rows:
+/// those below `q1 − k·(q3 − q1)` or above `q3 + k·(q3 − q1)`. The quartiles
+/// are the profile's own nearest-rank quantiles (25 and 75), so the fences
+/// agree with the quantiles shown, and every number is exact (no float).
+/// Like the rest of the profile, only rows whose values the caller may read
+/// are counted or named; past the scan bound (`approximate`) the outliers
+/// cover only the rows read.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornOutliers {
+    /// `tukey_far_out`.
+    pub method: String,
+    /// The multiplier `k`, as an exact decimal (`"3"`).
+    pub k: String,
+    /// The 25th percentile by nearest rank.
+    #[schema(schema_with = value_schema)]
+    pub q1: RuntimeValue,
+    /// The 75th percentile by nearest rank.
+    #[schema(schema_with = value_schema)]
+    pub q3: RuntimeValue,
+    /// `q1 − k·(q3 − q1)`; a value below it is an outlier.
+    #[schema(schema_with = value_schema)]
+    pub lower_fence: RuntimeValue,
+    /// `q3 + k·(q3 − q1)`; a value above it is an outlier.
+    #[schema(schema_with = value_schema)]
+    pub upper_fence: RuntimeValue,
+    /// Rows outside a fence.
+    pub count: u64,
+    /// At most 20 of them, furthest from their fence first, then by id.
+    pub examples: Vec<NornOutlier>,
+}
+
+/// One row whose value is outside a fence.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornOutlier {
+    /// The row's id.
+    pub id: String,
+    /// Its value.
+    #[schema(schema_with = value_schema)]
+    pub value: RuntimeValue,
 }
 
 /// One quantile.
@@ -251,6 +303,7 @@ fn profile_property(
         max: None,
         quantiles: Vec::new(),
         histogram: None,
+        outliers: None,
     };
     match kind {
         "numeric" => {
@@ -297,6 +350,48 @@ fn profile_property(
         _ => {}
     }
     out
+}
+
+/// Tukey's far-out values among `rows` (id, exact number), or `None` when a
+/// fence cannot be computed exactly or there are no rows.
+fn outliers(rows: &[(&str, Decimal)]) -> Option<NornOutliers> {
+    let mut sorted: Vec<Decimal> = rows.iter().map(|(_, value)| *value).collect();
+    sorted.sort();
+    let (q1, q3) = (at_rank(&sorted, 25)?, at_rank(&sorted, 75)?);
+    let iqr = q3.checked_sub(q1)?;
+    let span = (1..OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
+    let (lower, upper) = (q1.checked_sub(span)?, q3.checked_add(span)?);
+    let mut found: Vec<(Decimal, &str, Decimal)> = rows
+        .iter()
+        .filter_map(|(id, value)| {
+            let distance = if *value < lower {
+                lower.checked_sub(*value)
+            } else if *value > upper {
+                value.checked_sub(upper)
+            } else {
+                return None;
+            };
+            distance.map(|distance| (distance, *id, *value))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    Some(NornOutliers {
+        method: "tukey_far_out".into(),
+        k: OUTLIER_K.to_string(),
+        q1: RuntimeValue::Number(q1),
+        q3: RuntimeValue::Number(q3),
+        lower_fence: RuntimeValue::Number(lower),
+        upper_fence: RuntimeValue::Number(upper),
+        count: count(found.len()),
+        examples: found
+            .into_iter()
+            .take(MAX_OUTLIER_EXAMPLES)
+            .map(|(_, id, value)| NornOutlier {
+                id: id.to_owned(),
+                value: RuntimeValue::Number(value),
+            })
+            .collect(),
+    })
 }
 
 fn fill(out: &mut NornPropertyProfile, sorted: &[RuntimeValue]) {
@@ -373,7 +468,28 @@ pub fn get_object_profile<E: SqlEngine>(
                             .filter(|value| **value != RuntimeValue::Null)
                     })
                     .collect();
-                profile_property(property, kind_of(declared.as_ref()), &values)
+                let kind = kind_of(declared.as_ref());
+                let mut profile = profile_property(property, kind, &values);
+                if kind == "numeric" {
+                    let rows: Vec<(&str, Decimal)> = readable
+                        .iter()
+                        .filter_map(|listed| match listed.row.values.get(property) {
+                            Some(RuntimeValue::Number(number)) => {
+                                Some((listed.row.id.as_str(), *number))
+                            }
+                            Some(
+                                RuntimeValue::Null
+                                | RuntimeValue::Bool(_)
+                                | RuntimeValue::String(_)
+                                | RuntimeValue::Array(_)
+                                | RuntimeValue::Object(_),
+                            )
+                            | None => None,
+                        })
+                        .collect();
+                    profile.outliers = outliers(&rows);
+                }
+                profile
             })
             .collect(),
     })
@@ -387,6 +503,36 @@ pub fn get_object_profile<E: SqlEngine>(
 )]
 mod tests {
     use super::*;
+
+    #[test]
+    fn far_out_values_are_named_most_extreme_first() {
+        let decimal = |text: &str| Decimal::parse(text).unwrap();
+        let ids: Vec<String> = (0..13).map(|n| format!("row-{n:02}")).collect();
+        let mut rows: Vec<(&str, Decimal)> = ids
+            .iter()
+            .zip([
+                "10", "11", "12", "12.5", "13", "14", "15", "15.5", "16", "17", "18",
+            ])
+            .map(|(id, value)| (id.as_str(), decimal(value)))
+            .collect();
+        rows.push((ids[11].as_str(), decimal("720")));
+        rows.push((ids[12].as_str(), decimal("-200")));
+        let found = outliers(&rows).unwrap();
+        // q1 = 12 and q3 = 16 by nearest rank (ranks 4 and 10 of 13); IQR 4; fences 0 and 28.
+        assert_eq!(
+            (&found.q1, &found.q3, &found.lower_fence, &found.upper_fence),
+            (
+                &RuntimeValue::Number(decimal("12")),
+                &RuntimeValue::Number(decimal("16")),
+                &RuntimeValue::Number(decimal("0")),
+                &RuntimeValue::Number(decimal("28"))
+            )
+        );
+        assert_eq!(found.count, 2);
+        assert_eq!(found.examples[0].id, "row-11");
+        assert_eq!(found.examples[1].id, "row-12");
+        assert!(outliers(&[]).is_none());
+    }
 
     #[test]
     fn nearest_rank_quantiles_never_interpolate() {

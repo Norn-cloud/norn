@@ -38,6 +38,8 @@ pub mod object_links;
 pub mod object_profile;
 /// HOST-READ-3: the object grid query grammar and its evaluation.
 pub mod object_query;
+/// HOST-READ-6: an object's quality findings and version history.
+pub mod object_review;
 /// HOST-READ-2: authorized typed object pages and objects.
 pub mod object_routes;
 /// Typed object, link and source-lineage reads for the Data Explorer.
