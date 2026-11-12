@@ -228,7 +228,11 @@ fn decisions<E: SqlEngine>(
                 body: &body,
                 now,
             };
-            let as_requester = steps.as_principal();
+            let as_requester =
+                |principal: &RunStarter,
+                 call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                    steps.as_principal(principal, call)
+                };
             match decide(host, &call, &reads, runtime, &as_requester) {
                 Ok(mut decided) => {
                     // The decision may have moved the run onto action steps.
@@ -287,22 +291,18 @@ impl<E: SqlEngine> Steps<'_, E> {
     /// when this cell cannot act as it, or has no slot.
     fn as_principal(
         &self,
-    ) -> impl Fn(
-        &RunStarter,
-        &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
-    ) -> Option<Result<ActionAnswer, Refusal>>
-    + '_ {
-        move |principal, call| {
-            let slot = self.caller?;
-            let current = slot.current();
-            let acting = acting_caller(principal, current.as_ref())?;
-            let _restore = Restore {
-                slot,
-                previous: current,
-            };
-            slot.record(Some(acting));
-            Some(call())
-        }
+        principal: &RunStarter,
+        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+    ) -> Option<Result<ActionAnswer, Refusal>> {
+        let slot = self.caller?;
+        let current = slot.current();
+        let acting = acting_caller(principal, current.as_ref())?;
+        let _restore = Restore {
+            slot,
+            previous: current,
+        };
+        slot.record(Some(acting));
+        Some(call())
     }
 
     /// Run `run_id`'s pending action steps under its recorded starter;
@@ -312,7 +312,10 @@ impl<E: SqlEngine> Steps<'_, E> {
         let (Some(runtime), Some(_)) = (self.questions, self.caller) else {
             return false;
         };
-        let as_starter = self.as_principal();
+        let as_starter =
+            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                self.as_principal(principal, call)
+            };
         let driven: Result<(), Refusal> =
             norn_api::flow_driver::drive_run(self.host, run_id, &as_starter, runtime, now);
         driven.is_ok()
