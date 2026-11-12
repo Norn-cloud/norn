@@ -352,13 +352,20 @@ pub fn handle_all<E: SqlEngine>(
 /// is absent.
 #[must_use]
 pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
-    respond(route::<E>(
-        None,
-        None,
-        &DefinitionKinds::default(),
-        None,
-        request,
-    ))
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
