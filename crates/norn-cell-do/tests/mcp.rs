@@ -164,23 +164,28 @@ fn notifications_are_accepted_without_a_body() {
 #[test]
 fn only_post_from_a_verified_caller_in_the_cells_own_scope_is_served() {
     let cell = cell();
-    let list = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string();
-    let refused = |response: Response| {
-        let body: Value = serde_json::from_str(&response.body).unwrap();
-        (response.status, body["code"].as_str().unwrap().to_owned())
-    };
-    assert_eq!(
-        refused(send(&cell, "GET", MCP_PATH, SCOPE, VIEWER, "")).0,
-        405
-    );
-    for (query, auth) in [
-        (SCOPE, None),
-        (SCOPE, STRANGER),
-        ("orgId=org_demo&environmentId=dev", VIEWER),
-        ("orgId=org_demo", VIEWER),
-    ] {
-        let (status, _) = refused(send(&cell, "POST", MCP_PATH, query, auth, &list));
-        assert!(status == 403 || status == 400, "{query} {auth:?}: {status}");
+    let get = send(&cell, "GET", MCP_PATH, SCOPE, VIEWER, "");
+    assert_eq!(get.status, 405);
+    // Nothing is answered, not initialize and not the catalog, to an unverified
+    // caller or another scope: the same opaque denial the catalog read gives.
+    for method in ["initialize", "tools/list", "tools/call", "ping"] {
+        let message = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": {"protocolVersion": "2025-11-25", "name": "norn_catalog"}}).to_string();
+        for (query, auth) in [
+            (SCOPE, None),
+            (SCOPE, STRANGER),
+            ("orgId=org_demo&environmentId=dev", VIEWER),
+            ("orgId=org_other&environmentId=analytics", VIEWER),
+            ("orgId=org_demo", VIEWER),
+        ] {
+            let refused = send(&cell, "POST", MCP_PATH, query, auth, &message);
+            let catalog = send(&cell, "GET", "/v1/definitions", query, auth, "");
+            assert_eq!(
+                (refused.status, refused.body.as_str()),
+                (catalog.status, catalog.body.as_str()),
+                "{method} {query} {auth:?}"
+            );
+            assert_eq!(refused.status, 403, "{method} {query} {auth:?}");
+        }
     }
 }
 

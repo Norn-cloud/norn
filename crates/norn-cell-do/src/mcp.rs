@@ -126,12 +126,19 @@ fn session<E: SqlEngine>(
         ));
     }
     let scope = scope_query(request.query)?;
-    // The catalog is built under the caller's own verified principal, which
-    // ends before any tool call re-enters the routes with its own.
+    // Nothing is answered, not even `initialize`, before the caller is verified
+    // and the scope is this cell's: the same opaque denial the read routes give.
+    // The catalog is built under that principal, which ends before any tool
+    // call re-enters the routes with its own.
     let catalog = {
         let _request = RequestScope::new(principals);
         let actor = principals.resolve(request.authorization, request.now);
-        let actor = actor.as_deref().ok_or_else(norn_api::authz::read_denied)?;
+        let admitted = host
+            .scope()
+            .admit(Some(&scope.org_id), Some(&scope.environment_id));
+        let (Some(actor), Ok(())) = (actor.as_deref(), admitted) else {
+            return Err(norn_api::authz::read_denied());
+        };
         Catalog::build(host, questions, &scope, actor)?
     };
     let mut session = Session::new(catalog.tools, &catalog.binding)?
@@ -148,7 +155,7 @@ fn session<E: SqlEngine>(
         actions: catalog.actions,
         version: catalog.version,
     };
-    session.handle(request.body, &mut backend)
+    norn_api::mcp::post_message(&mut session, request.body, &mut backend)
 }
 
 /// Scope from the query string: exactly `orgId` and `environmentId`.

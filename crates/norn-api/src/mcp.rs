@@ -3,6 +3,7 @@ use crate::refusal::Refusal;
 use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use utoipa::ToSchema;
 
 /// The backend's unchanged payload and failure classification.
 pub struct CallOutput {
@@ -377,4 +378,63 @@ impl Session {
             catalog_digest: &self.digest,
         })
     }
+}
+
+/// `POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,
+/// over its stateless Streamable HTTP transport. The tool catalog is not
+/// listed here: `tools/list` returns it, projected from what the cell declares.
+#[derive(Debug, ToSchema)]
+pub struct McpMessage {
+    /// Always `2.0`.
+    pub jsonrpc: String,
+    /// A string or number; absent for a notification, which is answered 202.
+    #[schema(value_type = Object, required = false)]
+    pub id: Option<RuntimeValue>,
+    /// `initialize`, `ping`, `tools/list`, `tools/call` or a notification.
+    pub method: String,
+    /// The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.
+    #[schema(value_type = Object, required = false)]
+    pub params: Option<RuntimeValue>,
+}
+
+/// The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id.
+#[derive(Debug, ToSchema)]
+pub struct McpReply {
+    /// Always `2.0`.
+    pub jsonrpc: String,
+    /// The request's id.
+    #[schema(value_type = Object)]
+    pub id: RuntimeValue,
+    /// The method's result. A tool's refusal is a result with `isError: true`
+    /// whose `structuredContent` is the route's own refusal.
+    #[schema(value_type = Object, required = false)]
+    pub result: Option<RuntimeValue>,
+    /// A protocol error: malformed message, unknown method or tool.
+    #[schema(required = false)]
+    pub error: Option<McpError>,
+}
+
+/// A JSON-RPC protocol error, carrying the shared refusal as its data.
+#[derive(Debug, ToSchema)]
+pub struct McpError {
+    /// The JSON-RPC error code.
+    pub code: i32,
+    /// The refusal's message.
+    pub message: String,
+    /// The refusal.
+    pub data: Refusal,
+}
+
+/// Answer one MCP message on a stateless session: the transport's single
+/// entry, so the documented route and the served one are the same call.
+///
+/// # Errors
+/// Serialization failure; protocol and backend refusals stay on the wire.
+#[utoipa::path(post, path = "/v1/mcp", params(crate::scope::ScopeQuery), request_body = McpMessage, responses((status = 200, description = "The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal.", body = McpReply), (status = 202, description = "A notification was accepted; there is no body."), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn post_message(
+    session: &mut Session,
+    message: &str,
+    backend: &mut impl Backend,
+) -> Result<Option<String>, Refusal> {
+    session.handle(message, backend)
 }
