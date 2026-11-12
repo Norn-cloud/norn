@@ -1039,9 +1039,30 @@ fn validate_view_calc(
                             ));
                     }
                 },
+                // ViewIR v1: the plan's operators are typed against the whole
+                // artifact set (`transform::check_transform_set`); its strict
+                // shape is the typed root's.
+                Some(JsonValue::String(k)) if k == "relational" => {
+                    if !matches!(calc.get("nodes"), Some(JsonValue::Object(_))) {
+                        diagnostics.push(kind_invalid(
+                            "payload.calc.nodes must be an object for kind \"relational\"",
+                            "payload.calc.nodes",
+                            artifact_id,
+                            code,
+                        ));
+                    }
+                    if !matches!(calc.get("output"), Some(JsonValue::String(_))) {
+                        diagnostics.push(kind_invalid(
+                            "payload.calc.output must name a node for kind \"relational\"",
+                            "payload.calc.output",
+                            artifact_id,
+                            code,
+                        ));
+                    }
+                }
                 _ => {
                     diagnostics.push(kind_invalid(
-                        "payload.calc.kind must be \"field_projection\"",
+                        "payload.calc.kind must be \"field_projection\" or \"relational\"",
                         "payload.calc.kind",
                         artifact_id,
                         code,
