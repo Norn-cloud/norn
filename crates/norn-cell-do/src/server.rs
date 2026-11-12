@@ -356,13 +356,13 @@ fn route<E: SqlEngine>(
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
-        action_catalog(host, actor, method, query)
+        action_catalog(host.ok_or_else(action_denied)?, actor, method, query)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if path == "/v1/questions:catalog" {
-        ad_hoc_catalog(host, questions, actor, method, query)
+        ad_hoc_catalog(cell(host)?, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -756,7 +756,7 @@ fn objects<E: SqlEngine>(
     };
     let object_type = decoded(object_type)?;
     if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
-        return profiled(host, actor, kind, query);
+        return profiled(cell(host)?, actor, kind, query);
     }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
