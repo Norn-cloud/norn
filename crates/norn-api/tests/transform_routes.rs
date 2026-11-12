@@ -5,6 +5,7 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::indexing_slicing,
+    clippy::needless_pass_by_value,
     missing_docs,
     reason = "transform route correspondence"
 )]
@@ -302,7 +303,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         &Mapping,
     )
     .expect("first page");
-    let cursor = first.next_after.clone().expect("more rows");
+    let cursor = first.next_after.expect("more rows");
     let second = get_transform_rows(
         &host,
         &scope(),
