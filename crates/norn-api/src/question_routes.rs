@@ -87,6 +87,21 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         Err(read_denied())
     }
+    /// QUERY-ENGINE-1: evaluate an admitted plan's current answer. The default
+    /// is the native exact engine. A host may choose another engine that
+    /// returns the same rows; the result's `engine` names the one that
+    /// answered. Answers at a knowledge cutoff always use the native engine.
+    /// # Errors
+    /// A typed compute refusal, or a host engine failure.
+    fn evaluate(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<QueryResult, CellError> {
+        store.evaluate_question(plan, context, visible)
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -176,15 +191,14 @@ fn answer_plan<E: SqlEngine>(
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
+    let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let mut answer = match snapshot.cutoff {
         Some(cutoff) => cell
             .store()
             .evaluate_question_known_at(plan, snapshot.context, cutoff, visible)
             .map(QuestionAnswer::Historical),
-        None => cell
-            .store()
-            .evaluate_question(plan, snapshot.context, visible)
+        None => runtime
+            .evaluate(cell.store(), plan, snapshot.context, &mut visible)
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;

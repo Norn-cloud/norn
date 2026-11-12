@@ -57,6 +57,9 @@ ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"
 [features]
 # Local smoke builds only: lets the Worker accept fixture principals.
 fixtures = []
+# `norn-dev-host` answers questions DuckDB can lower on DuckDB (QUERY-ENGINE-1)
+# and falls back to the native exact engine. Opt-in: it builds bundled DuckDB.
+duckdb = ["norn-cell/duckdb"]
 
 [lints]
 workspace = true
