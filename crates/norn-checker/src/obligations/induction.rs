@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType, verification::LawWriter};
 
+/// The extracted, proved frame decision for preservation goals (#718 U6).
+pub(super) mod frame;
+
 pub(super) struct Induction {
     pub(super) laws: Vec<Value>,
     pub(super) writers: Vec<Value>,
@@ -100,9 +103,10 @@ pub(super) fn build(
                     "nonVacuity":"premise is satisfiable"},
                 "assessment":"unknown"}));
         }
-        let reads = frame_reads(&law, &catalog);
+        let reads: Option<Vec<String>> =
+            frame_reads(&law, &catalog).map(|fields| fields.into_iter().collect());
         for (writer_index, writer) in writers.iter().enumerate() {
-            let assessment = if transition_frame(&law, reads.as_ref(), writer) {
+            let assessment = if transition_frame(&law, reads.as_deref(), writer) {
                 "transition_frame"
             } else {
                 "unknown"
@@ -233,7 +237,7 @@ fn independent_reads(expression: &str, object: &EffectiveObjectType) -> Option<B
     Some(reads.fields)
 }
 
-fn transition_frame(law: &LawIR, reads: Option<&BTreeSet<String>>, writer: &LawWriter) -> bool {
+fn transition_frame(law: &LawIR, reads: Option<&[String]>, writer: &LawWriter) -> bool {
     let LawWriter::Transition {
         object_type,
         property,
@@ -242,7 +246,7 @@ fn transition_frame(law: &LawIR, reads: Option<&BTreeSet<String>>, writer: &LawW
     else {
         return false;
     };
-    object_type == &law.subject && reads.is_some_and(|fields| !fields.contains(property))
+    frame::discharges(&law.subject, object_type, property, reads)
 }
 
 #[cfg(test)]

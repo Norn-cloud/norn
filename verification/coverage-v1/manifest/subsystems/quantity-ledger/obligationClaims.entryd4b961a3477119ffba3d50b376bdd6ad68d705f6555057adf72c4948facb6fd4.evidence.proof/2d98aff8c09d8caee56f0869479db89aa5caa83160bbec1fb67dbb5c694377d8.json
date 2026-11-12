@@ -1,0 +1,10 @@
+{
+  "order": 5,
+  "value": {
+    "artifact": "verification/exact-arith-v1/LedgerProof.lean",
+    "command": "scripts/verify-exact-arith-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.proof.entry2d98aff8c09d8caee56f0869479db89aa5caa83160bbec1fb67dbb5c694377d8.selectors"
+    }
+  }
+}
