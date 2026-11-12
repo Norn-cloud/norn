@@ -6,6 +6,7 @@ import { Norn } from "@norn/authoring"
 // assumption check, linked to its spec. Written only through these actions.
 const Status = Schema.Literals(["pass", "warn", "fail", "not_applicable"])
 const Summary = Schema.Literals(["pass", "warn", "fail"])
+const ReadPath = Schema.Literals(["export", "paged"])
 const Assumption = Schema.Literals(["missingness", "sanity", "linearity", "normality", "homoscedasticity", "independence", "multicollinearity", "influence"])
 
 const SpecFields = Schema.Struct({
@@ -20,6 +21,7 @@ const SpecFields = Schema.Struct({
   method: Schema.String,
   summary: Summary,
   request: Schema.NullOr(Schema.String), // the stats.CheckRequest that asked for it; null for a run from Python
+  read_path: ReadPath, // how the rows were read: the analytical engine's export, or the paged object route
 })
 
 export const ModelSpec = Norn.type({
@@ -64,6 +66,7 @@ const RequestedSpecFields = Schema.Struct({
   method: Schema.String,
   summary: Summary,
   request: Schema.String,
+  read_path: ReadPath,
 })
 
 export const RecordRequestedModelSpec = Norn.action({
