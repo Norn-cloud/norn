@@ -105,10 +105,19 @@ test("a malformed trust, rule or range bound is a compile error", () => {
   }
 }, 30_000)
 
+test("a feature the referenced type does not declare is a compile-time type error", () => {
+  const result = compileModule(SOURCE.replace('"region"],', '"region", "lifetime_value"],'), scope)
+  expect(result.ok).toBe(false)
+  expect((result.diagnostics ?? []).map((d) => d.code)).toContain("NORN-FLOW-TYPE")
+}, 30_000)
+
 test.skipIf(!checker)("Rust admits the model and refuses an unknown or non-admitted feature", () => {
   const codes = (artifacts: any[]): string[] =>
     (checker!.checkArtifactSet(artifacts).diagnostics.diagnostics as unknown as readonly { code: string }[]).map((d) => d.code)
   expect(codes(compile(SOURCE))).toEqual([])
-  expect(codes(compile(SOURCE.replace('"region"],', '"region", "lifetime_value"],')))).toContain("model.admission.unknown_feature")
+  // Named by string, the input type is resolved by the checker alone.
+  const byName = SOURCE.replace("input: Customer,", 'input: "sales.Customer",')
+  expect(codes(compile(byName.replace('"region"],', '"region", "lifetime_value"],')))).toContain("model.admission.unknown_feature")
   expect(codes(compile(SOURCE.replace('"region"],', '"region", "signed_up"],')))).toContain("model.admission.feature_kind")
+  expect(codes(compile(SOURCE.replace('input: Customer,', 'input: "sales.Prospect",')))).toContain("model.admission.unknown_input")
 }, 30_000)
