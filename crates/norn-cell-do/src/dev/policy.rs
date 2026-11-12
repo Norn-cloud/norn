@@ -439,8 +439,9 @@ mod tests {
         assert_eq!(amount["count"], 3);
         assert_eq!(amount["nulls"], 0);
         assert_eq!(amount["distinct"], 3);
-        assert_eq!(amount["min"].to_string(), "5.50");
-        assert_eq!(amount["max"].to_string(), "10.00");
+        // The reader's JSON parse keeps the number, not its trailing zeros.
+        assert_eq!(amount["min"].to_string(), "5.5");
+        assert_eq!(amount["max"].to_string(), "10.0");
         let median = amount["quantiles"]
             .as_array()
             .unwrap()

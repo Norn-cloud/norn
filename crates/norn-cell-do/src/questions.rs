@@ -157,6 +157,33 @@ pub struct DerivedRuntime<'m> {
     derived: Arc<Derived>,
 }
 
+impl DerivedRuntime<'_> {
+    /// The object type a read of `resource` is governed by: a derived sum's
+    /// semantic model, a ratio's numerator's, and a type name itself.
+    fn governed<'a>(&'a self, resource: &'a str) -> &'a str {
+        let mut name = resource;
+        // A ratio names its numerator; a derived ratio never nests deeper.
+        for _ in 0..2 {
+            let Some(metric) = self
+                .derived
+                .definitions
+                .iter()
+                .find(|definition| definition.name == name)
+            else {
+                return name;
+            };
+            if let Some(params) = &metric.type_params.metric_aggregation_params {
+                return params.semantic_model.0.as_str();
+            }
+            match metric.type_params.numerator.as_deref() {
+                Some(numerator) => name = numerator,
+                None => return resource,
+            }
+        }
+        resource
+    }
+}
+
 impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
         Err(Refusal::new(
@@ -210,7 +237,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
             capability: crate::policy::capability_name(capability).into(),
             action_id: crate::policy::READ_ACTION.into(),
             resource: ResourceInput {
-                object_type: row.map_or(question, |row| row.object_type.as_str()).into(),
+                object_type: row
+                    .map_or_else(|| self.governed(question), |row| row.object_type.as_str())
+                    .into(),
                 id: row.map_or(question, |row| row.id.as_str()).into(),
                 scope: key,
                 attributes: BTreeMap::new(),
