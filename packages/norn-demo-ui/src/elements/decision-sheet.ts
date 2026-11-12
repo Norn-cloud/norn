@@ -429,35 +429,48 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
 }
 
 /** `<norn-decision-sheet>`: set `options` to mount; removing the element disposes the machine. */
-export class NornDecisionSheet extends HTMLElement {
-  #driver: Driver | null = null
-  #options: SheetOptions | null = null
-  set options(options: SheetOptions) {
-    this.#options = options
-    if (this.isConnected) this.#mount()
-  }
-  connectedCallback() {
-    if (this.#options && !this.#driver) this.#mount()
-  }
-  disconnectedCallback() {
-    this.#driver?.dispose()
-    this.#driver = null
-  }
+export interface NornDecisionSheet extends HTMLElement {
+  options: SheetOptions
   /** The machine's current snapshot, for hosts and tests. */
-  get snapshot(): Snapshot | null {
-    return this.#driver?.snapshot() ?? null
-  }
+  readonly snapshot: Snapshot | null
   /** Raise the first event of `nodeId` the current state takes (a host's Escape raises `close-button`). */
-  request(nodeId: string): boolean {
-    return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false
-  }
-  #mount() {
-    this.#driver?.dispose()
-    this.#driver = this.#options ? mountDecisionSheet(this, this.#options) : null
-  }
+  request(nodeId: string): boolean
 }
 
-/** Register `<norn-decision-sheet>` once. */
+/**
+ * Register `<norn-decision-sheet>` once. The class is made here, not at import, so the module loads
+ * where there is no DOM (tests, server rendering).
+ */
 export function defineDecisionSheet(name = "norn-decision-sheet"): void {
-  if (!customElements.get(name)) customElements.define(name, NornDecisionSheet)
+  if (customElements.get(name)) return
+  class Element extends HTMLElement implements NornDecisionSheet {
+    #driver: Driver | null = null
+    #options: SheetOptions | null = null
+    set options(options: SheetOptions) {
+      this.#options = options
+      if (this.isConnected) this.#mount()
+    }
+    get options(): SheetOptions {
+      if (this.#options === null) throw new Error("the sheet has no options yet")
+      return this.#options
+    }
+    connectedCallback() {
+      if (this.#options && !this.#driver) this.#mount()
+    }
+    disconnectedCallback() {
+      this.#driver?.dispose()
+      this.#driver = null
+    }
+    get snapshot(): Snapshot | null {
+      return this.#driver?.snapshot() ?? null
+    }
+    request(nodeId: string): boolean {
+      return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false
+    }
+    #mount() {
+      this.#driver?.dispose()
+      this.#driver = this.#options ? mountDecisionSheet(this, this.#options) : null
+    }
+  }
+  customElements.define(name, Element)
 }
