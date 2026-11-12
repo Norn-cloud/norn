@@ -14,11 +14,15 @@
 //! made the slot's caller for each one call, restored on every path. A
 //! resolver without a caller slot records no starter, and its runs' action
 //! steps are denied.
+//!
+//! APPROVAL-1: approving a parked action call commits it through the same
+//! dispatch with its requester made the slot's caller for that one call, the
+//! same way.
 
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_api::actions::ActionReceipt;
+use norn_api::actions::ActionAnswer;
 use norn_api::authz::ReadCapability;
 use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery, decide, list_decisions};
 use norn_api::host::DevHost;
@@ -229,7 +233,12 @@ fn decisions<E: SqlEngine>(
                 body: &body,
                 now,
             };
-            match decide(host, &call, &reads, runtime) {
+            let as_requester =
+                |principal: &RunStarter,
+                 call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                    steps.as_principal(principal, call)
+                };
+            match decide(host, &call, &reads, runtime, &as_requester) {
                 Ok(mut decided) => {
                     // The decision may have moved the run onto action steps.
                     if steps.drive(&decided.run.id, now)
@@ -278,36 +287,54 @@ impl<E: SqlEngine> Steps<'_, E> {
         self.caller?
             .current()
             .filter(|caller| caller.subject_id == actor)
-            .map(|caller| RunStarter {
-                subject: caller.subject_id,
-                actor_kind: caller.actor_kind.to_owned(),
-                roles: caller.roles,
-                role_table: caller.role_table.to_owned(),
-            })
+            .map(principal_of)
+    }
+
+    /// Run one call as a recorded principal (a run's starter, an approved
+    /// call's requester): it is the slot's verified caller for exactly that
+    /// call, and the request's own caller is restored on every path. `None`
+    /// when this cell cannot act as it, or has no slot.
+    fn as_principal(
+        &self,
+        principal: &RunStarter,
+        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+    ) -> Option<Result<ActionAnswer, Refusal>> {
+        let slot = self.caller?;
+        let current = slot.current();
+        let acting = acting_caller(principal, current.as_ref())?;
+        let _restore = Restore {
+            slot,
+            previous: current,
+        };
+        slot.record(Some(acting));
+        Some(call())
     }
 
     /// Run `run_id`'s pending action steps under its recorded starter;
     /// `true` when it could try. A failure leaves the step pending for the
     /// next drive.
     fn drive(&self, run_id: &str, now: norn_kernel::LogicalTime) -> bool {
-        let (Some(runtime), Some(slot)) = (self.questions, self.caller) else {
+        let (Some(runtime), Some(_)) = (self.questions, self.caller) else {
             return false;
         };
-        let as_starter = |starter: &RunStarter,
-                          call: &mut dyn FnMut() -> Result<ActionReceipt, Refusal>|
-         -> Option<Result<ActionReceipt, Refusal>> {
-            let current = slot.current();
-            let acting = acting_caller(starter, current.as_ref())?;
-            let _restore = Restore {
-                slot,
-                previous: current,
+        let as_starter =
+            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                self.as_principal(principal, call)
             };
-            slot.record(Some(acting));
-            Some(call())
-        };
         let driven: Result<(), Refusal> =
             norn_api::flow_driver::drive_run(self.host, run_id, &as_starter, runtime, now);
         driven.is_ok()
+    }
+}
+
+/// A verified caller as a recorded principal: exactly what the resolver
+/// verified, never rebuilt from the request.
+pub(crate) fn principal_of(caller: Caller) -> RunStarter {
+    RunStarter {
+        subject: caller.subject_id,
+        actor_kind: caller.actor_kind.to_owned(),
+        roles: caller.roles,
+        role_table: caller.role_table.to_owned(),
     }
 }
 
