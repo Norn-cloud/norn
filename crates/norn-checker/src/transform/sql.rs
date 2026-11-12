@@ -163,7 +163,7 @@ enum Ex {
     Call(Call),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 struct Call {
     name: String,
     args: Vec<Ex>,
@@ -171,6 +171,18 @@ struct Call {
     distinct: bool,
     over: Option<Over>,
     at: usize,
+}
+
+/// One call is the same expression wherever it is written: `DATE_TRUNC(…)`
+/// in the select list matches the same call in GROUP BY.
+impl PartialEq for Call {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.args == other.args
+            && self.star == other.star
+            && self.distinct == other.distinct
+            && self.over == other.over
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1081,11 +1093,11 @@ impl Lowering<'_> {
             );
             node = id;
             if !windows.is_empty() {
-                let names: BTreeMap<String, String> = select
+                let names: Vec<(Ex, String)> = select
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(index, item)| (format!("{:?}", item.ex), name_of(item, index)))
+                    .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                     .collect();
                 node = self.window(&node, &windows, &names)?;
             }
@@ -1119,11 +1131,11 @@ impl Lowering<'_> {
         );
         node = id;
         if !windows.is_empty() {
-            let names: BTreeMap<String, String> = select
+            let names: Vec<(Ex, String)> = select
                 .items
                 .iter()
                 .enumerate()
-                .map(|(index, item)| (format!("{:?}", item.ex), name_of(item, index)))
+                .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                 .collect();
             node = self.window(&node, &windows, &names)?;
         }
@@ -1135,10 +1147,13 @@ impl Lowering<'_> {
         &mut self,
         input: &str,
         windows: &[(String, Ex, usize)],
-        names: &BTreeMap<String, String>,
+        names: &[(Ex, String)],
     ) -> Result<String, Refusal> {
         let column_of = |ex: &Ex, at: usize| -> Result<String, Refusal> {
-            let selected = names.get(&format!("{ex:?}")).cloned();
+            let selected = names
+                .iter()
+                .find(|(selected, _)| selected == ex)
+                .map(|(_, name)| name.clone());
             if let Ex::Column(_, column) = ex {
                 Ok(selected.unwrap_or_else(|| column.clone()))
             } else {

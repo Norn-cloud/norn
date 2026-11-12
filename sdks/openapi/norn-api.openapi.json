@@ -2247,6 +2247,103 @@
           }
         ]
       }
+    },
+    "/v1/transforms:compile": {
+      "post": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it against the\ninstalled definitions. Nothing is installed and no SQL runs.",
+        "description": "# Errors\nA denied definitions read (the opaque 403), no installed definitions\n(404 `defs.version_not_found`) or a host failure. A query the dialect or\nthe checker refuses is a 200 with `admitted: false` and its diagnostics.",
+        "operationId": "compile_transform",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompileTransformRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The lowered artifact and plan when the checker admits it; otherwise its diagnostics, among them `derived.validation.sql_unsupported` for anything without a typed operator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornCompiledTransform"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`defs.version_not_found`): nothing is installed yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2425,6 +2522,35 @@
             "description": "Lower-case hex SHA-256 of `restatement`; null with it."
           }
         }
+      },
+      "CompileTransformRequest": {
+        "type": "object",
+        "description": "A SQL transform to compile against the installed definitions (VIEW-SQL-1).",
+        "required": [
+          "id",
+          "title",
+          "version",
+          "sql"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The transform id to give the artifact (`shop.revenue_by_region`)."
+          },
+          "sql": {
+            "type": "string",
+            "description": "The query in the transform dialect. It is lowered, never run."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its version."
+          }
+        },
+        "additionalProperties": false
       },
       "DefinitionDocument": {
         "type": "object",
@@ -3916,6 +4042,47 @@
           "property": {
             "type": "string",
             "description": "The stored property, or `id`."
+          }
+        }
+      },
+      "NornCompiledTransform": {
+        "type": "object",
+        "description": "What a SQL transform lowers to, and whether the checker admits it.",
+        "required": [
+          "admitted",
+          "artifact",
+          "plan",
+          "diagnostics"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "The checker admits the lowered plan against the installed definitions."
+          },
+          "artifact": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The `derived` artifact the query declares; null when refused."
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusalDiagnostic"
+            },
+            "description": "Every refusal, with its stable code; empty when admitted."
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornTransformPlan",
+                "description": "The admitted plan; null when refused."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
