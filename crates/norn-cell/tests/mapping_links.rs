@@ -1111,6 +1111,15 @@ proptest::proptest! {
                 }
             }
         }
-        proptest::prop_assert_eq!(end_state(&single), end_state(&paged));
+        let (single, paged) = (end_state(&single), end_state(&paged));
+        let only = |a: &[String], b: &[String]| -> Vec<String> {
+            a.iter().filter(|line| !b.contains(line)).cloned().collect()
+        };
+        proptest::prop_assert!(
+            single == paged,
+            "one by one only: {:#?}\npaged only: {:#?}",
+            only(&single, &paged),
+            only(&paged, &single)
+        );
     }
 }
