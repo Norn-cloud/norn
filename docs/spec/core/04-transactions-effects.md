@@ -6,7 +6,7 @@ Purpose [Astra]: every governed writer lowers into one closed checked calculus w
 
 Reuse `DecisionOutput`, `FactChange`, kernel `CellCommit`, `FactExpectation`, `FactWrite`, `Command`, `Timer`, `IdempotencyKey`, `Generation`, `LogicalTime` and `World`. Extend these families rather than inventing application posting opcodes.
 
-**ACTION-ACTOR-1:** Action derivations read only the host-authenticated call principal as typed `actor.subjectId`, preparations and receipts bind that same principal, and caller-supplied `actor`/`approved` fields at any depth or a principal outside the NFC expression profile refuse with `action.invalid_input` before writes, never rewriting an identity; admission rejects those reserved input-schema property names, including nested objects and array items, with `action.validation.invalid_schema`.
+**ACTION-ACTOR-1:** Action derivations read only the host-authenticated call principal as typed `actor.subjectId`, preparations and receipts bind that same principal, and caller-supplied `actor`/`approved` fields at any depth or a principal outside the NFC expression profile refuse with `action.invalid_input` before writes, never rewriting an identity; admission rejects those reserved input-schema property names, including nested objects and array items, with `action.validation.invalid_schema`. A field an action derives from the actor without the caller (a derivation with `inputRequired: false` that reads `actor`) is never caller input: a supplied value refuses with `action.invalid_input` rather than being overwritten, and a published caller input schema (`GET /v1/actions`) omits it.
 
 | Target semantic envelope | Required fields |
 |---|---|
