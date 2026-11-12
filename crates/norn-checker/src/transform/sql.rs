@@ -10,10 +10,16 @@
 //! (`l.email = c.email`). Aggregates are `SUM`, `COUNT`, `COUNT(DISTINCT …)`,
 //! `MIN` and `MAX`; `DATE_TRUNC('week', col)` buckets a group key; windows are
 //! `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and a running `SUM … OVER`.
-//! Expressions are comparisons, `AND`/`OR`/`NOT`, `+ - * /`, `IS [NOT] NULL`,
+//! Expressions are comparisons, `AND`/`OR`/`NOT`, `+ - *`, `IS [NOT] NULL`,
 //! `COALESCE` and `CASE WHEN … THEN … ELSE … END`. Rows have no SQL order: a
 //! transform's rows are ordered by their grain, so `ORDER BY` and `LIMIT`
 //! outside a window refuse.
+//!
+//! Nothing is guessed. A construct whose SQL meaning the plan would not keep
+//! refuses rather than lowering to something close: division (SQL truncates
+//! integers), a comparison with a `NULL` literal (never true in SQL), a
+//! constant or position as a group or window key (`GROUP BY 1`), and a column
+//! or alias that is not a plain identifier (it becomes a ZEN path).
 
 use std::collections::BTreeMap;
 
@@ -106,10 +112,18 @@ fn tokenize(source: &str) -> Result<Vec<(Token, usize)>, Refusal> {
             let end = rest
                 .find(|c: char| !(c.is_ascii_digit() || c == '.'))
                 .unwrap_or(rest.len());
-            out.push((
-                Token::Number(rest.get(..end).unwrap_or_default().to_owned()),
-                at,
-            ));
+            let number = rest.get(..end).unwrap_or_default();
+            let glued = rest
+                .get(end..)
+                .and_then(|after| after.chars().next())
+                .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_');
+            if number.ends_with('.') || number.matches('.').count() > 1 || glued {
+                return Err(refusal(
+                    "a number is digits with an optional fraction (no exponent, radix or suffix)",
+                    at,
+                ));
+            }
+            out.push((Token::Number(number.to_owned()), at));
             rest = rest.get(end..).unwrap_or_default();
         } else if c == '\'' || c == '"' {
             let mut text = String::new();
@@ -293,12 +307,25 @@ impl Parser {
     fn identifier(&mut self) -> Result<String, Refusal> {
         let at = self.at();
         match self.next() {
-            Some(Token::Word(word)) if !RESERVED.iter().any(|r| r.eq_ignore_ascii_case(&word)) => {
-                Ok(word)
-            }
+            Some(Token::Word(word)) if !reserved(&word) => Ok(word),
+            Some(Token::Word(word)) => Err(refusal(
+                format!("{} is not a name here", word.to_ascii_uppercase()),
+                at,
+            )),
             Some(Token::Quoted(name)) => Ok(name),
-            _ => Err(refusal("expected a name", at)),
+            Some(Token::Number(_) | Token::Text(_) | Token::Symbol(_)) | None => {
+                Err(refusal("expected a name", at))
+            }
         }
+    }
+
+    /// A column or alias name. It becomes part of a ZEN path, so it is a
+    /// plain identifier, quoted or not.
+    fn name(&mut self) -> Result<String, Refusal> {
+        let at = self.at();
+        let name = self.identifier()?;
+        plain(&name, at)?;
+        Ok(name)
     }
 
     fn query(&mut self) -> Result<Vec<Select>, Refusal> {
@@ -332,15 +359,23 @@ impl Parser {
             name
         };
         self.eat_keyword("as");
-        let alias = if matches!(self.peek(), Some(Token::Word(w)) if !RESERVED.iter().any(|r| r.eq_ignore_ascii_case(w)))
+        let alias = if matches!(self.peek(), Some(Token::Word(w)) if !reserved(w))
             || matches!(self.peek(), Some(Token::Quoted(_)))
         {
-            self.identifier()?
+            self.name()?
         } else {
-            name.rsplit('.')
+            let alias = name
+                .rsplit('.')
                 .next()
                 .unwrap_or(&name)
-                .to_ascii_lowercase()
+                .to_ascii_lowercase();
+            if plain(&alias, self.at()).is_err() {
+                return Err(refusal(
+                    format!("name the source {name:?} with AS"),
+                    self.at(),
+                ));
+            }
+            alias
         };
         Ok(Source { name, alias })
     }
@@ -366,7 +401,7 @@ impl Parser {
             } else {
                 let ex = self.expression()?;
                 let alias = if self.eat_keyword("as") {
-                    Some(self.identifier()?)
+                    Some(self.name()?)
                 } else {
                     None
                 };
@@ -419,7 +454,14 @@ impl Parser {
             self.expect_keyword("by")?;
             loop {
                 let at = self.at();
-                group_by.push((self.expression()?, at));
+                let key = self.expression()?;
+                if constant(&key) {
+                    return Err(refusal(
+                        "GROUP BY names a column or an expression; a position or a constant is not a key",
+                        at,
+                    ));
+                }
+                group_by.push((key, at));
                 if !self.eat_symbol(",") {
                     break;
                 }
@@ -464,6 +506,7 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> Result<Ex, Refusal> {
+        let at = self.at();
         let left = self.sum()?;
         if self.eat_keyword("is") {
             let negated = self.eat_keyword("not");
@@ -480,7 +523,14 @@ impl Parser {
             (">", ">"),
         ] {
             if self.eat_symbol(symbol) {
-                return Ok(Ex::Binary(zen, Box::new(left), Box::new(self.sum()?)));
+                let right = self.sum()?;
+                if matches!(left, Ex::Null) || matches!(right, Ex::Null) {
+                    return Err(refusal(
+                        "a comparison with NULL is never true in SQL; write IS [NOT] NULL",
+                        at,
+                    ));
+                }
+                return Ok(Ex::Binary(zen, Box::new(left), Box::new(right)));
             }
         }
         if self.keyword("in") || self.keyword("like") || self.keyword("between") {
@@ -510,8 +560,11 @@ impl Parser {
         loop {
             if self.eat_symbol("*") {
                 left = Ex::Binary("*", Box::new(left), Box::new(self.unary()?));
-            } else if self.eat_symbol("/") {
-                left = Ex::Binary("/", Box::new(left), Box::new(self.unary()?));
+            } else if self.symbol("/") {
+                return Err(refusal(
+                    "division has no typed operator in the dialect: SQL truncates integer division and its scale is the engine's",
+                    self.at(),
+                ));
             } else {
                 return Ok(left);
             }
@@ -579,12 +632,12 @@ impl Parser {
                 ))
             }
             Some(Token::Word(_) | Token::Quoted(_)) => {
-                let first = self.identifier()?;
+                let first = self.name()?;
                 if self.eat_symbol("(") {
                     return self.call(&first, at);
                 }
                 if self.eat_symbol(".") {
-                    let column = self.identifier()?;
+                    let column = self.name()?;
                     return Ok(Ex::Column(Some(first), column));
                 }
                 Ok(Ex::Column(None, first))
@@ -627,7 +680,12 @@ impl Parser {
             if self.eat_keyword("partition") {
                 self.expect_keyword("by")?;
                 loop {
-                    over.partition.push(self.expression()?);
+                    let at = self.at();
+                    let key = self.expression()?;
+                    if constant(&key) {
+                        return Err(refusal("a window key names a column, not a constant", at));
+                    }
+                    over.partition.push(key);
                     if !self.eat_symbol(",") {
                         break;
                     }
@@ -636,7 +694,11 @@ impl Parser {
             if self.eat_keyword("order") {
                 self.expect_keyword("by")?;
                 loop {
+                    let at = self.at();
                     let key = self.expression()?;
+                    if constant(&key) {
+                        return Err(refusal("a window key names a column, not a constant", at));
+                    }
                     let descending = if self.eat_keyword("desc") {
                         true
                     } else {
@@ -662,7 +724,9 @@ impl Parser {
     }
 }
 
-const RESERVED: [&str; 31] = [
+/// Words that are never a name: the dialect's keywords and the SQL
+/// keywords it refuses, so `FROM t FULL JOIN …` cannot read `FULL` as an alias.
+const RESERVED: &[&str] = &[
     "select",
     "from",
     "where",
@@ -694,7 +758,101 @@ const RESERVED: [&str; 31] = [
     "true",
     "false",
     "distinct",
+    "right",
+    "full",
+    "cross",
+    "natural",
+    "lateral",
+    "using",
+    "with",
+    "recursive",
+    "window",
+    "qualify",
+    "offset",
+    "fetch",
+    "top",
+    "into",
+    "values",
+    "exists",
+    "in",
+    "like",
+    "ilike",
+    "between",
+    "similar",
+    "escape",
+    "interval",
+    "cast",
+    "extract",
+    "rows",
+    "range",
+    "groups",
+    "filter",
+    "within",
+    "intersect",
+    "except",
+    "nulls",
+    "asc",
+    "desc",
+    "current_date",
+    "current_time",
+    "current_timestamp",
+    "localtime",
+    "localtimestamp",
+    "grouping",
+    "rollup",
+    "cube",
+    "insert",
+    "update",
+    "delete",
+    "drop",
+    "create",
+    "alter",
+    "copy",
+    "attach",
+    "pragma",
+    "install",
+    "load",
+    "explain",
 ];
+
+fn reserved(word: &str) -> bool {
+    RESERVED.iter().any(|r| r.eq_ignore_ascii_case(word))
+}
+
+/// A column or alias name is a plain identifier: it is spliced into a ZEN path.
+fn plain(name: &str, at: usize) -> Result<(), Refusal> {
+    let mut chars = name.chars();
+    let ok = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if ok {
+        Ok(())
+    } else {
+        Err(refusal(
+            format!("{name:?} is not a plain name (letters, digits and _)"),
+            at,
+        ))
+    }
+}
+
+/// A literal, possibly negated: never a group or window key.
+fn constant(ex: &Ex) -> bool {
+    if let Ex::Negate(inner) = ex {
+        return constant(inner);
+    }
+    matches!(ex, Ex::Number(_) | Ex::Text(_) | Ex::Bool(_) | Ex::Null)
+}
+
+/// The dialect's syntax tree of one query: its `UNION ALL` branches.
+fn parse(source: &str) -> Result<Vec<Select>, Refusal> {
+    Parser {
+        tokens: tokenize(source)?,
+        position: 0,
+        end: source.len(),
+    }
+    .query()
+}
 
 /// Parse and lower one SQL query against `catalog`.
 ///
@@ -702,15 +860,7 @@ const RESERVED: [&str; 31] = [
 /// `derived.validation.sql_unsupported` at the first construct without a
 /// typed operator, an unknown type, alias or column, or an undeclared join.
 pub fn lower_sql(source: &str, catalog: &EffectiveCatalog) -> Result<SqlPlan, Vec<Diagnostic>> {
-    let tokens = tokenize(source).map_err(|refused| vec![refused.into_diagnostic()])?;
-    let mut parser = Parser {
-        tokens,
-        position: 0,
-        end: source.len(),
-    };
-    let selects = parser
-        .query()
-        .map_err(|refused| vec![refused.into_diagnostic()])?;
+    let selects = parse(source).map_err(|refused| vec![refused.into_diagnostic()])?;
     let mut lowering = Lowering {
         catalog,
         nodes: Map::new(),
@@ -1291,4 +1441,621 @@ pub fn sql_artifact(
     admitted_pool.push(envelope.clone());
     super::admit(&envelope, &admitted_pool, registry)?;
     Ok(artifact)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::too_many_lines,
+    reason = "property tests: a failed setup is a failed test; one generator reads top to bottom"
+)]
+mod properties {
+    //! The bar for a hand-written dialect (#341): a printed query parses back
+    //! to itself, every query the parser accepts is admitted or refused with a
+    //! registered code, and no input panics.
+
+    use std::collections::BTreeSet;
+
+    use norn_ir::ArtifactEnvelope;
+    use proptest::collection::vec;
+    use proptest::option;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+    use serde_json::{Value, json};
+
+    use super::{
+        Call, Ex, Item, JoinClause, Over, RESERVED, Select, Source, SqlMeta, constant, parse,
+        sql_artifact,
+    };
+    use crate::Diagnostic;
+    use crate::codes;
+
+    fn print_query(selects: &[Select]) -> String {
+        selects
+            .iter()
+            .map(print_select)
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ")
+    }
+
+    fn print_select(select: &Select) -> String {
+        let items = select
+            .items
+            .iter()
+            .map(|item| match (&item.alias, item.star) {
+                (_, true) => "*".to_owned(),
+                (Some(alias), false) => format!("{} AS {alias}", print_ex(&item.ex)),
+                (None, false) => print_ex(&item.ex),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut parts = vec![format!(
+            "SELECT {items} FROM {}",
+            print_source(&select.from)
+        )];
+        parts.extend(select.joins.iter().map(|join| {
+            format!(
+                "{}JOIN {} ON {}",
+                if join.left { "LEFT " } else { "" },
+                print_source(&join.source),
+                print_ex(&join.on)
+            )
+        }));
+        if let Some(filter) = &select.filter {
+            parts.push(format!("WHERE {}", print_ex(filter)));
+        }
+        if !select.group_by.is_empty() {
+            let keys = select
+                .group_by
+                .iter()
+                .map(|(key, _)| print_ex(key))
+                .collect::<Vec<_>>()
+                .join(", ");
+            parts.push(format!("GROUP BY {keys}"));
+        }
+        parts.join(" ")
+    }
+
+    fn print_source(source: &Source) -> String {
+        format!(
+            "\"{}\" AS {}",
+            source.name.replace('"', "\"\""),
+            source.alias
+        )
+    }
+
+    fn print_list(items: &[Ex]) -> String {
+        items.iter().map(print_ex).collect::<Vec<_>>().join(", ")
+    }
+
+    fn print_ex(ex: &Ex) -> String {
+        match ex {
+            Ex::Column(Some(alias), column) => format!("{alias}.{column}"),
+            Ex::Column(None, column) | Ex::Number(column) => column.clone(),
+            Ex::Text(text) => format!("'{}'", text.replace('\'', "''")),
+            Ex::Bool(flag) => String::from(if *flag { "TRUE" } else { "FALSE" }),
+            Ex::Null => "NULL".to_owned(),
+            Ex::Not(inner) => format!("(NOT {})", print_ex(inner)),
+            Ex::Negate(inner) => format!("(-{})", print_ex(inner)),
+            Ex::Binary(op, left, right) => {
+                let op = match *op {
+                    "==" => "=",
+                    "!=" => "<>",
+                    "and" => "AND",
+                    "or" => "OR",
+                    other => other,
+                };
+                format!("({} {op} {})", print_ex(left), print_ex(right))
+            }
+            Ex::IsNull(inner, negated) => format!(
+                "({} IS {}NULL)",
+                print_ex(inner),
+                if *negated { "NOT " } else { "" }
+            ),
+            Ex::Case(condition, then, otherwise) => format!(
+                "CASE WHEN {} THEN {} ELSE {} END",
+                print_ex(condition),
+                print_ex(then),
+                print_ex(otherwise)
+            ),
+            Ex::Coalesce(args) => format!("COALESCE({})", print_list(args)),
+            Ex::Call(call) => print_call(call),
+        }
+    }
+
+    fn print_call(call: &Call) -> String {
+        let args = if call.star {
+            "*".to_owned()
+        } else if call.distinct {
+            format!("DISTINCT {}", print_list(&call.args))
+        } else {
+            print_list(&call.args)
+        };
+        let head = format!("{}({args})", call.name.to_ascii_uppercase());
+        let Some(over) = &call.over else {
+            return head;
+        };
+        let mut parts = Vec::new();
+        if !over.partition.is_empty() {
+            parts.push(format!("PARTITION BY {}", print_list(&over.partition)));
+        }
+        if !over.order.is_empty() {
+            let keys = over
+                .order
+                .iter()
+                .map(|(key, descending)| {
+                    format!(
+                        "{}{}",
+                        print_ex(key),
+                        if *descending { " DESC" } else { "" }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            parts.push(format!("ORDER BY {keys}"));
+        }
+        format!("{head} OVER ({})", parts.join(" "))
+    }
+
+    const COMPARISONS: [&str; 6] = ["==", "!=", "<", "<=", ">", ">="];
+    const OPERATORS: [&str; 11] = ["==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "and", "or"];
+    const FUNCTIONS: [&str; 10] = [
+        "sum",
+        "count",
+        "min",
+        "max",
+        "date_trunc",
+        "row_number",
+        "rank",
+        "lag",
+        "lead",
+        "upper",
+    ];
+
+    fn word() -> BoxedStrategy<String> {
+        "[a-z_][a-z0-9_]{0,5}"
+            .prop_filter("a keyword is not a name", |word| {
+                !RESERVED.contains(&word.as_str())
+            })
+            .boxed()
+    }
+
+    fn call(name: &str, args: Vec<Ex>, distinct: bool, over: Option<Over>) -> Ex {
+        Ex::Call(Call {
+            name: name.to_owned(),
+            args,
+            star: false,
+            distinct,
+            over,
+            at: 0,
+        })
+    }
+
+    fn key(ex: BoxedStrategy<Ex>) -> BoxedStrategy<Ex> {
+        ex.prop_filter("a key is not a constant", |ex| !constant(ex))
+            .boxed()
+    }
+
+    fn over(ex: BoxedStrategy<Ex>) -> impl Strategy<Value = Over> {
+        (
+            vec(key(ex.clone()), 0..2),
+            vec((key(ex), any::<bool>()), 0..2),
+        )
+            .prop_map(|(partition, order)| Over { partition, order })
+    }
+
+    /// Row expressions over `columns`, up to three levels deep.
+    fn expression(columns: BoxedStrategy<Ex>) -> BoxedStrategy<Ex> {
+        let leaf = prop_oneof![
+            4 => columns,
+            1 => "[0-9]{1,4}(\\.[0-9]{1,2})?".prop_map(Ex::Number),
+            1 => "[a-z '%-]{0,6}".prop_map(Ex::Text),
+            1 => any::<bool>().prop_map(Ex::Bool),
+            1 => Just(Ex::Null),
+        ];
+        leaf.prop_recursive(3, 16, 3, |inner| {
+            prop_oneof![
+                inner.clone().prop_map(|ex| Ex::Not(Box::new(ex))),
+                inner.clone().prop_map(|ex| Ex::Negate(Box::new(ex))),
+                (select(&OPERATORS[..]), inner.clone(), inner.clone())
+                    .prop_filter(
+                        "a comparison with a NULL literal refuses",
+                        |(op, left, right)| {
+                            !(COMPARISONS.contains(op)
+                                && (matches!(left, Ex::Null) || matches!(right, Ex::Null)))
+                        }
+                    )
+                    .prop_map(|(op, left, right)| Ex::Binary(op, Box::new(left), Box::new(right))),
+                (inner.clone(), any::<bool>())
+                    .prop_map(|(ex, negated)| Ex::IsNull(Box::new(ex), negated)),
+                (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| Ex::Case(
+                    Box::new(c),
+                    Box::new(t),
+                    Box::new(e)
+                )),
+                vec(inner.clone(), 2..4).prop_map(Ex::Coalesce),
+                (
+                    select(&FUNCTIONS[..]),
+                    vec(inner.clone(), 0..3),
+                    any::<bool>(),
+                    any::<bool>(),
+                    option::of(over(inner.clone().boxed()))
+                )
+                    .prop_map(|(name, args, star, distinct, over)| {
+                        let star = star && args.is_empty();
+                        let distinct = distinct && !args.is_empty();
+                        Ex::Call(Call {
+                            name: name.to_owned(),
+                            args,
+                            star,
+                            distinct,
+                            over,
+                            at: 0,
+                        })
+                    }),
+            ]
+        })
+        .boxed()
+    }
+
+    fn any_select() -> impl Strategy<Value = Select> {
+        let column = (option::of(word()), word())
+            .prop_map(|(alias, column)| Ex::Column(alias, column))
+            .boxed();
+        let ex = expression(column);
+        let item = prop_oneof![
+            1 => Just(Item { ex: Ex::Null, alias: None, star: true, at: 0 }),
+            6 => (ex.clone(), option::of(word()))
+                .prop_map(|(ex, alias)| Item { ex, alias, star: false, at: 0 }),
+        ];
+        let source =
+            ("[A-Za-z][A-Za-z0-9_.]{0,8}", word()).prop_map(|(name, alias)| Source { name, alias });
+        let join =
+            (source.clone(), any::<bool>(), ex.clone()).prop_map(|(source, left, on)| JoinClause {
+                source,
+                left,
+                on,
+                at: 0,
+            });
+        (
+            vec(item, 1..4),
+            source,
+            vec(join, 0..3),
+            option::of(ex.clone()),
+            vec(key(ex), 0..3),
+        )
+            .prop_map(|(items, from, joins, filter, keys)| Select {
+                items,
+                from,
+                joins,
+                filter,
+                group_by: keys.into_iter().map(|key| (key, 0)).collect(),
+            })
+    }
+
+    fn column(alias: &str, name: &str) -> Ex {
+        Ex::Column(Some(alias.to_owned()), name.to_owned())
+    }
+
+    fn aliased(index: usize, ex: Ex) -> Item {
+        Item {
+            ex,
+            alias: Some(format!("a{index}")),
+            star: false,
+            at: 0,
+        }
+    }
+
+    /// In-dialect queries over the shop catalog: a projection, a grouped
+    /// query or a window, with up to two declared joins and an optional filter.
+    fn shop_query() -> impl Strategy<Value = Vec<Select>> {
+        (0..3_usize, any::<bool>()).prop_flat_map(|(joins, left)| {
+            let mut names = vec![
+                ("o", "id"),
+                ("o", "amount"),
+                ("o", "rate"),
+                ("o", "note"),
+                ("o", "placed_at"),
+            ];
+            let mut clauses = Vec::new();
+            if joins >= 1 {
+                names.extend([("c", "id"), ("c", "email"), ("c", "region")]);
+                clauses.push(JoinClause {
+                    source: Source {
+                        name: "shop.Customer".to_owned(),
+                        alias: "c".to_owned(),
+                    },
+                    left,
+                    on: Ex::Binary(
+                        "==",
+                        Box::new(column("o", "customer")),
+                        Box::new(column("c", "id")),
+                    ),
+                    at: 0,
+                });
+            }
+            if joins >= 2 {
+                names.extend([("l", "id"), ("l", "email"), ("l", "source")]);
+                clauses.push(JoinClause {
+                    source: Source {
+                        name: "shop.Lead".to_owned(),
+                        alias: "l".to_owned(),
+                    },
+                    left: false,
+                    on: Ex::Binary(
+                        "==",
+                        Box::new(column("l", "email")),
+                        Box::new(column("c", "email")),
+                    ),
+                    at: 0,
+                });
+            }
+            let columns = select(names)
+                .prop_map(|(alias, name)| column(alias, name))
+                .boxed();
+            let ex = expression(columns.clone());
+            let week = call(
+                "date_trunc",
+                vec![Ex::Text("week".to_owned()), column("o", "placed_at")],
+                false,
+                None,
+            );
+            let projection = vec(ex.clone(), 1..4)
+                .prop_map(|items| -> (Vec<Item>, Vec<Ex>) {
+                    (
+                        items
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, ex)| aliased(i, ex))
+                            .collect(),
+                        Vec::new(),
+                    )
+                })
+                .boxed();
+            let grouped = (
+                vec(prop_oneof![3 => columns.clone(), 1 => Just(week)], 1..3),
+                vec(
+                    (
+                        select(&["sum", "count", "min", "max"][..]),
+                        columns.clone(),
+                        any::<bool>(),
+                    ),
+                    0..3,
+                ),
+            )
+                .prop_map(|(keys, measures)| -> (Vec<Item>, Vec<Ex>) {
+                    let mut items: Vec<Item> = keys
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .map(|(i, key)| aliased(i, key))
+                        .collect();
+                    for (function, measured, distinct) in measures {
+                        let distinct = distinct && function == "count";
+                        items.push(aliased(
+                            items.len(),
+                            call(function, vec![measured], distinct, None),
+                        ));
+                    }
+                    (items, keys)
+                })
+                .boxed();
+            let windowed = (
+                vec(columns.clone(), 1..3),
+                select(&["row_number", "rank", "lag", "sum"][..]),
+                columns.clone(),
+                columns,
+            )
+                .prop_map(
+                    |(plain, function, partition, value)| -> (Vec<Item>, Vec<Ex>) {
+                        let args = if matches!(function, "lag" | "sum") {
+                            vec![value]
+                        } else {
+                            Vec::new()
+                        };
+                        let over = Over {
+                            partition: vec![partition],
+                            order: vec![(column("o", "id"), false)],
+                        };
+                        let mut items: Vec<Item> = plain
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, ex)| aliased(i, ex))
+                            .collect();
+                        items.push(aliased(
+                            items.len(),
+                            call(function, args, false, Some(over)),
+                        ));
+                        (items, Vec::new())
+                    },
+                )
+                .boxed();
+            (prop_oneof![projection, grouped, windowed], option::of(ex)).prop_map(
+                move |((items, keys), filter): ((Vec<Item>, Vec<Ex>), Option<Ex>)| {
+                    vec![Select {
+                        items,
+                        from: Source {
+                            name: "shop.Order".to_owned(),
+                            alias: "o".to_owned(),
+                        },
+                        joins: clauses.clone(),
+                        filter,
+                        group_by: keys.into_iter().map(|key| (key, 0)).collect(),
+                    }]
+                },
+            )
+        })
+    }
+
+    fn entity(name: &str, object_type: Value) -> ArtifactEnvelope {
+        let mut object_type = object_type;
+        object_type["name"] = json!(name);
+        serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
+            "namespace": "shop", "name": name, "version": "0.1.0", "lifecycle": "draft",
+            "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
+            "provenance": {"source": "authoring_sdk"},
+            "payload": {"entityVersion": "2.0", "objectType": object_type}
+        }))
+        .expect("entity")
+    }
+
+    fn pool() -> Vec<ArtifactEnvelope> {
+        vec![
+            entity(
+                "shop.Customer",
+                json!({
+                    "properties": [
+                        {"id": "email", "type": {"kind": "text"}},
+                        {"id": "region", "type": {"kind": "text"}}
+                    ],
+                    "identity": [{"name": "email", "properties": ["email"]}]
+                }),
+            ),
+            entity(
+                "shop.Order",
+                json!({
+                    "properties": [
+                        {"id": "placed_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+                        {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"}}},
+                        {"id": "rate", "type": {"kind": "decimal", "scale": 4}},
+                        {"id": "note", "constraints": {"nullable": true}, "type": {"kind": "text"}}
+                    ],
+                    "links": [{"id": "customer", "target": "shop.Customer",
+                        "cardinality": {"to": "one", "from": "many"}}]
+                }),
+            ),
+            entity(
+                "shop.Lead",
+                json!({
+                    "properties": [
+                        {"id": "email", "type": {"kind": "text"}},
+                        {"id": "source", "type": {"kind": "text"}}
+                    ]
+                }),
+            ),
+        ]
+    }
+
+    fn compile(text: &str) -> Result<Value, Vec<Diagnostic>> {
+        sql_artifact(
+            text,
+            &SqlMeta {
+                id: "shop.sql_view",
+                title: "SQL view",
+                version: "0.1.0",
+                scope: json!({"orgId": "org_demo", "environmentId": "dev"}),
+            },
+            &pool(),
+            &BTreeSet::new(),
+        )
+    }
+
+    fn registered(found: &[Diagnostic]) -> Result<(), TestCaseError> {
+        prop_assert!(!found.is_empty(), "a refusal names at least one code");
+        for diagnostic in found {
+            prop_assert!(
+                codes::lookup(diagnostic.code.as_str()).is_some(),
+                "unregistered code {}",
+                diagnostic.code.as_str()
+            );
+        }
+        Ok(())
+    }
+
+    const SOUP: [&str; 48] = [
+        "SELECT",
+        "FROM",
+        "\"shop.Order\"",
+        "\"shop.Customer\"",
+        "o",
+        "c",
+        "AS",
+        "o.amount",
+        "o.note",
+        "o.placed_at",
+        "o.customer",
+        "c.id",
+        "c.region",
+        ",",
+        "(",
+        ")",
+        "=",
+        "<>",
+        "<",
+        ">=",
+        "+",
+        "-",
+        "*",
+        "/",
+        "AND",
+        "OR",
+        "NOT",
+        "IS",
+        "NULL",
+        "JOIN",
+        "LEFT",
+        "ON",
+        "WHERE",
+        "GROUP",
+        "BY",
+        "SUM",
+        "COUNT",
+        "DATE_TRUNC",
+        "'week'",
+        "OVER",
+        "PARTITION",
+        "ORDER",
+        "UNION",
+        "ALL",
+        "CASE",
+        "WHEN",
+        "1",
+        ";",
+    ];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// print → parse → print is the identity: the parser reads every
+        /// construct of the dialect as written, with nothing dropped.
+        #[test]
+        fn a_printed_query_parses_back_to_itself(query in vec(any_select(), 1..3)) {
+            let text = print_query(&query);
+            let parsed = parse(&text).map_err(|refused| {
+                TestCaseError::fail(format!("{text}: {} at {}", refused.message, refused.at))
+            })?;
+            prop_assert_eq!(print_query(&parsed), text);
+        }
+
+        /// Every query the parser accepts lowers to a plan that the checker
+        /// admits or refuses with a registered code.
+        #[test]
+        fn an_accepted_query_is_admitted_or_refused_with_a_registered_code(query in shop_query()) {
+            let text = print_query(&query);
+            prop_assert!(parse(&text).is_ok(), "the parser refused its own print: {}", text);
+            match compile(&text) {
+                Ok(artifact) => {
+                    prop_assert_eq!(artifact["payload"]["calc"]["kind"].as_str(), Some("relational"));
+                }
+                Err(found) => registered(&found)?,
+            }
+        }
+
+        /// No text panics the dialect or the checker behind it; anything
+        /// refused is refused with a registered code.
+        #[test]
+        fn no_text_panics_and_every_refusal_is_registered(
+            text in prop_oneof![
+                "\\PC{0,80}",
+                vec(select(&SOUP[..]), 0..30).prop_map(|tokens| tokens.join(" ")),
+            ]
+        ) {
+            if let Err(found) = compile(&text) {
+                registered(&found)?;
+            }
+        }
+    }
 }

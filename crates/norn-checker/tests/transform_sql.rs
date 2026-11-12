@@ -243,3 +243,122 @@ fn what_has_no_typed_operator_is_refused_never_run() {
         "derived.validation.type_mismatch",
     );
 }
+
+/// Real-world SQL the dialect has no typed operator for. Each one refuses
+/// `derived.validation.sql_unsupported` at the dialect boundary; none is read
+/// as something close to what was written.
+const OUTSIDE_THE_DIALECT: &[&str] = &[
+    // Statements other than one query.
+    "INSERT INTO \"shop.Order\" (amount) VALUES (1)",
+    "UPDATE \"shop.Order\" SET amount = 0",
+    "DELETE FROM \"shop.Order\"",
+    "DROP TABLE \"shop.Order\"",
+    "CREATE TABLE copy AS SELECT o.amount AS amount FROM \"shop.Order\" o",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o; DROP TABLE \"shop.Order\"",
+    "EXPLAIN SELECT o.amount AS amount FROM \"shop.Order\" o",
+    "COPY \"shop.Order\" TO '/tmp/out.csv'",
+    "ATTACH 'other.db' AS other",
+    "INSTALL httpfs",
+    "PRAGMA table_info('shop.Order')",
+    "",
+    "-- only a comment",
+    "SELECT 1",
+    // External reads and table functions.
+    "SELECT * FROM read_csv('/etc/passwd')",
+    "SELECT * FROM read_parquet('s3://bucket/orders.parquet')",
+    "SELECT * FROM generate_series(1, 10)",
+    // Subqueries and common table expressions.
+    "WITH recent AS (SELECT o.id AS id FROM \"shop.Order\" o) SELECT id FROM recent",
+    "WITH RECURSIVE n AS (SELECT 1 AS k UNION ALL SELECT k + 1 FROM n) SELECT k FROM n",
+    "SELECT o.amount AS amount FROM (SELECT * FROM \"shop.Order\") o",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.customer IN (SELECT c.id FROM \"shop.Customer\" c)",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE EXISTS (SELECT 1 FROM \"shop.Customer\" c WHERE c.id = o.customer)",
+    "SELECT (SELECT MAX(c.region) FROM \"shop.Customer\" c) AS top FROM \"shop.Order\" o",
+    // Joins other than one declared equality.
+    "SELECT o.amount AS amount FROM \"shop.Order\" o RIGHT JOIN \"shop.Customer\" c ON o.customer = c.id",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o FULL OUTER JOIN \"shop.Customer\" c ON o.customer = c.id",
+    "SELECT o.amount AS amount FROM \"shop.Order\" FULL JOIN \"shop.Customer\" c ON c.id = c.id",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o CROSS JOIN \"shop.Customer\" c",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o NATURAL JOIN \"shop.Customer\" c",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o, \"shop.Customer\" c WHERE o.customer = c.id",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o JOIN \"shop.Customer\" c USING (id)",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id AND c.region = 'north'",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer <> c.id",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o CROSS JOIN LATERAL (SELECT 1 AS one) x",
+    // Grouping other than named keys.
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY 1",
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY 'x'",
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY ROLLUP (o.note)",
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY CUBE (o.note)",
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY GROUPING SETS ((o.note), ())",
+    "SELECT o.note AS note, COUNT(*) AS n FROM \"shop.Order\" o GROUP BY o.note HAVING COUNT(*) > 1",
+    "SELECT o.note AS note, AVG(o.amount) AS mean FROM \"shop.Order\" o GROUP BY o.note",
+    "SELECT o.note AS note, SUM(DISTINCT o.amount) AS total FROM \"shop.Order\" o GROUP BY o.note",
+    "SELECT o.note AS note, COUNT(*) FILTER (WHERE o.amount > 0) AS n FROM \"shop.Order\" o GROUP BY o.note",
+    // Row order and row sets.
+    "SELECT o.amount AS amount FROM \"shop.Order\" o ORDER BY o.amount",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o LIMIT 10",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o OFFSET 5",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o FETCH FIRST 10 ROWS ONLY",
+    "SELECT TOP 10 o.amount AS amount FROM \"shop.Order\" o",
+    "SELECT DISTINCT o.note AS note FROM \"shop.Order\" o",
+    "SELECT DISTINCT ON (o.note) o.note AS note FROM \"shop.Order\" o",
+    "SELECT o.note AS note FROM \"shop.Order\" o UNION SELECT l.source AS note FROM \"shop.Lead\" l",
+    "SELECT o.note AS note FROM \"shop.Order\" o INTERSECT SELECT l.source AS note FROM \"shop.Lead\" l",
+    "SELECT o.note AS note FROM \"shop.Order\" o EXCEPT SELECT l.source AS note FROM \"shop.Lead\" l",
+    "SELECT o.note AS note FROM \"shop.Order\" o UNION ALL SELECT l.source AS note FROM \"shop.Lead\" l ORDER BY note",
+    // Windows other than the fixed frames.
+    "SELECT o.id AS id, SUM(o.amount) OVER (ORDER BY o.id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS s FROM \"shop.Order\" o",
+    "SELECT o.id AS id, SUM(o.amount) OVER (ORDER BY o.id RANGE UNBOUNDED PRECEDING) AS s FROM \"shop.Order\" o",
+    "SELECT o.id AS id, RANK() OVER w AS r FROM \"shop.Order\" o WINDOW w AS (ORDER BY o.id)",
+    "SELECT o.id AS id, NTILE(4) OVER (ORDER BY o.id) AS q FROM \"shop.Order\" o",
+    "SELECT o.id AS id, FIRST_VALUE(o.amount) OVER (ORDER BY o.id) AS f FROM \"shop.Order\" o",
+    "SELECT o.id AS id, ROW_NUMBER() OVER (ORDER BY o.id NULLS FIRST) AS r FROM \"shop.Order\" o",
+    "SELECT o.id AS id, ROW_NUMBER() OVER (ORDER BY 1) AS r FROM \"shop.Order\" o",
+    "SELECT o.id AS id FROM \"shop.Order\" o QUALIFY ROW_NUMBER() OVER (ORDER BY o.id) = 1",
+    // Expressions whose SQL meaning the plan would not keep.
+    "SELECT o.amount / 2 AS half FROM \"shop.Order\" o",
+    "SELECT o.amount % 2 AS odd FROM \"shop.Order\" o",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note = NULL",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE NULL <> o.note",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note LIKE 'a%'",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note ILIKE 'a%'",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.amount BETWEEN 1 AND 2",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note IN ('a', 'b')",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note SIMILAR TO 'a'",
+    "SELECT CAST(o.amount AS INTEGER) AS whole FROM \"shop.Order\" o",
+    "SELECT o.amount::INTEGER AS whole FROM \"shop.Order\" o",
+    "SELECT EXTRACT(YEAR FROM o.placed_at) AS year FROM \"shop.Order\" o",
+    "SELECT o.note || 'x' AS tagged FROM \"shop.Order\" o",
+    "SELECT UPPER(o.note) AS loud FROM \"shop.Order\" o",
+    "SELECT NOW() AS at FROM \"shop.Order\" o",
+    "SELECT CURRENT_DATE AS today FROM \"shop.Order\" o",
+    "SELECT o.placed_at + INTERVAL '1 day' AS next FROM \"shop.Order\" o",
+    "SELECT CASE o.note WHEN 'a' THEN 1 ELSE 0 END AS flag FROM \"shop.Order\" o",
+    "SELECT CASE WHEN o.amount > 1 THEN 1 WHEN o.amount > 0 THEN 2 ELSE 0 END AS band FROM \"shop.Order\" o",
+    "SELECT CASE WHEN o.amount > 1 THEN 1 END AS band FROM \"shop.Order\" o",
+    "SELECT 1e3 AS big FROM \"shop.Order\" o",
+    "SELECT 0x10 AS hex FROM \"shop.Order\" o",
+    "SELECT 1.2.3 AS bad FROM \"shop.Order\" o",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.amount > $1",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.amount > ?",
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.amount > :min",
+    "SELECT o.amount AS amount /* a comment */ FROM \"shop.Order\" o",
+    "SELECT `o`.amount AS amount FROM \"shop.Order\" o",
+    // Names that would splice into a ZEN path.
+    "SELECT o.\"amount > 0 or true\" AS x FROM \"shop.Order\" o",
+    "SELECT o.amount AS \"the amount\" FROM \"shop.Order\" o",
+    "SELECT o.amount AS amount FROM \"shop.Order\" AS \"o o\"",
+    "SELECT o.amount AS montant_€ FROM \"shop.Order\" o",
+];
+
+#[test]
+fn real_world_sql_outside_the_dialect_refuses_cleanly() {
+    for sql in OUTSIDE_THE_DIALECT {
+        let found = compile(sql).expect_err(sql);
+        assert!(
+            !found.is_empty() && found.iter().all(|d| d.code == SQL_UNSUPPORTED),
+            "{sql}: expected only {SQL_UNSUPPORTED}, found {found:#?}"
+        );
+    }
+}
