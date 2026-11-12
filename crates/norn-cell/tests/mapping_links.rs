@@ -879,7 +879,6 @@ fn absence_maps_to_null_and_a_required_source_field_refuses_it() {
     assert_eq!(unchanged.version, line.version, "nothing was written");
 }
 
-
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(24))]
     /// The narrowed link plan equals the wide one (checked inside every
