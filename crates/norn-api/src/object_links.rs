@@ -496,3 +496,7 @@ pub fn get_object_lineage<E: SqlEngine>(
             .ok_or_else(not_found)
     })
 }
+
+#[cfg(test)]
+#[path = "scanned_documents_tests.rs"]
+mod scanned_documents_tests;

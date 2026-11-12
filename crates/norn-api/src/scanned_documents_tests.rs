@@ -26,29 +26,27 @@
     reason = "end-to-end scenario assertions"
 )]
 
-#[path = "support/action_cell.rs"]
+#[path = "../tests/support/action_cell.rs"]
 #[allow(dead_code, reason = "only the admitted-store helper is shared")]
 mod action_cell;
 
 use std::collections::BTreeMap;
 
-use norn_api::actions::{ActionQuery, ActionReceipt, call_action, decode_action_request};
-use norn_api::authz::{
+use crate::actions::{ActionQuery, ActionReceipt, call_action, decode_action_request};
+use crate::authz::{
     AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest,
     RefusalDetailRequest, read_denied,
 };
-use norn_api::host::DevHost;
-use norn_api::question_routes::{QuestionRuntime, QuestionSnapshot};
-use norn_api::refusal::Refusal;
-use norn_api::scope::CellScope;
+use crate::host::DevHost;
+use crate::question_routes::{QuestionRuntime, QuestionSnapshot};
+use crate::refusal::Refusal;
+use crate::scope::CellScope;
 use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::{CellStore, MAIN_WORLD, ObjectRecord, SqliteCell};
 use norn_checker::metric::compute::QuestionPlan;
-use norn_ir::{
-    DataQualityFindingStatus, DataQualityRuleRef, FactRef, RuntimeObject, RuntimeValue,
-};
+use norn_ir::{DataQualityFindingStatus, DataQualityRuleRef, FactRef, RuntimeObject, RuntimeValue};
 use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey};
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
@@ -155,10 +153,8 @@ fn raw(record: &RuntimeValue) -> Observed<RuntimeValue> {
 
 /// Install the pack, then capture and map every extracted row.
 fn loaded() -> CellStore<NativeEngine> {
-    let mut store = action_cell::admitted_store(
-        &documents(),
-        norn_api::action_admission::prepare_action_model,
-    );
+    let mut store =
+        action_cell::admitted_store(&documents(), crate::action_admission::prepare_action_model);
     let mut captured = Vec::new();
     for (dataset, record) in snapshot_rows() {
         let input = MappingInput {
@@ -354,7 +350,11 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .expect("raw reads keep the source truth");
     assert_eq!(text(&caught, "total"), "720");
     assert_eq!(text(&caught, "lines_total"), "72.00");
-    assert!(reader.observation_is_quarantined(MAIN_WORLD, &caught).expect("quality"));
+    assert!(
+        reader
+            .observation_is_quarantined(MAIN_WORLD, &caught)
+            .expect("quality")
+    );
     assert!(
         reader
             .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
@@ -445,7 +445,10 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         STEWARD,
         r#"{"idempotencyKey":"no-reason","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"","correction_evidence":"SCAN-RPT-0117/total"}}"#,
     );
-    assert!(unexplained.is_err(), "a correction without a reason is refused");
+    assert!(
+        unexplained.is_err(),
+        "a correction without a reason is refused"
+    );
 
     correct(
         &host,
@@ -462,8 +465,15 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         .expect("corrected");
     assert_eq!(text(&corrected, "total"), "72.00");
     assert_eq!(text(&corrected, "corrected_by"), STEWARD);
-    assert_eq!(text(&corrected, "correction_evidence"), "SCAN-RPT-0117/total");
-    assert_eq!(text(&corrected, "extractor"), "legacy-ocr", "a patch keeps the other values");
+    assert_eq!(
+        text(&corrected, "correction_evidence"),
+        "SCAN-RPT-0117/total"
+    );
+    assert_eq!(
+        text(&corrected, "extractor"),
+        "legacy-ocr",
+        "a patch keeps the other values"
+    );
     assert!(corrected.version > slipped);
     // The original version is history, not overwritten.
     let original = reader
@@ -476,7 +486,13 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
 #[test]
 fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let host = host(loaded());
-    let before = host.cell().expect("cell").store().read().dump().expect("dump");
+    let before = host
+        .cell()
+        .expect("cell")
+        .store()
+        .read()
+        .dump()
+        .expect("dump");
     let wrong = correct(
         &host,
         STEWARD,
@@ -485,7 +501,12 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let refusal = wrong.expect_err("70.00 is not 30.00 + 40.00 + 2.00");
     assert_eq!(refusal.status, 422, "{refusal:?}");
     assert_eq!(
-        host.cell().expect("cell").store().read().dump().expect("dump"),
+        host.cell()
+            .expect("cell")
+            .store()
+            .read()
+            .dump()
+            .expect("dump"),
         before,
         "a refused correction commits nothing"
     );
