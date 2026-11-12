@@ -334,7 +334,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 Err(unproven_snapshot())
             };
         }
-        let receipt = self.verified_receipt_at(commit)?;
+        let receipt = self
+            .verified_receipt_at(commit)?
+            .ok_or_else(unproven_snapshot)?;
         if !fact_receipt_matches(&snapshot, &hash, &receipt) {
             return Err(unproven_snapshot());
         }
@@ -346,23 +348,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// while the connection's read revision is unchanged (no write between),
     /// as the dispute index is, so proving N facts of one commit hashes its
     /// receipt once rather than N times.
-    fn verified_receipt_at(&self, commit: u64) -> Result<Arc<Receipt>, CellError> {
-        let revision = self.conn.read_cache_revision()?;
+    fn verified_receipt_at(&self, commit: u64) -> Result<Option<Arc<Receipt>>, CellError> {
+        // Inside a transaction-scoped pass the revision is the pass itself.
+        let revision = if self.verified_receipts_transaction {
+            Some((0, 0))
+        } else {
+            self.conn.read_cache_revision()?
+        };
         if let (Some(cache), Some(revision)) = (self.verified_receipts, revision) {
             let cache = cache.borrow();
             if cache.revision == Some(revision)
                 && let Some(receipt) = cache.receipts.get(&commit)
             {
-                return Ok(Arc::clone(receipt));
+                return Ok(Some(Arc::clone(receipt)));
             }
         }
-        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+        let Some(receipt) = self.receipt_at(commit)? else {
+            return Ok(None);
+        };
         if hash_json(&receipt.body)? != receipt.hash {
             return Err(unproven_snapshot());
         }
         let receipt = Arc::new(receipt);
         if let (Some(cache), Some(revision)) = (self.verified_receipts, revision)
-            && self.conn.read_cache_revision()? == Some(revision)
+            && (self.verified_receipts_transaction
+                || self.conn.read_cache_revision()? == Some(revision))
         {
             let mut cache = cache.borrow_mut();
             if cache.revision != Some(revision) || cache.receipts.len() >= VERIFIED_RECEIPTS {
@@ -371,7 +381,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             cache.receipts.insert(commit, Arc::clone(&receipt));
         }
-        Ok(receipt)
+        Ok(Some(receipt))
     }
 
     /// Authenticate the receipt that emitted one exact committed fact version.
@@ -1285,7 +1295,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if rows.len() > 4096 {
             return Err(unproven_event());
         }
-        let receipt = self.receipt_at(commit_seq)?;
+        // Checked once per pass, not once per emitted version.
+        let receipt = self.verified_receipt_at(commit_seq)?;
         rows.into_iter()
             .map(|row| {
                 let snapshot = self.proven_snapshot(

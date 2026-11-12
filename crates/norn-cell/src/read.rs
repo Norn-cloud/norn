@@ -1171,6 +1171,9 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) mapping_plans:
         Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
     pub(crate) verified_receipts: Option<&'a std::cell::RefCell<crate::history::VerifiedReceipts>>,
+    /// The receipt cache belongs to one read-only pass inside a transaction:
+    /// nothing writes while it lives, so it holds without a read revision.
+    pub(crate) verified_receipts_transaction: bool,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1251,7 +1254,18 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             mapping_plans: None,
             source_disputes_transaction: false,
             verified_receipts: None,
+            verified_receipts_transaction: false,
         }
+    }
+
+    /// A receipt cache for one read-only pass inside a transaction.
+    pub(crate) const fn with_transaction_verified_receipts(
+        mut self,
+        receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
+    ) -> Self {
+        self.verified_receipts = Some(receipts);
+        self.verified_receipts_transaction = true;
+        self
     }
 
     pub(crate) const fn with_verified_receipts(
