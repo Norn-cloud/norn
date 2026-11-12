@@ -1,0 +1,1346 @@
+{
+  "catalog": {
+    "artifacts": [
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.Order.entity",
+        "kind": "entity",
+        "namespace": "shop",
+        "name": "Order",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "entityVersion": "2.0",
+          "objectType": {
+            "name": "shop.Order",
+            "properties": [
+              {
+                "id": "amount",
+                "type": {
+                  "kind": "decimal",
+                  "scale": 2,
+                  "additivity": {
+                    "kind": "additive"
+                  }
+                }
+              },
+              {
+                "id": "placed_at",
+                "type": {
+                  "kind": "timestamp",
+                  "timezone": "utc"
+                }
+              },
+              {
+                "id": "channel",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "web"
+                    },
+                    {
+                      "value": "store"
+                    }
+                  ]
+                }
+              }
+            ],
+            "links": [
+              {
+                "id": "customer",
+                "target": "shop.Customer",
+                "cardinality": {
+                  "to": "one",
+                  "from": "many"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.Customer.entity",
+        "kind": "entity",
+        "namespace": "shop",
+        "name": "Customer",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "entityVersion": "2.0",
+          "objectType": {
+            "name": "shop.Customer",
+            "properties": [
+              {
+                "id": "name",
+                "type": {
+                  "kind": "text"
+                }
+              },
+              {
+                "id": "region",
+                "type": {
+                  "kind": "text"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.revenue_by_region",
+        "kind": "derived",
+        "namespace": "shop",
+        "name": "Weekly revenue by region",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [
+          {
+            "artifactId": "shop.Order.entity",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": true
+          },
+          {
+            "artifactId": "shop.Customer.entity",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": true
+          }
+        ],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "viewVersion": "0.1",
+          "viewId": "shop.revenue_by_region",
+          "inputs": [
+            {
+              "artifactId": "shop.Order.entity",
+              "kind": "entity",
+              "version": "0.1.0",
+              "alias": "order"
+            },
+            {
+              "artifactId": "shop.Customer.entity",
+              "kind": "entity",
+              "version": "0.1.0",
+              "alias": "customer"
+            }
+          ],
+          "calc": {
+            "kind": "relational",
+            "output": "ranked",
+            "nodes": {
+              "order": {
+                "op": "scan",
+                "input": "order"
+              },
+              "customer": {
+                "op": "scan",
+                "input": "customer"
+              },
+              "paid": {
+                "op": "filter",
+                "input": "order",
+                "predicate": "input.amount > 0"
+              },
+              "joined": {
+                "op": "join",
+                "left": "paid",
+                "right": "customer",
+                "on": {
+                  "link": {
+                    "column": "id",
+                    "link": "customer"
+                  }
+                },
+                "kind": "left",
+                "prefix": "customer_"
+              },
+              "regional": {
+                "op": "project",
+                "input": "joined",
+                "columns": [
+                  {
+                    "name": "id",
+                    "expression": "input.id"
+                  },
+                  {
+                    "name": "region",
+                    "expression": "input.customer_region ?? \"unassigned\""
+                  },
+                  {
+                    "name": "amount",
+                    "expression": "input.amount"
+                  },
+                  {
+                    "name": "placed_at",
+                    "expression": "input.placed_at"
+                  }
+                ]
+              },
+              "weekly": {
+                "op": "aggregate",
+                "input": "regional",
+                "groupBy": [
+                  {
+                    "column": "region"
+                  },
+                  {
+                    "column": "placed_at",
+                    "grain": "week"
+                  }
+                ],
+                "measures": [
+                  {
+                    "name": "revenue",
+                    "fn": "sum",
+                    "column": "amount"
+                  },
+                  {
+                    "name": "orders",
+                    "fn": "count"
+                  },
+                  {
+                    "name": "largest",
+                    "fn": "max",
+                    "column": "amount"
+                  }
+                ]
+              },
+              "ranked": {
+                "op": "window",
+                "input": "weekly",
+                "partitionBy": [
+                  "region"
+                ],
+                "orderBy": [
+                  {
+                    "column": "placed_at",
+                    "direction": "asc"
+                  }
+                ],
+                "columns": [
+                  {
+                    "name": "week_number",
+                    "fn": "row_number"
+                  },
+                  {
+                    "name": "to_date",
+                    "fn": "running_sum",
+                    "column": "revenue"
+                  },
+                  {
+                    "name": "previous_week",
+                    "fn": "lag",
+                    "column": "revenue"
+                  }
+                ]
+              }
+            }
+          },
+          "outputSchema": {},
+          "maintenance": "recompute_on_read"
+        }
+      }
+    ]
+  },
+  "rows": {
+    "transform": "shop.revenue_by_region",
+    "version": "0.1.0",
+    "engine": "cell",
+    "commits": 2,
+    "columns": [
+      {
+        "name": "region",
+        "type": "text",
+        "nullable": false,
+        "additivity": "undeclared",
+        "identity": null,
+        "origins": [
+          {
+            "input": "customer",
+            "property": "region"
+          }
+        ],
+        "markings": []
+      },
+      {
+        "name": "placed_at",
+        "type": "date",
+        "nullable": false,
+        "additivity": "undeclared",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "placed_at"
+          }
+        ],
+        "markings": []
+      },
+      {
+        "name": "revenue",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": []
+      },
+      {
+        "name": "orders",
+        "type": "integer",
+        "nullable": false,
+        "additivity": "additive",
+        "identity": null,
+        "origins": [],
+        "markings": []
+      },
+      {
+        "name": "largest",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": []
+      },
+      {
+        "name": "week_number",
+        "type": "integer",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [],
+        "markings": []
+      },
+      {
+        "name": "to_date",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": []
+      },
+      {
+        "name": "previous_week",
+        "type": "decimal<2>",
+        "nullable": true,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": []
+      }
+    ],
+    "grain": [
+      "region",
+      "placed_at"
+    ],
+    "rows": [
+      {
+        "rowId": "6386ba2844eecb1dc8161b72f8a266177aaefe15907f495e20f1532331df2cc9",
+        "values": {
+          "largest": 18.25,
+          "orders": 1,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "east",
+          "revenue": 18.25,
+          "to_date": 18.25,
+          "week_number": 1
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "cb771e6fc24fd751ece709bb09396152b7363ca7a39b75f79e5e7ae4f1b35fd3",
+        "values": {
+          "largest": 66,
+          "orders": 1,
+          "placed_at": "2026-11-09",
+          "previous_week": 18.25,
+          "region": "east",
+          "revenue": 66,
+          "to_date": 84.25,
+          "week_number": 2
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "d5afb4c1c59745a56ee0a55fed4213cd304511399b41a58c16a86cb96297a094",
+        "values": {
+          "largest": 120,
+          "orders": 2,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "north",
+          "revenue": 195.5,
+          "to_date": 195.5,
+          "week_number": 1
+        },
+        "memberCount": 4
+      },
+      {
+        "rowId": "1ed76a21ea30ac577dbf68c911252b141e4062ce69cb89d506d38f76f6cfe9ff",
+        "values": {
+          "largest": 60,
+          "orders": 1,
+          "placed_at": "2026-11-02",
+          "previous_week": 195.5,
+          "region": "north",
+          "revenue": 60,
+          "to_date": 255.5,
+          "week_number": 2
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "2fad5e2a0780e346979d54dc6f622bd70cc82e8096fbde15367478463087f3a6",
+        "values": {
+          "largest": 205,
+          "orders": 2,
+          "placed_at": "2026-11-09",
+          "previous_week": 60,
+          "region": "north",
+          "revenue": 347.75,
+          "to_date": 603.25,
+          "week_number": 3
+        },
+        "memberCount": 4
+      },
+      {
+        "rowId": "483c4f73b411cf0723a171fe47230e5c3fea5230cba54dd9f47e63f979bc225c",
+        "values": {
+          "largest": 240,
+          "orders": 1,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "south",
+          "revenue": 240,
+          "to_date": 240,
+          "week_number": 1
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "60cea42e2a456c8b0cef9f68179d8c452cb20fe0800c26a63bcff3ebbc4f1eb1",
+        "values": {
+          "largest": 310.4,
+          "orders": 2,
+          "placed_at": "2026-11-02",
+          "previous_week": 240,
+          "region": "south",
+          "revenue": 405.4,
+          "to_date": 645.4,
+          "week_number": 2
+        },
+        "memberCount": 3
+      },
+      {
+        "rowId": "be1c486b086c416ffdcc96bc73e81f9beeb4c9639da08a27f04589a49d8f10a3",
+        "values": {
+          "largest": 40,
+          "orders": 1,
+          "placed_at": "2026-11-09",
+          "previous_week": null,
+          "region": "unassigned",
+          "revenue": 40,
+          "to_date": 40,
+          "week_number": 1
+        },
+        "memberCount": 1
+      }
+    ],
+    "totalRows": 8,
+    "withheld": {},
+    "excluded": 0,
+    "complete": true,
+    "nextAfter": null
+  },
+  "lineage": {
+    "1ed76a21ea30ac577dbf68c911252b141e4062ce69cb89d506d38f76f6cfe9ff": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "1ed76a21ea30ac577dbf68c911252b141e4062ce69cb89d506d38f76f6cfe9ff",
+      "commits": 2,
+      "values": {
+        "largest": 60,
+        "orders": 1,
+        "placed_at": "2026-11-02",
+        "previous_week": 195.5,
+        "region": "north",
+        "revenue": 60,
+        "to_date": 255.5,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1005",
+          "version": 1
+        }
+      ]
+    },
+    "2fad5e2a0780e346979d54dc6f622bd70cc82e8096fbde15367478463087f3a6": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "2fad5e2a0780e346979d54dc6f622bd70cc82e8096fbde15367478463087f3a6",
+      "commits": 2,
+      "values": {
+        "largest": 205,
+        "orders": 2,
+        "placed_at": "2026-11-09",
+        "previous_week": 60,
+        "region": "north",
+        "revenue": 347.75,
+        "to_date": 603.25,
+        "week_number": 3
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-badr",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1008",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1010",
+          "version": 1
+        }
+      ]
+    },
+    "483c4f73b411cf0723a171fe47230e5c3fea5230cba54dd9f47e63f979bc225c": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "483c4f73b411cf0723a171fe47230e5c3fea5230cba54dd9f47e63f979bc225c",
+      "commits": 2,
+      "values": {
+        "largest": 240,
+        "orders": 1,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "south",
+        "revenue": 240,
+        "to_date": 240,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-cairo",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1003",
+          "version": 1
+        }
+      ]
+    },
+    "60cea42e2a456c8b0cef9f68179d8c452cb20fe0800c26a63bcff3ebbc4f1eb1": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "60cea42e2a456c8b0cef9f68179d8c452cb20fe0800c26a63bcff3ebbc4f1eb1",
+      "commits": 2,
+      "values": {
+        "largest": 310.4,
+        "orders": 2,
+        "placed_at": "2026-11-02",
+        "previous_week": 240,
+        "region": "south",
+        "revenue": 405.4,
+        "to_date": 645.4,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-cairo",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1006",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1007",
+          "version": 1
+        }
+      ]
+    },
+    "6386ba2844eecb1dc8161b72f8a266177aaefe15907f495e20f1532331df2cc9": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "6386ba2844eecb1dc8161b72f8a266177aaefe15907f495e20f1532331df2cc9",
+      "commits": 2,
+      "values": {
+        "largest": 18.25,
+        "orders": 1,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "east",
+        "revenue": 18.25,
+        "to_date": 18.25,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-delta",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1004",
+          "version": 1
+        }
+      ]
+    },
+    "be1c486b086c416ffdcc96bc73e81f9beeb4c9639da08a27f04589a49d8f10a3": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "be1c486b086c416ffdcc96bc73e81f9beeb4c9639da08a27f04589a49d8f10a3",
+      "commits": 2,
+      "values": {
+        "largest": 40,
+        "orders": 1,
+        "placed_at": "2026-11-09",
+        "previous_week": null,
+        "region": "unassigned",
+        "revenue": 40,
+        "to_date": 40,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1011",
+          "version": 1
+        }
+      ]
+    },
+    "cb771e6fc24fd751ece709bb09396152b7363ca7a39b75f79e5e7ae4f1b35fd3": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "cb771e6fc24fd751ece709bb09396152b7363ca7a39b75f79e5e7ae4f1b35fd3",
+      "commits": 2,
+      "values": {
+        "largest": 66,
+        "orders": 1,
+        "placed_at": "2026-11-09",
+        "previous_week": 18.25,
+        "region": "east",
+        "revenue": 66,
+        "to_date": 84.25,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-delta",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1009",
+          "version": 1
+        }
+      ]
+    },
+    "d5afb4c1c59745a56ee0a55fed4213cd304511399b41a58c16a86cb96297a094": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "d5afb4c1c59745a56ee0a55fed4213cd304511399b41a58c16a86cb96297a094",
+      "commits": 2,
+      "values": {
+        "largest": 120,
+        "orders": 2,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "north",
+        "revenue": 195.5,
+        "to_date": 195.5,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-badr",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1001",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1002",
+          "version": 1
+        }
+      ]
+    }
+  },
+  "plan": {
+    "transform": "shop.revenue_by_region",
+    "version": "0.1.0",
+    "viewId": "shop.revenue_by_region",
+    "inputs": [
+      {
+        "alias": "customer",
+        "objectType": "shop.Customer",
+        "artifactId": "shop.Customer.entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "order",
+        "objectType": "shop.Order",
+        "artifactId": "shop.Order.entity",
+        "version": "0.1.0"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "order",
+        "op": "scan",
+        "inputs": [
+          "order"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "paid",
+        "op": "filter",
+        "inputs": [
+          "order"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "customer",
+        "op": "scan",
+        "inputs": [
+          "customer"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Customer",
+            "origins": [
+              {
+                "input": "customer",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "name",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "name"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "joined",
+        "op": "join",
+        "inputs": [
+          "paid",
+          "customer"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "customer_id",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": "shop.Customer",
+            "origins": [
+              {
+                "input": "customer",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "customer_name",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "name"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "customer_region",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "regional",
+        "op": "project",
+        "inputs": [
+          "joined"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "weekly",
+        "op": "aggregate",
+        "inputs": [
+          "regional"
+        ],
+        "grain": [
+          "region",
+          "placed_at"
+        ],
+        "columns": [
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "date",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "revenue",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "orders",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [],
+            "markings": []
+          },
+          {
+            "name": "largest",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      },
+      {
+        "id": "ranked",
+        "op": "window",
+        "inputs": [
+          "weekly"
+        ],
+        "grain": [
+          "region",
+          "placed_at"
+        ],
+        "columns": [
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "placed_at",
+            "type": "date",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "revenue",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "orders",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [],
+            "markings": []
+          },
+          {
+            "name": "largest",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "week_number",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [],
+            "markings": []
+          },
+          {
+            "name": "to_date",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          },
+          {
+            "name": "previous_week",
+            "type": "decimal<2>",
+            "nullable": true,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": []
+          }
+        ]
+      }
+    ],
+    "output": "ranked"
+  }
+}
