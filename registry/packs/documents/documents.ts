@@ -133,7 +133,7 @@ export const Source = Norn.sourceSchema({
 
 export const Mapping = Norn.mapping({
   id: "docs.scans.mapping", title: "Extracted documents, lines and field evidence", version: "0.1.0",
-  source: { schemaId: "docs.scans.source", version: "0.1.0", sha256: "0000000000000000000000000000000000000000000000000000000000000000" },
+  source: { schemaId: "docs.scans.source", version: "0.1.0", sha256: "622eb87987809bffbdb22eb85b8f017b6407cd74ef46448334754c59a213f78c" },
   sourceContract: { kind: "generic" }, interfaces: [SourceDocument, SourceDocumentLine, SourceEvidence],
   maps: [
     {
