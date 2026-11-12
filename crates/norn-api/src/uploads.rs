@@ -674,10 +674,10 @@ fn shapes(columns: &[(Column, ColumnKind)]) -> (Vec<Value>, Vec<Value>, Vec<Valu
     let mut map_properties = vec![json!({"property": "row_id", "value": "input.row_id"})];
     for (ordinal, (column, kind)) in (1_u32..).zip(columns) {
         let mut property = json!({"id": column.id, "type": property_type(*kind, column.scale)});
-        if column.nullable {
-            if let Some(object) = property.as_object_mut() {
-                object.insert("constraints".to_owned(), json!({"nullable": true}));
-            }
+        if column.nullable
+            && let Some(object) = property.as_object_mut()
+        {
+            object.insert("constraints".to_owned(), json!({"nullable": true}));
         }
         properties.push(property);
         fields.push(json!({"dataset": "rows", "name": column.id, "ordinal": ordinal, "nativeType": "csv",

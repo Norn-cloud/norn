@@ -646,7 +646,14 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         error: None,
     };
     let watermark = serde_json::json!({"sha256": upload.sha256, "rows": read}).to_string();
-    report(host, &config, &run, &summary, &watermark, Some(upload.ended_ms));
+    report(
+        host,
+        &config,
+        &run,
+        &summary,
+        &watermark,
+        Some(upload.ended_ms),
+    );
 }
 
 /// SYNC-REPORT-1: the run, as the cell's own observations. A cell without

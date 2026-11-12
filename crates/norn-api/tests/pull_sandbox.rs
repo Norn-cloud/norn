@@ -600,18 +600,34 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let version = install(&host, &generated, 2).expect("installed");
     assert!(version > 1);
     let loaded = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("loaded");
-    assert_eq!((loaded.rows_read, loaded.rows_landed, loaded.rows_quarantined), (2, 2, 0), "{loaded:#?}");
+    assert_eq!(
+        (
+            loaded.rows_read,
+            loaded.rows_landed,
+            loaded.rows_quarantined
+        ),
+        (2, 2, 0),
+        "{loaded:#?}"
+    );
     let second = host
         .host_object("upload.Sales", &format!("{uri}#row=2"))
         .expect("read")
         .expect("row 2");
     assert_eq!(second.get("units"), Some(&RuntimeValue::Null));
     assert_eq!(second.get("shipped_at"), Some(&RuntimeValue::Null));
-    assert_eq!(second.get("region").and_then(RuntimeValue::as_str), Some("south"));
+    assert_eq!(
+        second.get("region").and_then(RuntimeValue::as_str),
+        Some("south")
+    );
     // Loading the same object again lands nothing new.
     let again = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("reloaded");
     assert_eq!(again.rows_landed, 2);
     // The sandbox mappings keep working on the extended definitions.
     let (rows, _) = pull("odoo", BTreeMap::new());
-    assert!(host.ingest(&rows).expect("ingested").iter().all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_))));
+    assert!(
+        host.ingest(&rows)
+            .expect("ingested")
+            .iter()
+            .all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_)))
+    );
 }
