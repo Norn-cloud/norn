@@ -1432,6 +1432,100 @@
         ]
       }
     },
+    "/v1/objects/{type}:profile": {
+      "get": {
+        "tags": [
+          "crate::object_profile"
+        ],
+        "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
+        "operationId": "get_object_profile",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The concept to profile.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile of the caller's authorized snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectProfile"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The snapshot moved while it was read; retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/questions/{question}/answer": {
       "get": {
         "tags": [
@@ -1758,6 +1852,72 @@
           },
           "422": {
             "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/questions:metrics": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "F2b: list the metrics an ad-hoc question may name. A metric is listed\nonly when the caller may read its concept's population (HOST-READ-1), so\nthe list never names a concept the caller cannot read.\n# Errors\nNo actor, or a host failure.",
+        "operationId": "list_metrics",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The metrics ad-hoc questions may name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornMetricList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3158,6 +3318,29 @@
         ],
         "title": "NornArtifactEnvelopeWidget"
       },
+      "NornBin": {
+        "type": "object",
+        "description": "One histogram bin.",
+        "required": [
+          "lower",
+          "upper",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows in the bin.",
+            "minimum": 0
+          },
+          "lower": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          },
+          "upper": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          }
+        }
+      },
       "NornCheckReceipt": {
         "type": "object",
         "description": "A current checker admission receipt.",
@@ -4335,6 +4518,27 @@
           "The Unified Code for Units of Measure (case-sensitive codes).",
           "A QUDT unit (`unit:` local name)."
         ]
+      },
+      "NornHistogram": {
+        "type": "object",
+        "description": "A histogram.",
+        "required": [
+          "kind",
+          "bins"
+        ],
+        "properties": {
+          "bins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornBin"
+            },
+            "description": "Bins in ascending order."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`equal_population` (numeric: bins of equal row count, bounded by the\nvalues at their edges, so no bin edge is computed), `day` or `month`\n(temporal: calendar bins in UTC)."
+          }
+        }
       },
       "NornHistoricalQuestionResult": {
         "type": "object",
@@ -17713,6 +17917,22 @@
         },
         "additionalProperties": false
       },
+      "NornIrQuestionLimits": {
+        "type": "object",
+        "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
+        "required": [
+          "max_scanned_records"
+        ],
+        "properties": {
+          "max_scanned_records": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum source records one evaluation of a question may scan.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrQuestionMetric": {
         "type": "object",
         "description": "A selected metric, optionally with an explicit re-aggregation request.",
@@ -19332,6 +19552,17 @@
           "memory": {
             "$ref": "#/components/schemas/NornIrMemoryLimits",
             "description": "Working memory."
+          },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrQuestionLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bounds on an analytical question. Absent from `norn.limits/1`, whose\nbytes and hash are unchanged; a profile without them bounds questions\nby [`QuestionLimits::DEFAULT`] (see\n[`ResourceLimitProfile::question_limits`])."
           },
           "slice": {
             "$ref": "#/components/schemas/NornIrSliceLimits",
@@ -24889,6 +25120,85 @@
         },
         "additionalProperties": false
       },
+      "NornMetricList": {
+        "type": "object",
+        "description": "The metrics ad-hoc questions may name, among those the caller may read.",
+        "required": [
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornMetricSummary"
+            },
+            "description": "In name order."
+          }
+        }
+      },
+      "NornMetricSummary": {
+        "type": "object",
+        "description": "One metric an ad-hoc question may name.",
+        "required": [
+          "name",
+          "label",
+          "kind",
+          "objectType",
+          "expression",
+          "timeProperty",
+          "numerator",
+          "denominator"
+        ],
+        "properties": {
+          "denominator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The denominator metric, for a ratio."
+          },
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The aggregated expression (a property), for a simple metric."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`simple`, `ratio`, `cumulative`, `derived` or `conversion`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Its label."
+          },
+          "name": {
+            "type": "string",
+            "description": "The metric's name, as a question's `aggregate` names it."
+          },
+          "numerator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The numerator metric, for a ratio."
+          },
+          "objectType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The concept it aggregates, for a simple metric."
+          },
+          "timeProperty": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The time property its buckets use, for a simple metric."
+          }
+        }
+      },
       "NornNumericContribution": {
         "type": "object",
         "description": "One original numeric member; enrichment does not enter this list.",
@@ -25121,6 +25431,65 @@
         },
         "additionalProperties": false
       },
+      "NornObjectProfile": {
+        "type": "object",
+        "description": "The profile of a concept's objects as the caller may see them.",
+        "required": [
+          "objectType",
+          "rows",
+          "withheldRows",
+          "quarantinedRows",
+          "approximate",
+          "scanLimit",
+          "engine",
+          "properties"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the scan bound was reached: the profile covers only the rows\nread, and every count is a lower bound."
+          },
+          "engine": {
+            "type": "string",
+            "description": "The engine that computed the profile: `cell`, the native exact engine."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concept profiled; rows may be of its subtypes."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornPropertyProfile"
+            },
+            "description": "One profile per declared property, in declared order."
+          },
+          "quarantinedRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows held back by source disputes or open quarantining findings.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows whose values were profiled.",
+            "minimum": 0
+          },
+          "scanLimit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The visible-row scan bound.",
+            "minimum": 0
+          },
+          "withheldRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows the caller may know exist but whose values are withheld; none of\ntheir values is counted.",
+            "minimum": 0
+          }
+        }
+      },
       "NornObjectQueryPage": {
         "type": "object",
         "description": "One page of a grid query over a concept's objects.",
@@ -25210,6 +25579,92 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornPropertyProfile": {
+        "type": "object",
+        "description": "The profile of one property over the profiled rows.",
+        "required": [
+          "property",
+          "kind",
+          "count",
+          "nulls",
+          "distinct",
+          "min",
+          "max",
+          "quantiles",
+          "histogram"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows with a value.",
+            "minimum": 0
+          },
+          "distinct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct values.",
+            "minimum": 0
+          },
+          "histogram": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornHistogram",
+                "description": "The distribution (numeric and temporal properties)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`numeric`, `temporal`, `boolean`, `text` or `other`."
+          },
+          "max": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
+          },
+          "min": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
+          },
+          "nulls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows without one.",
+            "minimum": 0
+          },
+          "property": {
+            "type": "string",
+            "description": "The property id."
+          },
+          "quantiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornQuantile"
+            },
+            "description": "Quantiles by nearest rank (numeric and temporal properties)."
+          }
+        }
+      },
+      "NornQuantile": {
+        "type": "object",
+        "description": "One quantile.",
+        "required": [
+          "percent",
+          "value"
+        ],
+        "properties": {
+          "percent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The percentile, 0 to 100.",
+            "minimum": 0
+          },
+          "value": {
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
+          }
+        }
       },
       "NornQueriedRecord": {
         "type": "object",

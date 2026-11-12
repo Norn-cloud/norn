@@ -134,7 +134,9 @@ fn value_schema() -> Schema {
 
 fn optional_value_schema() -> Schema {
     let mut schema = Object::with_type(SchemaType::AnyValue);
-    schema.description = Some(format!("{VALUE} Null when the property has no value to report."));
+    schema.description = Some(format!(
+        "{VALUE} Null when the property has no value to report."
+    ));
     Schema::Object(schema)
 }
 
