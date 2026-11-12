@@ -39,8 +39,9 @@ test("registry packs are generated from their typed sources", () => {
 test.skipIf(!checker)("the Rust checker admits every registry pack and link", () => {
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
-  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
-  const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
+  // Every installed core interface (a pack may implement any of them), plus the value types and units.
+  const interfaces = readdirSync(core).filter(name => name.endsWith(".interface.json")).sort()
+  const base = [...interfaces, "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))

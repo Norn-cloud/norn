@@ -1289,6 +1289,10 @@ impl ObservationAuthorization {
     /// # Errors
     /// More linked subjects on one target than the bound, an unreadable
     /// subject or target, unsupported semantics or exhausted fuel.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass finds a changed target's subjects, compares before and after, and binds the findings"
+    )]
     fn recheck_linked_subjects<E, C, T, V: crate::CommitView + ?Sized>(
         &mut self,
         catalog: &TypeCatalog<'_>,
@@ -1301,9 +1305,12 @@ impl ObservationAuthorization {
         }
         let model = crate::CommitModel::new(catalog);
         let refuse = |error: &str| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
-        let from_commit = |error: crate::CommitError<V::Error>| match error {
-            crate::CommitError::Law { reason, .. } => ObservationRefusal::from(reason),
-            _ => refuse("a linked subject or its target cannot be read"),
+        let from_commit = |error: crate::CommitError<V::Error>| {
+            if let crate::CommitError::Law { reason, .. } = error {
+                ObservationRefusal::from(reason)
+            } else {
+                refuse("a linked subject or its target cannot be read")
+            }
         };
         let written: BTreeSet<FactKey> = commit
             .writes
@@ -1317,7 +1324,7 @@ impl ObservationAuthorization {
             };
             let current = view
                 .object_values(&model.canonical(&authorized.write.key))
-                .map_err(|_| refuse("a target's values cannot be read"))?;
+                .map_err(|_host| refuse("a target's values cannot be read"))?;
             if current.as_ref() == Some(values) {
                 continue;
             }
@@ -1346,13 +1353,13 @@ impl ObservationAuthorization {
         for (subject, (provenance, observation_id)) in subjects {
             let Some(values) = view
                 .object_values(&subject)
-                .map_err(|_| refuse("a linked subject's values cannot be read"))?
+                .map_err(|_host| refuse("a linked subject's values cannot be read"))?
             else {
                 continue;
             };
             let expected = view
                 .version(&subject)
-                .map_err(|_| refuse("a linked subject's version cannot be read"))?;
+                .map_err(|_host| refuse("a linked subject's version cannot be read"))?;
             let mut held_links =
                 crate::commit_check::CommitLinks::new(&before, model, view, &subject);
             let held = crate::governing_laws::evaluate_linked(

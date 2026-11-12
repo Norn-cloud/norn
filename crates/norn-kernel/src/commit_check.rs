@@ -637,6 +637,9 @@ fn check_link_values<E, C, T, V: CommitView + ?Sized>(
     Ok(())
 }
 
+/// A link target as a commit leaves it: its key, version and values.
+type ResolvedTarget = (FactKey, u64, crate::cell_host::JsonObject);
+
 /// LAW-LINK-1 bound: most subjects one written target re-checks in a commit.
 pub(crate) const MAX_LINK_LAW_SUBJECTS: usize = 4096;
 
@@ -743,7 +746,7 @@ impl<E, C, T, V: CommitView + ?Sized> crate::governing_laws::LinkTargets
             ))
         };
         let (commit, model, view) = (self.commit, self.model, self.view);
-        let resolved = (|| -> Result<Option<(FactKey, u64, crate::cell_host::JsonObject)>, CommitError<V::Error>> {
+        let resolved = (|| -> Result<Option<ResolvedTarget>, CommitError<V::Error>> {
             let live = links_after_commit(commit, model, view, &self.subject)?;
             let mut targets = live
                 .into_iter()
@@ -1639,6 +1642,10 @@ fn evaluate_commit_invariants(
     })
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one stage recomputes written and read-bound findings over the same links"
+)]
 fn check_invariants<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
