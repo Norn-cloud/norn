@@ -1,0 +1,51 @@
+{
+  "artifactId": "ml.promotion_policy.law",
+  "dependencies": [
+    {
+      "artifactId": "ml.ModelVersion.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "No promotion without an evaluation on the pinned dataset",
+  "namespace": "ml",
+  "payload": {
+    "id": "ml.promotion_policy",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "ml",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/ml/ml.ts"
+    },
+    "rationale": "A model version reaches production only when its evaluation run read the pinned dataset revision and every declared output contract held.",
+    "response": {
+      "invariantId": "evaluated_on_pinned_dataset",
+      "kind": "invariant",
+      "objectType": "ml.ModelVersion"
+    },
+    "scope": {
+      "objectTypes": [
+        "ml.ModelVersion"
+      ],
+      "root": {
+        "id": "ml.ModelVersion",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "ml.ModelVersion"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.promotion_policy.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
