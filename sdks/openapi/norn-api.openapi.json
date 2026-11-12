@@ -148,7 +148,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}": {
@@ -249,7 +254,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}:retire": {
@@ -369,7 +379,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:admit": {
@@ -470,7 +485,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:install": {
@@ -581,7 +601,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:list": {
@@ -699,7 +724,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/answer": {
@@ -808,7 +838,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/trace": {
@@ -935,7 +970,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:evaluate": {
@@ -1036,7 +1076,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:trace": {
@@ -1137,7 +1182,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     }
   },
@@ -24835,6 +24885,13 @@
           }
         },
         "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "hostToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The cell host's own credential, sent to the cell host directly as `Authorization: Bearer <token>`. A published host accepts only a token signed (EdDSA) by the identity service it is configured to trust, issued for at most five minutes and bound to the cell's organization; the token is not bound to an environment. The local development host accepts the session token it writes to the owner-only file `.norn/dev.token`. A caller that reaches the cell through a fronting application (for example Studio's proxy) authenticates to that application by its own means and does not present this token. Without a valid token no route serves: a route that reaches authorization refuses with 403 `authz.denied`, and an unknown route, a wrong method or a malformed query can refuse before that."
       }
     }
   }
