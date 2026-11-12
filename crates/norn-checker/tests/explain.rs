@@ -154,7 +154,8 @@ fn unknown_subject_has_its_own_code_and_exactly_that_codes_guidance() {
         // and not the law-binding advice this refusal used to borrow.
         let registered = norn_checker::codes::lookup("explain.selector.unknown_subject").unwrap();
         let borrowed =
-            norn_checker::codes::lookup(norn_checker::verification::codes::UNKNOWN_BINDING).unwrap();
+            norn_checker::codes::lookup(norn_checker::verification::codes::UNKNOWN_BINDING)
+                .unwrap();
         assert_eq!(finding["fix"], registered.fix.unwrap());
         assert_ne!(registered.fix, borrowed.fix);
         assert!(registered.fix.unwrap().contains("action, law and concept"));
@@ -195,7 +196,9 @@ fn every_v2_finding_carries_the_guidance_registered_for_its_own_code() {
         );
         assert_eq!(
             finding["no_fix"],
-            registered.no_fix.map_or(serde_json::Value::Null, Into::into),
+            registered
+                .no_fix
+                .map_or(serde_json::Value::Null, Into::into),
             "{}",
             error.code.as_str()
         );

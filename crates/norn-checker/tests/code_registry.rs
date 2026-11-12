@@ -504,7 +504,10 @@ fn integrity_codes_carry_no_generic_fix() {
 fn source_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).expect("source directory should be readable") {
         let path = entry.expect("directory entry should be readable").path();
-        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
         if path.is_dir() {
             if name != "node_modules" && name != "target" {
                 source_files(&path, extension, files);
