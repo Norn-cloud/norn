@@ -15,7 +15,9 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
+use norn_api::actions::{
+    ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
+};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
@@ -270,6 +272,15 @@ pub fn handle_all<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let served = Route::of(path).is_some_and(|route| route != Route::Access);
+    if let (true, Some(action)) = (served, action) {
+        return respond(governed_action(
+            host,
+            questions,
+            actor,
+            (method, action, query, body),
+            now,
+        ));
+    }
     let result = if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -279,8 +290,6 @@ pub fn handle_all<E: SqlEngine>(
         ))
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
-    } else if let Some(action) = action {
-        governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if method != "GET" {
@@ -329,9 +338,14 @@ pub fn handle_all<E: SqlEngine>(
             )),
         }
     };
+    respond(result.map(|body| (StatusCode::OK, body)))
+}
+
+/// A route's answer, or its refusal, as the response.
+fn respond(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -387,14 +401,15 @@ fn ad_hoc_question<E: SqlEngine>(
 /// (`orgId`, `environmentId`, optional `version` pin) with the call in a JSON
 /// body. The shared service authorizes, admits and commits; the cell's
 /// question runtime is its receipt-disclosure authority (D53), so a cell
-/// without one serves no action.
+/// without one serves no action. A call an approval holds answers 202 with
+/// the decision it waits on (APPROVAL-1).
 fn governed_action<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
     (method, action, query, body): (&str, &str, &str, &str),
     now: u64,
-) -> Result<String, Refusal> {
+) -> Result<(StatusCode, String), Refusal> {
     if method != "POST" {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -426,15 +441,10 @@ fn governed_action<E: SqlEngine>(
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
     let request = decode_action_request(body)?;
     let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
-    document_json(&call_action(
-        host,
-        &query,
-        actor,
-        &action,
-        &request,
-        named(runtime),
-        now,
-    )?)
+    match call_action(host, &query, actor, &action, &request, named(runtime), now)? {
+        ActionAnswer::Receipt(receipt) => Ok((StatusCode::OK, document_json(&receipt)?)),
+        ActionAnswer::Pending(pending) => Ok((StatusCode::ACCEPTED, document_json(&pending)?)),
+    }
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional

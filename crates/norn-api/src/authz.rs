@@ -115,6 +115,15 @@ pub trait Authorizer: Send + Sync {
     /// types stay denied.
     fn model_changed(&self, _object_types: &[norn_ir::ObjectTypeDef]) {}
 
+    /// The principal this host verified for `actor` in the current request:
+    /// who a call of an approval-gated action parks for, and under whose
+    /// authority it commits once approved (APPROVAL-1). Never rebuilt from
+    /// anything the request carries. `None`, the default, for a host without
+    /// one: its gated calls are denied.
+    fn verified_principal(&self, _actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
+        None
+    }
+
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
     /// Action/read grants do not imply this decision; absent policy denies.
     fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {

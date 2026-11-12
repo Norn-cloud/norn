@@ -7,6 +7,8 @@ pub mod actions;
 pub mod answers;
 /// The `approval` retained-definition kind (APPROVAL-1).
 pub mod approval_definitions;
+/// APPROVAL-1: a call of an approval-gated action parks as a decision.
+pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
 pub mod clock;
