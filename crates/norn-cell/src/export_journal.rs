@@ -255,8 +255,18 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     ///
-    /// Engine errors, invalid JSON, or an export record whose content hash does not verify.
+    /// `core.world.fork_evidence_forbidden` for a commit minted after the
+    /// fork's lineage left main (FORK-EVIDENCE-1); engine errors, invalid JSON, or an export
+    /// record whose content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
+        // The lineage's main horizon, not this fork's base: a fork of a fork
+        // inherits its parent fork's minted commits below its own base.
+        if self
+            .fork_pin()
+            .is_some_and(|pin| commit_seq > pin.main_horizon)
+        {
+            return Err(CellError::ForkEvidenceForbidden);
+        }
         let Some(record) = self.local_export_record(commit_seq)? else {
             return Ok(None);
         };
@@ -271,7 +281,9 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(Some(record))
     }
 
-    /// Verified local history remains usable without portable cell provenance.
+    /// [`Self::export_record`] for the store's own use: verified local
+    /// history without portable cell provenance, and in a fork its minted
+    /// commits too.
     pub(crate) fn local_export_record(
         &self,
         commit_seq: u64,
