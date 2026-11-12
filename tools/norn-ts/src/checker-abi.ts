@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
+import { TOOL_ROOT } from "./profile.ts"
 
 export interface CheckerDiagnostic {
   readonly code: string
@@ -44,8 +45,23 @@ interface WasmModule {
 
 export const CHECKER_PKG_ENV = "NORN_CHECKER_WASM_PKG"
 
-/** Load the checker package from `dir` (default `$NORN_CHECKER_WASM_PKG`); undefined when absent. */
-export async function loadChecker(dir: string | undefined = process.env[CHECKER_PKG_ENV]): Promise<CheckerAbi | undefined> {
+/** Where a released package carries its checker: built with it, next to `src`. */
+export const BUNDLED_CHECKER = join(TOOL_ROOT, "checker")
+
+/**
+ * The checker package directory. `$NORN_CHECKER_WASM_PKG` is an override and
+ * wins whenever it is set, even when it names a directory without a package
+ * (that is an error to report, not a reason to use another checker silently).
+ * Otherwise the package's bundled checker, when there is one. Otherwise none.
+ */
+export function checkerPackageDir(env: Readonly<Record<string, string | undefined>> = process.env, bundled: string = BUNDLED_CHECKER): string | undefined {
+  const override = env[CHECKER_PKG_ENV]
+  if (override) return override
+  return existsSync(join(bundled, "norn_checker_wasm.js")) && existsSync(join(bundled, "norn_checker_wasm_bg.wasm")) ? bundled : undefined
+}
+
+/** Load the checker package from `dir` (default: `checkerPackageDir()`); undefined when there is none. */
+export async function loadChecker(dir: string | undefined = checkerPackageDir()): Promise<CheckerAbi | undefined> {
   if (!dir) return undefined
   const js = join(dir, "norn_checker_wasm.js")
   const wasm = join(dir, "norn_checker_wasm_bg.wasm")

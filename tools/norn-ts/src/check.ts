@@ -21,6 +21,7 @@ import {
   type Profile,
   ProfileError,
   TOOL_ROOT,
+  dependencyDir,
   loadProfile,
 } from "./profile.ts"
 
@@ -110,7 +111,7 @@ const AMBIENT_ROOTS = new Set([
   "Bun",
 ])
 
-const EFFECT_DIST = join(TOOL_ROOT, "node_modules", "effect", "dist") + sep
+const EFFECT_DIST = join(dependencyDir("effect"), "dist") + sep
 const RESOLVE_ANCHOR = join(TOOL_ROOT, "__norn_resolve_anchor__.ts")
 
 export const COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -133,7 +134,7 @@ export function assertPins(profile: Profile): void {
     )
   }
   const effectPkg = JSON.parse(
-    readFileSync(join(TOOL_ROOT, "node_modules", "effect", "package.json"), "utf8"),
+    readFileSync(join(dependencyDir("effect"), "package.json"), "utf8"),
   ) as { version: string }
   if (effectPkg.version !== profile.pins.effect.version) {
     throw new ProfileError(
