@@ -14767,9 +14767,7 @@
         },
         "offset": {
           "description": "Rows back or ahead for `lag`/`lead` (default 1).",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
+          "$ref": "#/$defs/WholeNumber"
         }
       },
       "additionalProperties": false,

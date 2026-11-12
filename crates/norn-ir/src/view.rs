@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::members::{IrVersion01, present_non_null};
+use crate::members::{IrVersion01, WholeNumber, present_non_null};
 use crate::metric::TimeGrain;
 use crate::rule::JsonObject;
 
@@ -367,8 +367,8 @@ pub struct WindowColumn {
         deserialize_with = "present_non_null",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "u32")]
-    pub offset: Option<u32>,
+    #[schemars(with = "WholeNumber")]
+    pub offset: Option<WholeNumber>,
 }
 
 /// Adds window columns; the grain is unchanged.
