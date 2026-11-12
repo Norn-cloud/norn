@@ -524,6 +524,11 @@ pub fn get_transform_plan<E: SqlEngine>(
     let (_epoch, _actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let plan = installed_plan(cell.store(), transform)?;
+    Ok(plan_document(&plan))
+}
+
+/// The definition graph of an admitted plan.
+fn plan_document(plan: &TransformPlan) -> NornTransformPlan {
     let nodes = plan
         .order
         .iter()
@@ -540,7 +545,7 @@ pub fn get_transform_plan<E: SqlEngine>(
             })
         })
         .collect();
-    Ok(NornTransformPlan {
+    NornTransformPlan {
         transform: plan.artifact_id.clone(),
         version: plan.version.clone(),
         view_id: plan.view_id.clone(),
@@ -555,6 +560,116 @@ pub fn get_transform_plan<E: SqlEngine>(
             })
             .collect(),
         nodes,
-        output: plan.output,
-    })
+        output: plan.output.clone(),
+    }
+}
+
+/// A SQL transform to compile against the installed definitions (VIEW-SQL-1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompileTransformRequest {
+    /// The transform id to give the artifact (`shop.revenue_by_region`).
+    pub id: String,
+    /// Its title.
+    pub title: String,
+    /// Its version.
+    pub version: String,
+    /// The query in the transform dialect. It is lowered, never run.
+    pub sql: String,
+}
+
+/// What a SQL transform lowers to, and whether the checker admits it.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornCompiledTransform {
+    /// The checker admits the lowered plan against the installed definitions.
+    pub admitted: bool,
+    /// The `derived` artifact the query declares; null when refused.
+    #[schema(required = true, nullable = true, value_type = Object)]
+    pub artifact: Option<serde_json::Value>,
+    /// The admitted plan; null when refused.
+    #[schema(required = true, nullable = true)]
+    pub plan: Option<NornTransformPlan>,
+    /// Every refusal, with its stable code; empty when admitted.
+    pub diagnostics: Vec<crate::refusal::RefusalDiagnostic>,
+}
+
+/// VIEW-SQL-1: lower a SQL query to a transform and admit it against the
+/// installed definitions. Nothing is installed and no SQL runs.
+///
+/// # Errors
+/// A denied definitions read (the opaque 403), no installed definitions
+/// (404 `defs.version_not_found`) or a host failure. A query the dialect or
+/// the checker refuses is a 200 with `admitted: false` and its diagnostics.
+#[utoipa::path(post, path = "/v1/transforms:compile", operation_id = "compile_transform", params(ScopeQuery), request_body = CompileTransformRequest, responses((status = 200, description = "The lowered artifact and plan when the checker admits it; otherwise its diagnostics, among them `derived.validation.sql_unsupported` for anything without a typed operator.", body = NornCompiledTransform), (status = 400, description = "The request was refused as invalid (`request.invalid`).", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`defs.version_not_found`): nothing is installed yet.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn compile_transform<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    request: &CompileTransformRequest,
+) -> Result<NornCompiledTransform, Refusal> {
+    let epoch = host.definition_read();
+    let authorized = host.authorizer.authorize(&crate::authz::AccessRequest {
+        scope: host.scope(),
+        actor,
+        operation: crate::authz::Operation::ReadDefinitions,
+    });
+    let scoped = host
+        .scope()
+        .admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
+    if authorized.is_err() || scoped.is_err() {
+        return Err(read_denied());
+    }
+    let _epoch = epoch?;
+    let cell = host.cell()?;
+    let installed = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| {
+            Refusal::new(
+                StatusCode::NOT_FOUND,
+                "defs.version_not_found",
+                "no definitions are installed",
+                "install definitions before compiling a transform against them",
+            )
+        })?;
+    let pool: Vec<ArtifactEnvelope> =
+        serde_json::from_str(&installed.canonical_set).map_err(Refusal::host)?;
+    let registry: BTreeSet<PropertyTypeName> = installed
+        .registry
+        .iter()
+        .map(|name| PropertyTypeName(name.clone()))
+        .collect();
+    let meta = norn_checker::transform::sql::SqlMeta {
+        id: &request.id,
+        title: &request.title,
+        version: &request.version,
+        scope: serde_json::json!({"orgId": host.scope().org_id, "environmentId": host.scope().environment_id}),
+    };
+    let refused = |findings: &[norn_checker::Diagnostic]| NornCompiledTransform {
+        admitted: false,
+        artifact: None,
+        plan: None,
+        diagnostics: crate::refusal::RefusalDiagnostic::from_checker(findings, ""),
+    };
+    let artifact =
+        match norn_checker::transform::sql::sql_artifact(&request.sql, &meta, &pool, &registry) {
+            Ok(artifact) => artifact,
+            Err(findings) => return Ok(refused(&findings)),
+        };
+    let envelope: ArtifactEnvelope =
+        serde_json::from_value(artifact.clone()).map_err(Refusal::host)?;
+    let mut all = pool;
+    all.push(envelope.clone());
+    match admit(&envelope, &all, &registry) {
+        Ok(plan) => Ok(NornCompiledTransform {
+            admitted: true,
+            artifact: Some(artifact),
+            plan: Some(plan_document(&plan)),
+            diagnostics: Vec::new(),
+        }),
+        Err(findings) => Ok(refused(&findings)),
+    }
 }

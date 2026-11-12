@@ -415,3 +415,41 @@ fn a_reader_who_may_only_count_a_row_sees_it_withheld() {
         V::from(Decimal::parse("13.5").unwrap())
     );
 }
+
+#[test]
+fn sql_compiles_against_the_installed_definitions_and_never_runs() {
+    use norn_api::transform_routes::{CompileTransformRequest, compile_transform};
+    let (host, _directory) = host();
+    let compile = |sql: &str| {
+        compile_transform(
+            &host,
+            &scope(),
+            Some("full"),
+            &CompileTransformRequest {
+                id: "shop.by_region".into(),
+                title: "By region".into(),
+                version: "0.1.0".into(),
+                sql: sql.into(),
+            },
+        )
+        .expect("compiled")
+    };
+    let admitted = compile(
+        "SELECT c.region AS region, SUM(o.amount) AS revenue \
+         FROM \"shop.Order\" o LEFT JOIN \"shop.Customer\" c ON o.customer = c.id GROUP BY c.region",
+    );
+    assert!(admitted.admitted, "{:?}", admitted.diagnostics);
+    let plan = admitted.plan.expect("plan");
+    assert!(plan.nodes.iter().any(|node| node.op == "join"));
+    assert_eq!(
+        plan.nodes.last().map(|node| node.op.as_str()),
+        Some("aggregate")
+    );
+    let refused = compile("SELECT o.amount AS amount FROM \"shop.Order\" o ORDER BY o.amount");
+    assert!(!refused.admitted);
+    assert_eq!(
+        refused.diagnostics[0].code,
+        "derived.validation.sql_unsupported"
+    );
+    assert!(refused.artifact.is_none());
+}
