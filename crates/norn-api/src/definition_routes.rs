@@ -1185,8 +1185,21 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
+                // The rebuilt model is the admitted set's alone. A cell that
+                // serves actions also holds the kernel's own action types
+                // (their call records, possibly with rows): keep them, or
+                // the install would drop them and the migration refuses.
+                let action_ready =
+                    cell.store().model().object_types().any(|object_type| {
+                        object_type.name.as_str() == norn_kernel::ACTION_CALL_TYPE
+                    });
+                let model = if action_ready {
+                    crate::action_admission::prepare_action_model(&admitted.model)?
+                } else {
+                    admitted.model
+                };
                 (
-                    admitted.model,
+                    model,
                     admitted.canonical_set,
                     admitted.receipt_sha256,
                     Some(admitted.receipt),

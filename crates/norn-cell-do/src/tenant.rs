@@ -130,6 +130,8 @@ struct Serving<E: SqlEngine> {
     actions: ActionSlot,
     /// The definitions version the installed action policy was compiled from.
     compiled: Option<u64>,
+    /// Why the active definitions installed no action policy, if they failed.
+    policy_error: Option<String>,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -159,28 +161,49 @@ impl<E: SqlEngine> Serving<E> {
             object_types,
             actions,
             compiled: None,
+            policy_error: None,
         })
     }
 
     /// Install the action policy of the active definitions when they changed
     /// since it was compiled. A policy that does not compile, or definitions
-    /// that cannot be read, install none: the cell then serves no action.
+    /// that cannot be read, install none: the cell then serves no action, and
+    /// the reason is kept for the operator ([`Tenant::action_policy_error`]).
     fn refresh_actions(&mut self) {
-        let active = self.host.active_definitions().ok().flatten();
+        let active = match self.host.active_definitions() {
+            Ok(active) => active,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
         let version = active.as_ref().map(|set| set.version);
         if version == self.compiled && version.is_some() {
             return;
         }
-        let policy = active.and_then(|set| {
-            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set).ok()?;
-            let model = norn_api::kernel_set::kernel_model(&artifacts).ok()?;
-            ActionPolicy::compile(&model, &artifacts, self.host.scope())
-                .ok()
-                .flatten()
+        let compiled = active.map(|set| {
+            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set)?;
+            let model = norn_api::kernel_set::kernel_model(&artifacts)
+                .map_err(|error| format!("{error:?}"))?;
+            ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
         });
+        match compiled {
+            Some(Ok(policy)) => self.install_actions(policy, version, None),
+            Some(Err(reason)) => self.install_actions(None, version, Some(reason)),
+            None => self.install_actions(None, version, None),
+        }
+    }
+
+    fn install_actions(
+        &mut self,
+        policy: Option<ActionPolicy>,
+        version: Option<u64>,
+        error: Option<String>,
+    ) {
         if let Ok(mut slot) = self.actions.write() {
             *slot = policy.map(Arc::new);
             self.compiled = version;
+            self.policy_error = error;
         }
     }
 }
@@ -267,6 +290,17 @@ impl<E: SqlEngine> Tenant<E> {
     #[must_use]
     pub const fn scope(&self) -> &CellScope {
         &self.scope
+    }
+
+    /// Why the cell's active definitions installed no action policy, as of
+    /// the last request: for the operator's log, never for a caller (every
+    /// refused call answers the one opaque action denial).
+    #[must_use]
+    pub fn action_policy_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Serving(serving) => serving.policy_error.as_deref(),
+            State::Vacant => None,
+        }
     }
 
     /// Whether the scope has a cell.
