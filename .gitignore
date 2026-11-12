@@ -86,9 +86,11 @@ docs/**
 !docs/reference/index.md
 # docs/** keeps personal notes out of the public repository. A file in docs/authoring/ is
 # tracked only if it is listed here or was added before this rule (README.md, dx-spec.md,
-# runnable/); anything new there stays ignored unless listed. The alpha tutorial is public.
+# runnable/); anything new there stays ignored unless listed. The alpha tutorial and the
+# release procedure are public.
 !docs/authoring/
 !docs/authoring/tutorial.md
+!docs/authoring/release.md
 legacy/docs/platform-docs-archive-2026-06-01/local-ignored/
 !openspec/docs/
 !openspec/docs/**/*.md

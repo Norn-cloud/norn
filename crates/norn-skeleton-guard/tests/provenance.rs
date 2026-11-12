@@ -511,6 +511,12 @@ fn policy_fixture() -> Fixture {
         "scripts/coverage_manifest.py",
         "scripts/verify-promoted-subsystems.sh",
         "scripts/check-proof-holes.py",
+        "scripts/release/assemble.py",
+        "scripts/release/test_assemble.py",
+        "scripts/release/third_party.py",
+        "scripts/release/test_third_party.py",
+        "scripts/release/build.sh",
+        "scripts/release/tools.sh",
     ] {
         fixture.add(
             path,
@@ -580,6 +586,8 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
         "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
+        "scripts/release/assemble.py",
+        "scripts/release/build.sh",
     ] {
         let mut candidate = policy_fixture();
         let record = candidate

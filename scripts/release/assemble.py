@@ -2,8 +2,9 @@
 """Assemble Norn's release packages from one commit, and prove what is in them.
 
     assemble.py build  --commit REV --channel registry|tarball [--base-url URL] --toolchain X.Y.Z \
-                       --wasm DIR --hosts DIR --third-party FILE --out DIR
-    assemble.py verify --commit REV --channel registry|tarball [--base-url URL] --toolchain X.Y.Z --out DIR
+                       --platforms P[,P...] --wasm DIR --hosts DIR --third-party FILE --out DIR
+    assemble.py verify --commit REV --channel registry|tarball [--base-url URL] --toolchain X.Y.Z \
+                       --platforms P[,P...] --out DIR
 
 `build` writes, under `--out`:
 
@@ -18,8 +19,10 @@ tagged source tree; this script covers what is built from it):
 
 - The release's facts come from the commit and the caller, never from the
   files being checked: the version is `tools/norn-ts/package.json` at
-  `--commit`; channel, base URL and toolchain are arguments (the release
-  workflow passes its own). `manifest.json` must state exactly these.
+  `--commit`; channel, base URL, toolchain and the platforms whose hosts ship
+  are arguments (the release workflow passes its own). `manifest.json` must
+  state exactly these, and the packages must be exactly the CLI, the
+  authoring profile and one host package per platform.
 - Every file in every package is either a *source* file or a *built* file.
 - A source file must be byte-identical to a tracked file at `--commit`, read
   from git, at the repository path this script maps it to. Nothing from the
@@ -34,10 +37,13 @@ tagged source tree; this script covers what is built from it):
 - `release/manifest.json` records the sha256 and size of every published file,
   and `SHA256SUMS` repeats them.
 
-The compiled files (checker WebAssembly, dev hosts) and the third-party licence
-text are inputs: this script proves where they sit and that every copy agrees,
-not how they were compiled. The release workflow builds them from the same
-commit and attests the results. This script never downloads anything.
+The compiled and generated files are inputs whose contents this script does not
+check: the checker WebAssembly module and its JavaScript loader
+(`norn_checker_wasm.js`, which the CLI executes), the dev hosts, and the
+third-party licence text. It proves where they sit and that every copy agrees,
+not how they were made. `.github/workflows/release.yml` builds them from the
+same commit with `scripts/release/build.sh`; when it publishes, it attests them
+to that run and commit. This script never downloads anything.
 """
 
 from __future__ import annotations
@@ -150,7 +156,9 @@ def sources(commit: Commit, name: str) -> dict[str, str]:
 
 def manifest_of(commit: Commit, name: str, version: str, channel: str, platforms: list[str]) -> dict:
     tracked = json.loads(commit.read(f"{TOOL}/package.json"))
-    common = {"version": version, "license": tracked["license"], "repository": "github:Norn-cloud/norn"}
+    # The full URL form: npm provenance checks it against the publishing repository.
+    common = {"version": version, "license": tracked["license"],
+              "repository": {"type": "git", "url": "git+https://github.com/Norn-cloud/norn.git"}}
     if kind_of(name) == "@norn/dev-host":
         platform = name.removeprefix("@norn/dev-host-")
         return {"name": name, **common, "description": f"Norn dev host (norn-dev-host) for {platform}",
@@ -223,9 +231,11 @@ def unpacked(tarball: bytes, name: str = "tarball") -> bytes:
         raise Refused(f"{name} is not a gzip stream: {error}") from error
 
 
-def release_inputs(commit: Commit, channel: str, base_url: str, toolchain: str) -> str:
+def release_inputs(commit: Commit, channel: str, base_url: str, toolchain: str, platforms: list[str]) -> str:
     """The release's version, from the commit, once the caller's inputs are ones this script builds.
     `verify` takes the same inputs from its caller: nothing in the files it checks decides them."""
+    if not platforms or len(set(platforms)) != len(platforms) or not set(platforms) <= set(PLATFORMS):
+        raise Refused(f"--platforms {','.join(platforms) or '(none)'} must name distinct prebuilt platforms from {', '.join(sorted(PLATFORMS))}")
     version = json.loads(commit.read(f"{TOOL}/package.json")).get("version", "")
     if not VERSION.fullmatch(version):
         raise Refused(f"{TOOL}/package.json version {version!r} is not 0.x.y-alpha.N")
@@ -241,12 +251,15 @@ def release_inputs(commit: Commit, channel: str, base_url: str, toolchain: str) 
 
 
 def build(commit: Commit, out: Path, wasm: Path, hosts: Path, third_party: Path, channel: str, base_url: str,
-          toolchain: str) -> None:
-    version = release_inputs(commit, channel, base_url, toolchain)
-    platforms = sorted(p for p in PLATFORMS if (hosts / PLATFORMS[p]["target"] / "norn-dev-host").is_file())
-    unknown = sorted(p.name for p in hosts.iterdir() if p.is_dir() and p.name not in {v["target"] for v in PLATFORMS.values()})
-    if unknown or not platforms:
-        raise Refused(f"--hosts must hold <target>/norn-dev-host for known targets only; found {unknown or 'none'}")
+          toolchain: str, platforms: list[str]) -> None:
+    version = release_inputs(commit, channel, base_url, toolchain, platforms)
+    platforms = sorted(platforms)
+    wanted = {PLATFORMS[p]["target"] for p in platforms}
+    present = {p.name for p in hosts.iterdir() if p.is_dir()}
+    missing = sorted(t for t in wanted if not (hosts / t / "norn-dev-host").is_file())
+    if present != wanted or missing:
+        raise Refused(f"--hosts must hold <target>/norn-dev-host for exactly {', '.join(sorted(wanted))}; "
+                      f"found {', '.join(sorted(present)) or 'none'}{f' (missing the binary for {missing})' if missing else ''}")
     if out.exists():
         shutil.rmtree(out)
     release = out / "release"
@@ -280,17 +293,20 @@ def build(commit: Commit, out: Path, wasm: Path, hosts: Path, third_party: Path,
     write(release / "SHA256SUMS", "".join(f"{entry['sha256']}  {name}\n" for name, entry in files.items()).encode())
 
 
-def verify(commit: Commit, out: Path, channel: str, base_url: str, toolchain: str) -> None:
+def verify(commit: Commit, out: Path, channel: str, base_url: str, toolchain: str, platforms: list[str]) -> None:
     """Check `out` against what this commit and the caller's release inputs produce.
     The version comes from the commit; channel, base URL and toolchain come from the
-    caller (the release workflow passes its own). The manifest must agree with them:
-    it is checked, never trusted, since nothing signs it."""
-    version = release_inputs(commit, channel, base_url, toolchain)
+    caller (the release workflow passes its own), and so do the platforms whose hosts
+    must ship. The manifest must agree with them: it is checked, never trusted, since
+    nothing signs it."""
+    version = release_inputs(commit, channel, base_url, toolchain, platforms)
     release = out / "release"
     try:
         manifest = json.loads((release / "manifest.json").read_text())
     except (OSError, ValueError) as error:
         raise Refused(f"release/manifest.json is unreadable: {error}") from error
+    if not isinstance(manifest, dict):
+        raise Refused(f"release/manifest.json is a JSON {type(manifest).__name__}, not an object")
     stated = {key: manifest.get(key) for key in ("format", "version", "commit", "channel", "baseUrl", "toolchain")}
     wanted = {"format": "norn-release/1", "version": version, "commit": commit.sha, "channel": channel,
               "baseUrl": base_url, "toolchain": toolchain}
@@ -301,9 +317,9 @@ def verify(commit: Commit, out: Path, channel: str, base_url: str, toolchain: st
         if path.is_symlink():
             raise Refused(f"{path.relative_to(out)} is a symlink")
     packages = sorted(path.name for path in (out / "packages").iterdir())
-    names = [name for name in ["@norn/cli", "@norn/authoring", *(host_package(p) for p in PLATFORMS)] if package_dir(name) in packages]
-    if sorted(package_dir(name) for name in names) != packages or not {"@norn/cli", "@norn/authoring"} <= set(names):
-        raise Refused(f"packages/ holds {packages}, not the CLI, the authoring profile and known hosts only")
+    names = ["@norn/cli", "@norn/authoring", *(host_package(p) for p in sorted(platforms))]
+    if sorted(package_dir(name) for name in names) != packages:
+        raise Refused(f"packages/ holds {packages}, not the CLI, the authoring profile and the hosts for {', '.join(sorted(platforms))}")
     for name in names:
         directory = out / "packages" / package_dir(name)
         expected = sources(commit, name)
@@ -363,6 +379,8 @@ def main() -> int:
         command.add_argument("--channel", required=True, choices=("registry", "tarball"))
         command.add_argument("--base-url", default="", help="the release's download address (tarball channel only)")
         command.add_argument("--toolchain", required=True, help="the exact Rust version the hosts were built with")
+        command.add_argument("--platforms", required=True, type=lambda text: text.split(","),
+                             help="comma-separated platforms whose prebuilt hosts the release ships, e.g. linux-x64,linux-arm64")
         if name == "build":
             command.add_argument("--wasm", required=True, type=Path)
             command.add_argument("--hosts", required=True, type=Path)
@@ -371,8 +389,9 @@ def main() -> int:
     try:
         commit = Commit(args.repo, args.commit)
         if args.command == "build":
-            build(commit, args.out, args.wasm, args.hosts, args.third_party, args.channel, args.base_url, args.toolchain)
-        verify(commit, args.out, args.channel, args.base_url, args.toolchain)
+            build(commit, args.out, args.wasm, args.hosts, args.third_party, args.channel, args.base_url, args.toolchain,
+                  args.platforms)
+        verify(commit, args.out, args.channel, args.base_url, args.toolchain, args.platforms)
     except Refused as refusal:
         print(f"release refused: {refusal}", file=sys.stderr)
         return 1

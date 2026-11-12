@@ -6,7 +6,8 @@
  * The host binary is `norn-dev-host`, built from the `norn-cell-do` crate. It
  * is found in this order:
  * 1. `NORN_DEV_HOST_BIN`, an override that wins whenever it is set;
- * 2. the platform package `@norn/dev-host-<platform>-<arch>`, when installed;
+ * 2. the platform package `@norn/dev-host-<platform>-<arch>`, when installed,
+ *    run only if its sha256 is the one this release records (no record, no run);
  * 3. the prebuilt host this release records for the platform
  *    (`generated/build.json`), downloaded once into the cache and kept only
  *    if its sha256 is the recorded one.
@@ -21,7 +22,7 @@ import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { warnAuthoringVersion } from "./authoring-version.ts"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
@@ -99,12 +100,19 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
  * toolchain filled in when the package records them: a host built from another
  * commit may not match this CLI's compile worker.
  */
-function unavailable(detail: string, build: BuildInfo | undefined): ProjectError {
+/** Where `cargo build --release`, run from this checkout's root, puts the host: CARGO_TARGET_DIR when set (relative to that root), else target/. */
+export function checkoutHost(env: HostLookup["env"]): string {
+  const repo = resolve(TOOL_ROOT, "..", "..")
+  return join(env.CARGO_TARGET_DIR ? resolve(repo, env.CARGO_TARGET_DIR) : join(repo, "target"), "release", "norn-dev-host")
+}
+
+function unavailable(detail: string, lookup: Pick<HostLookup, "build" | "env">): ProjectError {
+  const { build, env } = lookup
   const command = "`cargo build --release -p norn-cell-do --bin norn-dev-host`"
   // A checkout knows where its own build lands; a release names the commit to build from.
   const how = build
-    ? `Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
-    : `Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
+    ? `Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="\${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host"\` from the repository root.`
+    : `Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN="${checkoutHost(env)}"\`.`
   return new ProjectError("cli.setup.host_unavailable", `No native Norn host: ${detail} ${how}`, 3)
 }
 
@@ -118,7 +126,7 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   const build = lookup.build
   const override = lookup.env.NORN_DEV_HOST_BIN
   if (override) {
-    if (!existsSync(override)) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which does not exist.`, build)
+    if (!existsSync(override)) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which does not exist.`, lookup)
     return override
   }
   const asset = build?.hosts[lookup.platform]
@@ -128,29 +136,29 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     const binary = join(packaged, "bin", "norn-dev-host")
     // An installed host runs only if it is the one this release records: no record, no run.
     if (!asset) {
-      throw unavailable(`${packageName} is installed at ${packaged}, but ${build ? `this release records no host for ${lookup.platform}` : "a checkout records no host digest"}, so it is not run.`, build)
+      throw unavailable(`${packageName} is installed at ${packaged}, but ${build ? `this release records no host for ${lookup.platform}` : "a checkout records no host digest"}, so it is not run.`, lookup)
     }
     if (sha256(readFileSync(binary)) !== asset.sha256) {
-      throw unavailable(`the installed ${packageName} at ${packaged} is not the host this release records (sha256 ${asset.sha256}); reinstall @norn/cli.`, build)
+      throw unavailable(`the installed ${packageName} at ${packaged} is not the host this release records (sha256 ${asset.sha256}); reinstall @norn/cli.`, lookup)
     }
     return binary
   }
-  if (!build) throw unavailable("this is a checkout, which carries no prebuilt host.", build)
+  if (!build) throw unavailable("this is a checkout, which carries no prebuilt host.", lookup)
   if (!asset) {
-    throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
+    throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, lookup)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
   if (existsSync(cached) && sha256(readFileSync(cached)) === asset.sha256) return cached
-  if (!asset.url) throw unavailable(`${packageName} is not installed; reinstall @norn/cli for this platform.`, build)
-  if (!fetchable(asset.url)) throw unavailable(`the release records ${asset.url}, which is not an https address.`, build)
+  if (!asset.url) throw unavailable(`${packageName} is not installed; reinstall @norn/cli for this platform.`, lookup)
+  if (!fetchable(asset.url)) throw unavailable(`the release records ${asset.url}, which is not an https address.`, lookup)
   let bytes: Uint8Array
   process.stderr.write(`norn dev: fetching the dev host for ${lookup.platform} (${(asset.size / 1_000_000).toFixed(0)} MB), once\n`)
   try { bytes = await lookup.download(asset.url, asset.size) }
-  catch (error) { throw unavailable(`fetching ${asset.url} failed (${error instanceof Error ? error.message : String(error)}).`, build) }
+  catch (error) { throw unavailable(`fetching ${asset.url} failed (${error instanceof Error ? error.message : String(error)}).`, lookup) }
   const found = sha256(bytes)
   if (found !== asset.sha256) {
     // Never keep or run a file that is not the one the release recorded.
-    throw unavailable(`the file fetched from ${asset.url} has sha256 ${found}, not the ${asset.sha256} this release records; it was not kept.`, build)
+    throw unavailable(`the file fetched from ${asset.url} has sha256 ${found}, not the ${asset.sha256} this release records; it was not kept.`, lookup)
   }
   mkdirSync(dirname(cached), { recursive: true })
   const partial = `${cached}.${process.pid}.partial`
@@ -160,7 +168,7 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     renameSync(partial, cached)
   } catch (error) {
     rmSync(partial, { force: true })
-    throw unavailable(`the fetched host could not be stored in ${dirname(cached)} (${error instanceof Error ? error.message : String(error)}).`, build)
+    throw unavailable(`the fetched host could not be stored in ${dirname(cached)} (${error instanceof Error ? error.message : String(error)}).`, lookup)
   }
   return cached
 }

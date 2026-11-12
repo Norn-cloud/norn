@@ -77,7 +77,8 @@ class Release(unittest.TestCase):
     def inputs(self, channel="tarball", base_url=None):
         """The release inputs a caller passes; verify takes them from the caller, not from the files."""
         url = self.BASE_URL if channel == "tarball" and base_url is None else (base_url or "")
-        return ["--channel", channel, "--toolchain", "1.98.0", *(["--base-url", url] if url else [])]
+        return ["--channel", channel, "--toolchain", "1.98.0", "--platforms", "linux-x64,linux-arm64",
+                *(["--base-url", url] if url else [])]
 
     def build(self, channel="tarball"):
         self.channel = channel
@@ -259,8 +260,35 @@ class Release(unittest.TestCase):
 
     def test_verify_refuses_inputs_it_cannot_build(self):
         self.build()
-        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.98.0", "--base-url", self.BASE_URL)
-        self.refused("is not an exact Rust version", *self.inputs()[:2], "--toolchain", "stable", "--base-url", self.BASE_URL)
+        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.98.0", "--platforms", "linux-x64,linux-arm64", "--base-url", self.BASE_URL)
+        self.refused("is not an exact Rust version", *self.inputs()[:2], "--toolchain", "stable", "--platforms", "linux-x64", "--base-url", self.BASE_URL)
+        self.refused("must name distinct prebuilt platforms", *self.inputs()[:4], "--platforms", "linux-x64,darwin-arm64", "--base-url", self.BASE_URL)
+
+    def test_canary_a_host_dropped_consistently(self):
+        """Every trace of the arm64 host removed and every record resealed: the caller's platforms still need it."""
+        import shutil
+        self.build()
+        shutil.rmtree(self.package("@norn/dev-host-linux-arm64"))
+        for name in ("norn-dev-host-linux-arm64", assemble.tarball_name("@norn/dev-host-linux-arm64", "0.1.0-alpha.3")):
+            (self.out / "release" / name).unlink()
+        self.rewrite(self.package("@norn/cli") / "generated/build.json", lambda info: info["hosts"].pop("linux-arm64"))
+        self.repack("@norn/cli")
+        self.rewrite(self.out / "release/manifest.json", lambda m: [m["files"].pop(n) for n in list(m["files"]) if "arm64" in n])
+        self.reseal()
+        self.refused("not the CLI, the authoring profile and the hosts for linux-arm64, linux-x64")
+        # The same files are a consistent x64-only release for a caller that asked for one.
+        self.assertEqual(self.verify("--channel", "tarball", "--toolchain", "1.98.0", "--platforms", "linux-x64", "--base-url", self.BASE_URL).returncode, 0)
+
+    def test_canary_a_manifest_that_is_not_an_object(self):
+        self.build()
+        (self.out / "release/manifest.json").write_text("[]\n")
+        self.refused("release/manifest.json is a JSON list, not an object")
+
+    def test_build_takes_exactly_the_named_platforms(self):
+        result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
+                                 "--channel", "registry", "--toolchain", "1.98.0", "--platforms", "linux-x64")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("for exactly x86_64-unknown-linux-musl", result.stderr)
 
     def test_canary_a_release_tarball_that_is_not_gzip(self):
         self.build()
@@ -300,12 +328,12 @@ class Release(unittest.TestCase):
     def test_builds_refuse_what_they_cannot_name(self):
         (self.hosts / "x86_64-pc-windows-msvc").mkdir()
         result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                                 "--channel", "registry", "--toolchain", "1.98.0")
+                                 "--channel", "registry", "--toolchain", "1.98.0", "--platforms", "linux-x64,linux-arm64")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("known targets only", result.stderr)
+        self.assertIn("found aarch64-unknown-linux-musl, x86_64-pc-windows-msvc", result.stderr)
         (self.hosts / "x86_64-pc-windows-msvc").rmdir()
         result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                                 "--channel", "tarball", "--toolchain", "1.98.0")
+                                 "--channel", "tarball", "--toolchain", "1.98.0", "--platforms", "linux-x64,linux-arm64")
         self.assertEqual(result.returncode, 1)
         self.assertIn("--base-url", result.stderr)
 

@@ -205,10 +205,14 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     const warning = authoringVersionWarning(dir)
     expect(warning).toMatchObject({ code: "cli.setup.authoring_version_mismatch" })
     expect(warning!.message).toContain("installed @norn/authoring is 0.0.0")
-    // Under Node too, which enforces `exports`.
-    const node = spawnSync("node", ["--experimental-transform-types", "--no-warnings", "-e",
-      `import(${JSON.stringify(join(TOOL_ROOT, "src/authoring-version.ts"))}).then((m) => console.log(m.installedAuthoringVersion(${JSON.stringify(join(dir, "src"))})))`], { encoding: "utf8" })
-    if (node.error === undefined) expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
+    // Under Node too, which enforces `exports`. Node runs this TypeScript from 22.7
+    // (`--experimental-transform-types`); an older or missing Node skips the probe.
+    const nodeVersion = spawnSync("node", ["--version"], { encoding: "utf8" }).stdout?.trim().match(/^v(\d+)\.(\d+)\./)
+    if (nodeVersion && (Number(nodeVersion[1]) > 22 || (Number(nodeVersion[1]) === 22 && Number(nodeVersion[2]) >= 7))) {
+      const node = spawnSync("node", ["--experimental-transform-types", "--no-warnings", "-e",
+        `import(${JSON.stringify(join(TOOL_ROOT, "src/authoring-version.ts"))}).then((m) => console.log(m.installedAuthoringVersion(${JSON.stringify(join(dir, "src"))})))`], { encoding: "utf8" })
+      expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
+    }
     writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION, exports: { ".": { types: "./profile/norn-authoring.d.ts" } } }))
     expect(authoringVersionWarning(dir)).toBeUndefined()
   } finally { rmSync(root, { recursive: true }) }
@@ -291,15 +295,20 @@ test("dev host: the build-from-source instructions name this CLI's commit and ar
     const commit = build({}).commit
     expect(mac.message).toContain(`git checkout ${commit}`)
     expect(mac.message).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
-    expect(mac.message).toContain('export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"')
+    expect(mac.message).toContain('export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host"')
     // A checkout prints no commit to check out: it builds itself, and gets the absolute path.
     const checkout = await refusal(hostBinary(lookup(root, { build: undefined })))
-    expect(checkout.message).toContain(`Build it in this checkout with \`cargo build --release -p norn-cell-do --bin norn-dev-host\`, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\``)
+    expect(checkout.message).toContain(`Build it in this checkout with \`cargo build --release -p norn-cell-do --bin norn-dev-host\`, then \`export NORN_DEV_HOST_BIN="${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}"\``)
+    // CARGO_TARGET_DIR moves the build, absolute or relative to the checkout's root.
+    const moved = await refusal(hostBinary(lookup(root, { build: undefined, env: { CARGO_TARGET_DIR: "/srv/cargo-target" } })))
+    expect(moved.message).toContain('export NORN_DEV_HOST_BIN="/srv/cargo-target/release/norn-dev-host"')
+    const relative = await refusal(hostBinary(lookup(root, { build: undefined, env: { CARGO_TARGET_DIR: "out" } })))
+    expect(relative.message).toContain(`export NORN_DEV_HOST_BIN="${join(TOOL_ROOT, "..", "..", "out", "release", "norn-dev-host")}"`)
     expect(checkout.message).not.toContain("git checkout")
     // The registered fix gives the same command and path, not another one.
     const registered = registeredCodes().get("cli.setup.host_unavailable")!
     expect(registered.fix).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
-    expect(registered.fix).toContain("target/release/norn-dev-host")
+    expect(registered.fix).toContain("${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host")
     expect(registered.fix).toContain("`norn --version`")
   } finally { rmSync(root, { recursive: true }) }
 })
