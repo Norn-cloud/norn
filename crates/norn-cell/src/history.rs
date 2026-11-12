@@ -1897,8 +1897,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .with_interfaces(model.interfaces())
             .with_property_types(model.property_types())
             .with_governing_laws(model.law_artifacts());
-        if !norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &finding)
-            .unwrap_or(false)
+        let mut links = crate::link_laws::PinnedLinks {
+            reader: self,
+            world: &entry.world,
+            links: crate::link_laws::pinned_links(&finding),
+        };
+        if !norn_kernel::snapshot_observe::verify_finding_values(
+            &catalog, &key, &values, &finding, &mut links,
+        )
+        .unwrap_or(false)
         {
             return Ok(None);
         }

@@ -732,6 +732,13 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
             .map(FactVersion)
     }
 
+    fn object_values(&self, key: &FactKey) -> Result<Option<norn_kernel::JsonObject>, CellError> {
+        Ok(self
+            .0
+            .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
+            .map(|record| record.values))
+    }
+
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, CellError> {
         let mut links: Vec<LinkKey> = self
             .0

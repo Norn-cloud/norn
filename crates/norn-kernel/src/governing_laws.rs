@@ -55,6 +55,181 @@ pub struct LawFailure {
     pub message: String,
     /// Original invariant refusal details for the existing attempt journal.
     pub invariant: Option<Box<BoundInvariantFailure>>,
+    /// LAW-LINK-1: the exact version of each link target the failing instance
+    /// read, by link id. Non-empty exactly when the outcome is `Linked`.
+    pub links: std::collections::BTreeMap<String, norn_ir::FactRef>,
+}
+
+/// LAW-LINK-1: one link target in the snapshot a law is checked against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkedTarget {
+    /// The target object (its concrete type and key).
+    pub key: FactKey,
+    /// The target's version in that snapshot.
+    pub version: u64,
+    /// Its values in that snapshot.
+    pub values: JsonObject,
+}
+
+/// LAW-LINK-1: what a subject's one-hop, to-one links reach in the snapshot a
+/// law is checked against. Hosts supply the state the commit or observation is
+/// admitted on; a caller that cannot read links uses [`NoLinkTargets`], and a
+/// law that reads one then refuses rather than reading `null`.
+pub trait LinkTargets {
+    /// The live target of `link` on the subject and its values; `None` when
+    /// the subject has no target on it.
+    ///
+    /// # Errors
+    /// The snapshot cannot be read, or the target's values cannot be proven.
+    fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError>;
+
+    /// Whether laws that read links are left for a later pass (an observation
+    /// prepared before its bundle's links are known). Such laws are skipped.
+    fn defers(&self) -> bool {
+        false
+    }
+}
+
+/// An observation prepared before its links are known: link laws are left to
+/// the pass that runs once the bundle's links are (see
+/// `ObservationAuthorization::refresh_link_findings`).
+pub struct DeferLinkLaws;
+
+impl LinkTargets for DeferLinkLaws {
+    fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError> {
+        Err(LawEvaluationError::Unsupported(format!(
+            "link {link} is read before the bundle's links are known"
+        )))
+    }
+
+    fn defers(&self) -> bool {
+        true
+    }
+}
+
+/// A caller that reads no links: a governing law that reads one refuses.
+pub struct NoLinkTargets;
+
+impl LinkTargets for NoLinkTargets {
+    fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError> {
+        Err(LawEvaluationError::Unsupported(format!(
+            "link {link} is read by a governing law, but this caller cannot read links"
+        )))
+    }
+}
+
+/// LAW-LINK-1: the declared to-one links of `subject` a law reads, in order.
+/// A to-many link, or a second hop past a link target, refuses.
+///
+/// # Errors
+/// An unparsable expression, a to-many link, or a second hop.
+pub fn law_link_reads(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    law: &LawIR,
+) -> Result<Vec<String>, LawEvaluationError> {
+    let declared = |owner: &ObjectTypeName, id: &str| {
+        catalog.ancestry(owner).into_iter().find_map(|definition| {
+            catalog
+                .declared_links(&definition.name)
+                .into_iter()
+                .find(|link| link.id.as_str() == id)
+        })
+    };
+    let mut reads = std::collections::BTreeSet::new();
+    let response = match &law.response {
+        LawResponse::Predicate { expression } => Some(expression.as_str()),
+        LawResponse::Invariant { .. }
+        | LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => None,
+    };
+    for text in law.condition.iter().map(|c| c.as_str()).chain(response) {
+        let paths = norn_expr::expression_read_paths(text, "self")
+            .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?;
+        for path in paths {
+            let Some(link) = path.first().and_then(|first| declared(subject, first)) else {
+                continue;
+            };
+            let second_hop = path
+                .get(1)
+                .is_some_and(|member| declared(&link.target, member).is_some());
+            if link.cardinality.to != norn_ir::Multiplicity::One || second_hop {
+                return Err(LawEvaluationError::Unsupported(format!(
+                    "{}: LAW-LINK-1 reads one to-one link and its target's properties",
+                    law.id
+                )));
+            }
+            reads.insert(link.id.as_str().to_owned());
+        }
+    }
+    Ok(reads.into_iter().collect())
+}
+
+/// Whether any governing law of `object_type` reads a link (LAW-LINK-1).
+///
+/// # Errors
+/// As [`TypeCatalog::governing_laws`] and [`law_link_reads`].
+pub fn reads_links(
+    catalog: &TypeCatalog<'_>,
+    object_type: &ObjectTypeName,
+) -> Result<bool, LawEvaluationError> {
+    for artifact in catalog.governing_laws(object_type)? {
+        if !law_link_reads(catalog, object_type, &decode(artifact)?)?.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The laws (artifact and declaration) whose subject may be `subject` and that
+/// read a link to a type `target` is (LAW-LINK-1's other side).
+///
+/// # Errors
+/// As [`law_link_reads`].
+pub fn laws_reading_target<'a>(
+    catalog: &TypeCatalog<'a>,
+    target: &ObjectTypeName,
+) -> Result<Vec<(ObjectTypeName, String)>, LawEvaluationError> {
+    let mut found = Vec::new();
+    for subject in catalog.object_type_names() {
+        for artifact in catalog.governing_laws(subject)? {
+            let law = decode(artifact)?;
+            for link in law_link_reads(catalog, subject, &law)? {
+                let declared = catalog
+                    .ancestry(subject)
+                    .into_iter()
+                    .find_map(|definition| {
+                        catalog
+                            .declared_links(&definition.name)
+                            .into_iter()
+                            .find(|declared| declared.id.as_str() == link)
+                    });
+                let reaches = declared.is_some_and(|declared| {
+                    declared.target == *target
+                        || catalog
+                            .ancestry(target)
+                            .iter()
+                            .any(|ty| ty.name == declared.target)
+                        || catalog.implements(target, declared.target.as_str())
+                });
+                if reaches && !found.contains(&(subject.clone(), link.clone())) {
+                    found.push((subject.clone(), link));
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The expression object of stored values.
+fn expr_object(values: &JsonObject) -> Result<Value, LawEvaluationError> {
+    values
+        .iter()
+        .map(|(name, value)| crate::decision_commit::expr_value(value).map(|v| (name.clone(), v)))
+        .collect::<Result<_, _>>()
+        .map(Value::Object)
+        .map_err(LawEvaluationError::Invalid)
 }
 
 /// The invariant outcome and owner pin from the evaluated definition snapshot.
@@ -198,6 +373,7 @@ fn law_failure(
         },
         message: format!("{}: {}", law.id, law.rationale),
         invariant,
+        links: std::collections::BTreeMap::new(),
     })
 }
 
@@ -270,6 +446,7 @@ pub(crate) fn classify(
     DataQualityRuleClassification::Unverified
 }
 /// LAW-COMMIT-1 / OBS-EVIDENCE-1: evaluate retained direct laws, never caller payloads.
+/// A law that reads a link refuses here (LAW-LINK-1 needs [`evaluate_linked`]).
 ///
 /// # Errors
 /// Incomplete scope, unsupported semantics, invalid context or exhausted fuel.
@@ -279,22 +456,60 @@ pub fn evaluate(
     values: &JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<LawFailure>, LawEvaluationError> {
+    evaluate_linked(catalog, key, values, &mut NoLinkTargets, remaining)
+}
+
+/// LAW-COMMIT-1 / LAW-LINK-1: evaluate retained direct laws over the subject's
+/// values and, for a law that reads a to-one link, its target's values in the
+/// same snapshot (`self.<link>` is `null` when there is no target).
+///
+/// # Errors
+/// Incomplete scope, unsupported semantics, invalid context, an unreadable
+/// link target, or exhausted fuel.
+pub fn evaluate_linked(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    links: &mut dyn LinkTargets,
+    remaining: &mut u64,
+) -> Result<Vec<LawFailure>, LawEvaluationError> {
     let artifacts = catalog.governing_laws(&key.object_type)?;
     if artifacts.is_empty() {
         return Ok(Vec::new());
     }
-    let object = values
-        .iter()
-        .map(|(name, value)| crate::decision_commit::expr_value(value).map(|v| (name.clone(), v)))
-        .collect::<Result<_, _>>()
-        .map_err(LawEvaluationError::Invalid)?;
-    let context = Value::object([("self", Value::Object(object))]);
+    let Value::Object(subject) = expr_object(values)? else {
+        return Err(LawEvaluationError::Invalid("subject values".into()));
+    };
     let mut failures = Vec::new();
     for artifact in artifacts {
         let law = decode(artifact)?;
         if !supported(&law) {
             return Err(LawEvaluationError::Unsupported(law.id));
         }
+        let reads = law_link_reads(catalog, &key.object_type, &law)?;
+        if !reads.is_empty() && links.defers() {
+            continue;
+        }
+        let mut object = subject.clone();
+        let mut pinned = std::collections::BTreeMap::new();
+        for link in reads {
+            let value = match links.target(&link)? {
+                Some(target) => {
+                    pinned.insert(
+                        link.clone(),
+                        norn_ir::FactRef::new(
+                            target.key.object_type.as_str(),
+                            target.key.key.clone(),
+                            target.version,
+                        ),
+                    );
+                    expr_object(&target.values)?
+                }
+                None => Value::Null,
+            };
+            object.insert(link, value);
+        }
+        let context = Value::object([("self", Value::Object(object))]);
         let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
         let mut invariant_failure = None;
         let activation = match &law.condition {
@@ -343,7 +558,17 @@ pub fn evaluate(
             },
         };
         if let Err(outcome) = result {
-            failures.push(law_failure(artifact, &law, outcome, invariant_failure)?);
+            let outcome = if pinned.is_empty() {
+                outcome
+            } else {
+                DataQualityOutcome::Linked {
+                    links: pinned.clone(),
+                    outcome: Box::new(outcome),
+                }
+            };
+            let mut failure = law_failure(artifact, &law, outcome, invariant_failure)?;
+            failure.links = pinned;
+            failures.push(failure);
         }
     }
     Ok(failures)

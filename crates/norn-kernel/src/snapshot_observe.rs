@@ -368,6 +368,7 @@ impl ObservationAuthorization {
             provenance,
             observation_id,
             failures,
+            &mut crate::governing_laws::DeferLinkLaws,
         )?;
         self.writes.push(AuthorizedObservedWrite {
             write: write.clone(),
@@ -394,6 +395,7 @@ impl ObservationAuthorization {
             provenance,
             observation_id,
             failures,
+            &mut crate::governing_laws::DeferLinkLaws,
         )?;
         // Claim authority retains the checked values even when no finding is emitted.
         if !findings.is_empty()
@@ -989,6 +991,7 @@ impl ObservationAuthorization {
         catalog: &TypeCatalog<'_>,
         authorized: &AuthorizedObservedReadFinding,
         failures: &[InvariantFailure],
+        links: &mut dyn crate::governing_laws::LinkTargets,
     ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
         findings_for(
             catalog,
@@ -997,6 +1000,7 @@ impl ObservationAuthorization {
             &authorized.provenance,
             &authorized.observation_id,
             failures,
+            links,
         )
     }
 
@@ -1149,6 +1153,7 @@ impl ObservationAuthorization {
         catalog: &TypeCatalog<'_>,
         write: &FactWrite,
         failures: &[InvariantFailure],
+        links: &mut dyn crate::governing_laws::LinkTargets,
     ) -> Option<PreparedFindingComparison<'_>> {
         let authorized = self
             .writes
@@ -1170,9 +1175,88 @@ impl ObservationAuthorization {
                 &authorized.provenance,
                 &authorized.observation_id,
                 failures,
+                links,
             ),
             &authorized.findings,
         ))
+    }
+
+    /// LAW-LINK-1: once a bundle's links are in `commit`, recompute the
+    /// complete findings of every prepared write and guarded read whose type
+    /// has a law that reads a link, over the state the commit leaves. The
+    /// commit's own admission recomputes the same findings and compares them.
+    ///
+    /// # Errors
+    /// An unreadable link target, unsupported semantics or exhausted fuel.
+    pub fn refresh_link_findings<E, C, T, V: crate::CommitView + ?Sized>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        commit: &CellCommit<E, C, T>,
+        view: &V,
+    ) -> Result<(), ObservationRefusal> {
+        let model = crate::CommitModel::new(catalog);
+        let refuse = |error: String| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
+        let mut remaining = EvaluationBudget::default().units();
+        for authorized in &mut self.writes {
+            let FactMutation::Put { values } = &authorized.write.mutation else {
+                continue;
+            };
+            let key = authorized.write.key.clone();
+            if !crate::governing_laws::reads_links(catalog, &key.object_type)? {
+                continue;
+            }
+            let failures = crate::commit_check::evaluate_commit_invariants(
+                catalog,
+                &key,
+                values,
+                &mut remaining,
+                true,
+            )
+            .map_err(|error| refuse(format!("{error:?}")))?;
+            let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &key);
+            let findings = findings_for(
+                catalog,
+                &key,
+                values,
+                &authorized.provenance,
+                &authorized.observation_id,
+                &failures,
+                &mut links,
+            )?;
+            if links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read".into()));
+            }
+            authorized.findings = findings;
+        }
+        for authorized in &mut self.read_findings {
+            if !crate::governing_laws::reads_links(catalog, &authorized.key.object_type)? {
+                continue;
+            }
+            let failures = crate::commit_check::evaluate_commit_invariants(
+                catalog,
+                &authorized.key,
+                &authorized.values,
+                &mut remaining,
+                true,
+            )
+            .map_err(|error| refuse(format!("{error:?}")))?;
+            let mut links =
+                crate::commit_check::CommitLinks::new(commit, model, view, &authorized.key);
+            let findings = findings_for(
+                catalog,
+                &authorized.key,
+                &authorized.values,
+                &authorized.provenance,
+                &authorized.observation_id,
+                &failures,
+                &mut links,
+            )?;
+            if links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read".into()));
+            }
+            authorized.findings = findings;
+        }
+        Ok(())
     }
 
     /// Add this authority's provenance-bearing finding events to `commit`.
@@ -1256,6 +1340,7 @@ fn findings_for(
     provenance: &InstanceProvenance,
     observation_id: &str,
     failures: &[InvariantFailure],
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let evidence_digest = norn_ir::canonical::canonical_json_of(values)
         .map(|bytes| {
@@ -1334,7 +1419,9 @@ fn findings_for(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut remaining = EvaluationBudget::default().units();
-    for failure in crate::governing_laws::evaluate(catalog, key, values, &mut remaining)? {
+    for failure in
+        crate::governing_laws::evaluate_linked(catalog, key, values, links, &mut remaining)?
+    {
         findings.push(build(
             failure.rule_ref,
             failure.severity,
@@ -1355,8 +1442,9 @@ pub fn verify_finding_values(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<bool, ObservationRefusal> {
-    let expected = reevaluate_finding(catalog, key, values, finding)?;
+    let expected = reevaluate_finding(catalog, key, values, finding, links)?;
     Ok(expected.iter().any(|expected| {
         expected.rule_ref == finding.rule_ref
             && expected.subjects == finding.subjects
@@ -1377,6 +1465,7 @@ pub fn finding_rule_is_violated(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<bool, ObservationRefusal> {
     if let DataQualityOutcome::ObservedOutOfBand { property, .. } = &finding.outcome {
         return Err(ObservationRefusal::InvalidLifecycle {
@@ -1384,7 +1473,7 @@ pub fn finding_rule_is_violated(
             reason: "state-aware finding recovery is unsupported".into(),
         });
     }
-    Ok(reevaluate_finding(catalog, key, values, finding)?
+    Ok(reevaluate_finding(catalog, key, values, finding, links)?
         .iter()
         .any(|expected| expected.rule_ref == finding.rule_ref))
 }
@@ -1394,6 +1483,7 @@ fn reevaluate_finding(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let mut remaining = EvaluationBudget::default().units();
     let failures = evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| {
@@ -1421,6 +1511,7 @@ fn reevaluate_finding(
         &provenance,
         "verified-history",
         &failures,
+        links,
     )
 }
 

@@ -106,6 +106,15 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             &mut commit,
             &mut authorization,
         )?;
+        // LAW-LINK-1: laws that read a link are evaluated once the bundle's
+        // links are known, over the state this commit leaves.
+        authorization
+            .refresh_link_findings(
+                &catalog,
+                &commit,
+                &crate::host::GuardView(&self.store().read()),
+            )
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
