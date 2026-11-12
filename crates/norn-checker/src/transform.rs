@@ -19,8 +19,10 @@ use norn_expr::{EnvOptions, Expression, InferredType, Type, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
     JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyTypeName, ResourceLimitProfile,
-    SortDirection, TimeGrain, ViewInputKind, ViewIrPayload, ViewMaintenance, ViewNode, WindowFn,
+    SortDirection, ViewInputKind, ViewIrPayload, ViewMaintenance, ViewNode, WindowFn,
 };
+
+use norn_ir::metric::TimeGrain;
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
@@ -477,13 +479,18 @@ impl<'a> Context<'a> {
             if let Some(admitted) = builder.node(node, &pointer) {
                 builder.nodes.insert(id.clone(), admitted);
             } else {
+                if builder.out.is_empty() {
+                    builder.fail(codes::INVALID_PLAN, "the node cannot be typed", pointer);
+                }
                 // A node that fails leaves its consumers unchecked; their
                 // findings would only repeat this one.
                 break;
             }
         }
+        let nodes = std::mem::take(&mut builder.nodes);
+        let links = std::mem::take(&mut builder.links);
         out.append(&mut builder.out);
-        if !out.is_empty() {
+        if !out.is_empty() || !nodes.contains_key(&plan.output) {
             return Err(out);
         }
         Ok(TransformPlan {
@@ -492,9 +499,9 @@ impl<'a> Context<'a> {
             view_id: root.view_id,
             inputs,
             order,
-            nodes: builder.nodes,
+            nodes,
             output: plan.output.clone(),
-            links: builder.links,
+            links,
             fuel_units: self.limits.decide.fuel_units,
         })
     }
@@ -884,7 +891,14 @@ impl Builder<'_, '_> {
     }
 
     fn env_for(&mut self, schema: &NodeSchema, at: &str) -> Option<ZenTypeEnv> {
-        let base = self.context.env.as_ref()?;
+        let Some(base) = self.context.env.as_ref() else {
+            self.fail(
+                codes::INVALID_PLAN,
+                "the input types have no supported expression environment",
+                at,
+            );
+            return None;
+        };
         let records = base
             .records()
             .iter()
@@ -1298,15 +1312,15 @@ impl Builder<'_, '_> {
         let mut renames = Vec::new();
         for column in &right.columns {
             let name = format!("{}{}", join.prefix, column.name);
-            let mut renamed = Column {
+            let mut right_column = Column {
                 fanned: column.fanned || right_fans,
                 ..column.renamed(&name)
             };
             if join.kind == JoinKind::Left {
-                renamed = renamed.nullable();
+                right_column = right_column.nullable();
             }
             renames.push((column.name.clone(), name));
-            columns.push(renamed);
+            columns.push(right_column);
         }
         let mut grain = left.grain.clone();
         if left_fans {
@@ -1944,5 +1958,6 @@ fn column_type(inferred: &InferredType) -> Option<Type> {
         InferredType::Number => Type::Number,
         InferredType::Optional(inner) => Type::Optional(Box::new(column_type(inner)?)),
         InferredType::Null | InferredType::List(_) | InferredType::Record(_) => return None,
+        _ => return None,
     })
 }

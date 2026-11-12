@@ -12,9 +12,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{EvaluationBudget, Type, Value};
-use norn_ir::{
-    AggregateFn, Decimal, DedupeKeep, JoinKind, RuntimeValue, SortDirection, TimeGrain, WindowFn,
-};
+use norn_ir::metric::TimeGrain;
+use norn_ir::{AggregateFn, Decimal, DedupeKeep, JoinKind, RuntimeValue, SortDirection, WindowFn};
 
 use super::{AdmittedJoin, MAX_ROWS, Projection, ROW_ROOT, Step, TransformPlan, TypedExpression};
 
