@@ -16,6 +16,16 @@ use norn_kernel::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type MappingCommit = CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>;
+
+static WIDE_SCOPE_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Also plan every mapping bundle's links over the wide journal scope (every
+/// record and claim key at both ends) and refuse if the narrowed plan differs.
+/// For tests: it makes every plan cost what it did before the narrowing.
+#[doc(hidden)]
+pub fn check_link_plans_against_wide_scope(on: bool) {
+    WIDE_SCOPE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
 const MAX_CLAIM_BUNDLES: usize = 1000;
 const MAX_CLAIM_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CLAIMS: usize = 20_000;
@@ -38,6 +48,7 @@ enum Standing {
 }
 
 /// Edge changes for one bundle and the claims that must back them.
+#[derive(Debug, PartialEq)]
 pub(crate) struct LinkPlan {
     pub(crate) links: Vec<LinkWrite>,
     fresh: Vec<ObservedLinkClaim>,
@@ -314,6 +325,34 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
         let model = CommitModel::new(&catalog);
+        let plan = self.link_plan_over(bundle, commit, model, &self.plan_scope(bundle, model)?)?;
+        // Equivalence check for the narrowed scope (tests turn it on): the same
+        // plan over the wide scope, every record and claim key at both ends.
+        if WIDE_SCOPE_CHECK.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut keys = BTreeSet::new();
+            for record in &bundle.records {
+                keys.insert(record.key.clone());
+            }
+            for claim in bundle.link_claims()? {
+                keys.insert(claim.source_key);
+                keys.extend(claim.target.map(|t| t.key));
+            }
+            let wide = self.link_plan_over(bundle, commit, model, &ClaimScope::either(keys))?;
+            if wide != plan {
+                return Err(CellError::Encoding(format!(
+                    "the narrowed link plan differs from the wide one: {plan:?} != {wide:?}"
+                )));
+            }
+        }
+        Ok(plan)
+    }
+
+    /// The journal scope a bundle's plan reads.
+    fn plan_scope(
+        &self,
+        bundle: &MappingBundle,
+        model: CommitModel<'_, '_>,
+    ) -> Result<ClaimScope, CellError> {
         // A plan changes only links touching this commit's objects or this
         // bundle's claims. Sources: every record and every claim source, so
         // each changed (source, role) group is read whole. Targets, only where
@@ -344,7 +383,18 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             }
             scope.sources.insert(claim.source_key);
         }
-        let entries = self.claim_journal(Some(bundle), Some(&scope))?;
+        Ok(scope)
+    }
+
+    /// The plan over one journal scope.
+    fn link_plan_over<E, C, T>(
+        &self,
+        bundle: &MappingBundle,
+        commit: &CellCommit<E, C, T>,
+        model: CommitModel<'_, '_>,
+        scope: &ClaimScope,
+    ) -> Result<LinkPlan, CellError> {
+        let entries = self.claim_journal(Some(bundle), Some(scope))?;
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };

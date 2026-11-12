@@ -63,6 +63,8 @@ fn setup(path: &Path) -> Cell {
 }
 
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
+    // Every plan in these tests is also checked against the wide journal scope.
+    norn_cell::check_link_plans_against_wide_scope(true);
     let mut artifacts = fixture_artifacts();
     edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
@@ -820,4 +822,54 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
         provider(&cell),
         BTreeSet::from(["demo/party/custodian".into()])
     );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    /// The narrowed link plan equals the wide one (checked inside every
+    /// mapping commit) over generated histories: deliveries in any order,
+    /// re-pointed claims, redeliveries of older versions and, on the to-many
+    /// `peers` link, cleared claims; for the production links (`from: one`
+    /// owner) and the added `from: many` relation.
+    #[test]
+    fn obs_link_narrowed_plans_equal_wide_plans(
+        many in proptest::bool::ANY,
+        steps in proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..18),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("shadow.sqlite");
+        let mut cell = if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) };
+        let source = fixture("erpnext");
+        let rows = source["snapshot"].as_array().expect("rows").clone();
+        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
+        for (row, party, version) in steps {
+            let mut row = rows[usize::from(row) % rows.len()].clone();
+            let record = row["record"].as_object_mut().expect("record");
+            let party = parties[usize::from(party)];
+            if record.contains_key("provider_ref") && party != "clear" {
+                record.insert("provider_ref".into(), json!(party));
+            }
+            if many && record.contains_key("owner_ref") {
+                record.insert("owner_ref".into(), json!(party));
+            }
+            // A refusal of an unsupported profile is a valid outcome; a plan
+            // mismatch surfaces as an encoding error and fails here.
+            let event = version.to_string();
+            let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                capture(&mut cell, "erpnext", &row, &event)
+            }));
+            if let Err(panic) = captured {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
+                proptest::prop_assert!(
+                    !message.contains("narrowed link plan differs"),
+                    "{message}"
+                );
+                break;
+            }
+        }
+    }
 }
