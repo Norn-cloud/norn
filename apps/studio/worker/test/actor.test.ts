@@ -177,7 +177,7 @@ function streamed(document: unknown, status = 200): Response {
 }
 
 test("a streamed definition read is served without cloning, signed or not", async () => {
-  let document: unknown = {}
+  let document: Record<string, unknown> = {}
   const { env, auth } = stage(() => streamed(document))
   const cookie = await signUp(env, "streamed@example.com")
   const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
@@ -190,5 +190,5 @@ test("a streamed definition read is served without cloning, signed or not", asyn
   document = { id: "ops.approve_refund", kind: "flow", signoff: null }
   const unsigned = await read()
   expect(unsigned.status).toBe(200)
-  expect(await unsigned.json()).toEqual(document)
+  expect(await unsigned.json() as Record<string, unknown>).toEqual(document)
 })
