@@ -1,4 +1,6 @@
 import { apiKey } from "@better-auth/api-key"
+import { cimd } from "@better-auth/cimd"
+import { mcp } from "@better-auth/mcp"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
 import { APIError } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
@@ -18,7 +20,7 @@ import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts
 
 /** The sign-in path that created a session, as Norn's `actor.authMethod`. */
 export const AUTH_METHODS = { "/sign-up/email": "password", "/sign-in/email": "password", "/magic-link/verify": "magic_link" } as const
-export type AuthMethod = (typeof AUTH_METHODS)[keyof typeof AUTH_METHODS] | "api_key"
+export type AuthMethod = (typeof AUTH_METHODS)[keyof typeof AUTH_METHODS] | "api_key" | "oauth"
 
 // Better Auth's own permissions cover organization administration only
 // (members, invitations, API keys). Viewers and members administer nothing.
@@ -57,7 +59,90 @@ export interface AuthConfig {
   readonly scrypt?: PasswordScrypt
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
+  /**
+   * Serve `<baseURL>/mcp` to assistants people connect (Claude, ChatGPT): Better Auth becomes
+   * their OAuth 2.1 authorization server. Needs migration 0007_oauth_provider.
+   */
+  readonly mcp?: boolean
 }
+
+/** Where assistants reach Norn, and the resource their access tokens are bound to (RFC 8707). */
+export const MCP_PATH = "/mcp"
+export const mcpResource = (baseURL: string) => new URL(MCP_PATH, baseURL).href
+
+/** The access-token claim carrying the organization the person consented for. */
+export const ORG_CLAIM = "https://norn.cloud/org"
+
+/**
+ * Callbacks an assistant may receive a person's authorization code on. Registration (dynamic or
+ * by metadata document) cannot add others, so a look-alike client cannot collect codes elsewhere.
+ * Loopback callbacks serve local tools (Claude Code, the MCP inspector).
+ */
+export const ASSISTANT_CALLBACKS: readonly string[] = [
+  "https://claude.ai/api/mcp/auth_callback",
+  "https://claude.com/api/mcp/auth_callback",
+  "https://chatgpt.com/connector_platform_oauth_redirect",
+]
+export function assistantCallback(uri: string): boolean {
+  if (ASSISTANT_CALLBACKS.includes(uri)) return true
+  try {
+    const url = new URL(uri)
+    if (url.username || url.password || url.hash) return false
+    if (url.origin === "https://chatgpt.com") return /^\/connector\/oauth\/[A-Za-z0-9_-]+$/.test(url.pathname) && url.search === ""
+    return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]")
+  } catch {
+    return false
+  }
+}
+
+/** Origins whose client metadata documents (CIMD) are fetched; any other client_id URL is refused unfetched. */
+export const CIMD_ORIGINS: ReadonlySet<string> = new Set(["https://claude.ai", "https://claude.com", "https://chatgpt.com"])
+export function cimdAllowed(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === "https:" && CIMD_ORIGINS.has(parsed.origin) && !parsed.username && !parsed.password
+  } catch {
+    return false
+  }
+}
+
+/** Fetch a client metadata document from an allowed origin only, never following a redirect. */
+export async function fetchClientMetadata(input: RequestInfo | URL, init?: RequestInit, fetcher: typeof fetch = fetch): Promise<Response> {
+  const url = input instanceof Request ? input.url : String(input)
+  if (!cimdAllowed(url)) throw new Error("client metadata documents are fetched only from known assistants")
+  return fetcher(url, { ...init, redirect: "manual", signal: init?.signal ?? AbortSignal.timeout(5000) })
+}
+
+/**
+ * The OAuth 2.1 authorization server for assistants (MCP authorization). Identity only, like the
+ * rest of this file: the token names a person and the organization they consented for; Norn's
+ * policy on the server decides every call. Sign-in is Studio's own, and nothing here signs anyone
+ * up. A person sees who is asking and for which workspace before any grant.
+ */
+const assistantAuthorization = (baseURL: string) => [
+  mcp({
+    resource: mcpResource(baseURL),
+    loginPage: "/oauth/sign-in",
+    consentPage: "/oauth/consent",
+    // Public clients register themselves (RFC 7591) or by metadata document (CIMD); either way
+    // only the callbacks above can receive a code.
+    allowDynamicClientRegistration: true,
+    allowUnauthenticatedClientRegistration: true,
+    validateRedirectUri: (uri: string, _registered: readonly string[], matched: boolean) => matched && assistantCallback(uri),
+    accessTokenExpiresIn: 15 * MINUTE,
+    // The consent is recorded against the organization the person is working in.
+    postLogin: {
+      page: "/oauth/consent",
+      consentReferenceId: ({ session }) => {
+        const org = (session as { activeOrganizationId?: unknown }).activeOrganizationId
+        return typeof org === "string" && org !== "" ? org : undefined
+      },
+      shouldRedirect: () => false,
+    },
+    customAccessTokenClaims: ({ referenceId }) => referenceId === undefined || referenceId === "" ? {} : { [ORG_CLAIM]: referenceId },
+  }),
+  cimd({ fetchClientMetadataResource: (input, init) => fetchClientMetadata(input, init), isMetadataDocumentUrlAllowed: cimdAllowed }),
+]
 
 /** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
 export interface GatewayClient {
@@ -256,6 +341,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         "/sign-in/magic-link": { window: 15 * MINUTE, max: 3 },
         "/magic-link/verify": { window: 5 * MINUTE, max: 10 },
         "/api-key/verify": { window: MINUTE, max: 60 },
+        "/oauth2/register": { window: 60 * MINUTE, max: 20 },
+        "/oauth2/token": { window: MINUTE, max: 60 },
       },
     },
     advanced: {
@@ -309,6 +396,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
       ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
+      ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
     ],
     databaseHooks: {
       user: {
