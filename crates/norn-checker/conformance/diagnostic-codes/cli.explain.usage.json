@@ -1,0 +1,7 @@
+{
+  "code": "cli.explain.usage",
+  "message": "Usage: norn explain KIND ID [--json] [--wording FILE --locale TAG]; KIND is one of `action`, `law`, `concept`",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

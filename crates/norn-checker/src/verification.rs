@@ -1361,58 +1361,7 @@ fn predicate(
     }
 }
 
-/// Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LawWriter {
-    /// A complete admitted behavior artifact (including cascaded/opaque effects).
-    Artifact {
-        /// The artifact identity, without delimiter interpretation.
-        artifact_id: String,
-    },
-    /// One transition of an effective, possibly inherited lifecycle.
-    Transition {
-        /// Effective concrete type.
-        object_type: String,
-        /// Lifecycle property.
-        property: String,
-        /// Declared transition id.
-        transition: String,
-    },
-}
-impl LawWriter {
-    /// Tagged wire identity, with independently encoded components.
-    #[must_use]
-    pub fn to_json(&self) -> serde_json::Value {
-        match self {
-            Self::Artifact { artifact_id } => {
-                serde_json::json!({"kind":"artifact","artifactId":artifact_id})
-            }
-            Self::Transition {
-                object_type,
-                property,
-                transition,
-            } => {
-                serde_json::json!({"kind":"transition","objectType":object_type,"property":property,"transition":transition})
-            }
-        }
-    }
-    /// Conservative UTF-8/JSON-escaping allocation bound, before copying any id.
-    #[must_use]
-    pub fn encoded_byte_bound(&self) -> usize {
-        let lengths = match self {
-            Self::Artifact { artifact_id } => artifact_id.len(),
-            Self::Transition {
-                object_type,
-                property,
-                transition,
-            } => object_type
-                .len()
-                .saturating_add(property.len())
-                .saturating_add(transition.len()),
-        };
-        lengths.saturating_mul(6).saturating_add(128)
-    }
-}
+pub use norn_ir::explain::LawWriter;
 
 /// Conservative invalidation inventory. Every artifact is retained: hidden/opaque writers
 /// cannot disappear merely because their write set is not syntactically visible.
