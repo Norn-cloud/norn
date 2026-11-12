@@ -316,9 +316,11 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
   const paint = (snapshot: Snapshot) => {
     const state = snapshot.stateId
     const role = machine.states.find((candidate) => candidate.stateId === state)?.role
-    const settled = role === "terminal" || state === "awaiting-approval"
+    const settled = role === "terminal"
     q(".norn-sheet")?.setAttribute("data-state", state)
+    // A terminal machine shows only its outcome; otherwise the form stays, with what it offers now.
     q('[data-region="form"]')?.toggleAttribute("hidden", settled)
+    q('[data-host="back"]')?.toggleAttribute("hidden", !settled)
     paintCountdown(settled)
     paintOutcome(state)
     const choice = snapshot.fields.choice
@@ -340,6 +342,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
     q('[data-region="decision-leave"]')?.toggleAttribute("hidden", state !== "leaving")
     const editable = enabled(machine, evaluate, snapshot, "option-choice")
+    // Choices and the note show while they can change, and while a call is in flight (read-only).
+    for (const region of ["decision-choices", "decision-note"]) q(`[data-region="${region}"]`)?.toggleAttribute("hidden", !editable && state !== "sending")
     q("textarea")?.toggleAttribute("disabled", !editable)
     q('[data-node="option-choice"]')?.toggleAttribute("aria-disabled", !editable)
     // The server's words for a refusal: the top-level message and unpointed diagnostics at the top,
@@ -407,12 +411,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     event.preventDefault()
     if (!raise("confirm-button")) raise("decide-button")
   })
-  root.addEventListener("valuechange", (event) => {
+  // UI SDK reports a change on the group itself (`valuechange`, not bubbling); its `value` is the checked radio.
+  const group = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
+  group?.addEventListener("valuechange", (event) => {
     const detail = (event as CustomEvent<{ value?: unknown }>).detail
-    const source = (event.target as Element | null)?.closest<HTMLElement>("[data-node]")
-    const value = typeof detail?.value === "string" ? detail.value : ""
-    if (source?.dataset.node === "option-choice") raise("option-choice", { value, confirm: needsConfirm(decision, value) })
-    if (source?.dataset.node === "note-input") raise("note-input", { value })
+    const value = typeof detail?.value === "string" ? detail.value : typeof group.value === "string" ? group.value : ""
+    if (value !== "") raise("option-choice", { value, confirm: needsConfirm(decision, value) })
   })
   // The native textarea reports every edit, upgraded or not.
   root.addEventListener("input", (event) => {
