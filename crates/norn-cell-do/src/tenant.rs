@@ -252,8 +252,7 @@ impl<E: SqlEngine> Tenant<E> {
         let engine = open().map_err(SeedError)?;
         // A stored cell that does not open is kept as a refusal state: every
         // request answers at once instead of retrying the open (and queueing).
-        let state = reopen(engine, &scope, table, &caller)
-            .unwrap_or_else(|error| State::Unopenable(error.0));
+        let state = reopen(engine, &scope, table, &caller)?.unwrap_or_else(State::Unopenable);
         let derived = handle_key
             .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
             .map(|questions| questions.with_label("tenant"));
@@ -597,8 +596,9 @@ impl<E: SqlEngine> Tenant<E> {
             {
                 // Provisioned since this host last looked (a reply it lost):
                 // serve it and answer from its first revision.
-                self.state =
-                    reopen(engine, &self.scope, self.table, &self.caller).map_err(Refusal::host)?;
+                self.state = reopen(engine, &self.scope, self.table, &self.caller)
+                    .map_err(Refusal::host)?
+                    .map_err(Refusal::host)?;
             } else {
                 let (store, receipt) = provision::provision_cell(
                     engine,
@@ -642,31 +642,52 @@ fn handles(key: Option<&[u8]>) -> Result<Option<ReceiptHandles>, SeedError> {
 
 /// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with
 /// the model rebuilt from the retained set; vacant when it holds none.
+///
+/// The inner `Err` is a stored cell this host cannot open (its definitions do
+/// not read, or its layout is not the one they rebuild): the caller serves it
+/// as a refusal state.
+///
+/// # Errors
+/// The engine's definitions cannot be read, or the store is bound to
+/// another scope: never served, and never told apart from a vacant scope.
 fn reopen<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
     table: &'static GrantTable,
     caller: &Arc<CallerSlot>,
-) -> Result<State<E>, SeedError> {
+) -> Result<Result<State<E>, String>, SeedError> {
     let fail =
         |context: &str, error: &dyn std::fmt::Display| SeedError(format!("{context}: {error}"));
     let Some(active) =
         CellStore::read_active_definitions(&engine).map_err(|e| fail("definitions", &e))?
     else {
-        return Ok(State::Vacant);
+        return Ok(Ok(State::Vacant));
     };
-    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
-        .map_err(|e| fail("active definitions", &e))?;
-    // The serving model every install path checks against (DEFS-REOPEN-1):
-    // the kernel's action types are part of it, as provisioned.
-    let model = norn_api::kernel_set::serving_model(&artifacts)
-        .map_err(|e| fail("active definitions", &e))?;
-    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
-    // A store bound to another scope is never served under this one.
+    // A store bound to another scope is never served under this one; its
+    // binding is read before its layout is trusted.
+    match CellStore::read_binding(&engine, "scope").map_err(|e| fail("scope", &e))? {
+        Some(bound) if bound != scope.key() => {
+            return Err(SeedError(format!("scope: the store is bound to {bound}")));
+        }
+        Some(_) | None => {}
+    }
+    let opened = (|| {
+        let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        // The serving model every install path checks against (DEFS-REOPEN-1):
+        // the kernel's action types are part of it, as provisioned.
+        let model = norn_api::kernel_set::serving_model(&artifacts)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
+    })();
+    let mut store = match opened {
+        Ok(store) => store,
+        Err(reason) => return Ok(Err(reason)),
+    };
     store
         .bind("scope", &scope.key())
         .map_err(|e| fail("scope", &e))?;
-    Ok(State::Serving(Box::new(Serving::from_store(
+    Ok(Ok(State::Serving(Box::new(Serving::from_store(
         store, scope, table, caller, None,
-    )?)))
+    )?))))
 }
