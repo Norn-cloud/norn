@@ -165,7 +165,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
                 {edges.length === 0
                   ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
                   : live
-                    ? <div className="pt-2"><LinkedRecords from={from} ids={edges.map(({ source }) => source)} /></div>
+                    ? <div className="pt-2"><LinkedRecords from={from} ids={edges.map(({ source }) => source)} parent={id} /></div>
                     : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
               </li>
             )
