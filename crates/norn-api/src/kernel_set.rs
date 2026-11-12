@@ -172,6 +172,26 @@ pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefus
         .map_err(|e| invalid("governing laws")(&e))
 }
 
+/// HOST-REOPEN-1: the model a host serves `artifacts` under, as provisioning
+/// installs it and a restarted host rebuilds it from the retained set: the
+/// kernel model with the kernel's action receipt and owned-row types. Every
+/// definitions install uses it (DEFS-REOPEN-1), so no install commits a
+/// layout the next open would refuse.
+///
+/// # Errors
+/// The set's model does not project, or declares a kernel-reserved name.
+pub fn serving_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
+    let model = kernel_model(artifacts).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => findings
+            .iter()
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect::<Vec<_>>()
+            .join("; "),
+        KernelRefusal::Invalid(detail) => detail,
+    })?;
+    crate::action_admission::prepare_action_model(&model).map_err(|refusal| refusal.message)
+}
+
 /// The artifact envelopes of an installed set's canonical text.
 ///
 /// # Errors
