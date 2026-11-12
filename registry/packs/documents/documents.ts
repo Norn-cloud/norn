@@ -27,7 +27,7 @@ export const SourceDocumentLine = Norn.interfaceType({
 })
 
 export const BookedEntry = Norn.interfaceType({
-  name: "docs.BookedEntry", title: "Booked journal entry", version: "0.1.0",
+  name: "docs.BookedEntry", title: "Booked journal entry", version: "0.1.0", role: "happening",
   description: "The journal entry a document was booked to, as the ledger reports it: one signed amount, positive for a debit.",
   properties: Schema.Struct({ id: Schema.String, entry_number: Schema.String, currency: Schema.Literals(["USD"]), amount: Money }),
 })
@@ -176,7 +176,7 @@ export const Source = Norn.sourceSchema({
 
 export const Mapping = Norn.mapping({
   id: "docs.scans.mapping", title: "Extracted documents, lines and field evidence", version: "0.1.0",
-  source: { schemaId: "docs.scans.source", version: "0.1.0", sha256: "92a09d31598c15246cdd783553e772a9196c4bc9de9a6bca75751c0bf96c8181" },
+  source: { schemaId: "docs.scans.source", version: "0.1.0", sha256: "1a06e7d02947180bcec0cb7b3f2440473679db263fe5516c526b33e0b2e1abd7" },
   sourceContract: { kind: "generic" }, interfaces: [SourceDocument, SourceDocumentLine, SourceEvidence, BookedEntry],
   maps: [
     {

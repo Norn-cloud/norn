@@ -46,7 +46,8 @@
             "scale": 2
           }
         }
-      ]
+      ],
+      "role": "happening"
     }
   },
   "provenance": {
