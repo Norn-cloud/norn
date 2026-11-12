@@ -1405,3 +1405,166 @@ mod sources_pack {
         std::fs::remove_file(path).expect("scratch export");
     }
 }
+
+/// A property may be named like any alias the engine's SQL uses: every
+/// operation reads such a type as any other (the `label` profile fault).
+mod alias_names {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{
+        ExportFormat, ExportRequest, PageClause, PageKey, PageOp, PageOperand, PageRequest,
+        ProfileRequest,
+    };
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+    /// Every bare alias in the engine's statements, and their numbered forms.
+    const ALIASES: [&str; 25] = [
+        "a",
+        "b",
+        "base",
+        "c",
+        "contributes",
+        "digest",
+        "f",
+        "first",
+        "g",
+        "gk",
+        "label",
+        "n",
+        "p",
+        "pk",
+        "r",
+        "refuse",
+        "rn",
+        "s",
+        "t",
+        "v",
+        "x",
+        "g0",
+        "a0",
+        "n0",
+        "c0",
+    ];
+
+    #[test]
+    fn a_type_whose_properties_are_named_like_engine_aliases_profiles_pages_and_exports() {
+        let mut properties: Vec<serde_json::Value> = ALIASES
+            .iter()
+            .map(|id| serde_json::json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}}))
+            .collect();
+        properties
+            .push(serde_json::json!({"id": "amount", "type": {"kind": "decimal", "scale": 2}}));
+        properties.push(
+            serde_json::json!({"id": "at", "type": {"kind": "timestamp", "timezone": "utc"}}),
+        );
+        let object: norn_ir::ObjectTypeDef = serde_json::from_value(
+            serde_json::json!({"name": "demo.Aliased", "properties": properties}),
+        )
+        .expect("type");
+        let mut store =
+            CellStore::open_in_memory(Model::from_definitions(&[object], &[]).expect("model"))
+                .expect("cell");
+        let writes = (0..3i64)
+            .map(|i| {
+                let mut values: BTreeMap<String, RuntimeValue> = ALIASES
+                    .iter()
+                    .map(|id| {
+                        (
+                            (*id).to_owned(),
+                            RuntimeValue::from(format!("{id}-{i}").as_str()),
+                        )
+                    })
+                    .collect();
+                values.insert(
+                    "amount".into(),
+                    RuntimeValue::from(
+                        norn_ir::Decimal::parse(&format!("{i}.25")).expect("decimal"),
+                    ),
+                );
+                values.insert(
+                    "at".into(),
+                    RuntimeValue::from(format!("2026-11-1{i}T12:00:00Z").as_str()),
+                );
+                FactWriteRow::Put {
+                    object_type: "demo.Aliased".into(),
+                    key: format!("k{i}"),
+                    values,
+                }
+            })
+            .collect();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes,
+                ..CommitBatch::default()
+            })
+            .expect("rows commit");
+        let (_dir, engine) = engine();
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "demo.Aliased")
+            .expect("source");
+        let columns: Vec<String> = store
+            .analytics_table("demo.Aliased")
+            .expect("table")
+            .columns
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns: columns.clone(),
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 3);
+        for id in &columns {
+            let page = engine
+                .page(&PageRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    filters: vec![PageClause {
+                        column: id.clone(),
+                        op: PageOp::Present,
+                        operands: Vec::new(),
+                    }],
+                    sort: vec![PageKey {
+                        column: id.clone(),
+                        descending: true,
+                    }],
+                    offset: 1,
+                    limit: 1,
+                })
+                .expect("page");
+            assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
+            assert_eq!(page.rows[0].id, "k1", "{id}");
+        }
+        let text = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: vec![PageClause {
+                    column: "label".into(),
+                    op: PageOp::Eq,
+                    operands: vec![PageOperand::Text("label-2".into())],
+                }],
+                sort: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("label page");
+        assert_eq!(text.total, 1);
+        let path = engine
+            .export(&ExportRequest {
+                tenant: tenant(),
+                source,
+                columns,
+                format: ExportFormat::Jsonl,
+            })
+            .expect("export");
+        std::fs::remove_file(path).expect("scratch export");
+    }
+}
