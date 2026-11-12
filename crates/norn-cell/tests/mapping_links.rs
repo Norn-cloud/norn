@@ -1048,7 +1048,11 @@ fn claims_follow_their_referents(cell: &Cell) -> Result<(), String> {
         }
         at.as_str().map(str::to_owned)
     };
-    let ledger = cell.store().read().ledger(0).expect("ledger");
+    let ledger = cell
+        .store()
+        .read()
+        .ledger(0)
+        .map_err(|error| error.to_string())?;
     for (index, entry) in ledger.iter().enumerate() {
         if text(&entry.event, &["event", "key", "objectType"]).as_deref()
             != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
@@ -1209,7 +1213,7 @@ async fn obs_page_commits_export_and_restore_with_their_members() {
     for row in rows.iter().rev() {
         let (raw, input) = raw_of(row, "1");
         match pages.last_mut() {
-            Some((current, raws)) if current.dataset == input.dataset => raws.push(raw),
+            Some((current, members)) if current.dataset == input.dataset => members.push(raw),
             _ => pages.push((input, vec![raw])),
         }
     }
