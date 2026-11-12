@@ -308,7 +308,7 @@ test("dev host: the build-from-source instructions name this CLI's commit and ar
     // The registered fix gives the same command and path, not another one.
     const registered = registeredCodes().get("cli.setup.host_unavailable")!
     expect(registered.fix).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
-    expect(registered.fix).toContain("target/release/norn-dev-host")
+    expect(registered.fix).toContain("${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host")
     expect(registered.fix).toContain("`norn --version`")
   } finally { rmSync(root, { recursive: true }) }
 })
