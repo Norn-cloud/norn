@@ -1,4 +1,4 @@
-//! The OFBiz reader on authored toy fixtures: the output and its loss report
+//! The `OFBiz` reader on authored toy fixtures: the output and its loss report
 //! against goldens, the conformance rules every importer meets, and the
 //! refusals (an unknown element, a pin mismatch).
 #![allow(
@@ -105,7 +105,9 @@ fn loss_jsonl(import: &SchemaImport) -> String {
         .iter()
         .map(|entry| {
             let value = sorted_keys(serde_json::to_value(entry).unwrap());
-            format!("{}\n", serde_json::to_string(&value).unwrap())
+            let mut line = serde_json::to_string(&value).unwrap();
+            line.push('\n');
+            line
         })
         .collect()
 }
