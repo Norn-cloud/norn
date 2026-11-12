@@ -170,6 +170,14 @@ export const SandboxSource = Norn.sourceSchema({
       required: true
     },
     {
+      dataset: "stock.quant",
+      name: "write_date",
+      ordinal: 12,
+      nativeType: "datetime",
+      typeCandidate: {type: "string", origin: "declared"},
+      required: true
+    },
+    {
       dataset: "res.partner",
       name: "id",
       ordinal: 0,
@@ -314,6 +322,8 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        // Odoo stores `write_date` in UTC without an offset.
+        {property: "observed_at", value: "timestamp(join(split(input.write_date, ' '), 'T') + 'Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},
@@ -484,7 +494,8 @@ export const SandboxConnector = Norn.connector({
           custodian_ref: "/x_custodian_ref",
           stock_cost: "/x_stock_cost",
           cost_currency: "/x_cost_currency",
-          valuation_method: "/x_valuation_method"
+          valuation_method: "/x_valuation_method",
+          write_date: "/write_date"
         },
         initial: {version: "1970-01-01 00:00:00", id: 0}
       },

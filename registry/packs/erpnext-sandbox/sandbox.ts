@@ -142,6 +142,14 @@ export const SandboxSource = Norn.sourceSchema({
       typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
+    {
+      dataset: "Warehouse Lot Balance",
+      name: "modified",
+      ordinal: 12,
+      nativeType: "Datetime",
+      typeCandidate: {type: "string", origin: "declared"},
+      required: true
+    },
     {dataset: "Party", name: "name", ordinal: 0, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Party",
@@ -273,6 +281,8 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        // Frappe's `modified` is the site's local time without an offset; the sandbox site runs in UTC.
+        {property: "observed_at", value: "timestamp(join(split(input.modified, ' '), 'T') + 'Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},
@@ -442,7 +452,8 @@ export const SandboxConnector = Norn.connector({
           custodian_ref: "/custodian_ref",
           stock_cost: "/stock_cost",
           cost_currency: "/cost_currency",
-          valuation_method: "/valuation_method"
+          valuation_method: "/valuation_method",
+          modified: "/modified"
         },
         initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       },

@@ -53,7 +53,8 @@
         "location": "north",
         "item_ref": "demo/item/gold",
         "owner_ref": "demo/party/owner",
-        "custodian_ref": "demo/party/custodian"
+        "custodian_ref": "demo/party/custodian",
+        "updated_at": "2026-11-01T00:00:00Z"
       }
     },
     {
@@ -67,7 +68,8 @@
         "location": "south",
         "item_ref": "demo/item/gold",
         "owner_ref": "demo/party/owner",
-        "custodian_ref": "demo/party/custodian"
+        "custodian_ref": "demo/party/custodian",
+        "updated_at": "2026-11-01T00:00:00Z"
       }
     },
     {
@@ -132,7 +134,8 @@
         "location": "north",
         "item_ref": "demo/item/gold",
         "owner_ref": "demo/party/owner",
-        "custodian_ref": "demo/party/custodian"
+        "custodian_ref": "demo/party/custodian",
+        "updated_at": "2026-11-01T00:00:00Z"
       }
     },
     {

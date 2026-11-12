@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-erpnext", instance: "demo", version: "erpnext-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4"},
+  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "c6be2331a6bfdb02e41db56d8da20433662b69c972f1e4ee49caecb0ccb29f6c"},
   datasets: [
     {id: "Item", nativeName: "Synthetic Item", kind: "document"},
     {id: "Warehouse Lot Balance", nativeName: "Synthetic Warehouse Lot Balance", kind: "document"},
@@ -74,6 +74,7 @@ export const Source = Norn.sourceSchema({
     {dataset: "Payment Entry", name: "payer_ref", ordinal: 5, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Payment Entry", name: "payee_ref", ordinal: 6, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Warehouse Lot Balance", name: "valuation_method", ordinal: 11, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "Warehouse Lot Balance", name: "modified", ordinal: 12, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Delivery Note Item", name: "posting_state", ordinal: 9, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "GL Entry", name: "posting_state", ordinal: 8, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true}
   ],
@@ -127,6 +128,7 @@ export const Mapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        {property: "observed_at", value: "timestamp(input.modified)"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},

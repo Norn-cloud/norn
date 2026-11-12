@@ -29,8 +29,8 @@ aggregation the property's contract forbids. Stored ratios refuse scalar
 aggregation (`metric.validation.ratio_aggregation`); callers must sum their
 operands separately before dividing. Non-additive prices require a declared
 weighting calculation; this bounded aggregate vocabulary provides none.
-Semi-additive balances require the existing snapshot contract, whose unsupported
-execution continues to refuse. Inheritance must preserve the classification.
+Semi-additive balances aggregate only through the snapshot contract of
+METRIC-SNAPSHOT-ASOF-1 below. Inheritance must preserve the classification.
 
 Named scenarios: **METRIC-UNDECLARED** (all numeric aggregates refuse without a
 declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
@@ -38,6 +38,39 @@ declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
 restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
 provenance use the following checked derivation contract.
+
+**METRIC-SNAPSHOT-ASOF-1:** a semi-additive measure (a stock or balance) is
+aggregated as a snapshot. Its metric declares `semi_additive` over time with
+the `last` reduction, and a `non_additive_dimension` naming the metric's time
+dimension with `window_choice: max`. Its `window_groupings` name the subject;
+empty means the measured object's identity. A subject's series is the stored
+versions of the measured object, ordered in valid time by the metric's time
+property, with ties going to the later version. Each output bucket is an ISO
+week of the question window, clipped to the window. A question that is
+ungrouped, or grouped by a non-time property, has one bucket ending at the
+window's end. In each bucket a subject takes its last version at or before the
+bucket's end (the end is exclusive). That value carries forward into later
+buckets until a later version replaces it, and a version from before the window
+counts. A subject with no version yet is absent from the bucket, never 0. The
+question's filters and its non-time grouping read that as-of version. Values
+are then summed across subjects and never across time. A null as-of value is
+skipped and counted, and METRIC-UNIT-PARTITION-1 applies. A semi-additive
+measure aggregated any other way still refuses
+`question.validation.snapshot_aggregation`. For every semi-additive numeric
+property with a direct time property, METRIC-DERIVE-1 also derives this
+snapshot metric ("<property>, as of <time>"). The exact engine supports only
+identity subjects, the week grain on the metric's own time property, no
+ratios, no reaggregation and no knowledge cutoff; anything else refuses as an
+unsupported engine shape.
+
+Named scenarios: **METRIC-ASOF-CARRY** (a subject's last value fills later
+weeks with no new version), **METRIC-ASOF-ABSENT** (a subject contributes
+nothing before its first version), **METRIC-ASOF-LAST-NOT-SUM** (two versions
+in one week contribute only the later one), **METRIC-ASOF-FILTER** (a filter
+reads the as-of version, so a subject can enter and leave the answer over
+time), and **METRIC-ASOF-ORACLE** (on generated histories the exact engine
+equals an independent per-subject fold, the oracle for every other engine's
+lowering).
 
 **METRIC-ADDITIVITY-REF-1:** a `ref` may declare `additivity` at its use site,
 so a flow and a stock can share one value type (an event quantity is additive;

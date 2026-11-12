@@ -20,7 +20,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{
     QuestionPlan, UNSUPPORTED_ENGINE, arithmetic as math,
-    contribution::{Contribution, project},
+    contribution::{Contribution, as_of, project},
 };
 use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
 use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
@@ -231,7 +231,9 @@ pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
 
 type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
 
-pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
+/// Each root identity's versioned contributions: one for an ordinary sum, one
+/// per bucket for a snapshot sum (METRIC-SNAPSHOT-ASOF-1).
+pub(crate) type Contributions = BTreeMap<String, Vec<(u64, Contribution)>>;
 /// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
 /// instant; sub-millisecond declarations never match a millisecond clock.
 fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
@@ -361,6 +363,10 @@ impl<E: SqlEngine> CellStore<E> {
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
+            // METRIC-SNAPSHOT-ASOF-1: a snapshot reads every stored version at the head.
+            if plan.as_of() && cutoff.is_some() {
+                return Err(refused(UNSUPPORTED_ENGINE));
+            }
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
@@ -402,8 +408,24 @@ impl<E: SqlEngine> CellStore<E> {
                 )? {
                     continue;
                 }
-                if let Some(value) = project(plan, &record.values).map_err(refused)? {
-                    contributions.insert(id, (record.version, value));
+                if plan.as_of() {
+                    let versions = reader
+                        .object_versions_with_budget(
+                            &context.world,
+                            plan.grain().as_str(),
+                            &id,
+                            &mut budget,
+                        )?
+                        .ok_or_else(|| refused("core.compute.bound_exceeded"))?
+                        .into_iter()
+                        .map(|version| (version.version, version.values))
+                        .collect::<Vec<_>>();
+                    let entries = as_of(plan, &versions).map_err(refused)?;
+                    if !entries.is_empty() {
+                        contributions.insert(id, entries);
+                    }
+                } else if let Some(value) = project(plan, &record.values).map_err(refused)? {
+                    contributions.insert(id, vec![(record.version, value)]);
                 }
             }
             let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
@@ -529,7 +551,7 @@ pub(crate) fn materialize(
     contributions: &Contributions,
 ) -> Result<QueryResult, CellError> {
     let mut totals = Totals::default();
-    for (_, value) in contributions.values() {
+    for (_, value) in contributions.values().flatten() {
         totals.adjust(value, false)?;
     }
     finish(
@@ -555,7 +577,10 @@ pub(crate) fn finish(
     let (context, exclusions) = population;
     let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
-    for (id, (version, contribution)) in contributions {
+    for (id, (version, contribution)) in contributions
+        .iter()
+        .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
+    {
         let key = bucket_key(contribution)?;
         let bucket = grouped.entry(key.clone()).or_insert_with(|| {
             (

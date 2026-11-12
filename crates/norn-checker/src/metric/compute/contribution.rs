@@ -26,6 +26,10 @@ pub fn project(
     plan: &QuestionPlan,
     row: &RuntimeObject,
 ) -> Result<Option<Contribution>, &'static str> {
+    // A snapshot sum reads each subject's versions, never one row in isolation.
+    if plan.as_of() {
+        return Err(UNSUPPORTED_ENGINE);
+    }
     if !matches_filters(plan, row, &plan.question().filters)? {
         return Ok(None);
     }
@@ -43,22 +47,7 @@ pub fn project(
         None => RuntimeValue::Null,
         Some(dimension) if dimension.grain == Some(TimeGrain::Week) => {
             let seconds = instant(plan, row, dimension.path.property.as_str())?.0;
-            let monday = seconds
-                .checked_sub(345_600)
-                .ok_or(UNSUPPORTED_ENGINE)?
-                .div_euclid(604_800)
-                .checked_mul(604_800)
-                .and_then(|s| s.checked_add(345_600))
-                .ok_or(UNSUPPORTED_ENGINE)?;
-            let date = norn_expr::temporal::naming_series_date_at(
-                monday.checked_mul(1000).ok_or(UNSUPPORTED_ENGINE)?,
-                "UTC",
-            )
-            .map_err(|_date| UNSUPPORTED_ENGINE)?;
-            RuntimeValue::from(format!(
-                "{:04}-{:02}-{:02}",
-                date.year, date.month, date.day
-            ))
+            week_key(week_monday(seconds).ok_or(UNSUPPORTED_ENGINE)?)?
         }
         Some(dimension) => value(plan, row, dimension.path.property.as_str())?.clone(),
     };
@@ -90,6 +79,110 @@ pub fn project(
         amounts,
         nulls,
     }))
+}
+
+/// The UTC Monday 00:00 (epoch seconds) of the ISO week holding `seconds`.
+fn week_monday(seconds: i64) -> Option<i64> {
+    seconds
+        .checked_sub(345_600)?
+        .div_euclid(604_800)
+        .checked_mul(604_800)?
+        .checked_add(345_600)
+}
+
+/// The bucket key of the ISO week starting at `monday`: its `YYYY-MM-DD`.
+fn week_key(monday: i64) -> Result<RuntimeValue, &'static str> {
+    let date = norn_expr::temporal::naming_series_date_at(
+        monday.checked_mul(1000).ok_or(UNSUPPORTED_ENGINE)?,
+        "UTC",
+    )
+    .map_err(|_date| UNSUPPORTED_ENGINE)?;
+    Ok(RuntimeValue::from(format!(
+        "{:04}-{:02}-{:02}",
+        date.year, date.month, date.day
+    )))
+}
+
+/// Most output buckets one snapshot question may produce.
+const MAX_AS_OF_BUCKETS: usize = 1024;
+
+/// METRIC-SNAPSHOT-ASOF-1: one subject's contributions, given its stored
+/// versions as `(version, values)` in any order. Each bucket (an ISO week of
+/// the window clipped to it, or one bucket ending at the window's end) takes
+/// the subject's last version whose time is before the bucket's end, ties to
+/// the later version, carried forward; a subject with no such version is
+/// absent. Filters and a non-time grouping read that version; a null measured
+/// value is skipped and counted. Each contribution carries its version.
+///
+/// # Errors
+/// Refuses a plan that is not one snapshot sum, values outside the profile,
+/// or more than [`MAX_AS_OF_BUCKETS`] buckets.
+pub fn as_of(
+    plan: &QuestionPlan,
+    versions: &[(u64, RuntimeObject)],
+) -> Result<Vec<(u64, Contribution)>, &'static str> {
+    let [sum] = plan.sums() else {
+        return Err(UNSUPPORTED_ENGINE);
+    };
+    if !sum.as_of {
+        return Err(UNSUPPORTED_ENGINE);
+    }
+    let parse = norn_expr::temporal::timestamp_ordering_key;
+    let window = &plan.question().time_window;
+    let start = parse(window.start.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
+    let end = parse(window.end.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
+    let mut series = versions
+        .iter()
+        .map(|(version, row)| Ok((instant(plan, row, sum.time_property.as_str())?, *version, row)))
+        .collect::<Result<Vec<_>, &'static str>>()?;
+    series.sort_by_key(|(at, version, _)| (*at, *version));
+    let grouping = plan.question().dimensions.first();
+    let mut buckets = Vec::new();
+    if grouping.is_some_and(|dimension| dimension.grain == Some(TimeGrain::Week)) {
+        let mut monday = week_monday(start.0).ok_or(UNSUPPORTED_ENGINE)?;
+        while (monday, 0) < end {
+            let next = monday.checked_add(604_800).ok_or(UNSUPPORTED_ENGINE)?;
+            buckets.push((Some(week_key(monday)?), std::cmp::min((next, 0), end)));
+            if buckets.len() > MAX_AS_OF_BUCKETS {
+                return Err("core.compute.bound_exceeded");
+            }
+            monday = next;
+        }
+    } else {
+        buckets.push((None, end));
+    }
+    let mut contributions = Vec::new();
+    for (key, bucket_end) in buckets {
+        let Some((_, version, row)) = series.iter().rev().find(|(at, ..)| *at < bucket_end) else {
+            continue;
+        };
+        if !matches_filters(plan, row, &plan.question().filters)?
+            || !matches_filters(plan, row, &sum.filters)?
+        {
+            continue;
+        }
+        let bucket = match (key, grouping) {
+            (Some(key), _) => key,
+            (None, None) => RuntimeValue::Null,
+            (None, Some(dimension)) => value(plan, row, dimension.path.property.as_str())?.clone(),
+        };
+        let measured = value(plan, row, sum.property.id.as_str())?;
+        let (amount, null) = if measured.is_null() {
+            (None, true)
+        } else {
+            let number = measured.as_decimal().ok_or(UNSUPPORTED_ENGINE)?;
+            (Some(coefficient(number).ok_or(UNSUPPORTED_ENGINE)?), false)
+        };
+        contributions.push((
+            *version,
+            Contribution {
+                bucket,
+                amounts: vec![amount],
+                nulls: vec![null],
+            },
+        ));
+    }
+    Ok(contributions)
 }
 
 fn value<'a>(

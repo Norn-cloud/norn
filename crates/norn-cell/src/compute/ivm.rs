@@ -5,7 +5,7 @@ use crate::{
     engine::SqlEngine,
     reactive::{BudgetedRead, DecodeBudget, ReactiveLimits},
 };
-use norn_checker::metric::compute::{QuestionPlan, contribution::project};
+use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE, contribution::project};
 use norn_ir::ResourceLimitProfile;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,6 +54,10 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
+        // METRIC-SNAPSHOT-ASOF-1: a snapshot is not maintained incrementally.
+        if plan.as_of() {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
         let (snapshot, source_pins, receipt_pin) =
             store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
                 let reader = store.read();
@@ -64,7 +68,7 @@ impl IncrementalQuestion {
                 Ok((snapshot, pins, receipt))
             })?;
         let mut totals = Totals::default();
-        for (_, value) in snapshot.contributions.values() {
+        for (_, value) in snapshot.contributions.values().flatten() {
             totals.adjust(value, false)?;
         }
         let mut result = snapshot.result;
@@ -284,7 +288,7 @@ impl IncrementalQuestion {
             for id in std::mem::take(&mut changed) {
                 self.finding_members.remove(&id);
                 exclusions.remove(&id);
-                if let Some((_, previous)) = self.contributions.remove(&id) {
+                for (_, previous) in self.contributions.remove(&id).unwrap_or_default() {
                     self.totals.adjust(&previous, true)?;
                 }
                 let selected = if let Some(cutoff) = self.knowledge {
@@ -321,7 +325,7 @@ impl IncrementalQuestion {
                                 project(&self.plan, &record.values).map_err(refused)?
                         {
                             self.totals.adjust(&value, false)?;
-                            self.contributions.insert(id, (record.version, value));
+                            self.contributions.insert(id, vec![(record.version, value)]);
                         }
                     }
                     BudgetedRead::Missing => {

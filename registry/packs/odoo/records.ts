@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-odoo", instance: "demo", version: "odoo-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "681adbdf0de776701a4390dd3f94a25cbdfd657501b0f2a2e14398ceb647fb8a"},
+  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "4b8f939a1266c787769606584c57fc3f06e6652e4ac0b7fa05f383a576043d46"},
   datasets: [
     {id: "product.product", nativeName: "Synthetic product.product", kind: "document"},
     {id: "stock.quant", nativeName: "Synthetic stock.quant", kind: "document"},
@@ -74,6 +74,7 @@ export const Source = Norn.sourceSchema({
     {dataset: "account.payment", name: "payer_ref", ordinal: 5, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "account.payment", name: "payee_ref", ordinal: 6, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "stock.quant", name: "valuation_method", ordinal: 11, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "stock.quant", name: "write_date", ordinal: 12, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "stock.move", name: "posting_state", ordinal: 9, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "account.move.line", name: "posting_state", ordinal: 8, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true}
   ],
@@ -127,6 +128,7 @@ export const Mapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        {property: "observed_at", value: "timestamp(input.write_date)"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},

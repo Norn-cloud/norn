@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
-    DimensionPath, MeasureAggregate, MetricAdditivity, MetricAggregationParams, MetricNorn,
-    MetricType, MetricTypeParams, TimeGrain,
+    AdditivityAxis, DimensionPath, MeasureAggregate, MetricAdditivity, MetricAggregationParams,
+    MetricNorn, MetricType, MetricTypeParams, NonAdditiveDimension, Reaggregate, TimeGrain,
+    WindowChoice,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
@@ -265,6 +266,12 @@ fn candidates_at_time(
             | PropertyAdditivity::NonAdditive {}
             | PropertyAdditivity::Ratio { .. } => false,
         };
+        if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {}) {
+            let mut generated = candidate(snapshot(object, &property.id, time_path), dimensions, Vec::new());
+            generated.unit_partition = unit_partition(object, &[&property.id]);
+            candidates.push(generated);
+            continue;
+        }
         if !additive {
             continue;
         }
@@ -551,6 +558,36 @@ fn sum(
             incremental: None,
         },
     }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1: a balance's value as of each period's end, summed
+/// across subjects and never over time.
+fn snapshot(object: &EffectiveObjectType, property: &PropertyId, time: &DimensionPath) -> MetricDefinition {
+    let mut definition = sum(object, property, time, &[]);
+    definition.name = format!(
+        "analysis.object_{}.{}.as_of_{}",
+        encoded_name(object.name.as_str()),
+        property.as_str(),
+        time.property.as_str()
+    );
+    definition.label = format!(
+        "{}, as of {}; last value per {} at each period's end",
+        property.as_str(),
+        time.property.as_str(),
+        object.name.as_str()
+    );
+    if let Some(params) = definition.type_params.metric_aggregation_params.as_mut() {
+        params.non_additive_dimension = Some(NonAdditiveDimension {
+            name: params.agg_time_dimension.clone(),
+            window_choice: WindowChoice::Max,
+            window_groupings: Vec::new(),
+        });
+    }
+    definition.norn.additivity = MetricAdditivity::SemiAdditive {
+        over: AdditivityAxis::Time,
+        aggregate: Reaggregate::Last,
+    };
+    definition
 }
 
 fn encoded_name(name: &str) -> String {

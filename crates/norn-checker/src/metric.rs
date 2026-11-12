@@ -135,6 +135,8 @@ struct BoundMetric {
     additivity: MetricAdditivity,
     time_dimension: DimensionPath,
     default_filters: Vec<MetricFilter>,
+    /// METRIC-SNAPSHOT-ASOF-1: the metric declares a `non_additive_dimension`.
+    snapshot: bool,
     snapshot_groupings: Vec<DimensionPath>,
     currency: Option<MetricCurrency>,
     safe_aggregation: Option<norn_ir::metric::SafeAggregation>,
@@ -1133,7 +1135,15 @@ impl<'a> Checker<'a> {
             if !visited.insert((source.name.as_str(), symmetric)) {
                 continue;
             }
-            if matches!(source.additivity, MetricAdditivity::SemiAdditive { .. }) {
+            // METRIC-SNAPSHOT-ASOF-1: only the declared last-value snapshot aggregates a balance.
+            if matches!(source.additivity, MetricAdditivity::SemiAdditive { .. })
+                && !(source.snapshot
+                    && source.additivity
+                        == (MetricAdditivity::SemiAdditive {
+                            over: norn_ir::metric::AdditivityAxis::Time,
+                            aggregate: Reaggregate::Last,
+                        }))
+            {
                 self.reject(codes::SNAPSHOT_AGGREGATION, &format!("{at}/aggregate"));
             }
             match &source.measure {
@@ -1544,6 +1554,10 @@ fn bind_metric(definition: &MetricDefinition) -> Result<BoundMetric, (&'static s
         additivity,
         time_dimension,
         default_filters: n.default_filters.clone(),
+        snapshot: p
+            .metric_aggregation_params
+            .as_ref()
+            .is_some_and(|p| p.non_additive_dimension.is_some()),
         snapshot_groupings: p
             .metric_aggregation_params
             .as_ref()
