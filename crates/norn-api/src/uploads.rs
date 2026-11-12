@@ -661,18 +661,7 @@ pub fn generate(
             None => Some((column.clone(), column.inferred)),
         })
         .collect();
-    let measures: BTreeSet<&str> = request
-        .columns
-        .iter()
-        .filter(|c| c.include && c.measure)
-        .map(|c| c.id.as_str())
-        .collect();
-    if let Some((column, _)) = columns.iter().find(|(column, kind)| {
-        measures.contains(column.id.as_str())
-            && !matches!(kind, ColumnKind::Integer | ColumnKind::Decimal)
-    }) {
-        return Err(format!("{} is a measure but not a number", column.id));
-    }
+    let measures = measures_of(request, &columns)?;
     let key = key_of(table, &columns, &request.key, &measures)?;
     let snake = name.to_ascii_lowercase();
     let object_type = format!("upload.{name}");
@@ -739,6 +728,27 @@ pub fn generate(
         artifacts: vec![interface_envelope, entity, source, mapping_envelope],
         columns,
     })
+}
+
+/// UPLOAD-MEASURE-1: the included columns declared measures, once each is
+/// an integer or a decimal.
+fn measures_of<'a>(
+    request: &'a LoadRequest,
+    columns: &[(Column, ColumnKind)],
+) -> Result<BTreeSet<&'a str>, String> {
+    let measures: BTreeSet<&str> = request
+        .columns
+        .iter()
+        .filter(|c| c.include && c.measure)
+        .map(|c| c.id.as_str())
+        .collect();
+    match columns.iter().find(|(column, kind)| {
+        measures.contains(column.id.as_str())
+            && !matches!(kind, ColumnKind::Integer | ColumnKind::Decimal)
+    }) {
+        Some((column, _)) => Err(format!("{} is a measure but not a number", column.id)),
+        None => Ok(measures),
+    }
 }
 
 /// UPLOAD-KEY-1: the declared key's column ids, once each names an included,
