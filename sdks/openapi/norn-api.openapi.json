@@ -1889,6 +1889,364 @@
           }
         ]
       }
+    },
+    "/v1/transforms/{transform}/plan": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "A transform's admitted plan: inputs, typed nodes and column lineage.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared transform (404), a plan that\nno longer admits (422) or a host failure.",
+        "operationId": "get_transform_plan",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan the checker admits against the installed definitions now: every node's operator, inputs, grain and typed columns with their lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformPlan"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input`): the transform no longer admits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/transforms/{transform}/rows": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "One page of a transform's rows, evaluated now under the reader's visibility.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared transform (404), an invalid\nlimit or cursor (400), a commit since the cursor (409\n`transform.snapshot_moved`), a bound (413), a stale or failed evaluation\n(422) or a host failure.",
+        "operationId": "get_transform_rows",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 1,000; 100 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 1000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The `nextAfter` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the transform's rows. Each input row enters only with Population and Values; a row the reader may only count is excluded, counted in `withheld`, and makes the page incomplete.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated parameter, a limit outside 1 to 1,000, or a cursor this transform did not issue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied on the transform or on any object type it reads, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found`): no installed relational transform has this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`transform.snapshot_moved`, retryable from the first page): the cell committed since the cursor was issued; a page is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`core.compute.bound_exceeded`): the exact engine's row bound; no partial result is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`): the transform no longer admits against the installed definitions, or an admitted expression failed on a row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/transforms/{transform}/rows/{row}/lineage": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "One row's lineage: the input rows it derives from (VIEW-LINEAGE-1).",
+        "description": "# Errors\nAs [`get_transform_rows`], and a row this reader does not see now (404\n`transform.row_not_found`).",
+        "operationId": "get_transform_row_lineage",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "A `rowId` from a page of the transform's rows.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row and every input row it derives from, under the same visibility as its page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found` or `transform.row_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`core.compute.bound_exceeded`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -3542,6 +3900,24 @@
           "T6",
           "T7"
         ]
+      },
+      "NornColumnOrigin": {
+        "type": "object",
+        "description": "Where a column's value comes from: one stored property of one input.",
+        "required": [
+          "input",
+          "property"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The input alias."
+          },
+          "property": {
+            "type": "string",
+            "description": "The stored property, or `id`."
+          }
+        }
       },
       "NornDefinitionsCatalog": {
         "type": "object",
@@ -26262,6 +26638,361 @@
           "property": {
             "type": "string",
             "description": "The property sorted on."
+          }
+        }
+      },
+      "NornTransformColumn": {
+        "type": "object",
+        "description": "One typed column of a transform's row (VIEW-TYPE-1).",
+        "required": [
+          "name",
+          "type",
+          "nullable",
+          "additivity",
+          "identity",
+          "origins",
+          "markings"
+        ],
+        "properties": {
+          "additivity": {
+            "type": "string",
+            "description": "The aggregation contract: `undeclared`, `additive`, `semi_additive`,\n`non_additive` or `ratio`."
+          },
+          "identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The object type whose ids the column holds, if any."
+          },
+          "markings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Effective markings of the origins."
+          },
+          "name": {
+            "type": "string",
+            "description": "The column name."
+          },
+          "nullable": {
+            "type": "boolean",
+            "description": "Whether a value may be null."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornColumnOrigin"
+            },
+            "description": "Column lineage: every stored property the value derives from."
+          },
+          "type": {
+            "type": "string",
+            "description": "The value type, as the checker names it (`decimal`, `text`, …)."
+          }
+        }
+      },
+      "NornTransformInput": {
+        "type": "object",
+        "description": "One declared input.",
+        "required": [
+          "alias",
+          "objectType",
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "The alias the plan reads."
+          },
+          "artifactId": {
+            "type": "string",
+            "description": "The pinned artifact."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          }
+        }
+      },
+      "NornTransformLineage": {
+        "type": "object",
+        "description": "One row's lineage: the input rows it derives from.",
+        "required": [
+          "transform",
+          "rowId",
+          "commits",
+          "values",
+          "members"
+        ],
+        "properties": {
+          "commits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits in the cell when the row was read.",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformMember"
+            },
+            "description": "The input rows, ordered by input, then id."
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The row."
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every column value by column name; decimals are exact JSON number tokens.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "NornTransformMember": {
+        "type": "object",
+        "description": "One input row a transform row derives from (VIEW-LINEAGE-1).",
+        "required": [
+          "input",
+          "objectType",
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "input": {
+            "type": "string",
+            "description": "The input alias."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version read.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornTransformNode": {
+        "type": "object",
+        "description": "One admitted operator with its row schema.",
+        "required": [
+          "id",
+          "op",
+          "inputs",
+          "grain",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformColumn"
+            },
+            "description": "Its typed columns."
+          },
+          "grain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its row identity."
+          },
+          "id": {
+            "type": "string",
+            "description": "The node id."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The nodes (or, for a scan, the input alias) it reads."
+          },
+          "op": {
+            "type": "string",
+            "description": "The operator: `scan`, `filter`, `project`, `join`, `aggregate`,\n`window`, `union` or `dedupe`."
+          }
+        }
+      },
+      "NornTransformPage": {
+        "type": "object",
+        "description": "One page of a transform's rows under the reader's visibility.",
+        "required": [
+          "transform",
+          "version",
+          "engine",
+          "commits",
+          "columns",
+          "grain",
+          "rows",
+          "totalRows",
+          "withheld",
+          "excluded",
+          "complete",
+          "nextAfter"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformColumn"
+            },
+            "description": "Output columns, in schema order."
+          },
+          "commits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits in the cell when the rows were read.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "No input row was withheld or excluded."
+          },
+          "engine": {
+            "type": "string",
+            "description": "The evaluator: `cell` (exact) today."
+          },
+          "excluded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input rows excluded by open quarantining findings.",
+            "minimum": 0
+          },
+          "grain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The columns that identify a row."
+          },
+          "nextAfter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `after` for the next page; null on the last page."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformRow"
+            },
+            "description": "This page's rows, ordered by grain (nulls last)."
+          },
+          "totalRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows across all pages.",
+            "minimum": 0
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform (its artifact id)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          },
+          "withheld": {
+            "type": "object",
+            "description": "Input rows the reader may count but not read, excluded, by input alias.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "NornTransformPlan": {
+        "type": "object",
+        "description": "A transform's admitted plan: the definition graph Studio draws.",
+        "required": [
+          "transform",
+          "version",
+          "viewId",
+          "inputs",
+          "nodes",
+          "output"
+        ],
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformInput"
+            },
+            "description": "The declared inputs."
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformNode"
+            },
+            "description": "Every node, inputs first."
+          },
+          "output": {
+            "type": "string",
+            "description": "The output node."
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          },
+          "viewId": {
+            "type": "string",
+            "description": "The view id."
+          }
+        }
+      },
+      "NornTransformRow": {
+        "type": "object",
+        "description": "One output row.",
+        "required": [
+          "rowId",
+          "values",
+          "memberCount"
+        ],
+        "properties": {
+          "memberCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many input rows the row derives from (its lineage).",
+            "minimum": 0
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The row's stable id: the content hash of its grain values."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every column value by column name; decimals are exact JSON number tokens.",
+            "additionalProperties": true
           }
         }
       },
