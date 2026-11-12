@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture authored for Norn tests; not upstream content. -->
+<entitymodel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="entitymodel.xsd">
+    <title>Toy ledger</title>
+    <version>1.0</version>
+    <entity entity-name="Book" package-name="org.toy.ledger" title="Ledger book" table-name="TOY_BOOK">
+        <description>A book of accounts.</description>
+        <field name="bookId" type="id"/>
+        <field name="bookTypeId" type="id" not-null="true"/>
+        <field name="statusId" type="id"/>
+        <field name="opened" type="date-time"><description>When the book was opened.</description></field>
+        <field name="secret" type="long-varchar" encrypt="true" col-name="SECRET_TEXT"/>
+        <field name="active" type="indicator"/>
+        <prim-key field="bookId"/>
+        <relation type="one" fk-name="BOOK_TYPE" rel-entity-name="BookType"><key-map field-name="bookTypeId"/></relation>
+        <relation type="one" fk-name="BOOK_STTS" title="Current" rel-entity-name="StatusItem"><key-map field-name="statusId"/></relation>
+        <relation type="many" rel-entity-name="Line"><key-map field-name="bookId"/></relation>
+        <relation type="one-nofk" title="Missing" rel-entity-name="NoSuchEntity"><key-map field-name="bookTypeId"/></relation>
+        <index name="BOOK_OPENED" unique="false"><index-field name="opened"/></index>
+    </entity>
+    <entity entity-name="BookType" package-name="org.toy.ledger">
+        <field name="bookTypeId" type="id"/>
+        <field name="description" type="description"/>
+        <prim-key field="bookTypeId"/>
+    </entity>
+    <entity entity-name="Line" package-name="org.toy.ledger" never-cache="true">
+        <field name="bookId" type="id"/>
+        <field name="lineSeqId" type="id"/>
+        <field name="amount" type="currency-amount"/>
+        <field name="rate" type="floating-point"/>
+        <field name="code" type="id"/>
+        <prim-key field="bookId"/>
+        <prim-key field="lineSeqId"/>
+        <relation type="one" fk-name="LINE_BOOK" rel-entity-name="Book"><key-map field-name="bookId"/></relation>
+        <index name="LINE_CODE" unique="true"><index-field name="code"/></index>
+    </entity>
+    <entity entity-name="StatusType" package-name="org.toy.common">
+        <field name="statusTypeId" type="id"/>
+        <field name="parentTypeId" type="id"/>
+        <field name="description" type="description"/>
+        <prim-key field="statusTypeId"/>
+    </entity>
+    <entity entity-name="StatusItem" package-name="org.toy.common">
+        <field name="statusId" type="id"/>
+        <field name="statusTypeId" type="id"/>
+        <field name="statusCode" type="short-varchar"/>
+        <field name="sequenceId" type="id"/>
+        <field name="description" type="description"/>
+        <prim-key field="statusId"/>
+        <relation type="one" fk-name="STATUS_TYPE" rel-entity-name="StatusType"><key-map field-name="statusTypeId"/></relation>
+    </entity>
+    <entity entity-name="StatusValidChange" package-name="org.toy.common">
+        <field name="statusId" type="id"/>
+        <field name="statusIdTo" type="id"/>
+        <field name="transitionName" type="name"/>
+        <prim-key field="statusId"/>
+        <prim-key field="statusIdTo"/>
+        <relation type="one" fk-name="STATUS_CHG_FROM" title="Main" rel-entity-name="StatusItem"><key-map field-name="statusId"/></relation>
+        <relation type="one" fk-name="STATUS_CHG_TO" title="To" rel-entity-name="StatusItem"><key-map field-name="statusIdTo" rel-field-name="statusId"/></relation>
+    </entity>
+    <extend-entity entity-name="Book">
+        <field name="closedBy" type="name"/>
+    </extend-entity>
+    <view-entity entity-name="BookAndLine" package-name="org.toy.ledger" title="Book with lines">
+        <member-entity entity-alias="B" entity-name="Book"/>
+        <member-entity entity-alias="L" entity-name="Line"/>
+        <alias-all entity-alias="B"/>
+        <alias entity-alias="L" name="amount"/>
+        <view-link entity-alias="B" rel-entity-alias="L"><key-map field-name="bookId"/></view-link>
+    </view-entity>
+</entitymodel>

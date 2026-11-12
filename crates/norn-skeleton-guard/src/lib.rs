@@ -241,6 +241,16 @@ pub const CRATES: &[CrateRule] = &[
         dev_only_norn: &["norn-checker"],
         third_party: &[],
     },
+    // Readers of system-declared schemas (OFBiz entity XML first): one per
+    // system, behind the norn-formats contract; the checker runs the
+    // conformance harness in tests only.
+    CrateRule {
+        name: "norn-importers",
+        ring: Ring::One,
+        allowed_norn: &["norn-formats", "norn-ir"],
+        dev_only_norn: &["norn-checker"],
+        third_party: &[],
+    },
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
         name: "norn-testkit",

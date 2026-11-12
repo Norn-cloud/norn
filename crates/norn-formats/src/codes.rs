@@ -11,7 +11,7 @@
 //! translated; `info` records a deliberate, lossless choice.
 
 use norn_ir::DiagnosticRemediation::{self, FixDefinition};
-use norn_ir::DiagnosticSeverity::{self, Error, Warning};
+use norn_ir::DiagnosticSeverity::{self, Error, Info, Warning};
 
 /// One registered importer diagnostic code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,5 +41,24 @@ pub const XSD_INVALID: Code = code("format.xsd.invalid", Error, FixDefinition);
 /// Preserved XSD semantics requiring further lowering.
 pub const XSD_DEFERRED: Code = code("format.xsd.deferred", Warning, FixDefinition);
 
+/// Source bytes or their admission are invalid; nothing was imported.
+pub const SOURCE_INVALID: Code = code("format.source.invalid", Error, FixDefinition);
+/// Recorded in `SourceSchemaIR` (or its provenance extension) only; lowering
+/// it into `EntityIR` is a later mapping step. Deliberate and lossless.
+pub const SOURCE_SCHEMA_ONLY: Code = code("format.source_schema_only", Info, FixDefinition);
+/// A reference whose target or binding the source does not declare; the
+/// evidence that is known is kept for a later mapping step.
+pub const REFERENCE_UNRESOLVED: Code = code("format.reference_unresolved", Warning, FixDefinition);
+/// Preserved source semantics that need further lowering (view definitions,
+/// data rows, storage and security settings).
+pub const SOURCE_DEFERRED: Code = code("format.source_deferred", Warning, FixDefinition);
+
 /// Every registered importer code.
-pub const ALL: &[Code] = &[XSD_INVALID, XSD_DEFERRED];
+pub const ALL: &[Code] = &[
+    XSD_INVALID,
+    XSD_DEFERRED,
+    SOURCE_INVALID,
+    SOURCE_SCHEMA_ONLY,
+    REFERENCE_UNRESOLVED,
+    SOURCE_DEFERRED,
+];
