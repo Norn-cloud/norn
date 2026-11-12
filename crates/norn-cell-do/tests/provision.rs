@@ -554,8 +554,17 @@ fn an_artifact_scoped_outside_the_cell_is_refused() {
         );
         assert!(!cell.tenant.is_provisioned());
     }
-    // Unscoped artifacts are inside the cell: the same set provisions.
-    let created = provision(&mut cell, Some(&owner), &submission(&full()));
+    // An artifact scoped to the cell's own scope is inside it (the label
+    // catalog, which nothing else in the set references by content).
+    let mut artifacts = full();
+    let labels = artifacts
+        .iter()
+        .position(|text| text.contains("\"locale.ar_eg.labels\""))
+        .unwrap();
+    let mut own: Value = serde_json::from_str(&artifacts[labels]).unwrap();
+    own["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    artifacts[labels] = own.to_string();
+    let created = provision(&mut cell, Some(&owner), &submission(&artifacts));
     assert_eq!(created.status, 200, "{}", created.body);
     assert_eq!(definitions(&mut cell, Some(&owner)).status, 200);
 }
@@ -586,6 +595,19 @@ fn an_artifact_declaring_a_base_name_is_refused() {
         (422, provision::codes::PROVISION_REFUSED),
         "{}",
         response.body
+    );
+    // The refusal is the checker's finding about the shadowed name.
+    let diagnostics = json_of(&response)["diagnostics"].clone();
+    assert!(
+        diagnostics
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("core.code")),
+        "{diagnostics}"
     );
     assert!(!cell.tenant.is_provisioned());
 }

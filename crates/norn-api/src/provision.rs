@@ -126,6 +126,18 @@ impl TrustedBase {
     }
 }
 
+/// The submitted artifacts: artifact envelopes, as the IR defines them.
+fn submitted_artifacts_schema() -> utoipa::openapi::schema::Array {
+    utoipa::openapi::schema::ArrayBuilder::new()
+        .items(utoipa::openapi::Ref::from_schema_name(
+            "NornArtifactEnvelope",
+        ))
+        .description(Some(
+            "The tenant's artifact envelopes; none in a reserved namespace (core., std.).",
+        ))
+        .build()
+}
+
 /// `POST /v1/cell:provision`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -135,7 +147,7 @@ pub struct ProvisionRequest {
     pub base_sha256: String,
     /// The tenant's artifact envelopes. None may be in a reserved namespace
     /// (`core.`, `std.`): the host supplies the trusted base itself.
-    #[schema(value_type = Vec<Object>)]
+    #[schema(schema_with = submitted_artifacts_schema)]
     pub artifacts: Vec<Box<RawValue>>,
 }
 
