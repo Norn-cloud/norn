@@ -333,7 +333,13 @@ pub fn handle_all<E: SqlEngine>(
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    if let Some(response) = crate::runs::dispatch(host, questions, actor.as_deref(), request) {
+    if let Some(response) = crate::runs::dispatch(
+        host,
+        questions,
+        principals.caller(),
+        actor.as_deref(),
+        request,
+    ) {
         return response;
     }
     respond(route(

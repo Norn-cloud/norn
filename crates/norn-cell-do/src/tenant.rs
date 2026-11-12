@@ -256,6 +256,19 @@ impl<E: SqlEngine> Tenant<E> {
         })
     }
 
+    /// The same cell, its receipt coordinates keyed with `handle_key` (D53)
+    /// when it publishes no questions of its own: the disclosure authority a
+    /// decision and an action call answer with. Without it such a cell
+    /// decides nothing and serves no action.
+    ///
+    /// # Errors
+    /// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to serve
+    /// weakly keyed handles.
+    pub fn with_receipt_handles(mut self, handle_key: Option<&[u8]>) -> Result<Self, SeedError> {
+        self.handles = handles(handle_key)?;
+        Ok(self)
+    }
+
     /// The slot the cell's policy reads the request's verified principal
     /// from; the cell's [`PrincipalResolver`] records into it.
     #[must_use]
