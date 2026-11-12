@@ -146,7 +146,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     ) -> Result<Vec<String>, CellError> {
         // Bundles touching the scope, by the side of the claim, from the
         // endpoints recorded when each bundle was consumed.
-        let side = |name: &str, keys: Option<&BTreeSet<String>>| -> Result<Vec<Vec<crate::engine::SqlValue>>, CellError> {
+        let side = |name: &str,
+                    keys: Option<&BTreeSet<String>>|
+         -> Result<Vec<Vec<crate::engine::SqlValue>>, CellError> {
             let table = crate::system::CLAIM_ENDPOINT;
             match keys {
                 None => Ok(self.conn.query(
