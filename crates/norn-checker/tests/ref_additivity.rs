@@ -7,7 +7,8 @@
 
 //! METRIC-ADDITIVITY-REF-1: a `ref` declares additivity at its use site. A
 //! flow quantity sharing a value type with a stock derives a sum over its own
-//! time property; the stock does not. The law's three refusals are checked
+//! time property; the stock derives only its as-of snapshot
+//! (METRIC-SNAPSHOT-ASOF-1). The law's three refusals are checked
 //! over every pair of declared classes (exhaustive over the four non-ratio
 //! classes, which is the whole finite space the refinement rule ranges over).
 //! METRIC-UNIT-PARTITION-1 is checked over every free/grouped/eq/ne choice for
@@ -103,7 +104,7 @@ fn admitted() -> Vec<ArtifactEnvelope> {
 }
 
 #[test]
-fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_does_not() {
+fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_only_its_snapshot() {
     let artifacts = admitted();
     assert_eq!(errors(&artifacts), BTreeSet::new());
     let space = derive_metric_space(
@@ -135,16 +136,29 @@ fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_does_not() {
                     .property
                     .as_str()
                     .to_owned(),
+                matches!(
+                    candidate.definition.norn.additivity,
+                    norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
+                ),
             )
         })
         .collect();
     assert_eq!(
         derived,
-        BTreeSet::from([(
-            "demo.Delivery".to_owned(),
-            "quantity".to_owned(),
-            "occurred_at".to_owned()
-        )])
+        BTreeSet::from([
+            (
+                "demo.Delivery".to_owned(),
+                "quantity".to_owned(),
+                "occurred_at".to_owned(),
+                false
+            ),
+            (
+                "demo.Holding".to_owned(),
+                "quantity".to_owned(),
+                "as_of".to_owned(),
+                true
+            ),
+        ])
     );
 }
 
@@ -289,24 +303,38 @@ fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fi
         .map(|path| path.property.as_str())
         .collect();
     assert_eq!(paths, ["unit", "currency"]);
+    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
     let ways = ["free", "grouped", "eq", "ne"];
     for unit in ways {
         for currency in ways {
-            let refused = space
-                .admit(&question(&space, [unit, currency]), 100)
-                .err()
-                .unwrap_or_default()
-                .iter()
-                .any(|finding| finding.code.as_str() == norn_checker::metric::codes::MIXED_UNIT);
+            let question = question(&space, [unit, currency]);
+            // A hand-written question admits only with every source grouped or fixed.
+            let refused = norn_checker::metric::compute::admit(
+                std::slice::from_ref(&metric.definition),
+                &question,
+                &catalog,
+                100,
+            )
+            .err()
+            .unwrap_or_default()
+            .iter()
+            .any(|finding| finding.code.as_str() == norn_checker::metric::codes::MIXED_UNIT);
             let partitioned = [unit, currency]
                 .iter()
                 .all(|how| matches!(*how, "grouped" | "eq"));
             assert_eq!(refused, !partitioned, "unit {unit}, currency {currency}");
+            // A derived question groups by every source it leaves free.
+            let plan = space.admit(&question, 100).expect("derived question");
+            for (source, how) in ["unit", "currency"].into_iter().zip([unit, currency]) {
+                let grouped = plan
+                    .question()
+                    .dimensions
+                    .iter()
+                    .any(|dimension| dimension.path.property.as_str() == source);
+                assert_eq!(grouped, how != "eq", "{source} {how}");
+            }
         }
     }
-    space
-        .admit(&question(&space, ["eq", "eq"]), 100)
-        .expect("a weekly sum with both sources fixed lowers to the exact engine");
 }
 
 #[test]

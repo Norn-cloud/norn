@@ -53,6 +53,10 @@ fn scale(sum: &norn_checker::metric::compute::KeyedSum) -> Result<u64, CellError
 }
 
 fn lower(plan: &QuestionPlan) -> Result<(String, String), CellError> {
+    // METRIC-SNAPSHOT-ASOF-1: the snapshot lowering belongs to the analytics engine.
+    if plan.as_of() {
+        return Err(refused(UNSUPPORTED_ENGINE));
+    }
     let (a, b, ratio) = match plan.sums() {
         [a] => (scale(a)?, 0, false),
         [a, b] => (scale(a)?, scale(b)?, true),
@@ -92,7 +96,7 @@ fn execute(
     db(conn.execute_batch("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;"))?;
     db(conn.execute_batch(schema))?;
     let mut insert = db(conn.prepare("INSERT INTO input VALUES (?,?,?,?,?,?,?)"))?;
-    for (id, (version, contribution)) in &snapshot.contributions {
+    for (id, (version, contribution)) in super::entries(&snapshot.contributions) {
         let (a, b) = match contribution.amounts.as_slice() {
             [a] => (*a, None),
             [a, b] => (*a, *b),

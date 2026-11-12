@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::engine::SqlEngine;
-use norn_cell::flow_run::{FlowRef, RunRow, RunStart};
+use norn_cell::flow_run::{FlowRef, RunRow, RunStart, RunStarter};
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuleRoot, RuntimeValue};
 use norn_kernel::{DecisionTurn, EnvelopeLimits, FactKey, LogicalTime, TypeCatalog, World};
@@ -395,6 +395,20 @@ pub(crate) fn installed_flow<E: SqlEngine>(
     })
 }
 
+/// Whether the host lets `actor` start runs of `flow`: the one decision
+/// `POST /v1/runs` makes ([`Operation::StartRun`]), which a flow listing also
+/// reports as `canStart` so a client offers only the starts the cell allows.
+#[must_use]
+pub fn may_start<E: SqlEngine>(host: &DevHost<E>, actor: &str, flow: &str) -> bool {
+    host.authorizer
+        .authorize(&AccessRequest {
+            scope: host.scope(),
+            actor: Some(actor),
+            operation: Operation::StartRun(flow.to_owned()),
+        })
+        .is_ok()
+}
+
 /// `POST /v1/runs`: start a run of an installed flow.
 ///
 /// # Errors
@@ -411,20 +425,19 @@ pub fn start_run<E: SqlEngine>(
     body: &StartRunRequest,
     access: ReadAccess<'_>,
     now: LogicalTime,
+    // The verified principal the host recorded for this request: the run's
+    // action steps act under exactly it (ACTION-STEP-1).
+    starter: Option<RunStarter>,
 ) -> Result<(StatusCode, RunDocument), Refusal> {
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(start_denied)?;
     let epoch = host.definition_read();
-    let authorized = host.authorizer.authorize(&AccessRequest {
-        scope: host.scope(),
-        actor: Some(actor),
-        operation: Operation::StartRun(body.flow.clone()),
-    });
+    let authorized = may_start(host, actor, &body.flow);
     let scoped = host
         .scope()
         .admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() {
+    if !authorized || scoped.is_err() {
         return Err(start_denied());
     }
     let _epoch = epoch?;
@@ -452,7 +465,7 @@ pub fn start_run<E: SqlEngine>(
         };
     }
     let now = crate::actions::turn_clock(&mut cell, now)?;
-    commit_start(&mut cell, &flow, &body.run_id, now)?;
+    commit_start(&mut cell, &flow, &body.run_id, now, starter)?;
     let row = cell
         .store()
         .read()
@@ -482,6 +495,7 @@ fn commit_start<E: SqlEngine>(
     flow: &InstalledFlow,
     run_id: &str,
     now: LogicalTime,
+    starter: Option<RunStarter>,
 ) -> Result<(), Refusal> {
     let output = norn_kernel::flow_turn::start(&flow.rule, &flow.environment_hash, run_id)
         .map_err(|error| turn_refused(error.code(), "the flow refused to start"))?;
@@ -514,6 +528,7 @@ fn commit_start<E: SqlEngine>(
         },
         object_type: flow.object_type.clone(),
         state_property: flow.view.state_property.clone(),
+        started_by: starter,
     };
     cell.commit_run_start(commit, &start).map_err(|error| {
         let norn_kernel::CommitError::Host(host_error) = error else {

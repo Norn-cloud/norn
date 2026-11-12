@@ -175,6 +175,22 @@ test("signing in from the assistant's flow resumes it at consent", async () => {
   expect(new URL(((await signIn.json()) as { url: string }).url, ORIGIN).pathname).toBe("/oauth/consent")
 })
 
+test("a loopback callback registers without naming an application type, and gets a code", async () => {
+  const env = stage()
+  const { cookie } = await person(env, "lo@example.com")
+  const loopback = "http://127.0.0.1:33418/callback"
+  const clientId = await register(env, loopback)
+  const authorize = await call(env, authorizeUrl(clientId, pkce().challenge, loopback), { headers: { cookie } })
+  expect(authorize.status).toBe(302)
+  const consentPage = authorize.headers.get("location") ?? ""
+  expect(new URL(consentPage, ORIGIN).pathname).toBe("/oauth/consent")
+  const consent = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
+  expect(consent.status).toBe(200)
+  const callback = new URL(((await consent.json()) as { url: string }).url)
+  expect(`${callback.origin}${callback.pathname}`).toBe(loopback)
+  expect(callback.searchParams.get("code")).toBeTruthy()
+})
+
 test("a code is never sent to a callback outside the known assistants", async () => {
   const env = stage()
   const { cookie } = await person(env, "cy@example.com")
@@ -231,7 +247,12 @@ test("only the known assistants' callbacks and metadata documents are accepted",
 test("the widget pages are served as ui:// resources, to a granted assistant only", async () => {
   const env = stage()
   const page = '<!doctype html><html><head><meta charset="utf-8" /><meta name="norn-widget" content="1" /></head><body>widget …</body></html>'
-  const assets = { fetch: async (request: Request) => new Response(new URL(request.url).pathname === "/widgets/norn.html" ? page : "<!doctype html>studio") } as unknown as Fetcher
+  // As the deployed static layer answers: `norn.html` redirects to `/widgets/norn`, which serves the page.
+  const assets = { fetch: async (request: Request) => {
+    const { pathname } = new URL(request.url)
+    if (pathname === "/widgets/norn.html") return new Response(null, { status: 307, headers: { location: "/widgets/norn" } })
+    return new Response(pathname === "/widgets/norn" ? page : "<!doctype html>studio")
+  } } as unknown as Fetcher
   const withWidget = { ...env, ASSETS: assets }
   const { cookie } = await person(withWidget, "wi@example.com")
   const { accessToken } = await grant(withWidget, cookie)

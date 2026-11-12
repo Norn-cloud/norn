@@ -348,3 +348,86 @@ fn the_compiled_in_builtins_are_registered() {
     assert!(!norn_cell::builtin_registered("norn.decision", 2));
     assert!(!norn_cell::builtin_registered("tenant.anything", 1));
 }
+
+/// A provisioned tenant cell answers ad-hoc questions over the metrics its
+/// active definitions derive, under its own read policy, keyed by the stage's
+/// lineage key; a caller nobody verified gets the one denial.
+#[test]
+fn a_tenant_cell_lists_and_answers_its_derived_metrics() {
+    let directory = tempfile::tempdir().unwrap();
+    // One concept with additive amounts at a timestamp derives metrics.
+    let sale = json!({
+        "irVersion": "0.1", "artifactId": "shop.Sale.entity", "kind": "entity",
+        "namespace": "shop", "name": "Sale", "version": "0.1.0", "lifecycle": "active",
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "dependencies": [], "provenance": { "source": "system", "sourcePath": "tests/tenant_actions.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": { "name": "shop.Sale", "properties": [
+            { "id": "amount", "type": { "kind": "decimal", "scale": 2, "additivity": { "kind": "additive" } } },
+            { "id": "occurred_at", "type": { "kind": "timestamp", "timezone": "utc" } }
+        ] } }
+    });
+    let mut cell = provisioned(&directory.path().join("q.sqlite"), &[sale]);
+    let listed = cell.call("GET", "/v1/questions:metrics", Some(&user("admin")), "");
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed: Value = serde_json::from_str(&listed.body).unwrap();
+    let metrics = listed["metrics"].as_array().unwrap();
+    assert!(
+        metrics
+            .iter()
+            .any(|metric| metric["objectType"] == "shop.Sale" && metric["expression"] == "amount"),
+        "{listed}"
+    );
+    let anonymous = cell.call("GET", "/v1/questions:metrics", None, "");
+    assert_eq!(anonymous.status, 403, "{}", anonymous.body);
+}
+
+/// The kernel's call records (who called what, with which input and
+/// idempotency key) are read by admins and owners only.
+#[test]
+fn kernel_call_records_are_read_by_admins_and_owners_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("a.sqlite"),
+        &with_policy(&["member"]),
+    );
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("member")), "m1").status,
+        200
+    );
+    let calls = format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE);
+    for role in ["member", "viewer"] {
+        let response = cell.call("GET", &calls, Some(&user(role)), "");
+        assert_ne!(response.status, 200, "{role}: {}", response.body);
+        assert!(!response.body.contains("m1"), "{role}");
+    }
+    for role in ["admin", "owner"] {
+        let response = cell.call("GET", &calls, Some(&user(role)), "");
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        let page: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(page["records"].as_array().map(Vec::len), Some(1), "{role}");
+    }
+}
+
+/// An idempotency key another caller already used is refused: a second
+/// caller never replays, or learns, the first caller's call.
+#[test]
+fn a_second_caller_reusing_an_idempotency_key_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("a.sqlite"),
+        &with_policy(&["member", "admin"]),
+    );
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("member")), "k1").status,
+        200
+    );
+    let reused = cell.melt(MELT_ACTION, Some(&user("admin")), "k1");
+    let refusal: Value = serde_json::from_str(&reused.body).unwrap();
+    assert_eq!(
+        (reused.status, refusal["code"].as_str()),
+        (409, Some("action.idempotency_conflict")),
+        "{}",
+        reused.body
+    );
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+}

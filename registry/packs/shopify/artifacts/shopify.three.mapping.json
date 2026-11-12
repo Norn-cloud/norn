@@ -191,6 +191,10 @@
             "value": "input.quantity"
           },
           {
+            "property": "observed_at",
+            "value": "timestamp(input.updated_at)"
+          },
+          {
             "property": "unit",
             "value": "input.unit"
           },
@@ -463,7 +467,7 @@
     ],
     "source": {
       "schemaId": "shopify.three.source",
-      "sha256": "0f3b9172611997d6765978334a2a6b7cdd533930299d2194a92bb137dcee5f1d",
+      "sha256": "96924c86db3fa3d8585eb41e44b313a0e69d5f963e6eacd733b9b166e32f81f3",
       "version": "0.1.0"
     }
   },

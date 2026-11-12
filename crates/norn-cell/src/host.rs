@@ -180,7 +180,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &mut self,
         raws: &[Observed<Value>],
         input: &crate::mapping_bundle::MappingInput,
-    ) -> Result<Vec<(String, bool)>, CellError> {
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
         self.store.inject_mapping_page(raws, input)
     }
 

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -74,7 +74,10 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
-  useEffect(() => { if (phase.kind === "done") { onDirty?.(false); onCommitted?.() } }, [phase.kind])
+  useEffect(() => {
+    if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
+    if (phase.kind === "pending") onDirty?.(false)
+  }, [phase.kind])
   useEffect(() => {
     if (phase.kind !== "refused" || !wizard) return
     const first = problemsBySection(sections, phase.diagnostics).findIndex((n) => n > 0)
@@ -90,6 +93,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   const submit = () => dispatch({ kind: "submit", input: encodeObject(fields, draft as { readonly [name: string]: Draft }) })
+
+  if (phase.kind === "pending") return <SentForApproval action={action} expiresAtMs={phase.decision.expiresAtMs} decisionId={phase.decision.id} technical={technical} onClose={onClose} />
 
   if (committed) {
     return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} phase={phase}
@@ -404,6 +409,29 @@ function when(ms: number, now = Date.now()): string {
   if (seconds >= 0 && seconds < 60) return "just now"
   if (seconds >= 0 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+/** An approval-gated call: the cell committed nothing and put a decision in the inbox. */
+function SentForApproval({ action, expiresAtMs, decisionId, technical, onClose }: {
+  readonly action: ActionSummary; readonly expiresAtMs: number; readonly decisionId: string; readonly technical: boolean; readonly onClose: (() => void) | undefined
+}) {
+  const expires = new Date(expiresAtMs)
+  return (
+    <section aria-label="Sent for approval" className="grid gap-4">
+      <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+        <p role="status" className="flex items-start gap-2 text-sm font-medium">
+          <Hourglass className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span>{action.title} was sent for approval. Nothing changes until a decider approves it.</span>
+        </p>
+        <p className="text-meta text-muted-foreground">
+          It waits in Decisions until <time dateTime={expires.toISOString()} title={expires.toISOString()}>{expires.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>.
+        </p>
+        <Button asChild variant="outline" size="sm" className="justify-self-start border-node-border"><a href="/decisions"><Inbox /> Open Decisions</a></Button>
+        {technical && <div className="text-meta text-muted-foreground">Decision <CopyId value={decisionId} short={16} /></div>}
+      </div>
+      {onClose && <div className="flex justify-end"><Button type="button" variant="ghost" onClick={onClose}>Close</Button></div>}
+    </section>
+  )
 }
 
 type Committed = Extract<Phase, { kind: "done" | "undoing" | "undo-failed" | "undone" }>

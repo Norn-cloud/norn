@@ -52,7 +52,7 @@ struct Derived {
 /// A new revision is derived again on its first question; nothing is cached
 /// across revisions.
 pub struct DerivedQuestions {
-    handle_key: [u8; 32],
+    handle_key: Vec<u8>,
     scope: CellScope,
     label: String,
     cache: Mutex<Option<Arc<Derived>>>,
@@ -64,11 +64,23 @@ impl DerivedQuestions {
     #[must_use]
     pub fn new(handle_key: [u8; 32], scope: CellScope) -> Self {
         Self {
-            handle_key,
+            handle_key: handle_key.to_vec(),
             scope,
             label: "dev".into(),
             cache: Mutex::new(None),
         }
+    }
+
+    /// [`Self::new`] keyed by a host secret of any length of at least 32
+    /// bytes (a stage's `NORN_LINEAGE_KEY`); none for a shorter one.
+    #[must_use]
+    pub fn keyed(handle_key: &[u8], scope: CellScope) -> Option<Self> {
+        (handle_key.len() >= 32).then(|| Self {
+            handle_key: handle_key.to_vec(),
+            scope,
+            label: "dev".into(),
+            cache: Mutex::new(None),
+        })
     }
 
     /// Label the answer frontier's population and mapping pins with `label`
@@ -312,6 +324,30 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
 impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
     fn definitions(&self) -> &[MetricDefinition] {
         &self.derived.definitions
+    }
+    fn unit_partition(&self, metric: &str) -> Vec<String> {
+        let Some(space) = &self.derived.space else {
+            return Vec::new();
+        };
+        space
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.definition.name == metric)
+            .map(|candidate| {
+                candidate
+                    .unit_partition
+                    .iter()
+                    .map(|path| {
+                        path.links
+                            .iter()
+                            .map(|link| link.0.as_str())
+                            .chain(std::iter::once(path.property.0.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
     fn catalog(&self) -> &EffectiveCatalog {
         &self.derived.catalog

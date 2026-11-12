@@ -40,6 +40,16 @@ function amounts(read: Read<Trace>, index: number) {
 /** How a bucket's records are read: the published question's trace by name, or a built question's own (POST :trace). */
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
+/**
+ * Which engine computed the answer, as the cell reports it: DuckDB when the cell could lower the
+ * plan to it, the cell's maintained totals, or its own exact engine. The figures are exact either way.
+ */
+const ENGINES: Readonly<Record<string, string>> = { duckdb: "Computed by DuckDB", cell: "Computed by the cell's exact engine", ivm: "Read from the cell's maintained totals" }
+export const engineOf = (answer: unknown): string | undefined => {
+  const engine = (answer as { engine?: unknown } | null)?.engine
+  return typeof engine === "string" ? ENGINES[engine] ?? `Computed by ${engine}` : undefined
+}
+
 /** Refusals that mean the cell committed since this answer: its trace handle no longer names this number. */
 const MOVED = new Set(["core.projection.answer_moved", "core.projection.lineage_incomplete"])
 
@@ -169,7 +179,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
             <KpiTile icon={Sigma} label={latest.label} value={shown(latest)} sub={latest.totals.length > 1 ? `${fraction(latest.totals)} = ${latest.value} exactly` : undefined} />
           </button>
           <KpiTile icon={Rows3} label="Records counted" value={latest.members.length} sub={latest.label} />
-          <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`} />
+          <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={<>{`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`}{engineOf(answer) && <span className="block">{engineOf(answer)}</span>}</>} />
         </StatStrip>
       )}
       <Panel icon={ChartLine} label={headline(question)} action={frame ? `${period(question.window)} · scale ${frame.scale[0]}${frame.unit}–${frame.scale[1]}${frame.unit}` : period(question.window)}>
@@ -192,8 +202,8 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel>
-      <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
-        <TableCard><Table>
+      <Panel icon={Rows3} label="Every week" action={rows.length === 0 ? undefined : "Select a week to see its records"}>
+        {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
@@ -209,7 +219,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
               </TableRow>
             ))}
           </TableBody>
-        </Table></TableCard>
+        </Table></TableCard>}
       </Panel>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>

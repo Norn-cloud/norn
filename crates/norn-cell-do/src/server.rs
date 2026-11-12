@@ -17,7 +17,9 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::action_catalog::{ActionCatalogQuery, list_actions};
-use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
+use norn_api::actions::{
+    ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
+};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
@@ -164,6 +166,10 @@ routes! {
     UploadComplete => ("POST", "/v1/uploads/{id}:complete"),
     /// `POST /v1/uploads/{id}:load`, dispatched by the entry point (`connect`).
     UploadLoad => ("POST", "/v1/uploads/{id}:load"),
+    /// `POST /v1/uploads/{id}:define`, dispatched by the entry point (`connect`).
+    UploadDefine => ("POST", "/v1/uploads/{id}:define"),
+    /// `POST /v1/observations:load`, dispatched by the entry point (`connect`).
+    ObservationsLoad => ("POST", "/v1/observations:load"),
     /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
@@ -194,6 +200,8 @@ impl Route {
                 | Self::UploadRead
                 | Self::UploadComplete
                 | Self::UploadLoad
+                | Self::UploadDefine
+                | Self::ObservationsLoad
         )
     }
 
@@ -203,6 +211,7 @@ impl Route {
         match path {
             "/v1/access" => return Some(Self::Access),
             "/v1/uploads:begin" => return Some(Self::UploadBegin),
+            "/v1/observations:load" => return Some(Self::ObservationsLoad),
             "/v1/uploads:read" => return Some(Self::UploadRead),
             "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
@@ -271,6 +280,7 @@ impl Route {
             return match verb {
                 "complete" if !id.is_empty() && !id.contains('/') => Some(Self::UploadComplete),
                 "load" if !id.is_empty() && !id.contains('/') => Some(Self::UploadLoad),
+                "define" if !id.is_empty() && !id.contains('/') => Some(Self::UploadDefine),
                 _ => None,
             };
         }
@@ -329,8 +339,25 @@ pub fn handle_all<E: SqlEngine>(
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    if let Some(response) = crate::runs::dispatch(host, questions, actor.as_deref(), request) {
+    if let Some(response) = crate::runs::dispatch(
+        host,
+        questions,
+        principals.caller(),
+        actor.as_deref(),
+        request,
+    ) {
         return response;
+    }
+    // APPROVAL-1: a call an approval holds answers 202, so an action call
+    // keeps its status.
+    if let Some(action) = action_path(request.path) {
+        return respond_with(governed_call(
+            Some(host),
+            questions,
+            actor.as_deref(),
+            (request.method, action, request.query, request.body),
+            request.now,
+        ));
     }
     respond(route(
         Some(host),
@@ -348,19 +375,31 @@ pub fn handle_all<E: SqlEngine>(
 /// is absent.
 #[must_use]
 pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
-    respond(route::<E>(
-        None,
-        None,
-        &DefinitionKinds::default(),
-        None,
-        request,
-    ))
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
+    respond_with(result.map(|body| (StatusCode::OK, body)))
+}
+
+/// A route's answer with its status, or its refusal, as the response.
+fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -394,9 +433,7 @@ fn route<E: SqlEngine>(
         "/v1/questions:evaluate" | "/v1/questions:trace" | "/v1/questions:metrics"
     );
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
-    let action = path
-        .strip_prefix("/v1/actions/")
-        .filter(|id| !id.is_empty() && !id.contains('/'));
+    let action = action_path(path);
     // `Route` is the one list of what this host serves; a path it does not
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
@@ -639,9 +676,27 @@ fn governed_action<E: SqlEngine>(
     host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
-    (method, action, query, body): (&str, &str, &str, &str),
+    call: (&str, &str, &str, &str),
     now: u64,
 ) -> Result<String, Refusal> {
+    governed_call(host, questions, actor, call, now).map(|(_, body)| body)
+}
+
+/// The action id of an action call's path, `/v1/actions/{actionId}`.
+fn action_path(path: &str) -> Option<&str> {
+    path.strip_prefix("/v1/actions/")
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// [`governed_action`] with its status: a call an approval holds answers 202
+/// with the decision it waits on (APPROVAL-1).
+fn governed_call<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    (method, action, query, body): (&str, &str, &str, &str),
+    now: u64,
+) -> Result<(StatusCode, String), Refusal> {
     if method != "POST" {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -674,15 +729,10 @@ fn governed_action<E: SqlEngine>(
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
     let request = decode_action_request(body)?;
     let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
-    document_json(&call_action(
-        host,
-        &query,
-        actor,
-        &action,
-        &request,
-        named(runtime),
-        now,
-    )?)
+    match call_action(host, &query, actor, &action, &request, named(runtime), now)? {
+        ActionAnswer::Receipt(receipt) => Ok((StatusCode::OK, document_json(&receipt)?)),
+        ActionAnswer::Pending(pending) => Ok((StatusCode::ACCEPTED, document_json(&pending)?)),
+    }
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional

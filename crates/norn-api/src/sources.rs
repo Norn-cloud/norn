@@ -129,13 +129,30 @@ pub struct RunSummary {
     pub error: Option<(String, String)>,
 }
 
+/// The connector instance of the schemas the cell writes itself (its sync
+/// reports), reserved: no configured connection uses it (SYNC-INSTANCE-1).
+pub const CELL_INSTANCE: &str = "cell";
+
 /// The host's next move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// Send this and call [`Sources::step`](crate::sources::Sources::step) with the response.
     Request(HttpRequest),
+    /// Rows are still being mapped: yield, then call `step` again with no
+    /// response. SYNC-YIELD-1: a step maps one OBS-PAGE-1 page (at most
+    /// [`PAGE_ROWS`](crate::host::PAGE_ROWS) rows of one dataset, within the
+    /// cell's page byte bound), so a sync holds the cell for one page commit
+    /// at a time, however much a response carried.
+    Continue,
     /// The run is over.
     Done(RunSummary),
+}
+
+/// What the run does next.
+enum Next {
+    Request(HttpRequest),
+    Continue,
+    Done,
 }
 
 /// Why a sync could not be claimed.
@@ -156,6 +173,9 @@ struct Run {
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
     held: Option<Request>,
+    /// Sealed rows of the last page not yet mapped, and what follows them.
+    queue: std::collections::VecDeque<(norn_kernel::Observed<RuntimeValue>, MappingInput)>,
+    after: Option<HttpRequest>,
     watermark_from: String,
     read: u64,
     landed: u64,
@@ -199,6 +219,14 @@ impl Sources {
         for connection in &connections {
             if !ids.insert(connection.id.as_str()) {
                 return Err(format!("source configuration: {} twice", connection.id));
+            }
+            // SYNC-INSTANCE-1: `cell` names the schemas the cell writes itself
+            // (its sync reports); no connected system may claim it.
+            if connection.instance == CELL_INSTANCE {
+                return Err(format!(
+                    "source configuration: {} may not use the instance {CELL_INSTANCE}, which is the cell's own",
+                    connection.id
+                ));
             }
             if !allowed_base(&connection.base_url) {
                 return Err(format!(
@@ -253,6 +281,8 @@ impl Sources {
             pull: None,
             auth: Vec::new(),
             held: None,
+            queue: std::collections::VecDeque::new(),
+            after: None,
             watermark_from: String::new(),
             read: 0,
             landed: 0,
@@ -301,12 +331,18 @@ impl Sources {
             ));
         };
         let outcome = match response {
-            None => begin(host, &config, &self.secrets, run, watermarks_known),
-            Some((status, body)) => advance(host, &config, run, status, body, now_ms),
+            None if run.pull.is_some() => drain(host, run),
+            None => begin(host, &config, &self.secrets, run, watermarks_known)
+                .map(|first| first.map_or(Next::Done, Next::Request)),
+            Some((status, body)) => advance(&config, run, status, body, now_ms).and_then(|after| {
+                run.after = after;
+                drain(host, run)
+            }),
         };
         match outcome {
-            Ok(Some(request)) => Step::Request(request),
-            Ok(None) => self.finish(host, &config, None, now_ms),
+            Ok(Next::Request(request)) => Step::Request(request),
+            Ok(Next::Continue) => Step::Continue,
+            Ok(Next::Done) => self.finish(host, &config, None, now_ms),
             Err(error) => self.finish(host, &config, Some(error), now_ms),
         }
     }
@@ -442,8 +478,7 @@ fn begin<E: SqlEngine>(
     Ok(first.map(|request| http(config, &run.auth, request)))
 }
 
-fn advance<E: SqlEngine>(
-    host: &DevHost<E>,
+fn advance(
     config: &ConnectionConfig,
     run: &mut Run,
     status: u16,
@@ -517,29 +552,53 @@ fn advance<E: SqlEngine>(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail("source.seal", e))?;
-    let outcomes = host
-        .ingest(&batch)
-        .map_err(|refusal| fail("source.ingest", refusal.message))?;
     run.read = run
         .read
         .saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
-    for ingested in outcomes {
-        match ingested.outcome {
-            MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
-                run.landed = run.landed.saturating_add(1);
-            }
-            MappingOutcome::Quarantined(codes) => {
-                run.quarantined = run.quarantined.saturating_add(1);
-                for code in codes {
-                    let n = run.reasons.entry(code).or_insert(0);
-                    *n = n.saturating_add(1);
+    run.queue.extend(batch);
+    Ok(pull
+        .next_request()
+        .map(|request| http(config, &run.auth, request)))
+}
+
+/// SYNC-YIELD-1: map the next page of queued rows (one mapping input, at
+/// most [`PAGE_ROWS`](crate::host::PAGE_ROWS), no source record twice);
+/// continue while rows remain, then send what follows them.
+fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure> {
+    let mut seen = std::collections::BTreeSet::new();
+    let first = run.queue.front().map(|(_, input)| input.clone());
+    let take = run
+        .queue
+        .iter()
+        .take(crate::host::PAGE_ROWS)
+        .take_while(|(raw, input)| {
+            Some(input) == first.as_ref() && seen.insert(raw.provenance.source_id.clone())
+        })
+        .count();
+    let chunk: Vec<_> = run.queue.drain(..take).collect();
+    if !chunk.is_empty() {
+        let outcomes = host
+            .ingest(&chunk)
+            .map_err(|refusal| fail("source.ingest", refusal.message))?;
+        for ingested in outcomes {
+            match ingested.outcome {
+                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
+                    run.landed = run.landed.saturating_add(1);
+                }
+                MappingOutcome::Quarantined(codes) => {
+                    run.quarantined = run.quarantined.saturating_add(1);
+                    for code in codes {
+                        let n = run.reasons.entry(code).or_insert(0);
+                        *n = n.saturating_add(1);
+                    }
                 }
             }
         }
     }
-    Ok(pull
-        .next_request()
-        .map(|request| http(config, &run.auth, request)))
+    if !run.queue.is_empty() {
+        return Ok(Next::Continue);
+    }
+    Ok(run.after.take().map_or(Next::Done, Next::Request))
 }
 
 /// For an `oauth2` connector, the client-credentials token request (RFC 6749
@@ -736,6 +795,8 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         pull: None,
         auth: Vec::new(),
         held: None,
+        queue: std::collections::VecDeque::new(),
+        after: None,
         watermark_from: "{}".to_owned(),
         read,
         landed,
@@ -843,7 +904,7 @@ fn report<E: SqlEngine>(
                     MappingInput {
                         mapping: REPORT_MAPPING.to_owned(),
                         dataset: dataset.to_owned(),
-                        connector_instance: "cell".to_owned(),
+                        connector_instance: CELL_INSTANCE.to_owned(),
                         partition: dataset.to_owned(),
                         recorded_at: norn_ir::provenance::UtcTimestamp(rfc3339(now)),
                     },

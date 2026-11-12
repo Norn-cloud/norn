@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-shopify", instance: "demo", version: "shopify-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/shopify/synthetic.json", sha256: "d4be1ecbf98bc011894cb0fd51cfda8a015275dd26af659d01dafa5d6e14f0a6"},
+  rawMetadata: {uri: "registry/packs/shopify/synthetic.json", sha256: "6669d3251acb3d634d5b827a75559c4e1a89ed66abd8671e80e08feb4a5de59b"},
   datasets: [
     {id: "ProductVariant", nativeName: "Synthetic ProductVariant", kind: "document"},
     {id: "InventoryLevel", nativeName: "Synthetic InventoryLevel", kind: "document"},
@@ -34,6 +34,7 @@ export const Source = Norn.sourceSchema({
     {dataset: "InventoryLevel", name: "item_ref", ordinal: 6, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "InventoryLevel", name: "owner_ref", ordinal: 7, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "InventoryLevel", name: "custodian_ref", ordinal: 8, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "InventoryLevel", name: "updated_at", ordinal: 9, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Customer", name: "id", ordinal: 0, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Customer", name: "metafield_norn_ref", ordinal: 1, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Customer", name: "label", ordinal: 2, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
@@ -86,7 +87,7 @@ export const Mapping = Norn.mapping({
   id: "shopify.three.mapping",
   title: "shopify synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "0f3b9172611997d6765978334a2a6b7cdd533930299d2194a92bb137dcee5f1d"},
+  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "96924c86db3fa3d8585eb41e44b313a0e69d5f963e6eacd733b9b166e32f81f3"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, Settlement],
   maps: [
@@ -108,6 +109,7 @@ export const Mapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        {property: "observed_at", value: "timestamp(input.updated_at)"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "null"},

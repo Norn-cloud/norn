@@ -333,7 +333,7 @@ const UNDOCUMENTED: &[server::Route] = &[
     // the dev host and `server::handle` refuse it. Its document types live in
     // this crate, outside the generated contract.
     server::Route::Access,
-    // The cell's source and upload routes (#921): dispatched by the published
+    // The cell's source, upload and recorded-load routes (#921): dispatched by the published
     // host's entry point (`connect`), which owns the outbound fetch loop the
     // sync and the object reads need; `server::handle` refuses them. They are
     // write routes behind the cell's own policy, outside the read contract.
@@ -342,6 +342,8 @@ const UNDOCUMENTED: &[server::Route] = &[
     server::Route::UploadRead,
     server::Route::UploadComplete,
     server::Route::UploadLoad,
+    server::Route::UploadDefine,
+    server::Route::ObservationsLoad,
 ];
 
 /// The route's path template with every `{parameter}` filled by `x`.

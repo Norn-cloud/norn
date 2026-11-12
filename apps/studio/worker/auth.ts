@@ -57,6 +57,11 @@ export interface AuthConfig {
   readonly defaultOrganizationId?: string
   /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
   readonly scrypt?: PasswordScrypt
+  /**
+   * Invite-only sign-up: when set, only these addresses (lower-case) may create an account, by
+   * any sign-up path; every other address is refused before the user exists. Absent: open.
+   */
+  readonly signUpEmails?: readonly string[]
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
   /**
@@ -128,6 +133,9 @@ const assistantAuthorization = (baseURL: string) => [
     // only the callbacks above can receive a code.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
+    // A registration that names no application_type is typed by its callbacks: a loopback one
+    // (Claude Code, the MCP inspector) registers as native, an https one stays web.
+    clientRegistrationDefaultApplicationType: "infer",
     validateRedirectUri: (uri: string, _registered: readonly string[], matched: boolean) => matched && assistantCallback(uri),
     accessTokenExpiresIn: 15 * MINUTE,
     // The consent is recorded against the organization the person is working in.
@@ -401,6 +409,12 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     databaseHooks: {
       user: {
         create: {
+          // Invite-only deployments refuse an uninvited address before any row is written.
+          before: async (user) => {
+            if (config.signUpEmails !== undefined && !config.signUpEmails.includes(String(user.email).trim().toLowerCase())) {
+              throw new APIError("FORBIDDEN", { message: "Sign-up on this deployment is by invitation only." })
+            }
+          },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
             if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)

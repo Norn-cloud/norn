@@ -170,6 +170,14 @@ export const SandboxSource = Norn.sourceSchema({
       required: true
     },
     {
+      dataset: "stock.quant",
+      name: "write_date",
+      ordinal: 12,
+      nativeType: "datetime",
+      typeCandidate: {type: "string", origin: "declared"},
+      required: true
+    },
+    {
       dataset: "res.partner",
       name: "id",
       ordinal: 0,
@@ -289,7 +297,7 @@ export const SandboxMapping = Norn.mapping({
   id: "odoo.sandbox.mapping",
   title: "Odoo sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "d89e002214d8cbb30416fe683653d23b3f23bf95ef6e34d0fdf5baaf79dedd6e"},
+  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "76b16f0b382657832285372b79062ec0b243f00fd212fb6c928c1c4fc65e777d"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [
@@ -314,6 +322,10 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        // Odoo's `write_date` ("YYYY-MM-DD HH:MM:SS", UTC) to the day: the mapping profile cannot rebuild
+        // the time of day, every snapshot grain is at least a day, and same-day changes keep their order
+        // by version (this feed commits in `write_date` order).
+        {property: "observed_at", value: "timestamp(take(input.write_date, 10) + 'T00:00:00Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},
@@ -484,7 +496,8 @@ export const SandboxConnector = Norn.connector({
           custodian_ref: "/x_custodian_ref",
           stock_cost: "/x_stock_cost",
           cost_currency: "/x_cost_currency",
-          valuation_method: "/x_valuation_method"
+          valuation_method: "/x_valuation_method",
+          write_date: "/write_date"
         },
         initial: {version: "1970-01-01 00:00:00", id: 0}
       },

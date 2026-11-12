@@ -337,6 +337,17 @@
         }
       },
       {
+        "dataset": "InventoryLevel",
+        "name": "updated_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
         "dataset": "Customer",
         "name": "id",
         "nativeType": "SyntheticText",
@@ -659,7 +670,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-02T00:00:00Z",
     "rawMetadata": {
-      "sha256": "d4be1ecbf98bc011894cb0fd51cfda8a015275dd26af659d01dafa5d6e14f0a6",
+      "sha256": "6669d3251acb3d634d5b827a75559c4e1a89ed66abd8671e80e08feb4a5de59b",
       "uri": "registry/packs/shopify/synthetic.json"
     },
     "source": {
