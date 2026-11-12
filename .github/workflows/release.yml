@@ -141,10 +141,14 @@ jobs:
       - name: Verify the files against this commit before anything is public
         env:
           VERSION: ${{ needs.build.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           for channel in tarball registry; do
-            python3 scripts/release/assemble.py verify --commit "$GITHUB_SHA" --out "dist/$channel"
+            inputs=(--channel "$channel" --toolchain 1.98.0)
+            if [ "$channel" = tarball ]; then inputs+=(--base-url "https://github.com/$REPOSITORY/releases/download/v$VERSION"); fi
+            # The release's facts come from this run's own inputs; the artifact's manifest is checked against them.
+            python3 scripts/release/assemble.py verify --commit "$GITHUB_SHA" "${inputs[@]}" --out "dist/$channel"
             (cd "dist/$channel/release" && sha256sum -c SHA256SUMS)
             grep -q "\"version\": \"$VERSION\"" "dist/$channel/release/manifest.json"
           done

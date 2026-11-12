@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildInfo, parseBuildInfo, versionLine, type BuildInfo } from "../src/build-info.ts"
@@ -194,7 +194,8 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     expect(init.status).toBe(0)
     const installed = join(dir, "node_modules/@norn/authoring")
     mkdirSync(join(installed, "profile"), { recursive: true })
-    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: "0.0.0", types: "./profile/norn-authoring.d.ts" }))
+    // Shaped like the real package: `exports` without a `./package.json` entry.
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: "0.0.0", exports: { ".": { types: "./profile/norn-authoring.d.ts" } } }))
     writeFileSync(join(installed, "profile/norn-authoring.d.ts"), 'declare module "@norn/authoring" {}\n')
     const compiled = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "compile", join(dir, "src"), "--org", "local", "--env", "dev"], { cwd: dir, encoding: "utf8" })
     expect({ status: compiled.status, err: compiled.stderr }).toEqual({ status: 0, err: "" })
@@ -204,7 +205,11 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     const warning = authoringVersionWarning(dir)
     expect(warning).toMatchObject({ code: "cli.setup.authoring_version_mismatch" })
     expect(warning!.message).toContain("installed @norn/authoring is 0.0.0")
-    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION }))
+    // Under Node too, which enforces `exports`.
+    const node = spawnSync("node", ["--experimental-transform-types", "--no-warnings", "-e",
+      `import(${JSON.stringify(join(TOOL_ROOT, "src/authoring-version.ts"))}).then((m) => console.log(m.installedAuthoringVersion(${JSON.stringify(join(dir, "src"))})))`], { encoding: "utf8" })
+    if (node.error === undefined) expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION, exports: { ".": { types: "./profile/norn-authoring.d.ts" } } }))
     expect(authoringVersionWarning(dir)).toBeUndefined()
   } finally { rmSync(root, { recursive: true }) }
 }, 60_000)
@@ -221,6 +226,11 @@ test.skipIf(!process.env[CHECKER_PKG_ENV])("check prints the authoring version w
     expect(checked.status).toBe(0)
     expect(JSON.parse(checked.stdout).admitted).toBe(true)
     expect(checked.stderr).toStartWith("warning[cli.setup.authoring_version_mismatch] ")
+    // A project that does not compile is told too: the warning comes before compiling.
+    writeFileSync(join(dir, "src/broken.ts"), "export const broken: number = \"text\"\n")
+    const broken = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "check", join(dir, "src"), "--org", "local", "--env", "dev"], { cwd: dir, encoding: "utf8" })
+    expect(broken.status).toBe(1)
+    expect(broken.stderr).toStartWith("warning[cli.setup.authoring_version_mismatch] ")
   } finally { rmSync(root, { recursive: true }) }
 }, 60_000)
 
@@ -239,6 +249,12 @@ test("dev host: an installed platform package runs only if it is the host the re
     expect(await hostBinary(lookup(root, { packageDir: () => packaged, build: registry }))).toBe(join(packaged, "bin/norn-dev-host"))
     const missing = await refusal(hostBinary(lookup(root, { build: registry })))
     expect(missing.message).toContain("@norn/dev-host-linux-x64 is not installed")
+    // Fail closed: an installed host with no recorded digest is not run, in a release or a checkout.
+    const unrecorded = await refusal(hostBinary(lookup(root, { packageDir: () => packaged, build: build({}) })))
+    expect(unrecorded).toMatchObject({ code: "cli.setup.host_unavailable", exitCode: 3 })
+    expect(unrecorded.message).toContain("this release records no host for linux-x64, so it is not run")
+    const checkout = await refusal(hostBinary(lookup(root, { packageDir: () => packaged, build: undefined })))
+    expect(checkout.message).toContain("a checkout records no host digest, so it is not run")
   } finally { rmSync(root, { recursive: true }) }
 })
 
@@ -275,7 +291,11 @@ test("dev host: the build-from-source instructions name this CLI's commit and ar
     const commit = build({}).commit
     expect(mac.message).toContain(`git checkout ${commit}`)
     expect(mac.message).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
-    expect(mac.message).toContain("NORN_DEV_HOST_BIN to target/release/norn-dev-host")
+    expect(mac.message).toContain('export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"')
+    // A checkout prints no commit to check out: it builds itself, and gets the absolute path.
+    const checkout = await refusal(hostBinary(lookup(root, { build: undefined })))
+    expect(checkout.message).toContain(`Build it in this checkout with \`cargo build --release -p norn-cell-do --bin norn-dev-host\`, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\``)
+    expect(checkout.message).not.toContain("git checkout")
     // The registered fix gives the same command and path, not another one.
     const registered = registeredCodes().get("cli.setup.host_unavailable")!
     expect(registered.fix).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
@@ -285,6 +305,17 @@ test("dev host: the build-from-source instructions name this CLI's commit and ar
 })
 
 test("pinned dependencies are real paths, as TypeScript resolves them", () => {
+  // An isolated linker's layout: the package is a symlink into a store.
+  const root = realpathSync(scratch())
+  try {
+    const stored = join(root, "store", "effect")
+    mkdirSync(stored, { recursive: true })
+    writeFileSync(join(stored, "package.json"), "{}")
+    const tool = join(root, "project", "node_modules", "@norn", "cli")
+    mkdirSync(tool, { recursive: true })
+    symlinkSync(stored, join(root, "project", "node_modules", "effect"))
+    expect(dependencyDir("effect", tool)).toBe(stored)
+  } finally { rmSync(root, { recursive: true }) }
   for (const name of ["effect", "typescript"]) {
     const dir = dependencyDir(name)
     expect(realpathSync(dir)).toBe(dir)

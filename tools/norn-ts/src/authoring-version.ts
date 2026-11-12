@@ -5,9 +5,8 @@
  * types the checker does not use, so `norn check` and `norn dev` say so, as a
  * warning, never a refusal.
  */
-import { existsSync, readFileSync } from "node:fs"
-import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
+import { existsSync, readFileSync, statSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError } from "./project.ts"
 
@@ -16,11 +15,23 @@ function versionAt(packageJson: string): string | undefined {
   catch { return undefined }
 }
 
-/** The version of the `@norn/authoring` a project at `start` resolves to, if any. */
+/**
+ * The version of the `@norn/authoring` a project at `start` resolves to, if any:
+ * the nearest `node_modules/@norn/authoring/package.json` walking up, as Node's
+ * and Bun's resolution find the package. The file is read directly, not
+ * through `require.resolve`, which the package's `exports` (no
+ * `./package.json` entry) refuses under Node.
+ */
 export function installedAuthoringVersion(start: string): string | undefined {
-  const from = existsSync(start) && !start.endsWith(".ts") ? join(start, "noop.js") : join(dirname(start), "noop.js")
-  try { return versionAt(createRequire(from).resolve("@norn/authoring/package.json")) }
-  catch { return undefined }
+  let dir = resolve(start)
+  if (existsSync(dir) && statSync(dir).isFile()) dir = dirname(dir)
+  for (;;) {
+    const candidate = join(dir, "node_modules", "@norn", "authoring", "package.json")
+    if (existsSync(candidate)) return versionAt(candidate)
+    const parent = dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
 }
 
 /** The warning to print when the project's `@norn/authoring` is not this CLI's version; undefined otherwise. */
