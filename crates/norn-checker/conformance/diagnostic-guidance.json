@@ -1228,6 +1228,62 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "lifecycle.soundness.compensation_not_closed",
+    "fix": "Route every path from the dispatching transition to that ending through its compensating transition."
+  },
+  {
+    "code": "lifecycle.soundness.completion_unknown",
+    "fix": "Add an unguarded exit, or check the bounded lifecycle graph, which decides the guards."
+  },
+  {
+    "code": "lifecycle.soundness.deadline_without_remedy",
+    "fix": "Route the deadline to a remedy, a compensation or an ending."
+  },
+  {
+    "code": "lifecycle.soundness.fact_guarded",
+    "fix": "Remove the guard: a fact commits, posts a variance or shortfall, or is quarantined. Make it a request if it may be refused."
+  },
+  {
+    "code": "lifecycle.soundness.fact_refused",
+    "fix": "Post the excess to a variance or shortfall bucket instead of refusing, or make the transition a request with a non-request exit."
+  },
+  {
+    "code": "lifecycle.soundness.invalid_ending",
+    "fix": "Name each ending once, give final outcomes only to terminal states and the resting outcome only to non-terminal ones."
+  },
+  {
+    "code": "lifecycle.soundness.invalid_event",
+    "fix": "Use a lowercase unique event id, and ignore an event only in listed states, with a reason, where no transition handles it."
+  },
+  {
+    "code": "lifecycle.soundness.invalid_trigger",
+    "fix": "Give timers positive canonical milliseconds, trigger only on declared events, leave triggered transitions as facts, and compensate with another declared transition."
+  },
+  {
+    "code": "lifecycle.soundness.law_blocked_exit",
+    "fix": "Add an exit the laws allow, an exception to the blocking law (owner only), a remedy, or declare the state an ending."
+  },
+  {
+    "code": "lifecycle.soundness.no_ending",
+    "fix": "Declare the lifecycle's endings: terminal states with outcomes, or resting states for a perpetual object."
+  },
+  {
+    "code": "lifecycle.soundness.timer_cycle",
+    "fix": "Break the cycle with an action or an event, or give it an exit to an ending."
+  },
+  {
+    "code": "lifecycle.soundness.trap",
+    "fix": "Add an exit transition, a remedy or compensation, or declare an ending with an outcome."
+  },
+  {
+    "code": "lifecycle.soundness.unhandled_event",
+    "fix": "Add a transition the event triggers from the state, or list the state in the event's ignoredIn with a reason."
+  },
+  {
+    "code": "lifecycle.soundness.wait_without_deadline",
+    "fix": "Add a timer transition out of the state that leads to a remedy or an ending."
+  },
+  {
     "code": "lifecycle.validation.dead_end_state",
     "no_fix": "The intended permitted outgoing transition or terminal status requires review of the authored lifecycle."
   },

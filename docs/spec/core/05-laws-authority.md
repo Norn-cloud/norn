@@ -77,6 +77,7 @@ Replaying the same commits yields the same events. The accountable subject is ca
 | LAW-WITHIN-1: exact `within` obligation shape; structural admission | `law.validation.unsupported_temporal` / `law.validation.invalid_document` / `law.model.unknown_binding` / `law.model.predicate_type` |
 | AUTH-ATTENUATE-1: current scoped authority, no escalation; admission/commit/dispatch | `core.authority.denied` / `core.authority.revoked` |
 | PROOF-BIND-1: exact generated statement and checked result; evidence admission | `core.laws.stale_evidence` |
+| LIFE-SOUND-1..8: every run of a lifecycle can reach a good or compensated ending; admission (structural) and bounded graph | `lifecycle.soundness.*` (see *Lifecycle soundness*) |
 
 Evidence levels remain separate. Lean proof bodies must check the generated theorem with declared axioms and no admitted holes; bounded model results carry bounds. Admission receipts, source reviews and echoed challenges are structural evidence only. Report eligible auto-proof goals solved/total separately from all goals and unknown/refuted counts.
 
@@ -595,6 +596,104 @@ all initializations and every pre-state/transition pair with the checked native
 cell, including exact post-values and atomic refusal. The declaration variants
 cover a second governing law and a disabled guard; they never rewrite the actual
 App-root pack's recorded Unknown result. Checked backend evidence follows.
+
+### Lifecycle soundness: no dead ends (LIFE-SOUND-1..8, #1126)
+
+Owner position: every lifecycle run reaches a good or compensated ending. This
+is workflow-net soundness (option to complete, proper completion, no dead
+transitions) plus three Norn additions: laws that block every exit, total
+handling of external events, and endings classified by outcome. Option to
+complete is the CTL property `AG EF ending`, which no LTL tool (TLC, Apalache,
+Quint) can state, so the checker computes it as a fixpoint over the lifecycle
+graph: `reach` is the forward closure from the initial states over every edge,
+`exit` the backward closure from the endings over **must** edges only. A
+reachable state outside `exit` is stuck. A state whose only way to an ending
+crosses a **may** edge (a guard the analysis does not decide) is Unknown, never
+a pass. The core (`norn-checker` `soundness`) is shared with UI page
+statecharts (UI-MACHINE-1, #1236): one checker, two kinds of machine.
+
+Additive IR (D84; every member optional and omitted when empty, so existing
+artifacts keep their bytes): `Lifecycle.endings[] {state, outcome}` with
+`outcome` one of `completed`, `compensated`, `cancelled`, `breached_visible`,
+`resting`; `Lifecycle.events[] {id, ignoredIn[] {states, reason}}`;
+`Transition.trigger` (`{kind: timer, millis}` or `{kind: event, event}`;
+omitted means an action fires it); `Transition.mode` (`request`, the default,
+or `fact`); `Transition.compensatedBy` (a transition id). A terminal state with
+no declared outcome is an unclassified good ending. A `resting` ending is a
+non-terminal state a perpetual object may stay in; it still needs an exit.
+Endings and events are inherited; a redeclared transition inherits its parent's
+trigger, mode and compensation unless it states its own.
+
+- **LIFE-SOUND-1 (option to complete):** every reachable state can reach an
+  ending. Unguarded transitions, timers and events are must edges; guarded
+  transitions are may edges. A reachable state with exits but no reachable
+  ending is `lifecycle.soundness.trap`, with a shortest run; one reachable only
+  through a guard is `lifecycle.soundness.completion_unknown` (info: Unknown).
+  A chart with no terminal and no resting state is
+  `lifecycle.soundness.no_ending` (info): option to complete is vacuous, so a
+  perpetual object declares its resting states. A state with no exit at all
+  stays `lifecycle.validation.dead_end_state`.
+- **LIFE-SOUND-2 (ending shape):** an ending names a state once; a final
+  outcome is on a terminal state and `resting` on a non-terminal one
+  (`lifecycle.soundness.invalid_ending`).
+- **LIFE-SOUND-3 (timers and events are edges):** a timer's delay is positive
+  canonical milliseconds; an event trigger names a declared event; a triggered
+  transition is a fact, never a `request`; `compensatedBy` names another
+  transition (`lifecycle.soundness.invalid_trigger`). Event ids follow the
+  transition-id grammar and are unique; an ignore entry lists states, gives a
+  reason, and does not ignore an event a transition handles in that state
+  (`lifecycle.soundness.invalid_event`).
+- **LIFE-SOUND-4 (law-blocked exits):** over the PROOF-LIFECYCLE-3 bounded
+  graph, where guards and laws are decided on exact rows and every edge is
+  must, a reachable row from which no ending row is reachable is refuted. When
+  governing laws refuse its exits it is
+  `lifecycle.soundness.law_blocked_exit`, naming the exit and the smallest set
+  of governing laws its post-state violates (the smallest over the row's
+  blocked exits); otherwise, where it is a deadlock or on a cycle that never
+  ends, `lifecycle.soundness.trap`. Rows upstream of a reported row are not
+  repeated. A graph that cannot be built stays Unknown with its reason. This
+  is the "missing domain knowledge" report: the four repairs are an exit
+  transition, an exception (owner only), a remedy or compensation, or an
+  ending with an outcome.
+- **LIFE-SOUND-5 (facts are never refused):** a fact transition (a timer, an
+  event, or `mode: fact`: an observation, an offline sale, a count, a provider
+  result) carries no guard (`lifecycle.soundness.fact_guarded`); a governing
+  law that refuses a reachable fact step in the bounded graph is
+  `lifecycle.soundness.fact_refused`. A fact commits, commits with a variance
+  or shortfall (#1225), or is quarantined (Core 05 observed mode); only
+  requests are refused.
+- **LIFE-SOUND-6 (total event handling):** every reachable non-terminal state
+  handles every declared event with a transition it triggers, or ignores it
+  there with a reason (`lifecycle.soundness.unhandled_event`).
+- **LIFE-SOUND-7 (deadlines reach a remedy):** a reachable state whose every
+  exit waits on an external event has a timer exit
+  (`lifecycle.soundness.wait_without_deadline`); a timer leads to a state from
+  which an ending is reachable (`lifecycle.soundness.deadline_without_remedy`);
+  no cycle fires on timers alone (`lifecycle.soundness.timer_cycle`).
+- **LIFE-SOUND-8 (compensations close):** over the product of the chart with
+  "effect owed" for each transition that declares `compensatedBy`, no run
+  reaches a `cancelled`, `compensated` or `breached_visible` ending after the
+  dispatch without the compensating transition
+  (`lifecycle.soundness.compensation_not_closed`, with the run). `completed` and
+  `resting` endings keep the effect.
+
+Status: LIFE-SOUND-1..3 and 5..8 run at admission over every effective
+lifecycle (structural, conditional on the declared edges). LIFE-SOUND-4 and the
+`fact_refused` half of LIFE-SOUND-5 are `Graph::soundness` over the bounded
+graph; they report but issue no evidence and authorize no discharge. TARGET:
+runtime timers and event delivery in the cell (the IR is data only; firing is
+unchanged), proper completion over activations, holds and leases (#1225's
+three-exit discipline), CTD remedy chains from `within` violations (#1200),
+threshold abstraction for quantity guards so may edges become must, and the
+multi-object stage (bounded, labelled bounded or Unknown, never proved).
+
+Named scenarios: `a_planted_trap_is_found_though_every_state_has_an_exit`,
+`a_guarded_only_route_is_unknown_not_a_pass`,
+`a_law_blocked_exit_names_its_smallest_blocking_law_set`,
+`a_law_refusing_a_fact_is_reported`,
+`events_are_handled_or_ignored_in_every_reachable_live_state`,
+`a_deadline_into_a_trap_has_no_remedy`,
+`a_cancel_after_dispatch_must_run_the_compensation`.
 
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 
