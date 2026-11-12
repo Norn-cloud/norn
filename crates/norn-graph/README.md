@@ -85,8 +85,9 @@ outside this slice.
 Validation runs on Boat, never on the shared agent host:
 
 - `cargo fmt --all -- --check`
-- `cargo clippy --locked -p norn-graph -p norn-skeleton-guard --all-targets -- -D warnings`
-- `cargo test --locked -p norn-graph -p norn-skeleton-guard`
+- `cargo clippy --locked -p norn-graph --all-targets -- -D warnings`
+- `cargo test --locked -p norn-graph`
+- `cargo test --locked --manifest-path crates/norn-skeleton-guard/Cargo.toml`
 - `cargo build --locked -p norn-graph --target wasm32-unknown-unknown`
 
 Unit and behavioral tests cover errors, exact fractions, diamonds, disconnected

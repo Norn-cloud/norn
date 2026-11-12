@@ -379,7 +379,7 @@ fn a_sort_puts_missing_and_withheld_values_last_in_id_order() {
     );
     let page = query(&host, "pop", &params(None, Some("input:desc"), None)).unwrap();
     assert_eq!(page.query.sort[0].property, "input");
-    assert_eq!(page.query.sort[0].direction, "desc");
+    assert_eq!(page.query.sort[0].direction.as_str(), "desc");
     let total = page.total.unwrap();
     assert_eq!((total.count, total.approximate), (8, false));
 }
