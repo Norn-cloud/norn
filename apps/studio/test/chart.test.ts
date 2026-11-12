@@ -26,7 +26,7 @@ test("no answers, or none with a value, give no chart instead of infinite bounds
 test("an all-suppressed answer is not called empty", () => {
   const suppressed = { label: "Week", value: "unavailable", totals: ["1 g"], suppressed: true }
   expect(chartFrame([suppressed])).toBeUndefined()
-  expect(chartEmpty([])).toContain("no answers")
+  expect(chartEmpty([])).toContain("No records yet")
   expect(chartEmpty([suppressed])).toContain("suppressed")
   expect(chartEmpty([suppressed])).not.toContain("no answers")
   expect(chartEmpty([{ label: "Week", value: "unavailable", totals: ["0 g", "0 g"] }])).toContain("No week")

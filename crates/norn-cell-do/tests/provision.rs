@@ -1421,3 +1421,61 @@ fn a_short_lineage_key_refuses_to_open() {
     );
     assert!(refused.is_err());
 }
+
+/// DEFS-REOPEN-1, the alpha incident of 2026-11-12: a provisioned cell lands
+/// rows through its mapping path, then takes a runtime-defined upload type
+/// (`:load`, then `:define`), then its host restarts. The cell reopens at
+/// its active definitions with every row it had; a definitions install never
+/// commits a model the next open would refuse.
+#[test]
+fn a_runtime_defined_type_survives_a_restart() {
+    use norn_api::uploads::{LoadRequest, generate, install, load_rows, parse_csv, sha256_hex};
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    // Past provisioning's logical clock, in milliseconds.
+    let at = 4_000_000_000_000;
+    {
+        let cell = provisioned(&path, &scope, &full());
+        let host = cell.tenant.serving_host().expect("a served cell");
+        for (name, csv, uri, rows) in [
+            (
+                "Sales",
+                "region,units\nnorth,3\nsouth,4\n",
+                "s3://uploads/a.csv",
+                true,
+            ),
+            ("Probe", "sku,qty\nA,1\n", "s3://uploads/b.csv", false),
+        ] {
+            let table = parse_csv(csv).unwrap();
+            let sha = sha256_hex(csv.as_bytes());
+            let request = LoadRequest {
+                type_name: name.into(),
+                columns: vec![],
+                key: vec![],
+                sha256: None,
+            };
+            let generated =
+                generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").unwrap();
+            install(host, &generated, at).unwrap();
+            if rows {
+                let loaded = load_rows(host, &generated, &table, uri, &sha, at).unwrap();
+                assert_eq!(loaded.rows_landed, 2, "{loaded:?}");
+            }
+        }
+    }
+    // The restarted host: the same file, opened at its active definitions.
+    let mut cell = try_open(&path, &scope).expect("the cell reopens after a runtime-defined type");
+    let response = definitions(&mut cell, Some(&owner));
+    assert_eq!(response.status, 200, "{}", response.body);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let row = host
+        .host_object("upload.Sales", "s3://uploads/a.csv#row=2")
+        .unwrap()
+        .expect("the landed row is kept");
+    assert_eq!(
+        row.get("region").and_then(norn_ir::RuntimeValue::as_str),
+        Some("south")
+    );
+}

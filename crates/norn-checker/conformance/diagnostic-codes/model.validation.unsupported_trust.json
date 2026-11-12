@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.unsupported_trust",
+  "message": "a model's trust is not opaque or contract_checked",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

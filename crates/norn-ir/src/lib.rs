@@ -48,6 +48,10 @@ pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
 pub mod labels;
 pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
+pub mod model;
+pub use model::{ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelRoot};
+pub mod trust;
+pub use trust::TrustLevel;
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
@@ -302,6 +306,9 @@ pub enum ArtifactKind {
     /// Localized labels for definitions; never part of a definition's
     /// identity ([`labels`]).
     Labels,
+    /// `ModelIR`: a typed predictive model with opaque internals
+    /// ([`model`]).
+    Model,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -344,6 +351,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Law
             | ArtifactKind::DefinedConcept
             | ArtifactKind::Labels
+            | ArtifactKind::Model
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1496,6 +1504,27 @@ define_payload_root!(
     }
 );
 
+define_payload_root!(
+    /// A typed predictive model with opaque internals ([`model`]).
+    #[schemars(with = "ModelRoot")]
+    ModelPayload {
+        required {
+            model_id => "modelId" as String,
+            title => "title" as String,
+            version => "version" as String,
+            input => "input" as ModelInput,
+            features => "features" as Vec<PropertyId>,
+            outputs => "outputs" as Vec<ModelOutput>,
+            trust => "trust" as TrustLevel,
+            method => "method" as ModelMethod
+        }
+        optional {
+            target => "target" as PropertyId,
+            contracts => "contracts" as Vec<ModelContract>
+        }
+    }
+);
+
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1537,6 +1566,7 @@ pub enum ArtifactPayload {
     Law(LawPayload),
     DefinedConcept(DefinedConceptPayload),
     Labels(LabelsPayload),
+    Model(ModelPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1591,6 +1621,7 @@ impl ArtifactPayload {
                 Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
             }
             ArtifactKind::Labels => Self::Labels(LabelsPayload::from_json_object(object)),
+            ArtifactKind::Model => Self::Model(ModelPayload::from_json_object(object)),
         }
     }
 
@@ -1614,6 +1645,7 @@ impl ArtifactPayload {
             Self::Law(_) => ArtifactKind::Law,
             Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
             Self::Labels(_) => ArtifactKind::Labels,
+            Self::Model(_) => ArtifactKind::Model,
         }
     }
 
@@ -1637,6 +1669,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.to_json_value(),
             Self::DefinedConcept(payload) => payload.to_json_value(),
             Self::Labels(payload) => payload.to_json_value(),
+            Self::Model(payload) => payload.to_json_value(),
         }
     }
 
@@ -1660,6 +1693,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.unknown_fields(),
             Self::DefinedConcept(payload) => payload.unknown_fields(),
             Self::Labels(payload) => payload.unknown_fields(),
+            Self::Model(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1683,6 +1717,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.has_invalid_extensions(),
             Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
             Self::Labels(payload) => payload.has_invalid_extensions(),
+            Self::Model(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2188,6 +2223,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::Law => schema_for!(LawPayload),
         ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
         ArtifactKind::Labels => schema_for!(LabelsPayload),
+        ArtifactKind::Model => schema_for!(ModelPayload),
     }
 }
 

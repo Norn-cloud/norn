@@ -24,7 +24,7 @@ export interface ChartFrame {
  */
 /** What the empty chart says: no buckets at all, buckets that are all suppressed (the table still lists them), or none with a value. */
 export function chartEmpty(rows: readonly ChartRow[]): string {
-  if (rows.length === 0) return "The server returned no answers for this window."
+  if (rows.length === 0) return "No records yet: the cell has nothing loaded for this window, so it returned no answers."
   if (rows.every(({ suppressed }) => suppressed)) return "Every week in this window is suppressed, because too few records stand behind it. There is nothing to plot; the table lists each week."
   return "No week in this window has a value to plot."
 }
@@ -53,7 +53,7 @@ export interface PieSlice { readonly label: string; readonly value: number; read
  * negative part (it is not a share) and a total above zero.
  */
 export function pieSlices(rows: readonly ChartRow[]): readonly PieSlice[] | string {
-  if (rows.length === 0) return "The server returned no answers for this window."
+  if (rows.length === 0) return "No records yet: the cell has nothing loaded for this window, so it returned no answers."
   if (rows.some(({ suppressed }) => suppressed)) return "A part is suppressed, so the whole is not known; the table lists each part."
   const values = rows.map(({ value }) => Number(value))
   if (values.some((value) => !Number.isFinite(value) || value < 0)) return "A part is negative or has no value, so it is not a share of a whole; the table lists each part."

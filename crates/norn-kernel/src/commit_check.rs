@@ -748,7 +748,9 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         if scopes.any(|(_, other)| other != owner)
             || !commit.reads.contains(scope)
                 && !commit.writes.iter().any(|write| {
-                    model.canonical(&write.key) == source && write.expected == scope.expected
+                    write.key.key == source.key
+                        && model.canonical(&write.key) == source
+                        && write.expected == scope.expected
                 })
             || source_is_owned && retained.as_ref() != Some(owner) && !successor
             || !source_is_owned && (concrete.is_some() || !commit.writes.iter().any(|write| write.key == marker && matches!(&write.mutation, FactMutation::Put { values } if values.get("owner").and_then(crate::snapshot_observe::ObservedSourceOwner::from_value).as_ref() == Some(owner))))
@@ -1955,7 +1957,8 @@ fn concrete_after<E, C, T, V: CommitView + ?Sized>(
     match commit
         .writes
         .iter()
-        .find(|fact| model.canonical(&fact.key) == *canonical)
+        // `canonical` keeps the key: compare it first, the type walk second.
+        .find(|fact| fact.key.key == canonical.key && model.canonical(&fact.key) == *canonical)
     {
         Some(fact) => Ok(match fact.mutation {
             FactMutation::Put { .. } => Some(fact.key.object_type.clone()),

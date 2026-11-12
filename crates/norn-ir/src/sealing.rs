@@ -30,6 +30,8 @@ pub enum SealableNodeKind {
     DefinedConcept,
     /// Localized presentation labels.
     Labels,
+    /// A typed predictive model with opaque internals.
+    Model,
     Field,
     SurfaceSlot,
 }
@@ -52,6 +54,7 @@ impl From<ArtifactKind> for SealableNodeKind {
             ArtifactKind::Law => Self::Law,
             ArtifactKind::DefinedConcept => Self::DefinedConcept,
             ArtifactKind::Labels => Self::Labels,
+            ArtifactKind::Model => Self::Model,
         }
     }
 }

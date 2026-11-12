@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.invalid_id",
+  "message": "a model, input, feature, target, output or contract id is malformed",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
