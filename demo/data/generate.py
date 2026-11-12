@@ -18,6 +18,9 @@ Writes into OUTDIR:
 
 Quantities come in different units on purpose (g, kg and pieces). A sum
 that is not grouped by unit adds grams to pieces; the demo groups by unit.
+The ERP exports carry only the gram lines: the three-systems source schemas
+declare `unit` as the code set {g}, so any other unit would be refused at
+mapping, as it should be.
 """
 
 import argparse
@@ -90,12 +93,16 @@ def snapshot(system: str, customers, rows):
 
     for role in ("owner", "custodian"):
         record(shape["party"], role, f"demo/party/{role}", label=role.title(), role=role)
-    mine = [row for row in rows if row["system"] == system]
+    # The three-systems source schemas declare `unit` as a code set of `g`
+    # only, so the ERP exports carry the gram items; every unit is in orders.json.
+    mine = [row for row in rows if row["system"] == system and row["unit"] == "g"]
     used = {row["customer_ref"] for row in mine}
     for customer in customers:
         if customer["ref"] in used:
             record(shape["party"], customer["ref"].rsplit("/", 1)[1], customer["ref"], label=customer["label"], role="customer")
     for code, label, unit, price, _ in ITEMS:
+        if unit != "g":
+            continue
         record(shape["item"], f"item-{code.lower()}", f"demo/item/{code.lower()}", code=code, label=label, sku=f"SKU-{code}", price=float(price))
         for region in REGIONS:
             record(shape["holding"], f"holding-{region}-{code.lower()}", f"demo/holding/owner/{region}/{code.lower()}", resource_code=code, quantity=100000, unit=unit, location=region, item_ref=f"demo/item/{code.lower()}", owner_ref="demo/party/owner", custodian_ref="demo/party/custodian")
@@ -125,7 +132,7 @@ def main() -> None:
         "seed": args.seed,
         "orders": len(rows),
         "customers": len({row["customer_ref"] for row in rows}),
-        "perSystem": {system: sum(row["system"] == system for row in rows) for system in SHAPE},
+        "perSystem": {system: sum(row["system"] == system and row["unit"] == "g" for row in rows) for system in SHAPE},
         "units": sorted({row["unit"] for row in rows}),
         "sha256": digests,
     }
