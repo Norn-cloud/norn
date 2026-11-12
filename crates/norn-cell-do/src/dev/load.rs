@@ -159,6 +159,8 @@ pub(crate) fn load(
     let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
         SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
     let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    // Per file and dataset: rows, capture time and mapping time (µs), slowest mapping.
+    let mut timing: BTreeMap<(String, String), (u64, u128, u128, u128)> = BTreeMap::new();
     // Each row is captured and mapped before the next is captured: mapping a
     // bundle looks it up among the pending observations, so keeping that set
     // at one row keeps a load linear in its rows.
@@ -177,12 +179,23 @@ pub(crate) fn load(
                 .or_else(|| record.get("name"))
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let started = std::time::Instant::now();
             let (id, _new) = cell
                 .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
                 .map_err(|error| format!("{file}: {dataset} {label} not captured: {error}"))?;
+            let captured = started.elapsed().as_micros();
+            let started = std::time::Instant::now();
             let processed = cell.process_mapping_bundle(&id).map_err(|error| {
                 format!("{file}: {dataset} {label} was refused by the mapping: {error}")
             })?;
+            let mapping = started.elapsed().as_micros();
+            let spent = timing.entry((file.clone(), dataset.clone())).or_default();
+            *spent = (
+                spent.0.saturating_add(1),
+                spent.1.saturating_add(captured),
+                spent.2.saturating_add(mapping),
+                spent.3.max(mapping),
+            );
             let entry = mapped.entry(file.clone()).or_default();
             entry.0 = entry.0.saturating_add(1);
             if processed {
@@ -195,7 +208,15 @@ pub(crate) fn load(
         .map(|snapshot| {
             let file = snapshot.path.display().to_string();
             let (rows, newly) = mapped.get(&file).copied().unwrap_or_default();
-            serde_json::json!({ "file": file, "source": snapshot.source, "mapping": snapshot.mapping, "rows": rows, "newlyMapped": newly })
+            let datasets: serde_json::Map<String, Value> = timing
+                .iter()
+                .filter(|((timed, _), _)| *timed == file)
+                .map(|((_, dataset), (rows, capture, map, slowest))| {
+                    let ms = |micros: &u128| u64::try_from(micros / 1000).unwrap_or(u64::MAX);
+                    (dataset.clone(), serde_json::json!({ "rows": rows, "captureMs": ms(capture), "mapMs": ms(map), "slowestMapMs": ms(slowest) }))
+                })
+                .collect();
+            serde_json::json!({ "file": file, "source": snapshot.source, "mapping": snapshot.mapping, "rows": rows, "newlyMapped": newly, "datasets": datasets })
         })
         .collect();
     Ok((cell.into_store(), Loaded { files }))
