@@ -98,3 +98,14 @@ test("repository_install_uses_local_packages", async () => {
     expect(readFileSync(join(dir, "node_modules/@norn/cli/tsconfig.authoring.json"), "utf8")).toContain('"strict": true')
   } finally { rmSync(root, { recursive: true }) }
 }, 60000)
+
+test("starter_is_formatted: a new project passes norn fmt --check", async () => {
+  const root = scratch()
+  try {
+    const dir = join(root, "shop")
+    expect((await run([dir, "--no-install"])).status).toBe(0)
+    const child = Bun.spawn([process.execPath, join(TOOL_ROOT, "src/cli.ts"), "fmt", "--check", "--json"], { cwd: dir, stdout: "pipe", stderr: "pipe" })
+    const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited])
+    expect({ status, out: JSON.parse(out) }).toEqual({ status: 0, out: { changed: [], check: true } })
+  } finally { rmSync(root, { recursive: true }) }
+}, 60000)
