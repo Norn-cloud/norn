@@ -428,6 +428,11 @@ pub struct DefinitionSummary {
     /// With `uses`: the binding version this flow's performs are pinned to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
+    /// For a flow: whether the caller may start a run of it now, decided by
+    /// exactly the gate `POST /v1/runs` applies (an active flow and the host's
+    /// `StartRun` decision). Absent for other kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_start: Option<bool>,
 }
 
 /// One page of definitions, ordered by id.
@@ -1652,10 +1657,17 @@ pub fn list_definitions<E: SqlEngine>(
     } else {
         None
     };
+    let starts = |row: &RetainedDefinitionRecord| {
+        (row.definition.kind == "flow").then(|| {
+            row.definition.lifecycle == norn_cell::retained::RetainedLifecycle::Active
+                && crate::run_routes::may_start(host, actor.unwrap_or_default(), &row.definition.id)
+        })
+    };
     Ok(DefinitionPage {
         items: rows
             .into_iter()
             .map(|(row, pinned_version)| DefinitionSummary {
+                can_start: starts(&row),
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,

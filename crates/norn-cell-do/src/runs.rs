@@ -171,6 +171,11 @@ fn decisions<E: SqlEngine>(
     let now = norn_kernel::LogicalTime::from_millis(request.now.saturating_mul(1000));
     match (route, request.method) {
         (DecisionsRoute::Collection, "GET") => {
+            // A cell with no disclosure authority decides nothing, so it lists
+            // nothing either: the list shows exactly what :decide accepts.
+            if questions.is_none() {
+                return Err(norn_api::authz::read_denied());
+            }
             let mut fields = parse(
                 request.query,
                 &["orgId", "environmentId", "state", "flow", "cursor", "limit"],

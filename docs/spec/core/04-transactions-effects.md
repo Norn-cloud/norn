@@ -141,9 +141,12 @@ that waits on a step opens it, the next state closes it, and `completed` or
 `decision`, an `executor` or a `timer`; that is a state, not an error. An install
 that changes the model tells the host's authorizer under the definitions write
 epoch (`Authorizer::model_changed`), so the DO cell's read rules cover a flow's
-Run type before any request sees it. Named scenarios
-(`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**, **RUN-START-REFUSE**,
-**RUN-READ-GATED**.
+Run type before any request sees it. `GET /v1/definitions:list?kind=flow`
+carries, per flow, `canStart`: whether the caller may start it now, decided by
+exactly the gate `POST /v1/runs` applies (an active flow and `StartRun`), so a
+client offers only the starts the cell allows and the cell still decides at the
+call. Named scenarios (`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**,
+**RUN-START-REFUSE**, **RUN-READ-GATED**, **RUN-CAN-START**.
 
 ### DECISIONS-1 — deciding what a run waits on
 
