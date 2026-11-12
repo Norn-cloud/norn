@@ -4,6 +4,27 @@
  */
 
 export interface paths {
+    "/v1/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/actions`: the actions the caller may call, each as a form needs it.
+         * @description # Errors
+         *     As [`callable_actions`]; `host.error` when a retained action cannot be projected.
+         */
+        get: operations["list_actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/actions/{actionId}": {
         parameters: {
             query?: never;
@@ -538,6 +559,21 @@ export interface components {
             /** @description The turn the call committed in. */
             turn: string;
         };
+        /** @description `GET /v1/actions`: the callable actions, by action identity. */
+        NornActionCatalog: {
+            /**
+             * Format: int64
+             * @description The definitions version this list was read from.
+             */
+            definitionsVersion: number;
+            /** @description The callable actions an effect program can run, ordered by identity. */
+            items: components["schemas"]["NornActionSummary"][];
+        };
+        /**
+         * @description How an action's admitted effect program changes its target.
+         * @enum {string}
+         */
+        NornActionEffect: "upsert_input_object" | "fire_transition" | "mutate_parent_with_rows";
         /** @description Identity of one ontology object in a cell: its type and identity key. */
         NornActionFactKey: {
             /** @description The object's identity key value. */
@@ -559,6 +595,34 @@ export interface components {
          *     namespace ([`Self::domain`]).
          */
         NornActionObjectTypeName: string;
+        /** @description One action the actor may call, as a form needs it. */
+        NornActionSummary: {
+            /** @description The admitted action identity, the path segment of its call. */
+            actionId: string;
+            /** @description Its description, when it declares one. */
+            description?: string | null;
+            /** @description How its effect changes that object. */
+            effect: components["schemas"]["NornActionEffect"];
+            /** @description The admitted input schema, in the action's closed input dialect. */
+            inputSchema: Record<string, never>;
+            /** @description The input field that names the target object. */
+            objectIdField: string;
+            /** @description The object type its effect targets. */
+            objectKind: string;
+            /** @description Its title, or its identity when it declares none. */
+            title: string;
+            /** @description The effects a caller must handle. */
+            uiEffects: components["schemas"]["NornActionUiEffects"];
+        };
+        /** @description The effects a form must handle before it calls, from the action's own definition. */
+        NornActionUiEffects: {
+            /** @description The action may destroy existing data (declared, or a deleting write). */
+            destructive: boolean;
+            /** @description The action declares an effect that cannot be reversed. */
+            irreversible: boolean;
+            /** @description Currency identities its monetary effects use. */
+            money: string[];
+        };
         /**
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
@@ -9270,6 +9334,60 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_actions: {
+        parameters: {
+            query: {
+                /** @description Organization, matched against physical scope. */
+                orgId: string;
+                /** @description Environment, matched against physical scope. */
+                environmentId: string;
+                /** @description Only actions whose effect targets this object type. */
+                objectKind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The actions the caller may call now. Each call is still decided when it is made. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornActionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     call_action: {
         parameters: {
             query: {

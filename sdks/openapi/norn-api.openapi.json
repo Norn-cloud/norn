@@ -10,6 +10,92 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/actions": {
+      "get": {
+        "tags": [
+          "crate::action_catalog"
+        ],
+        "summary": "`GET /v1/actions`: the actions the caller may call, each as a form needs it.",
+        "description": "# Errors\nAs [`callable_actions`]; `host.error` when a retained action cannot be projected.",
+        "operationId": "list_actions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment, matched against physical scope.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "objectKind",
+            "in": "query",
+            "description": "Only actions whose effect targets this object type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The actions the caller may call now. Each call is still decided when it is made.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornActionCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/actions/{actionId}": {
       "post": {
         "tags": [
@@ -1856,6 +1942,38 @@
         },
         "additionalProperties": false
       },
+      "NornActionCatalog": {
+        "type": "object",
+        "description": "`GET /v1/actions`: the callable actions, by action identity.",
+        "required": [
+          "definitionsVersion",
+          "items"
+        ],
+        "properties": {
+          "definitionsVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The definitions version this list was read from.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionSummary"
+            },
+            "description": "The callable actions an effect program can run, ordered by identity."
+          }
+        }
+      },
+      "NornActionEffect": {
+        "type": "string",
+        "description": "How an action's admitted effect program changes its target.",
+        "enum": [
+          "upsert_input_object",
+          "fire_transition",
+          "mutate_parent_with_rows"
+        ]
+      },
       "NornActionFactKey": {
         "type": "object",
         "description": "Identity of one ontology object in a cell: its type and identity key.",
@@ -1888,6 +2006,82 @@
         "type": "string",
         "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
         "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+      },
+      "NornActionSummary": {
+        "type": "object",
+        "description": "One action the actor may call, as a form needs it.",
+        "required": [
+          "actionId",
+          "title",
+          "objectKind",
+          "effect",
+          "objectIdField",
+          "inputSchema",
+          "uiEffects"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "description": "The admitted action identity, the path segment of its call."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its description, when it declares one."
+          },
+          "effect": {
+            "$ref": "#/components/schemas/NornActionEffect",
+            "description": "How its effect changes that object."
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "The admitted input schema, in the action's closed input dialect."
+          },
+          "objectIdField": {
+            "type": "string",
+            "description": "The input field that names the target object."
+          },
+          "objectKind": {
+            "type": "string",
+            "description": "The object type its effect targets."
+          },
+          "title": {
+            "type": "string",
+            "description": "Its title, or its identity when it declares none."
+          },
+          "uiEffects": {
+            "$ref": "#/components/schemas/NornActionUiEffects",
+            "description": "The effects a caller must handle."
+          }
+        }
+      },
+      "NornActionUiEffects": {
+        "type": "object",
+        "description": "The effects a form must handle before it calls, from the action's own definition.",
+        "required": [
+          "irreversible",
+          "destructive",
+          "money"
+        ],
+        "properties": {
+          "destructive": {
+            "type": "boolean",
+            "description": "The action may destroy existing data (declared, or a deleting write)."
+          },
+          "irreversible": {
+            "type": "boolean",
+            "description": "The action declares an effect that cannot be reversed."
+          },
+          "money": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Currency identities its monetary effects use."
+          }
+        }
       },
       "NornArtifactEnvelope": {
         "oneOf": [
