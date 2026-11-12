@@ -67,8 +67,27 @@ struct Upload {
     store: Store,
     key: String,
     file_name: String,
+    content_type: String,
     uri: String,
     completed: Option<(String, u64, bool)>,
+    columns: Vec<uploads::Column>,
+}
+
+/// A completed upload, as the cell recorded it: for loaders that read the
+/// object themselves (the bulk loader), never its bytes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadRecord {
+    /// `s3://<bucket>/<key>`.
+    pub uri: String,
+    /// SHA-256 of the bytes the cell read at `:complete`.
+    pub sha256: String,
+    /// Their size.
+    pub size: u64,
+    /// The declared content type.
+    pub content_type: String,
+    /// The profiled columns (CSV), empty otherwise.
+    pub columns: Vec<uploads::Column>,
 }
 
 enum Waiting {
@@ -191,6 +210,33 @@ impl Connect {
             waiting: BTreeMap::new(),
             issued: 0,
         })
+    }
+
+    /// The completed upload `id`, as recorded; `None` before `:complete`.
+    #[must_use]
+    pub fn upload_record(&self, id: &str) -> Option<UploadRecord> {
+        let upload = self.uploads.get(id)?;
+        let (sha256, size, _) = upload.completed.clone()?;
+        Some(UploadRecord {
+            uri: upload.uri.clone(),
+            sha256,
+            size,
+            content_type: upload.content_type.clone(),
+            columns: upload.columns.clone(),
+        })
+    }
+
+    /// A signed `GET` of the object at `uri` valid for `seconds`, when `uri`
+    /// names a configured bucket; for loaders the cell itself directs.
+    #[must_use]
+    pub fn signed_get(&self, uri: &str, seconds: u32, now_ms: u64) -> Option<String> {
+        [Store::Uploads, Store::Documents]
+            .into_iter()
+            .filter_map(|store| self.store(store))
+            .find_map(|s3| {
+                let key = uri.strip_prefix(&format!("s3://{}/", s3.bucket))?;
+                (!key.is_empty() && !key.contains("..")).then(|| s3.presign("GET", key, now_ms, seconds))
+            })
     }
 
     /// SYNC-ONE-1: the next connection due on its schedule, claimed.
@@ -360,6 +406,8 @@ impl Connect {
                 store,
                 key,
                 file_name: begin.file_name,
+            content_type: begin.content_type.clone(),
+            columns: Vec::new(),
                 uri: uri.clone(),
                 completed: None,
             },
@@ -492,6 +540,9 @@ impl Connect {
         let table = std::str::from_utf8(body).ok().map(uploads::parse_csv);
         let csv = matches!(table, Some(Ok(_)));
         upload.completed = Some((sha256.to_owned(), size, csv));
+        if let Some(Ok(table)) = &table {
+            upload.columns.clone_from(&table.columns);
+        }
         let mut document = serde_json::Map::new();
         document.insert("uploadId".into(), json!(id));
         document.insert("uri".into(), json!(upload.uri));
