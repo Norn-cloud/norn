@@ -141,7 +141,7 @@ fn with_engine<E: SqlEngine + 'static>(
     scope: &CellScope,
     open: impl Fn() -> Result<E, String> + 'static,
 ) -> Result<Cell<E>, String> {
-    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open))
+    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open), None)
         .map_err(|error| error.to_string())?;
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
         .map_err(|refusal| refusal.code)?;

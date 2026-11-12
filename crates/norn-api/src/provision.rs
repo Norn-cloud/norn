@@ -431,8 +431,11 @@ pub fn provision_cell<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
     let input = install_input(&admitted, now_ms);
-    let store = CellStore::provision_definitions(engine, admitted.model, &input, &scope.key())
-        .map_err(|error| {
+    // Every provisioned cell can serve governed actions: the kernel's own
+    // receipt and owned-row types are part of its model from the start.
+    let model = crate::action_admission::prepare_action_model(&admitted.model)?;
+    let store =
+        CellStore::provision_definitions(engine, model, &input, &scope.key()).map_err(|error| {
             if matches!(error, CellError::IdempotencyConflict(_)) {
                 conflict()
             } else {
