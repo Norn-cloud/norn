@@ -9,8 +9,12 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 /// The only repository whose own branches may change workflows or gate files.
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
-/// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 15] = [
+/// Gate files pinned to the trusted base, besides every workflow. This module and its YAML
+/// reader are gated too: they hold the Rust half of the workflow rules (`concurrency_error`)
+/// and its parity tests against `validate.py`, so editing them needs `/approve-gates`.
+const GATE_FILES: [&str; 17] = [
+    "crates/norn-skeleton-guard/src/ci/mod.rs",
+    "crates/norn-skeleton-guard/src/ci/yaml.rs",
     "scripts/ci/core.sh",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
@@ -829,8 +833,8 @@ mod tests {
     /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
     /// gate file, so it may gain cases anywhere in its list; `validate.py`'s gate-pinned
     /// `PULL_REQUEST_CONCURRENCY_CASES` stops it losing a case, flipping a verdict or
-    /// changing a case's input, and changing that list needs `/approve-gates`. This test is
-    /// itself pinned by `validate.py`'s `RUST_CONCURRENCY_PARITY_MARKERS`.
+    /// changing a case's input, and changing that list needs `/approve-gates`. This file is a
+    /// gate file, and `core.sh`'s cheap phase requires both parity tests to run and pass.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
     const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");
@@ -863,10 +867,16 @@ mod tests {
         pinned
     }
 
-    /// `validate.py`'s `concurrency_case_digest`: sha256 of compact JSON `[on, concurrency]`.
+    /// `validate.py`'s `concurrency_case_digest`: sha256 of compact JSON
+    /// `[on, concurrency, source]`, null when absent.
     fn concurrency_case_digest(case: &Value) -> String {
         use sha2::{Digest, Sha256};
-        let input = Value::Array(vec![case["on"].clone(), case["concurrency"].clone()]).to_string();
+        let input = Value::Array(vec![
+            case["on"].clone(),
+            case["concurrency"].clone(),
+            case["source"].clone(),
+        ])
+        .to_string();
         format!("{:x}", Sha256::digest(input.as_bytes()))
     }
 
@@ -943,18 +953,22 @@ mod tests {
                     pinned_case_problems(&flipped),
                     vec![format!("{name}: flipped")]
                 );
-                let mut changed = list.clone();
-                for case in changed.iter_mut().filter(|case| named(case)) {
-                    case["concurrency"] = if case["concurrency"].is_null() {
-                        Value::from("concurrency:\n  group: changed\n")
-                    } else {
-                        Value::Null
-                    };
+                // Changing any part of the input (dropping `source` included) is caught.
+                for field in ["on", "concurrency", "source"] {
+                    let mut changed = list.clone();
+                    for case in changed.iter_mut().filter(|case| named(case)) {
+                        case[field] = if case[field].is_null() {
+                            Value::from("changed\n")
+                        } else {
+                            Value::Null
+                        };
+                    }
+                    assert_eq!(
+                        pinned_case_problems(&changed),
+                        vec![format!("{name}: input changed")],
+                        "{field}"
+                    );
                 }
-                assert_eq!(
-                    pinned_case_problems(&changed),
-                    vec![format!("{name}: input changed")]
-                );
             }
         }
     }

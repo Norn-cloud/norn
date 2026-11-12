@@ -618,6 +618,54 @@ def workflow_verdict_canaries(source: str) -> None:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
 
 
+def rust_parity_evidence_canaries() -> None:
+    """The cheap phase requires the two Rust parity tests to have run and passed (nextest JUnit)."""
+    validator = load_module("norn_rust_parity_evidence_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
+    second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
+    call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
+    run = f"      \"${{nextest[@]}}\" run -p norn-skeleton-guard --lib -E 'test(={first}) | test(={second})'\n"
+    with tempfile.TemporaryDirectory() as directory:
+        mutated = Path(directory) / "core.sh"
+        for label, before, after in (
+                ("the parity tests are not run", run, ""),
+                ("their run is not required", call, ""),
+                ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
+                ("only one parity test required", call, call.replace(f" {second}", "")),
+                ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", ')):
+            if core.count(before) != 1:
+                raise AssertionError(f"Rust parity evidence canary target drifted: {label}")
+            mutated.write_text(core.replace(before, after), encoding="utf-8")
+            validator.CORE_RUNNER = mutated
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage:
+                continue
+            finally:
+                validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+            raise AssertionError(f"Rust parity evidence mutation passed: {label}")
+    # The helper itself, run on nextest-shaped reports: only both tests passing passes.
+    start = core.index("require_passed() {")
+    helper = core[start:core.index("\nPY\n}\n", start) + len("\nPY\n}\n")]
+    passed = f'<testcase name="{first}" classname="norn-skeleton-guard" time="0.1"/>'
+    other = f'<testcase name="{second}" classname="norn-skeleton-guard" time="0.1"/>'
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "junit.xml"
+        for label, body, expected in (
+                ("both ran and passed", f'<testsuite name="norn-skeleton-guard">{passed}{other}</testsuite>', 0),
+                ("one ignored (absent)", f'<testsuite name="norn-skeleton-guard">{passed}</testsuite>', 1),
+                ("one skipped", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><skipped/></testcase></testsuite>', 1),
+                ("one failed", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><failure message="x"/></testcase></testsuite>', 1),
+                ("another binary's tests", f'<testsuite name="norn-skeleton-guard::provenance">{passed}{other}</testsuite>', 1),
+                ("an unreadable report", "not junit", 1)):
+            report.write_text(f"<testsuites>{body}</testsuites>" if body.startswith("<") else body, encoding="utf-8")
+            result = subprocess.run(["bash", "-c", helper + f'\nrequire_passed "$1" norn-skeleton-guard {first} {second}', "-", str(report)],
+                                    capture_output=True, text=True, timeout=30)
+            if (result.returncode == 0) != (expected == 0):
+                raise AssertionError(f"Rust parity evidence drift ({label}): {result.returncode} {result.stderr[-300:]}")
+
+
 def studio_browser_pin_canaries() -> None:
     """Weakened browser phases are rejected by the coverage validator."""
     validator = load_module("norn_browser_pin_canaries", VALIDATOR)
@@ -631,7 +679,8 @@ def studio_browser_pin_canaries() -> None:
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
                 ("not in the plan", " integration browser formal ", " integration formal "),
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
-                ("no named-case check", "        grep -qF '(pass) the checker admits what a drawn decision lowers to' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
+                ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
+                ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
                 ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test", "bun test")):
             if core.count(before) != 1:
                 raise AssertionError(f"browser pin canary target drifted: {label}")
@@ -711,7 +760,8 @@ def studio_browser_phase_canaries() -> None:
                 ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
                 ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
                 ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99")):
+                ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -731,6 +781,7 @@ def studio_browser_phase_canaries() -> None:
                                                                 "BUN_TEST_OUTPUT": {
                                                                     "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
                                                                     "config, checker-admission case missing": "(pass) the decider reads the real time limit",
+                                                                    "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
                                                                 }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
                                                                 "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
@@ -802,9 +853,9 @@ def workflow_concurrency_parity() -> None:
                     ("lost", [case for case in listed if not named(case)]),
                     ("flipped", [{**case, "expect": "reject" if case["expect"] == "accept" else "accept"}
                                  if named(case) else case for case in listed]),
-                    ("input changed", [{**case, "concurrency": None if case.get("concurrency") is not None
-                                        else "concurrency:\n  group: changed\n"}
-                                       if named(case) else case for case in listed])):
+                    *(("input changed", [{**case, field: None if case.get(field) is not None else "changed\n"}
+                                         if named(case) else case for case in listed])
+                      for field in ("on", "concurrency", "source"))):
                 try:
                     check_concurrency_cases(validator, mutated)
                 except PinnedConcurrencyCase as error:
@@ -812,7 +863,6 @@ def workflow_concurrency_parity() -> None:
                         continue
                     raise AssertionError(f"concurrency pin canary ({name}: {problem}) reported {error.problems}")
                 raise AssertionError(f"concurrency parity accepted a {problem} pinned case: {name}")
-    rust_concurrency_parity_canaries(validator)
 
 
 class PinnedConcurrencyCase(AssertionError):
@@ -835,28 +885,6 @@ def pinned_case_problems(validator, cases: list) -> list[str]:
         elif any(validator.concurrency_case_digest(case) != digest for case in found):
             problems.append(f"{name}: input changed")
     return problems
-
-
-def rust_concurrency_parity_canaries(validator) -> None:
-    """Removing any pinned marker of the Rust parity test, or ignoring a test, is refused."""
-    source = validator.SKELETON_GUARD_CI.read_text(encoding="utf-8")
-    mutations = [(marker.strip(), marker, "") for marker in validator.RUST_CONCURRENCY_PARITY_MARKERS]
-    mutations.append(("an ignored test", "    #[test]\n    fn the_parity_fixture_keeps_every_gate_pinned_case",
-                      "    #[test]\n    #[ignore]\n    fn the_parity_fixture_keeps_every_gate_pinned_case"))
-    with tempfile.TemporaryDirectory() as directory:
-        mutated = Path(directory) / "mod.rs"
-        for label, before, after in mutations:
-            if before not in source:
-                raise AssertionError(f"Rust parity canary target drifted: {label}")
-            mutated.write_text(source.replace(before, after, 1), encoding="utf-8")
-            validator.SKELETON_GUARD_CI = mutated
-            try:
-                validator.validate_rust_concurrency_parity()
-            except validator.InvalidCoverage:
-                continue
-            finally:
-                validator.SKELETON_GUARD_CI = ROOT / "crates/norn-skeleton-guard/src/ci/mod.rs"
-            raise AssertionError(f"Rust parity mutation passed: {label}")
 
 
 def check_concurrency_cases(validator, cases: list) -> None:
@@ -2256,6 +2284,7 @@ def main() -> int:
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
+        rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()
         workflow_merge_group_policy_canaries(source)

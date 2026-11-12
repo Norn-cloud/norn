@@ -478,72 +478,47 @@ PR_CONCURRENCY = (
 
 # Every case the pull_request concurrency parity fixture
 # (fixtures/pull-request-concurrency.json) must keep: its verdict and the sha256 of its input
-# (`concurrency_case_digest`). The fixture is not a gate file, so it may gain cases (anywhere
-# in its list); this gate-pinned list stops it losing a case, flipping a verdict or changing
-# what a case tests. negative_canaries.py and crates/norn-skeleton-guard/src/ci/mod.rs both
-# read this block, one `"name": ["verdict", "sha256"],` per line, and validate.py pins the
-# Rust check itself (RUST_CONCURRENCY_PARITY_MARKERS).
+# (`concurrency_case_digest`: `on`, `concurrency` and `source`). The fixture is not a gate
+# file, so it may gain cases anywhere in its list; this list stops it losing a case, flipping
+# a verdict or changing what a case tests. negative_canaries.py and the Rust parity tests in
+# crates/norn-skeleton-guard/src/ci/mod.rs (a gate file) both read this block, one
+# `"name": ["verdict", "sha256"],` per line; core.sh's cheap phase requires those two Rust
+# tests to have run and passed.
 PULL_REQUEST_CONCURRENCY_CASES = {
-    "codeql.yml as checked in": ["accept", "763f8e4ef735c314636f85735c84a3fca8ce0903b8c43c960245ee67ef4bdd33"],
-    "ci-policy.yml as checked in": ["accept", "a034e9bb3e51a7bdb17632dfd022ce358c104205059ca41370b7923d488ff1d5"],
-    "folded multi-line group": ["accept", "e0d369ce4695386cc5a15c0f1f52710079c3d413b52c099c62089cd55c917c27"],
-    "out of scope: pull_request_target without concurrency": ["accept", "0ef9b3068093ba612c90a00aff229ce258e70286642e0d3773d844e4ea517a1b"],
-    "out of scope: pull_request_target with an unconditional cancel": ["accept", "6495921b70bb36751f8aad920485ac37cec56c1b556782f29318f7e109e98e40"],
-    "out of scope: push and workflow_run list": ["accept", "63aa532f98a60e1e03f4dcc82d61d296b877e138b331fde972413c409b515af7"],
-    "out of scope: workflow_run mapping": ["accept", "5632ee017c5deec57e17bbabcc324d1c1c0119be7d1f6d36fc84c9bc34fe7e26"],
-    "pull_request string without concurrency": ["reject", "b9f0c6d8287d180b82bcd300a6f93c577e113dda2479b78eebb22b661ed65cc3"],
-    "pull_request in a list without concurrency": ["reject", "4a8abdb5238032ba82791efcd569effb2eff9d69ecc18bb9329eb3958043e228"],
-    "pull_request mapping without concurrency": ["reject", "3412442bcd304bb26bfa7b65abfa123c2fd2e3fe9d9b2ed7eebc1837890e69f8"],
-    "codeql: no concurrency": ["reject", "8468dd1cc865c18bc9fd0e4f42eb9dfb860c75feb6ef4e1ced9b0a3fa77f1a53"],
-    "codeql: group-only concurrency string": ["reject", "5b12129cf639362e1f2f5d8e75b2f54d89b3b078bdc3e6c5b034caee0181d036"],
-    "codeql: PR number replaced by the ref": ["reject", "ea227774c26e4685ebbe515f84f749852413a8f7692b77c48ecade85011997f4"],
-    "codeql: PR number dropped": ["reject", "58d73dec7ec548a7592d490b61caa10630c5e3d1579b227029c937c3c62bf603"],
-    "codeql: one shared group": ["reject", "b63fb76c29861951e848c6c605bd8b618128c2653aef83e7d8c0205c5f0af8d3"],
-    "codeql: no workflow prefix": ["reject", "c6a6389d2f29dc0010811fad6cab18932715bc7f29126cb3828cece08f6feaa7"],
-    "codeql: other events share a group": ["reject", "8b693535aa90884eba0440e835b8cca9e09e544f66345c002983be459b583cad"],
-    "codeql: unconditional cancel": ["reject", "922810e3b106c25947f5824051aa0e98c6f49d19b5509753887c02eb08e95f7b"],
-    "codeql: main pushes cancelled without the main-push group": ["reject", "689a29d426c2a87ab5fa85d6efdb0cfd6dbe2b627f43a6dc4f6fda3763b07186"],
-    "codeql: no cancel-in-progress": ["reject", "c1bb8c7b115c277fd883982aece2005fd1512ebd50edaab3a45abc85fdd3f521"],
-    "codeql: cancel disabled": ["reject", "38c3acad0358e7242899ee90a75f2d2ea85d02bef7241247e26f95ba7e96b78a"],
-    "codeql: extra concurrency key": ["reject", "df3fafce08eeb2aa1724b332cdd9bc2142ea684be263cd12d98029b52bf41d4d"],
-    "ci-policy: every push branch superseded": ["reject", "9c391806db82007aae059b354bb1a5d9bebccdfe0ce97e429a044f5b147dcc72"],
-    "ci-policy: release pushes superseded": ["reject", "8e144b81283137f1636ad350334b4419a1d12298f8acd0de13cb7c87174973cd"],
-    "ci-policy: main-push cancel without its own group": ["reject", "61302659ca706c0a001d4db9f08add49f9b8bb88981c6048698cd28b8ee211d7"],
-    "ci-policy: main-push group with a PR-only cancel": ["reject", "b91f04a4e36222ca7195e22a5478a8e66f673715d2a3a220861e45f73f6dbfb7"],
-    "ci-policy: merge groups cancelled": ["reject", "5e46990b3b585258c0aebfef98bc6a0c8f600744b521199f66b6cc8d05c8fe36"],
+    "codeql.yml as checked in": ["accept", "b9ff70930617fc3d64a9fc05eda0c13bfe8ce57c530923148c6de6654f5d2d27"],
+    "ci-policy.yml as checked in": ["accept", "9f544a43f09451c0ab8052bd1b952241c3566dd7119020574d71b09903b5f3d7"],
+    "folded multi-line group": ["accept", "60e1b9381e3b3cf8a50068f08697d21476530c5e1d0e1f52a5b53245b361dbb3"],
+    "out of scope: pull_request_target without concurrency": ["accept", "3782cd52452ef89a759540b54f49d82f2d0799fed2d7862111c7fdad8e139509"],
+    "out of scope: pull_request_target with an unconditional cancel": ["accept", "37cde653d1840effad301cb48d5c28de88e1a8a44f944de2ae6596e152c2eaed"],
+    "out of scope: push and workflow_run list": ["accept", "96da782a84912fedbdeba7b97a2a10ea8c27bd3f6439d5426d24099cddcac439"],
+    "out of scope: workflow_run mapping": ["accept", "6ab032d5a92d7b6e910ba6c848ddfc37ce73f763f3d8047fee3c7f54d577e43f"],
+    "pull_request string without concurrency": ["reject", "2351a6441a6a6e2e7881690887a9d0d70b1e93a9528e9462213b2b1706b04fe3"],
+    "pull_request in a list without concurrency": ["reject", "ef8c2661e74787e56dbf71c5b806a9f1612bc3084d866dbd57cabd7be10ec152"],
+    "pull_request mapping without concurrency": ["reject", "9b8ccd4b59ed81ee820e9280e7dbd50c6fa360fa9706de072c904c4b1084ac4e"],
+    "codeql: no concurrency": ["reject", "93e0f9974b23e309bccf14fb89b2acf360f7c0c85e53c039afeb2e27865c33db"],
+    "codeql: group-only concurrency string": ["reject", "f8b2e7bb77b920c243fd2ae622c41ca833e072922ad5848f66e4ba59441a9a51"],
+    "codeql: PR number replaced by the ref": ["reject", "251a43522ee79f8913e71ecf2a732d00a8c07a29b8077c6c99af2c2f38fe5271"],
+    "codeql: PR number dropped": ["reject", "4a9e2fb3a3d430da8796bf88ea956d9c4c4be075c62ee72d520e74f569957830"],
+    "codeql: one shared group": ["reject", "d8f7fa17d22343ea14d311fbc8bbd5badb8454174b4313deff59d7bd53d94a30"],
+    "codeql: no workflow prefix": ["reject", "2b6866668278f1403fefa4ef41ce2dfa713865a00c948de75d03f25c6799051b"],
+    "codeql: other events share a group": ["reject", "f77a9d3f72ce40b619538e717b2232dad3d52328b81e35b7c9e9fc5c8937ff99"],
+    "codeql: unconditional cancel": ["reject", "23b9ab9740c3cc1d2ca58e7644668f3da3af9a0bca6b8cf40367c2451591dec1"],
+    "codeql: main pushes cancelled without the main-push group": ["reject", "bff87c15cc8f04c49a6df5d2d106e1f1db027525877d422674cc54c708551da9"],
+    "codeql: no cancel-in-progress": ["reject", "13e1935e93997bfdf930b4182128e4260d62d1aa92d3d379eed9e38b2ea48893"],
+    "codeql: cancel disabled": ["reject", "88132c4cc01407fbbf0e055dba162cae0807934c7079345646e8aec39c0cca0c"],
+    "codeql: extra concurrency key": ["reject", "415cba09d48065a6fe2f4065b03a8b80d7046b5cdf9b827dfc5080d2d64152f3"],
+    "ci-policy: every push branch superseded": ["reject", "6585afdb837a4199a357382b366e85daea39af036d20529a2f1a832150e8b3ba"],
+    "ci-policy: release pushes superseded": ["reject", "c1c936aa6d22f10bdc0a48731d63e25ea8eb225916e4a506adfd4e0ea3ccb1af"],
+    "ci-policy: main-push cancel without its own group": ["reject", "62207b22e6b3ccf5f8605895f215d3adaf64e86d72c24ac87661f30289c87747"],
+    "ci-policy: main-push group with a PR-only cancel": ["reject", "d50e2e2da1fbb56b17983035b0e361bad66c0aa9ed6baf43186b4013c6fd1645"],
+    "ci-policy: merge groups cancelled": ["reject", "36279f89d2c2b2f3865ff351652ea483f63a3dd7323c1f456a866abb159c77a4"],
 }
 
 
 def concurrency_case_digest(case: dict) -> str:
-    """sha256 of a parity case's input: compact JSON of `[on, concurrency]` (null when absent)."""
-    return hashlib.sha256(json.dumps([case.get("on"), case.get("concurrency")], separators=(",", ":"),
-                                     ensure_ascii=False).encode("utf-8")).hexdigest()
-
-
-# The Rust half of the parity pin lives in a non-gate file, so its assertions are pinned
-# here: each marker must occur in crates/norn-skeleton-guard/src/ci/mod.rs exactly as often
-# as listed, and no test there may be ignored.
-SKELETON_GUARD_CI = ROOT / "crates/norn-skeleton-guard/src/ci/mod.rs"
-RUST_CONCURRENCY_PARITY_MARKERS = {
-    '#[cfg(test)]\nmod tests {\n': 1,
-    'include_str!("../../../../verification/coverage-v1/validate.py")': 1,
-    '    #[test]\n    fn the_parity_fixture_keeps_every_gate_pinned_case() {\n': 1,
-    '    #[test]\n    fn pull_request_concurrency_matches_the_shared_parity_fixture() {\n': 1,
-    '        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());\n': 2,
-    '            assert_eq!(verdict, text("expect"), "{name}");\n': 1,
-    '                vec![format!("{name}: lost")]\n': 1,
-    '                vec![format!("{name}: flipped")]\n': 1,
-    '                vec![format!("{name}: input changed")]\n': 1,
-    '        format!("{:x}", Sha256::digest(input.as_bytes()))\n': 1,
-}
-
-
-def validate_rust_concurrency_parity() -> None:
-    source = SKELETON_GUARD_CI.read_text(encoding="utf-8")
-    for marker, count in RUST_CONCURRENCY_PARITY_MARKERS.items():
-        require(source.count(marker) == count,
-                f"crates/norn-skeleton-guard/src/ci/mod.rs: the concurrency parity test must keep {marker.strip()!r} ({count}x)")
-    require("#[ignore" not in source, "crates/norn-skeleton-guard/src/ci/mod.rs: skeleton-guard tests are never ignored")
+    """sha256 of a parity case's input: compact JSON of `[on, concurrency, source]` (null when absent)."""
+    return hashlib.sha256(json.dumps([case.get("on"), case.get("concurrency"), case.get("source")],
+                                     separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
@@ -574,7 +549,6 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                                 workflows: Path = ROOT / ".github/workflows") -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
-    validate_rust_concurrency_parity()
     for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
         require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
     for trigger in ("pull_request", "pull_request_target", "push", "merge_group"):
@@ -849,9 +823,15 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
             "bundle may prune only Cargo build outputs, between tasks and when disk is low")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
-    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qF \'(pass) the checker admits what a drawn decision lowers to\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
+    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
     require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
             "browser phase must run the Studio Playwright rows and the checker-admission test, and refuse missing or empty tests")
+    # The Rust parity tests (crates/norn-skeleton-guard/src/ci/mod.rs) must have run and passed in
+    # the cheap phase, which every plan runs: nextest's JUnit report, not their source text.
+    require_passed = '# Fails unless each named test of binary $2 ran and passed in nextest\'s JUnit report $1:\n# absent (renamed, deleted, ignored, cfg\'d out), skipped, failed or an unreadable report fails.\nrequire_passed() {\n  python3 - "$@" << \'PY\'\nimport sys\nimport xml.etree.ElementTree as ET\nreport, binary, *names = sys.argv[1:]\ncases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")\n         if suite.get("name") == binary for case in suite.iter("testcase")}\nbad = [name for name in names if name not in cases or any(\n    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]\nif not names or bad:\n    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or \'none named\'}")\nPY\n}\n'
+    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c \'import json, sys; print(json.load(sys.stdin)["target_directory"])\')/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run -p norn-skeleton-guard --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
+    require(runner.count(require_passed) == 1 and runner.count(rust_parity) == 1,
+            "cheap phase must require the two Rust concurrency parity tests to have run and passed")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
             "full workspace tests must run")

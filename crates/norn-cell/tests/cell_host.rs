@@ -1051,9 +1051,10 @@ fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
 const SURVIVING_ROLLBACK_LAW: &str =
     "law violated: a perform whose claim or result is lost delivered or executed";
 
-/// The crash law can fail: an engine that commits a faulted transaction lets
+/// Crash rollback can fail: an engine that commits a faulted transaction lets
 /// a partial (or whole) write survive the crash, and the law machine finds a
-/// counterexample that arms a fault. It only needs to be caught, not
+/// counterexample that arms a fault; under the suite's seed the surviving
+/// write breaks the perform law (`SURVIVING_ROLLBACK_LAW`). It only needs to be caught, not
 /// minimised, so it takes the one shrink step proptest-state-machine needs.
 #[test]
 fn cell_host_mutant_committing_after_a_fault_is_caught() {

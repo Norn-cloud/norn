@@ -498,6 +498,8 @@ fn policy_fixture() -> Fixture {
     // A pull_request workflow cancels its superseded PR runs and nothing else.
     fixture.add(".github/workflows/core.yml", b"on: pull_request\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
+        "crates/norn-skeleton-guard/src/ci/mod.rs",
+        "crates/norn-skeleton-guard/src/ci/yaml.rs",
         "scripts/ci/core.sh",
         "scripts/ci/contract_diff.py",
         "scripts/ci/test_contract_diff.py",
