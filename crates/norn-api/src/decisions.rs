@@ -915,7 +915,7 @@ fn decide_held<E: SqlEngine>(
     check_answer(&decision, body)?;
     let recorded = match &decision.call {
         None => record(&mut cell, &decision, body, actor, now)?,
-        Some(call) => record_call(&mut cell, &decision, call, body, actor)?,
+        Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
     };
     if !recorded {
         return resolved_answer(&reader, &cell, id, body).map(|decided| (decided, None));
@@ -1130,7 +1130,7 @@ fn resolution_refused(error: norn_kernel::CommitError<norn_cell::CellError>) -> 
 fn record_call<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     decision: &OpenDecision,
-    call: &HeldCall,
+    held: &HeldCall,
     body: &DecideRequest,
     actor: &str,
 ) -> Result<bool, Refusal> {
@@ -1145,7 +1145,7 @@ fn record_call<E: SqlEngine>(
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
         generation: decision.generation.0,
-        run_id: call_run(cell.store(), decision, call)?.id,
+        run_id: call_run(cell.store(), decision, held)?.id,
         step: decision.step.clone(),
         resolution: Resolution::Decided,
         choice: Some(body.choice.clone()),
@@ -1195,7 +1195,7 @@ pub(crate) fn expire<E: SqlEngine>(
     decision: &OpenDecision,
     now: LogicalTime,
 ) -> Result<(), Refusal> {
-    if let Some(call) = &decision.call {
+    if let Some(held) = &decision.call {
         let failure: RuntimeObject = BTreeMap::from([(
             "_tag".to_owned(),
             RuntimeValue::String("Expired".to_owned()),
@@ -1204,7 +1204,7 @@ pub(crate) fn expire<E: SqlEngine>(
             decision_id: decision.id.clone(),
             command_id: decision.command.0.clone(),
             generation: decision.generation.0,
-            run_id: call_run(cell.store(), decision, call)?.id,
+            run_id: call_run(cell.store(), decision, held)?.id,
             step: decision.step.clone(),
             resolution: Resolution::Expired,
             choice: None,
@@ -1425,7 +1425,7 @@ pub(crate) fn run_decision<E: SqlEngine>(
 ) -> Result<Option<crate::run_routes::RunDecision>, Refusal> {
     Ok(open_decisions(store)?
         .into_iter()
-        .find(|decision| decision.run_id == run_id && may_decide(host, actor, &decision))
+        .find(|decision| decision.run_id == run_id && may_decide(host, actor, decision))
         .map(|decision| crate::run_routes::RunDecision {
             id: decision.id,
             expires_at_ms: decision.expires_at_ms,

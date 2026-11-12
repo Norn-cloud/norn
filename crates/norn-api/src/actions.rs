@@ -274,76 +274,103 @@ pub fn call_action<E: SqlEngine>(
             consumes: None,
         },
     };
-    let refused = |error: norn_kernel::ActionRefusal<norn_cell::CellError>| {
-        let refusal = error.refusal();
-        // Visibility and permission refusals are the one opaque action
-        // document: the kernel decides them per target, so a typed 404 or 403
-        // would tell a known action from an unknown one. Laws, preconditions,
-        // conflicts, invalid input and limits stay typed.
-        if matches!(
-            refusal.category,
-            norn_kernel::RefusalCategory::Visibility | norn_kernel::RefusalCategory::Permission
-        ) {
-            return action_denied();
-        }
-        crate::refusal_disclosure::project_refusal(
-            host.authorizer.as_ref(),
-            &RefusalDetailRequest {
-                scope: host.scope(),
-                actor,
-                action_id,
-            },
-            refusal,
-        )
-    };
-    if let Some(gate) = crate::approvals::gate(&cell, action_id)? {
-        // APPROVAL-1: the kernel's whole pipeline decides the call for its
-        // caller against a host that stops at the commit point. A call that
-        // reaches it parks, unless a decider already approved exactly this
-        // call; a replay answers its receipt; a refusal is the ungated one.
-        let dry = norn_kernel::commit_action(
-            &mut crate::approvals::WouldCommit(&cell),
+    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call)? {
+        Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
+        Gated::Replayed(outcome) => outcome,
+        Gated::Commit => norn_kernel::commit_action(
+            &mut *cell,
             &catalog,
             &kernel_call,
             &KernelAuthorizer(host.authorizer.as_ref()),
-        );
-        match dry {
-            Ok(replayed) => {
-                let store = cell.store();
-                let raw_hash = world_values(host, disclosure, store, actor);
-                return caller_receipt(store, action_id, request, replayed, raw_hash, key)
-                    .map(ActionAnswer::Receipt);
-            }
-            Err(error) if crate::approvals::would_have_committed(&error) => {
-                let requester = host
-                    .authorizer
-                    .verified_principal(actor)
-                    .ok_or_else(action_denied)?;
-                let parked = crate::approvals::ParkedCall {
-                    action: action_id.to_owned(),
-                    input: input.clone(),
-                    idempotency_key: request.idempotency_key.clone(),
-                    requester,
-                };
-                if let crate::approvals::Held::Pending(pending) =
-                    crate::approvals::hold(&mut cell, &gate, &parked, now)?
-                {
-                    return Ok(ActionAnswer::Pending(pending));
-                }
-            }
-            Err(error) => return Err(refused(error)),
-        }
-    }
-    let outcome = norn_kernel::commit_action(
-        &mut *cell,
-        &catalog,
-        &kernel_call,
-        &KernelAuthorizer(host.authorizer.as_ref()),
-    )
-    .map_err(refused)?;
+        )
+        .map_err(|error| kernel_refusal(host, actor, action_id, error))?,
+    };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+/// The caller's view of a kernel refusal. Visibility and permission refusals
+/// are the one opaque action document: the kernel decides them per target, so
+/// a typed 404 or 403 would tell a known action from an unknown one. Laws,
+/// preconditions, conflicts, invalid input and limits stay typed.
+fn kernel_refusal<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    action_id: &str,
+    error: norn_kernel::ActionRefusal<norn_cell::CellError>,
+) -> Refusal {
+    let refusal = error.refusal();
+    if matches!(
+        refusal.category,
+        norn_kernel::RefusalCategory::Visibility | norn_kernel::RefusalCategory::Permission
+    ) {
+        return action_denied();
+    }
+    crate::refusal_disclosure::project_refusal(
+        host.authorizer.as_ref(),
+        &RefusalDetailRequest {
+            scope: host.scope(),
+            actor,
+            action_id,
+        },
+        refusal,
+    )
+}
+
+/// What an approval gate (APPROVAL-1) does with a call.
+enum Gated {
+    /// No gate, or a decider approved exactly this call: commit it.
+    Commit,
+    /// An identical earlier call committed: its replay.
+    Replayed(ActionOutcome),
+    /// It parked, or waits on the decision it parked as.
+    Pending(crate::approvals::PendingAction),
+}
+
+/// APPROVAL-1: while an approval gates the action, the kernel's whole
+/// pipeline decides the call for its caller against a host that stops at the
+/// commit point. A call that reaches it parks, unless a decider already
+/// approved exactly this call; a refusal is the ungated one, and parks
+/// nothing.
+fn through_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &mut crate::host::ActionCell<E>,
+    catalog: &TypeCatalog<'_>,
+    call: &norn_kernel::ActionCall<'_>,
+) -> Result<Gated, Refusal> {
+    let action_id = call.action.action_id.as_str();
+    let Some(gate) = crate::approvals::gate(cell, action_id)? else {
+        return Ok(Gated::Commit);
+    };
+    let dry = norn_kernel::commit_action(
+        &mut crate::approvals::WouldCommit(&*cell),
+        catalog,
+        call,
+        &KernelAuthorizer(host.authorizer.as_ref()),
+    );
+    match dry {
+        Ok(replayed) => Ok(Gated::Replayed(replayed)),
+        Err(error) if crate::approvals::would_have_committed(&error) => {
+            let requester = host
+                .authorizer
+                .verified_principal(&call.actor)
+                .ok_or_else(action_denied)?;
+            let parked = crate::approvals::ParkedCall {
+                action: action_id.to_owned(),
+                input: call.input.clone(),
+                idempotency_key: call.idempotency_key.clone(),
+                requester,
+            };
+            Ok(
+                match crate::approvals::hold(cell, &gate, &parked, call.turn.now)? {
+                    crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
+                    crate::approvals::Held::Approved => Gated::Commit,
+                },
+            )
+        }
+        Err(error) => Err(kernel_refusal(host, &call.actor, action_id, error)),
+    }
 }
 
 /// The kernel turn's time: the cell clock after advancing it to `now` and the

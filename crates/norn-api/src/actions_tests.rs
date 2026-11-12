@@ -216,7 +216,7 @@ fn call_at(
     let request = decode_action_request(body)?;
     match call_action(host, query, actor, action, &request, &Disclosure, now)? {
         ActionAnswer::Receipt(receipt) => Ok(receipt),
-        ActionAnswer::Pending(pending) => panic!("no approval gates these actions: {pending:?}"),
+        ActionAnswer::Pending(_) => Err(Refusal::host("no approval gates these actions")),
     }
 }
 

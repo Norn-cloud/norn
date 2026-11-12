@@ -209,14 +209,14 @@ fn request(gate: &Gate) -> Value {
 /// The command id of a parked call: one per action, input, idempotency key
 /// and requester, so the same call parks once, and an approval approves
 /// exactly the call it was asked about.
-fn command_id(call: &ParkedCall) -> Result<String, Refusal> {
+fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
     let digest = norn_ir::canonical::domain_hash_hex(
         b"norn.approval.call/1\0",
         &(
-            &call.action,
-            &call.idempotency_key,
-            &call.requester.subject,
-            &call.input,
+            &parked_call.action,
+            &parked_call.idempotency_key,
+            &parked_call.requester.subject,
+            &parked_call.input,
         ),
     )
     .map_err(Refusal::host)?;
@@ -259,7 +259,7 @@ fn resolved(row: &DecisionRow) -> Result<Held, Refusal> {
     }
 }
 
-/// Hold `call` behind `gate`: an approved call commits; a rejected or
+/// Hold `parked_call` behind `gate`: an approved call commits; a rejected or
 /// expired one is refused; otherwise it parks as one `norn.decision@1`
 /// command carrying the call, and answers the decision it waits on. The same
 /// call parked again answers the same decision.
@@ -269,10 +269,10 @@ fn resolved(row: &DecisionRow) -> Result<Held, Refusal> {
 pub(crate) fn hold<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     gate: &Gate,
-    call: &ParkedCall,
+    parked_call: &ParkedCall,
     now: LogicalTime,
 ) -> Result<Held, Refusal> {
-    let id = command_id(call)?;
+    let id = command_id(parked_call)?;
     let decision_id = crate::decisions::decision_id(&id, 1)?;
     if let Some(row) = cell
         .store()
@@ -282,22 +282,21 @@ pub(crate) fn hold<E: SqlEngine>(
     {
         return resolved(&row);
     }
+    let unparked = cell
+        .store()
+        .read()
+        .pending_command(&id)
+        .map_err(Refusal::host)?
+        .is_none();
+    if unparked {
+        park(cell, gate, parked_call, &id)?;
+    }
     let parked = cell
         .store()
         .read()
         .pending_command(&id)
-        .map_err(Refusal::host)?;
-    let parked = match parked {
-        Some(parked) => parked,
-        None => {
-            park(cell, gate, call, &id)?;
-            cell.store()
-                .read()
-                .pending_command(&id)
-                .map_err(Refusal::host)?
-                .ok_or_else(|| Refusal::host("a parked call is missing"))?
-        }
-    };
+        .map_err(Refusal::host)?
+        .ok_or_else(|| Refusal::host("a parked call is missing"))?;
     let Some(decision) = crate::decisions::open_decision(cell.store(), &parked)? else {
         // Answered, and its resolution is committing.
         return Err(Refusal::new(
@@ -320,14 +319,14 @@ pub(crate) fn hold<E: SqlEngine>(
     }))
 }
 
-/// Commit the parked command for `call`, alone.
+/// Commit the parked command for `parked_call`, alone.
 fn park<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     gate: &Gate,
-    call: &ParkedCall,
+    parked_call: &ParkedCall,
     id: &str,
 ) -> Result<(), Refusal> {
-    let starter = norn_ir::runtime::encode(&call.requester).map_err(Refusal::host)?;
+    let starter = norn_ir::runtime::encode(&parked_call.requester).map_err(Refusal::host)?;
     let text = |value: &str| RuntimeValue::String(value.to_owned());
     let approval: RuntimeObject = BTreeMap::from([
         ("definition".to_owned(), text(&gate.definition)),
@@ -335,9 +334,15 @@ fn park<E: SqlEngine>(
             "revision".to_owned(),
             norn_ir::runtime::encode(&gate.revision).map_err(Refusal::host)?,
         ),
-        ("action".to_owned(), text(&call.action)),
-        ("input".to_owned(), RuntimeValue::Object(call.input.clone())),
-        ("idempotencyKey".to_owned(), text(&call.idempotency_key)),
+        ("action".to_owned(), text(&parked_call.action)),
+        (
+            "input".to_owned(),
+            RuntimeValue::Object(parked_call.input.clone()),
+        ),
+        (
+            "idempotencyKey".to_owned(),
+            text(&parked_call.idempotency_key),
+        ),
         ("requester".to_owned(), starter),
     ]);
     let payload: RuntimeObject = BTreeMap::from([

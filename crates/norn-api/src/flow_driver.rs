@@ -114,22 +114,6 @@ pub(crate) fn result_turn<E: SqlEngine>(
     .map_err(|refusal| refused(refusal.code(), "the flow's result turn was refused"))
 }
 
-/// The run's state after a commit, from the run ledger.
-///
-/// # Errors
-/// A host failure, or a run without a ledger row.
-pub(crate) fn run_state<E: SqlEngine>(
-    cell: &ActionCell<E>,
-    run_id: &str,
-) -> Result<Option<String>, Refusal> {
-    cell.store()
-        .read()
-        .flow_run(MAIN_WORLD, run_id)
-        .map_err(Refusal::host)?
-        .map(|row| row.state)
-        .ok_or_else(|| Refusal::host("a run lost its ledger row"))
-}
-
 /// The most action steps one [`drive_run`] executes; a run whose steps
 /// keep dispatching more continues on its next drive.
 pub const MAX_ACTION_STEPS: usize = 64;
