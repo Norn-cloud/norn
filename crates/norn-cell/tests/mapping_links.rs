@@ -1136,3 +1136,69 @@ proptest::proptest! {
         );
     }
 }
+
+/// OBS-PAGE-1 export/restore: a page commit's export carries the members it
+/// consumed, so a restored cell has the same state and the same per-record
+/// lineage as the original.
+#[tokio::test]
+async fn obs_page_commits_export_and_restore_with_their_members() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("paged.sqlite"));
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    // Rows of one dataset share a page; the orders link to holdings and
+    // parties captured in earlier pages or in their own.
+    let mut pages: Vec<(MappingInput, Vec<Observed<RuntimeValue>>)> = Vec::new();
+    for row in rows.iter().rev() {
+        let (raw, input) = raw_of(row, "1");
+        match pages.last_mut() {
+            Some((current, raws)) if current.dataset == input.dataset => raws.push(raw),
+            _ => pages.push((input, vec![raw])),
+        }
+    }
+    for (input, raws) in &pages {
+        for (id, _) in cell.inject_mapping_page(raws, input).expect("capture") {
+            cell.process_mapping_page(&id).expect("page");
+        }
+    }
+    let mut exporter =
+        norn_cell::export::Exporter::local(&directory.path().join("export")).expect("exporter");
+    for seq in 1..=cell.store().export_commit_count().expect("count") {
+        exporter
+            .append(
+                &cell
+                    .store()
+                    .export_record(seq)
+                    .expect("journal")
+                    .expect("record"),
+            )
+            .await
+            .expect("append");
+    }
+    let manifest = exporter.verify().await.expect("verified export");
+    let target = directory.path().join("restored.sqlite");
+    let model = cell.store().model().clone();
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore");
+    let restored = SqliteCell::new(
+        CellStore::open(&target, model, StoreOptions::default()).expect("reopen"),
+        "org_demo/dev",
+        |_| BTreeMap::new(),
+    )
+    .expect("cell");
+    assert_eq!(end_state(&restored), end_state(&cell));
+    assert_eq!(
+        restored.store().read().dump().expect("dump"),
+        cell.store().read().dump().expect("dump")
+    );
+}
