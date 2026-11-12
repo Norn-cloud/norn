@@ -67,8 +67,9 @@ DIAGNOSTIC_CODES = "crates/norn-checker/conformance/diagnostic-codes"
 SCHEMA_DIRS = ("crates/norn-ir/schema", "crates/norn-kernel/schema", "tools/norn-ts/schema",
                "crates/norn-builtins/src/schemas", "crates/norn-projections/schemas")
 # Single schema files outside a schema directory. The metrics ledger is append-only
-# and kept forever, so its record format only ever changes additively.
-SCHEMA_FILES = ("scripts/metrics/record.schema.json",)
+# and kept forever, so its record format only ever changes additively. The port
+# inventory schema types files kept in each ported application's own repository.
+SCHEMA_FILES = ("scripts/metrics/record.schema.json", "tools/norn-port/inventory.schema.json")
 APPROVALS = "scripts/ci/contract-breaks.json"
 # Which list a contract-shaped file goes on is a rule, not a judgement:
 # - enrolled (SCHEMA_DIRS, SCHEMA_FILES): it describes data that outlives or
