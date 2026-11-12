@@ -1532,12 +1532,12 @@ fn a_completed_upload_survives_a_restart() {
         let cell = provisioned(&path, &scope, &set);
         let host = cell.tenant.serving_host().expect("a served cell");
         let mut connect = Connect::new("[]", &vars).unwrap();
-        let begin = r#"{"fileName": "sales.csv", "contentType": "text/csv", "size": 30}"#;
+        let request = r#"{"fileName": "sales.csv", "contentType": "text/csv", "size": 30}"#;
         let begun = connect
             .route(
                 Some(host),
                 &cell.tokens,
-                &post("/v1/uploads:begin", &q, &owner, begin),
+                &post("/v1/uploads:begin", &q, &owner, request),
                 at,
             )
             .unwrap();
@@ -1571,7 +1571,7 @@ fn a_completed_upload_survives_a_restart() {
     assert!(!kept.owner.is_empty());
     let mut connect = Connect::new("[]", &vars).unwrap();
     let define = format!("/v1/uploads/{upload_id}:define");
-    let mut call = |body: &str| {
+    let mut define_with = |body: &str| {
         let routed = connect
             .route(
                 Some(host),
@@ -1584,8 +1584,8 @@ fn a_completed_upload_survives_a_restart() {
         connect.resume(Some(host), &token, 200, csv, at)
     };
     let claimed = json!({"typeName": "Sales", "sha256": "0".repeat(64)}).to_string();
-    assert_eq!(call(&claimed).status, 409);
-    let defined = call(r#"{"typeName": "Sales"}"#);
+    assert_eq!(define_with(&claimed).status, 409);
+    let defined = define_with(r#"{"typeName": "Sales"}"#);
     assert_eq!(defined.status, 200, "{}", defined.body);
     assert_eq!(json_of(&defined)["objectType"], "upload.Sales");
 }
