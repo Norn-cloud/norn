@@ -315,34 +315,35 @@ fn cell() -> Cell {
     cell
 }
 
-/// One request the way the published host serves it: run and decision
-/// routes through `handle_runs` with the cell's caller slot, the rest
-/// through the ordinary dispatch.
+/// One request through the published dispatch; its resolver carries the
+/// cell's caller slot.
 fn call(cell: &Cell, method: &str, path: &str, auth: Option<&str>, body: &str) -> (u16, Value) {
+    call_with(cell, method, path, SCOPE, auth, body)
+}
+
+fn call_with(
+    cell: &Cell,
+    method: &str,
+    path: &str,
+    query: &str,
+    auth: Option<&str>,
+    body: &str,
+) -> (u16, Value) {
     let request = server::Request {
         method,
         path,
-        query: SCOPE,
+        query,
         authorization: auth,
         now: NOW,
         body,
     };
-    let Response { status, body } = norn_cell_do::runs::handle_runs(
+    let Response { status, body } = server::handle_all(
         &cell.host,
         &cell.principals,
         Some(&cell.handles),
-        &cell.caller,
+        &cell.kinds,
         &request,
-    )
-    .unwrap_or_else(|| {
-        server::handle_all(
-            &cell.host,
-            &cell.principals,
-            Some(&cell.handles),
-            &cell.kinds,
-            &request,
-        )
-    });
+    );
     (status, serde_json::from_str(&body).unwrap())
 }
 
@@ -387,7 +388,8 @@ fn start_and_approve(cell: &Cell, starter: Option<&str>, run: &str) -> Value {
     );
     assert_eq!(status, 201, "{opened}");
     assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
-    let (_, page) = call(cell, "GET", "/v1/decisions", APPROVER, "");
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = call_with(cell, "GET", "/v1/decisions", &pending, APPROVER, "");
     assert_eq!(page["total"], json!(1), "{page}");
     let id = page["items"][0]["id"].as_str().unwrap().to_owned();
     let (status, decided) = call(
