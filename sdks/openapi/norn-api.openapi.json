@@ -3268,6 +3268,13 @@
           "updatedAtMs"
         ],
         "properties": {
+          "canStart": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "For a flow: whether the caller may start a run of it now, decided by\nexactly the gate `POST /v1/runs` applies (an active flow and the host's\n`StartRun` decision). Absent for other kinds."
+          },
           "id": {
             "type": "string",
             "description": "The definition id."

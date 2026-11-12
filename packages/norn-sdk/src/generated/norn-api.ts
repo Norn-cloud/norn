@@ -837,6 +837,12 @@ export interface components {
         };
         /** @description One listed definition, without its payload. */
         DefinitionSummary: {
+            /**
+             * @description For a flow: whether the caller may start a run of it now, decided by
+             *     exactly the gate `POST /v1/runs` applies (an active flow and the host's
+             *     `StartRun` decision). Absent for other kinds.
+             */
+            canStart?: boolean | null;
             /** @description The definition id. */
             id: string;
             /** @description Its kind. */
