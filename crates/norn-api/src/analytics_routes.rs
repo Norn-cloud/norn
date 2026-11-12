@@ -568,6 +568,243 @@ pub fn load_dataset<E: SqlEngine>(
     })
 }
 
+/// Whether `object_type`'s records are a loaded dataset's rows, which live
+/// only in the tenant's engine.
+///
+/// # Errors
+/// A store failure.
+pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Result<bool, Refusal> {
+    let guard = host.cell()?;
+    let has_type = guard.store().model().has_type(object_type);
+    Ok(has_type
+        && guard
+            .store()
+            .analytics_dataset(object_type)
+            .map_err(Refusal::host)?
+            .is_some())
+}
+
+/// HOST-READ-3 over a loaded dataset (D102): the grid query of
+/// `GET /v1/objects/{type}` answered by the tenant's engine, with the native
+/// grid's grammar, order and visibility: every clause holds (a withheld row
+/// matches none), absent values sort last either way, then identity. The
+/// dataset is immutable per load, so a cursor is an offset bound to the load,
+/// the query, the scope and the caller, and a sort or filter reads every row.
+///
+/// # Errors
+/// A denied gate (one opaque 403), an invalid query or cursor (400), a
+/// comparison the engine cannot evaluate (422), a reload since the cursor
+/// (409 `object.snapshot_moved`), or an unreachable engine.
+pub fn page_objects<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    params: &crate::object_query::ObjectQueryParams,
+    access: &dyn ObjectAccess,
+    transport: &dyn Transport,
+) -> Result<crate::objects::NornObjectQueryPage, Refusal> {
+    use crate::object_query::{self, Cursor};
+    use crate::objects::{
+        NornAppliedQuery, NornObjectQueryPage, NornQueriedRecord, NornQueryTotal,
+    };
+    use norn_cell::analytics::{PageKey, PageRequest, PageResponse};
+    let values = uniform_gate(host, scope, actor, object_type, access)?;
+    let actor = actor.unwrap_or_default();
+    let guard = host.cell()?;
+    let store = guard.store();
+    let properties = store
+        .model()
+        .effective_property_types(object_type)
+        .map_err(|_unknown| crate::object_routes::not_found())?;
+    let query = object_query::parse(params, &properties)?;
+    let (source, snapshot) = store
+        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
+        .map_err(engine_failure)?;
+    let quarantined = store
+        .analytics_dataset(object_type)
+        .map_err(Refusal::host)?
+        .map_or(0, |dataset| dataset.rejected);
+    let digest = norn_cell::compute::lineage::keyed_lineage_handle(
+        object_query::CURSOR_KEY,
+        &format!("{}\n{snapshot}", query.digest(object_type)),
+    );
+    let bound = [
+        digest,
+        Cursor::scope_digest(&host.scope().key()),
+        Cursor::actor_digest(actor),
+    ];
+    let offset = match query.after.as_deref() {
+        None => 0,
+        Some(text) => Cursor::decode(text)
+            .filter(|cursor| [&cursor.q, &cursor.s, &cursor.a] == [&bound[0], &bound[1], &bound[2]])
+            .and_then(|cursor| cursor.p.parse::<u64>().ok())
+            .ok_or_else(object_query::cursor_invalid)?,
+    };
+    // A caller without Values reads every row withheld: a withheld row
+    // matches no clause and has no sort value, so only identity orders it.
+    let (filters, sort) = if values {
+        (
+            query
+                .filter
+                .iter()
+                .map(page_clause)
+                .collect::<Result<Vec<_>, _>>()?,
+            query
+                .sort
+                .iter()
+                .map(|key| PageKey {
+                    column: key.property.clone(),
+                    descending: key.descending,
+                })
+                .collect(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let tenant = TenantId::of_scope(&host.scope().key());
+    let page = if !values && !query.filter.is_empty() {
+        PageResponse {
+            total: 0,
+            rows: Vec::new(),
+        }
+    } else {
+        let call = EngineCall::new(
+            "page",
+            &PageRequest {
+                tenant: tenant.clone(),
+                source: source.clone(),
+                filters,
+                sort,
+                offset,
+                limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
+            },
+        )
+        .map_err(engine_failure)?;
+        let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
+            .map_err(engine_failure)?;
+        if answer.status != 200 {
+            let error = refused(&answer.body);
+            // The dataset was loaded again since the cursor.
+            if query.after.is_some()
+                && matches!(error, CellError::ComputeRefused(code) if code == "core.compute.stale_input")
+            {
+                return Err(crate::object_routes::snapshot_moved());
+            }
+            return Err(engine_failure(error));
+        }
+        decode(&answer.body).map_err(engine_failure)?
+    };
+    let returned = u64::try_from(page.rows.len()).unwrap_or(u64::MAX);
+    let reached = offset.saturating_add(returned);
+    let [q, s, a] = bound;
+    let next = (returned > 0 && reached < page.total).then(|| {
+        Cursor {
+            v: 2,
+            q,
+            s,
+            a,
+            c: 0,
+            r: None,
+            p: reached.to_string(),
+        }
+        .encode()
+    });
+    let scope_key = host.scope().key();
+    let records = page
+        .rows
+        .into_iter()
+        .map(|row| {
+            let read = if values {
+                Some(
+                    row.values
+                        .iter()
+                        .map(|(id, value)| Ok((id.clone(), runtime_value(value)?)))
+                        .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
+                        .map_err(Refusal::host)?,
+                )
+            } else {
+                None
+            };
+            Ok(NornQueriedRecord {
+                object_type: object_type.to_owned(),
+                id: row.id,
+                scope: scope_key.clone(),
+                version: read.as_ref().map(|_| row.version),
+                withheld: read.is_none(),
+                values: read,
+                withheld_properties: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
+    Ok(NornObjectQueryPage {
+        object_type: object_type.to_owned(),
+        records,
+        quarantine_count: quarantined,
+        query: NornAppliedQuery {
+            sort: query.sort_document(),
+            filter: query.filter_document(),
+        },
+        next,
+        total: Some(NornQueryTotal {
+            count: page.total,
+            approximate: false,
+        }),
+    })
+}
+
+/// One parsed grid clause as the engine evaluates it: the same operator,
+/// operands typed as the column compares (a date as its UTC midnight's key).
+fn page_clause(
+    clause: &crate::object_query::Clause,
+) -> Result<norn_cell::analytics::PageClause, Refusal> {
+    use crate::object_query::{Op, Operand, Scalar};
+    use norn_cell::analytics::{PageClause, PageOp, PageOperand};
+    let unsupported = || Refusal::from_compute(CellError::ComputeRefused(UNSUPPORTED_ENGINE));
+    let operand = |scalar: &Scalar| -> Result<PageOperand, Refusal> {
+        Ok(match scalar {
+            Scalar::Text(text) => PageOperand::Text(text.clone()),
+            Scalar::Number(number) => PageOperand::Number(number.canonical()),
+            Scalar::Bool(flag) => PageOperand::Bool(*flag),
+            Scalar::Date(days) => PageOperand::Instant {
+                secs: days.checked_mul(86_400).ok_or_else(unsupported)?,
+                nanos: 0,
+            },
+            Scalar::Instant(nanos) => PageOperand::Instant {
+                secs: i64::try_from(nanos.div_euclid(1_000_000_000))
+                    .map_err(|_overflow| unsupported())?,
+                nanos: u32::try_from(nanos.rem_euclid(1_000_000_000))
+                    .map_err(|_overflow| unsupported())?,
+            },
+            Scalar::Span(_) => return Err(unsupported()),
+        })
+    };
+    let operands = match &clause.operand {
+        Operand::None => Vec::new(),
+        Operand::One(one) => vec![operand(one)?],
+        Operand::Many(many) => many.iter().map(operand).collect::<Result<_, _>>()?,
+        Operand::Range(low, high) => vec![operand(low)?, operand(high)?],
+    };
+    Ok(PageClause {
+        column: clause.property.clone(),
+        op: match clause.op {
+            Op::Eq => PageOp::Eq,
+            Op::Ne => PageOp::Ne,
+            Op::In => PageOp::In,
+            Op::Contains => PageOp::Contains,
+            Op::Prefix => PageOp::Prefix,
+            Op::Lt => PageOp::Lt,
+            Op::Lte => PageOp::Lte,
+            Op::Gt => PageOp::Gt,
+            Op::Gte => PageOp::Gte,
+            Op::Between => PageOp::Between,
+            Op::Empty => PageOp::Empty,
+            Op::Present => PageOp::Present,
+        },
+        operands,
+    })
+}
+
 /// HOST-READ-5 on the engine (D102): the profile of every row of
 /// `object_type` the caller may read, in the exact profile's shape and
 /// semantics (nearest-rank quantiles, equal-population bins, calendar labels,

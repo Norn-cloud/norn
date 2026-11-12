@@ -22,8 +22,9 @@ use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse, Source,
-    SyncRequest, TableSchema, TenantId, Test, Value, hex,
+    MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
+    PageResponse, PageRow, ProfileRequest, ProfileResponse, Source, SyncRequest, TableSchema,
+    TenantId, Test, Value, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -41,6 +42,8 @@ fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
 }
 
 const UNSUPPORTED: &str = "core.compute.unsupported_engine";
+/// The most rows one records page returns.
+pub const MAX_PAGE_ROWS: u32 = 200;
 const STALE: &str = "core.compute.stale_input";
 const MAX_VALUE: &str = "9000000000000000000";
 
@@ -343,6 +346,101 @@ impl Engine {
                     Err(error)
                 }
             }
+        })
+    }
+
+    /// One records page of a source (HOST-READ-3 on the engine): the rows
+    /// every clause holds for, ordered by the keys (absent values last in
+    /// either direction) then identity, from `offset`; and how many match.
+    /// Text compares by bytes, numbers exactly, instants by their ordering key.
+    ///
+    /// # Errors
+    /// An unknown column, a comparison its kind does not take, or a stale source.
+    pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
+        self.with(&request.tenant, |conn| {
+            let scope = Scope::new(conn, &request.source)?;
+            let mut conditions = vec![scope.population.clone()];
+            for clause in &request.filters {
+                conditions.push(page_clause(scope.column(&clause.column)?, clause)?);
+            }
+            let matches = Frag::join(&conditions, " AND ");
+            let mut order = Vec::new();
+            for key in &request.sort {
+                let column = scope.column(&key.column)?;
+                let direction = if key.descending { "DESC" } else { "ASC" };
+                let keys = match column.kind {
+                    ColumnKind::Timestamp | ColumnKind::Date => {
+                        vec![derived(&column.id, "t"), derived(&column.id, "n")]
+                    }
+                    ColumnKind::Text
+                    | ColumnKind::Integer
+                    | ColumnKind::Decimal { .. }
+                    | ColumnKind::Boolean => vec![ident(&column.id)],
+                    ColumnKind::Opaque => {
+                        return Err(refusal(UNSUPPORTED, format!("{} has no order", column.id)));
+                    }
+                };
+                order.extend(
+                    keys.into_iter()
+                        .map(|key| format!("{key} {direction} NULLS LAST")),
+                );
+            }
+            order.push(format!("{} ASC", ident(":id")));
+            let count = Frag::fmt(
+                &format!("SELECT count(*) FROM {} WHERE {{}}", scope.table),
+                &[&matches],
+            );
+            let total: u64 = db(db(conn.prepare(&count.text))?
+                .query_row(params_from_iter(count.params), |row| row.get(0)))?;
+            let mut select = vec![ident(":id"), ident(":v")];
+            for column in &scope.columns {
+                select.push(format!("CAST({} AS VARCHAR)", ident(&column.id)));
+                if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+                    select.push(derived(&column.id, "t"));
+                    select.push(derived(&column.id, "n"));
+                } else {
+                    select.push("CAST(NULL AS BIGINT)".to_owned());
+                    select.push("CAST(NULL AS INTEGER)".to_owned());
+                }
+            }
+            let page = Frag::fmt(
+                &format!(
+                    "SELECT {} FROM {} WHERE {{}} ORDER BY {} LIMIT {{}} OFFSET {{}}",
+                    select.join(", "),
+                    scope.table,
+                    order.join(", ")
+                ),
+                &[
+                    &matches,
+                    &Frag::bind("?", Sql::UInt(request.limit.min(MAX_PAGE_ROWS))),
+                    &Frag::bind("?", Sql::UBigInt(request.offset)),
+                ],
+            );
+            let mut statement = db(conn.prepare(&page.text))?;
+            let rows = db(statement.query_map(params_from_iter(page.params), |row| {
+                let mut values = BTreeMap::new();
+                for (i, column) in scope.columns.iter().enumerate() {
+                    let at = i.saturating_mul(3).saturating_add(2);
+                    let value = present(
+                        column.kind,
+                        row.get(at)?,
+                        row.get(at.saturating_add(1))?,
+                        row.get(at.saturating_add(2))?,
+                    );
+                    if let Some(value) = value {
+                        values.insert(column.id.clone(), value);
+                    }
+                }
+                Ok(PageRow {
+                    id: row.get(0)?,
+                    version: row.get(1)?,
+                    values,
+                })
+            }))?;
+            Ok(PageResponse {
+                total,
+                rows: db(rows.collect())?,
+            })
         })
     }
 
@@ -990,6 +1088,119 @@ fn filters_sql(scope: &Scope, filters: &[Filter]) -> Outcome<Condition> {
         holds = Frag::fmt("({} AND {})", &[&holds, &next.holds]);
     }
     Ok(Condition { holds, refuse })
+}
+
+/// One records clause over `column`: every comparison but `empty` needs a
+/// present value; a timestamp or date is present when it has its key.
+fn page_clause(column: &Column, clause: &PageClause) -> Outcome<Frag> {
+    let invalid = || {
+        refusal(
+            "analytics.invalid",
+            format!("{} does not compare as asked", column.id),
+        )
+    };
+    let temporal = matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date);
+    let c = ident(&column.id);
+    let held = if temporal {
+        format!("{} IS NOT NULL", derived(&column.id, "t"))
+    } else {
+        format!("{c} IS NOT NULL")
+    };
+    // One operand compared with `op` (`=`, `<>`, `<`, `<=`, `>`, `>=`).
+    let compare = |operand: &PageOperand, op: &str| -> Outcome<Frag> {
+        match (column.kind, operand) {
+            (ColumnKind::Text | ColumnKind::Opaque, PageOperand::Text(text)) => {
+                Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Text(text.clone())))
+            }
+            (ColumnKind::Integer | ColumnKind::Decimal { .. }, PageOperand::Number(text)) => {
+                let decimal = norn_ir::Decimal::parse(text).map_err(|_| invalid())?;
+                let canonical = decimal.canonical();
+                let scale = canonical.split_once('.').map_or(0, |(_, f)| f.len());
+                let digits = canonical.bytes().filter(u8::is_ascii_digit).count();
+                if digits > 38 {
+                    return Err(invalid());
+                }
+                Ok(Frag::bind(
+                    &format!("{c} {op} CAST(? AS DECIMAL(38,{scale}))"),
+                    Sql::Text(canonical),
+                ))
+            }
+            (ColumnKind::Boolean, PageOperand::Bool(flag)) => {
+                Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Boolean(*flag)))
+            }
+            (ColumnKind::Timestamp | ColumnKind::Date, PageOperand::Instant { secs, nanos }) => {
+                let t = derived(&column.id, "t");
+                let n = derived(&column.id, "n");
+                let secs = Frag::bind("?", Sql::BigInt(*secs));
+                let nanos = Frag::bind("?", Sql::BigInt(i64::from(*nanos)));
+                let (strict, last) = match op {
+                    "=" => {
+                        return Ok(Frag::fmt(
+                            &format!("({t} = {{}} AND {n} = {{}})"),
+                            &[&secs, &nanos],
+                        ));
+                    }
+                    "<>" => {
+                        return Ok(Frag::fmt(
+                            &format!("NOT ({t} = {{}} AND {n} = {{}})"),
+                            &[&secs, &nanos],
+                        ));
+                    }
+                    "<" | "<=" => ("<", op),
+                    _ => (">", op),
+                };
+                Ok(Frag::fmt(
+                    &format!("({t} {strict} {{}} OR ({t} = {{}} AND {n} {last} {{}}))"),
+                    &[&secs, &secs, &nanos],
+                ))
+            }
+            _ => Err(invalid()),
+        }
+    };
+    let one = || match clause.operands.as_slice() {
+        [operand] => Ok(operand),
+        _ => Err(invalid()),
+    };
+    let test = match clause.op {
+        PageOp::Empty => return Ok(Frag::raw(format!("NOT ({held})"))),
+        PageOp::Present => return Ok(Frag::raw(held)),
+        PageOp::Eq => compare(one()?, "=")?,
+        PageOp::Ne => compare(one()?, "<>")?,
+        PageOp::Lt => compare(one()?, "<")?,
+        PageOp::Lte => compare(one()?, "<=")?,
+        PageOp::Gt => compare(one()?, ">")?,
+        PageOp::Gte => compare(one()?, ">=")?,
+        PageOp::Between => match clause.operands.as_slice() {
+            [low, high] => Frag::fmt(
+                "({} AND {})",
+                &[&compare(low, ">=")?, &compare(high, "<=")?],
+            ),
+            _ => return Err(invalid()),
+        },
+        PageOp::In => {
+            if clause.operands.is_empty() {
+                return Err(invalid());
+            }
+            let each = clause
+                .operands
+                .iter()
+                .map(|operand| compare(operand, "="))
+                .collect::<Outcome<Vec<_>>>()?;
+            Frag::fmt("({})", &[&Frag::join(&each, " OR ")])
+        }
+        PageOp::Contains | PageOp::Prefix => match (column.kind, one()?) {
+            (ColumnKind::Text, PageOperand::Text(text)) => {
+                let function = if clause.op == PageOp::Contains {
+                    "contains"
+                } else {
+                    "starts_with"
+                };
+                Frag::bind(&format!("{function}({c}, ?)"), Sql::Text(text.clone()))
+            }
+            _ => return Err(invalid()),
+        },
+    };
+    Ok(Frag::fmt(&format!("({held} AND {{}})"), &[&test]))
 }
 
 fn instant_bound(column: &str, (secs, nanos): (i64, u32), op: &str) -> Frag {

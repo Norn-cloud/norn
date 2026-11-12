@@ -24,6 +24,10 @@ required-features = ["duckdb"]
 name = "analytics_profile"
 required-features = ["duckdb"]
 
+[[test]]
+name = "analytics_records"
+required-features = ["duckdb"]
+
 [dependencies]
 norn-api = { path = "../norn-api" }
 norn-cell = { path = "../norn-cell", default-features = false }

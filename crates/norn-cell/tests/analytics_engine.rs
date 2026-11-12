@@ -1263,3 +1263,139 @@ mod scales {
         }
     }
 }
+
+/// The sources pack's own types (a typed registry instant, enums, nullable
+/// text, an interface) mirror, profile, page and export on the engine like
+/// any other type.
+mod sources_pack {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{ExportFormat, ExportRequest, PageRequest, ProfileRequest};
+    use norn_ir::{ArtifactEnvelope, EntityRoot};
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+
+    fn artifact(path: &str) -> ArtifactEnvelope {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path),
+        )
+        .expect(path);
+        serde_json::from_str(&text).expect(path)
+    }
+
+    fn store() -> CellStore {
+        let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
+        for path in [
+            "registry/core/artifacts/std.value_types.entity.json",
+            "registry/packs/sources/artifacts/source.Synced.interface.json",
+            "registry/packs/sources/artifacts/source.Connection.entity.json",
+            "registry/packs/sources/artifacts/source.SyncRun.entity.json",
+        ] {
+            let artifact = artifact(path);
+            let root: EntityRoot = serde_json::from_value(
+                serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
+            )
+            .expect("entity root");
+            match root {
+                EntityRoot::V2(root) => objects.push(root.object_type),
+                EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+                EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+                EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+                    panic!("{path} is outside this profile")
+                }
+            }
+        }
+        let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+            .expect("model");
+        CellStore::open_in_memory(model).expect("cell")
+    }
+
+    fn connection(id: &str, ended: Option<&str>, read: i64) -> FactWriteRow {
+        let text = |t: &str| RuntimeValue::from(t);
+        FactWriteRow::Put {
+            object_type: "source.Connection".into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                ("id".into(), text(id)),
+                ("system".into(), text("upload")),
+                ("label".into(), text("items.csv")),
+                ("target".into(), text("s3://uploads/demo/items.csv")),
+                ("auth".into(), text("presigned_upload")),
+                ("status".into(), text("partial")),
+                (
+                    "last_sync_started_at".into(),
+                    text("2026-11-12T12:00:00.000Z"),
+                ),
+                (
+                    "last_sync_ended_at".into(),
+                    ended.map_or(RuntimeValue::Null, text),
+                ),
+                ("last_trigger".into(), text("upload")),
+                ("watermark".into(), text("{\"rows\":4}")),
+                ("rows_read".into(), RuntimeValue::from(read)),
+                ("rows_landed".into(), RuntimeValue::from(read - 1)),
+                ("rows_quarantined".into(), RuntimeValue::from(1i64)),
+                ("quarantine_reasons".into(), text("bulk.type=1")),
+                ("last_error_code".into(), RuntimeValue::Null),
+                ("last_error_message".into(), RuntimeValue::Null),
+                ("connector_id".into(), text("")),
+                ("source_schema_id".into(), text("")),
+                ("mapping_id".into(), text("")),
+            ]),
+        }
+    }
+
+    #[test]
+    fn the_sources_types_mirror_profile_page_and_export() {
+        let (_dir, engine) = engine();
+        let mut store = store();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes: vec![
+                    connection("upload.a", Some("2026-11-12T12:00:01.000Z"), 4),
+                    connection("upload.b", None, 9),
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("connections commit");
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "source.Connection")
+            .expect("source");
+        let table = store.analytics_table("source.Connection").expect("table");
+        let columns: Vec<String> = table.columns.iter().map(|c| c.id.clone()).collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns: columns.clone(),
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 2);
+        let page = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: Vec::new(),
+                sort: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("page");
+        assert_eq!(page.total, 2);
+        let path = engine
+            .export(&ExportRequest {
+                tenant: tenant(),
+                source,
+                columns,
+                format: ExportFormat::Jsonl,
+            })
+            .expect("export");
+        std::fs::remove_file(path).expect("scratch export");
+    }
+}

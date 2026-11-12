@@ -87,6 +87,7 @@ impl Transport for InProcess {
             "evaluate" => Self::run(&call.body, |r| engine.evaluate(r)),
             "members" => Self::run(&call.body, |r| engine.members(r)),
             "profile" => Self::run(&call.body, |r| engine.profile(r)),
+            "page" => Self::run(&call.body, |r| engine.page(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {

@@ -688,6 +688,118 @@ pub enum ExportFormat {
     Jsonl,
 }
 
+/// A comparison of the records grammar (HOST-READ-3), lowered by the cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageOp {
+    /// Equal.
+    Eq,
+    /// Present and not equal.
+    Ne,
+    /// Equal to one of the operands.
+    In,
+    /// Text containing the operand.
+    Contains,
+    /// Text starting with the operand.
+    Prefix,
+    /// Less than.
+    Lt,
+    /// At most.
+    Lte,
+    /// Greater than.
+    Gt,
+    /// At least.
+    Gte,
+    /// Within the two operands, inclusive.
+    Between,
+    /// Absent.
+    Empty,
+    /// Present.
+    Present,
+}
+
+/// An operand of a records clause, typed as its column compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "t", content = "v")]
+pub enum PageOperand {
+    /// Text (and enum values), compared by bytes.
+    Text(String),
+    /// A canonical exact decimal.
+    Number(String),
+    /// A boolean.
+    Bool(bool),
+    /// A timestamp or date by its ordering key.
+    Instant {
+        /// Whole UTC seconds.
+        secs: i64,
+        /// Nanoseconds.
+        nanos: u32,
+    },
+}
+
+/// One filter clause of a records page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageClause {
+    /// The column.
+    pub column: String,
+    /// The comparison.
+    pub op: PageOp,
+    /// Its operands: none, one, a set, or a range's two ends.
+    pub operands: Vec<PageOperand>,
+}
+
+/// One sort key of a records page; absent values sort last either way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageKey {
+    /// The column.
+    pub column: String,
+    /// Descending rather than ascending.
+    pub descending: bool,
+}
+
+/// One page of a source's rows: filtered, ordered by `sort` then identity,
+/// from `offset`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// What it reads.
+    pub source: Source,
+    /// Every clause must hold.
+    pub filters: Vec<PageClause>,
+    /// The order before the identity tie-break.
+    pub sort: Vec<PageKey>,
+    /// Rows skipped in that order.
+    pub offset: u64,
+    /// Rows returned at most.
+    pub limit: u32,
+}
+
+/// One row of a records page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageRow {
+    /// The identity.
+    pub id: String,
+    /// Its version.
+    pub version: u64,
+    /// Every column's present value.
+    pub values: BTreeMap<String, Value>,
+}
+
+/// A records page and how many rows match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageResponse {
+    /// The matching rows.
+    pub total: u64,
+    /// The page.
+    pub rows: Vec<PageRow>,
+}
+
 /// Export columns of every row of a source, with identity and version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
