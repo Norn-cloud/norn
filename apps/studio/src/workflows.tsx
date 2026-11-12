@@ -11,6 +11,7 @@ import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
+import { Automations } from "./automations.tsx"
 
 const state = (name: string) => words(name)
 
@@ -304,6 +305,7 @@ export function WorkflowsPage() {
         <h1 className="text-title font-medium">Workflows</h1>
         <p className="max-w-2xl text-muted-foreground">How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it.</p>
       </div>
+      <Automations />
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
       {definitions.data && workflows(definitions.data.map(({ document }) => document)).map((workflow) => (
