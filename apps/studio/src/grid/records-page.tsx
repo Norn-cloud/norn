@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useMode } from "@/lib/live-transport"
 import { useCatalog } from "../sources.tsx"
 import { ProfilePanel } from "./profile-panel.tsx"
+import { QuarantinePanel } from "./quarantine-panel.tsx"
 import { RecordsGrid } from "./records-grid.tsx"
 
 /** `/objects/$type`: one object type's records in the grid, full width. Its definition is on `/sources/$type`. */
@@ -28,9 +29,10 @@ export function RecordsPage() {
         </header>
         {live
           ? <Tabs defaultValue="records">
-            <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger></TabsList>
+            <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger></TabsList>
             <TabsContent value="records" className="pt-3"><RecordsGrid key={concept.name} concept={concept} /></TabsContent>
             <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} /></TabsContent>
+            <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
           </Tabs>
           : <RecordsGrid key={concept.name} concept={concept} />}
       </>}
