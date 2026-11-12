@@ -8,29 +8,29 @@
 use quick_xml::{Reader, events::Event};
 
 /// Largest file read.
-pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 /// Deepest nesting accepted.
-pub const MAX_DEPTH: usize = 64;
+pub(crate) const MAX_DEPTH: usize = 64;
 /// Most elements accepted in one file.
-pub const MAX_ELEMENTS: usize = 500_000;
+pub(crate) const MAX_ELEMENTS: usize = 500_000;
 
 /// One element.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Element {
+pub(crate) struct Element {
     /// The qualified name as written.
-    pub name: String,
+    pub(crate) name: String,
     /// Attributes in document order, values decoded and normalized.
-    pub attributes: Vec<(String, String)>,
+    pub(crate) attributes: Vec<(String, String)>,
     /// Child elements in document order.
-    pub children: Vec<Element>,
+    pub(crate) children: Vec<Element>,
     /// Text content, whitespace runs collapsed to one space.
-    pub text: String,
+    pub(crate) text: String,
 }
 
 impl Element {
     /// The value of attribute `name`.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&str> {
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.attributes
             .iter()
             .find(|(key, _)| key == name)
@@ -38,13 +38,13 @@ impl Element {
     }
 
     /// Children named `name`.
-    pub fn named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Self> {
+    pub(crate) fn named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Self> {
         self.children.iter().filter(move |child| child.name == name)
     }
 
     /// The collapsed text of the first child named `name`, when not blank.
     #[must_use]
-    pub fn child_text(&self, name: &str) -> Option<String> {
+    pub(crate) fn child_text(&self, name: &str) -> Option<String> {
         self.named(name)
             .next()
             .map(|child| child.text.clone())
@@ -60,7 +60,7 @@ fn collapse(text: &str) -> String {
 ///
 /// # Errors
 /// Oversized, non-UTF-8, malformed, DTD-bearing or too deep or large input.
-pub fn parse(bytes: &[u8]) -> Result<Element, String> {
+pub(crate) fn parse(bytes: &[u8]) -> Result<Element, String> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err("file exceeds 16 MiB".into());
     }

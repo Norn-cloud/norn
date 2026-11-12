@@ -1,4 +1,4 @@
-//! Apache OFBiz entity-engine XML: entity models, entity groups and seed data
+//! Apache `OFBiz` entity-engine XML: entity models, entity groups and seed data
 //! to `SourceSchemaIR`, with a loss report for every source element.
 //!
 //! Pure: source bytes and their pins in, typed output out; no IO, no clock.
@@ -9,7 +9,7 @@
 //! extension. Lowering into `EntityIR` is a later mapping step, so every
 //! lowered element is recorded as `format.source_schema_only`.
 //!
-//! OFBiz does not declare which status type or enumeration type a status or
+//! `OFBiz` does not declare which status type or enumeration type a status or
 //! enumeration field takes: its relations to `StatusItem` and `Enumeration`
 //! carry no type, and a relation title names a role, not a type. Those
 //! bindings are typed gaps that keep the relation, its title and its target.
@@ -219,7 +219,7 @@ fn entity_inventory(
     for (index, child) in element.children.iter().enumerate() {
         match child.name.as_str() {
             "description" if !extend => {
-                out.push(SourceElement::dataset_facet(dataset, Facet::Description))
+                out.push(SourceElement::dataset_facet(dataset, Facet::Description));
             }
             "field" => field_inventory(child, dataset, out),
             "prim-key" => out.push(SourceElement::dataset_facet(
@@ -372,7 +372,7 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
                     out.push(SourceElement::definition(GROUP, &format!("{path}#{top}")));
                 }
                 (Role::Seed, _) => {
-                    out.push(SourceElement::definition(SEED, &format!("{path}#{top}")))
+                    out.push(SourceElement::definition(SEED, &format!("{path}#{top}")));
                 }
                 _ => out.push(SourceElement::definition(
                     UNKNOWN,
@@ -386,7 +386,7 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
 
 // ----- types ------------------------------------------------------------------
 
-/// The normalized type candidate of an OFBiz field type. Conventions rather
+/// The normalized type candidate of an `OFBiz` field type. Conventions rather
 /// than exact equivalents (floats, Y/N indicators) are `inferred`.
 fn type_candidate(native: &str) -> TypeCandidate {
     let (normalized, exact) = match native {
@@ -1178,6 +1178,7 @@ impl<'a> Build<'a> {
         Value::Object(groups)
     }
 
+    #[allow(clippy::too_many_lines, reason = "one pass over every view's members and definition parts")]
     fn views(&mut self, files: &'a [(OfbizFile<'a>, Element)]) {
         let views: Vec<&Element> = files
             .iter()
@@ -1258,7 +1259,7 @@ impl<'a> Build<'a> {
                                 &codes::SOURCE_DEFERRED,
                                 "view aliases, links and conditions stay in the pinned bytes",
                             ),
-                        )
+                        );
                     }
                     _ => {}
                 }
@@ -1495,10 +1496,11 @@ impl SchemaImporter for OfbizReader {
         extension.insert("entityGroups".into(), groups);
         extension.insert("lifecycleCandidates".into(), Value::Array(lifecycles));
         extension.insert("enumerationCandidates".into(), enumerations);
-        let listing: String = files
+        let listing = files
             .iter()
             .map(|file| format!("{}\t{}\n", file.path, sha256_hex(file.bytes)))
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
         let report = build.ledger.finish();
         let unexplained: Vec<String> = report
             .entries
