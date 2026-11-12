@@ -227,14 +227,7 @@ impl Catalog {
         scope: &ScopeQuery,
         actor: &str,
     ) -> Result<Self, Refusal> {
-        let object_types: Vec<String> = {
-            let cell = host.cell()?;
-            cell.store()
-                .model()
-                .object_types()
-                .map(|object_type| object_type.name.as_str().to_owned())
-                .collect()
-        };
+        let object_types = host.object_type_names()?;
         let question_names = questions
             .map(|runtime| runtime.question_names())
             .unwrap_or_default();
