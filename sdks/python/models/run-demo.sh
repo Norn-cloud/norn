@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Model versions and their promotion, end to end against a local development host (#1171).
+# Model versions, their promotion and applying a model, end to end against a local development host (#1171).
 #
 #   sdks/python/models/run-demo.sh WORKDIR
 #
-# Needs what ../regression/run-demo.sh needs. Serves the tracking and ml packs,
-# then runs e2e_promotion.py: registration from finished runs only and the
-# promotion law. The approval gate needs a hosted cell's roles
+# Needs what ../regression/run-demo.sh needs. Serves the tracking and ml packs
+# with the demo pack in demo/ (customers, a churn model and its typed
+# predictions), then runs e2e_promotion.py (registration from finished runs only
+# and the promotion law) and e2e_apply.py (norn_models.apply_model: predictions
+# written and linked to their version, refused before any write when a contract
+# fails or the version is not in production). The approval gate needs a hosted cell's roles
 # (crates/norn-cell-do/tests/ml_approval.rs).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +33,7 @@ export PYTHONPATH="$work/client:$sdk/regression"
 project="$work/models"
 rm -rf "$project"
 bun "$repo/tools/norn-ts/src/cli.ts" init "$project" --no-install --template empty > /dev/null
-cp "$repo/registry/packs/tracking/tracking.ts" "$repo/registry/packs/ml/ml.ts" "$project/src/"
+cp "$repo/registry/packs/tracking/tracking.ts" "$repo/registry/packs/ml/ml.ts" "$here/demo/sales.ts" "$project/src/"
 (cd "$project" && exec bun "$repo/tools/norn-ts/src/cli.ts" dev --json --port 0 > "$work/dev.ndjson" 2> "$work/dev.err") &
 dev=$!
 trap 'kill "$dev" 2>/dev/null || true; wait "$dev" 2>/dev/null || true' EXIT
@@ -41,3 +44,4 @@ for _ in $(seq 1 240); do
 done
 grep -q '"event":"ready"' "$work/dev.ndjson" || { cat "$work/dev.ndjson" "$work/dev.err"; exit 1; }
 "$work/env/bin/python" "$here/e2e_promotion.py" "$project"
+"$work/env/bin/python" "$here/e2e_apply.py" "$project"
