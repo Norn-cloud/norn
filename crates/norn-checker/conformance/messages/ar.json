@@ -1611,7 +1611,7 @@
       "review": "needs_review"
     },
     "metric.validation.partial_path": {
-      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "message": "مُدخلات العملة والسعر تتطلب مسارات كاملة.",
       "review": "needs_review"
     },
     "metric.validation.ratio_aggregation": {
@@ -1644,6 +1644,10 @@
     },
     "model.admission.feature_kind": {
       "message": "خاصية سمة النموذج أو هدفه من نوع لا يستطيع النموذج قراءته",
+      "review": "needs_review"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "نوع تنبؤات النموذج لا يحمل مُخرجاته ولا الموضوع ولا إصدار النموذج",
       "review": "needs_review"
     },
     "model.admission.unknown_feature": {
