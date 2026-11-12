@@ -341,7 +341,7 @@
   },
   {
     "code": "cli.setup.host_unavailable",
-    "fix": "Run `cargo build --release -p norn-cell-do --bin norn-dev-host` in the Norn repository: for a released CLI, in a clone checked out at the commit `norn --version` prints; in a checkout, in that checkout. Then set NORN_DEV_HOST_BIN to the binary's absolute path, for example `export NORN_DEV_HOST_BIN=\"$PWD/target/release/norn-dev-host\"` from the repository root."
+    "fix": "Run `cargo build --release -p norn-cell-do --bin norn-dev-host` in the Norn repository: for a released CLI, in a clone checked out at the commit `norn --version` prints; in a checkout, in that checkout. Then set NORN_DEV_HOST_BIN to the binary's absolute path, for example `export NORN_DEV_HOST_BIN=\"${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host\"` from the repository root."
   },
   {
     "code": "cli.setup.unpublished",

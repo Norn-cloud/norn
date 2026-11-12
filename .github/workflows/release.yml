@@ -145,7 +145,8 @@ jobs:
         run: |
           set -euo pipefail
           for channel in tarball registry; do
-            inputs=(--channel "$channel" --toolchain 1.98.0)
+            # The same inputs scripts/release/build.sh builds with.
+            inputs=(--channel "$channel" --toolchain 1.98.0 --platforms linux-x64,linux-arm64)
             if [ "$channel" = tarball ]; then inputs+=(--base-url "https://github.com/$REPOSITORY/releases/download/v$VERSION"); fi
             # The release's facts come from this run's own inputs; the artifact's manifest is checked against them.
             python3 scripts/release/assemble.py verify --commit "$GITHUB_SHA" "${inputs[@]}" --out "dist/$channel"

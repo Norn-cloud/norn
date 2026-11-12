@@ -17,6 +17,8 @@
 set -euo pipefail
 
 TOOLCHAIN=1.98.0
+# The prebuilt hosts every release ships: assemble.py takes them as an input, never from the files.
+PLATFORMS=linux-x64,linux-arm64
 out=${1:?usage: build.sh OUT BASE_URL}
 base_url=${2:?usage: build.sh OUT BASE_URL}
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -44,7 +46,7 @@ for channel in tarball registry; do
   python3 scripts/release/assemble.py build --commit "$commit" --channel "$channel" \
     $([[ $channel == tarball ]] && printf -- '--base-url %s' "$base_url") \
     --wasm "$work/wasm" --hosts "$work/hosts" --third-party "$work/THIRD-PARTY-LICENSES" \
-    --toolchain "$TOOLCHAIN" --out "$out/$channel"
+    --toolchain "$TOOLCHAIN" --platforms "$PLATFORMS" --out "$out/$channel"
 done
 # The compile must not have touched a tracked file.
 [[ -z $(git status --porcelain --untracked-files=no) ]] || { echo "build.sh: the build changed tracked files" >&2; git status --short >&2; exit 1; }
