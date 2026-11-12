@@ -70,7 +70,7 @@ assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["it
 # The approval gate (APPROVAL-1): with it installed, a promote parks for an admin or owner to decide.
 definition = json.load(open(sys.argv[2]))
 admitted = http.post("/v1/definitions:admit", params={"orgId": cell.org_id, "environmentId": cell.environment_id}, json=definition)
-assert admitted.status_code == 200, admitted.text
+assert admitted.status_code == 200 and admitted.json()["admitted"], admitted.text
 installed = http.post("/v1/definitions:install", params={"orgId": cell.org_id, "environmentId": cell.environment_id},
                       json={**definition, "signoff": {"restatementSha256": admitted.json()["restatementSha256"]}})
 assert installed.status_code == 200, installed.text
