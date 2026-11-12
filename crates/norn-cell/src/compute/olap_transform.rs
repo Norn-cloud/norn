@@ -16,10 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use duckdb::{Connection, params_from_iter};
 use norn_checker::transform::eval::{EvalError, MemberRef, TransformInput, TransformOutput};
 use norn_checker::transform::{
-    AdmittedJoin, Column, NodeSchema, Projection, ROW_ROOT, Step, TransformPlan, TypedExpression,
-    eval,
+    AdmittedJoin, Column, NodeSchema, Projection, RowArithmetic, RowComparison, RowExpr, Step,
+    TransformPlan, Type, TypedExpression, eval,
 };
-use norn_expr::{RowArithmetic, RowComparison, RowExpr, Type};
 use norn_ir::metric::TimeGrain;
 use norn_ir::{AggregateFn, Decimal, DedupeKeep, JoinKind, RuntimeValue, SortDirection, WindowFn};
 
@@ -163,8 +162,8 @@ fn carried(schema: &NodeSchema, from: &str) -> Result<Vec<String>, CellError> {
 }
 
 fn expression(typed: &TypedExpression, schema: &NodeSchema) -> Result<String, CellError> {
-    let tree = norn_expr::row_expression(typed.expression.source(), ROW_ROOT)
-        .map_err(|_error| refused(UNSUPPORTED_ENGINE))?
+    let tree = typed
+        .row_tree()
         .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
     sql(&tree, schema)
 }
@@ -634,8 +633,8 @@ fn bound(value: Option<&RuntimeValue>) -> Result<Option<String>, CellError> {
 
 fn timestamp_key(text: Option<&str>) -> Result<Option<String>, CellError> {
     text.map(|text| {
-        norn_expr::temporal::timestamp_ordering_key(text)
-            .map_err(|_error| refused("core.compute.stale_input"))
+        norn_checker::transform::instant(text)
+            .ok_or_else(|| refused("core.compute.stale_input"))
             .and_then(|(seconds, nanos)| {
                 i128::from(seconds)
                     .checked_mul(1_000_000_000)
