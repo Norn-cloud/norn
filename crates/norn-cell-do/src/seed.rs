@@ -264,7 +264,8 @@ fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Resul
 mod tests {
     #![allow(clippy::unwrap_used, reason = "seed regression")]
     use super::{
-        DEFINITIONS, SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope, provision_set, seed_rows,
+        DEFINITIONS, INSTALLED_AT, SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope,
+        open_governed, seed_rows,
     };
     use norn_cell::engine::NativeEngine;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model};
@@ -290,12 +291,15 @@ mod tests {
             "the recording carries a label catalog"
         );
         let provisioned = |artifacts: &[ArtifactEnvelope]| {
-            let store = provision_set(
+            // As `provision` does, for a chosen set.
+            let mut store = open_governed(
                 NativeEngine::open_in_memory().unwrap(),
                 &demo_scope(),
                 artifacts,
+                INSTALLED_AT,
             )
             .unwrap();
+            seed_rows(&mut store, &demo_scope()).unwrap();
             let reader = store.read();
             let installed = reader.installed_definitions(None).unwrap().unwrap();
             let seeded = reader
