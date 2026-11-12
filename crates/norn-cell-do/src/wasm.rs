@@ -219,9 +219,8 @@ impl NornCell {
                 millis(now_ms),
             )
         {
-            let (then_token, then_request) = routed
-                .then
-                .map_or((None, None), |(token, planned)| {
+            let (then_token, then_request) =
+                routed.then.map_or((None, None), |(token, planned)| {
                     (Some(token), serde_json::to_string(&planned).ok())
                 });
             return Reply {
@@ -300,9 +299,13 @@ impl NornCell {
     )]
     pub fn resume(&mut self, token: &str, status: u16, body: Vec<u8>, now_ms: f64) -> Reply {
         let response = match self.connect.as_mut() {
-            Some(connect) => {
-                connect.resume(self.tenant.serving_host(), token, status, &body, millis(now_ms))
-            }
+            Some(connect) => connect.resume(
+                self.tenant.serving_host(),
+                token,
+                status,
+                &body,
+                millis(now_ms),
+            ),
             None => server::Response {
                 status: 404,
                 body: String::from("{}"),

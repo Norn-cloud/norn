@@ -32,7 +32,9 @@ use norn_api::definition_routes::authorize;
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_api::scope::ScopeQuery;
-use norn_api::sources::{ClaimError, HttpRequest, Sources, Step, Trigger, UploadRun, report_upload};
+use norn_api::sources::{
+    ClaimError, HttpRequest, Sources, Step, Trigger, UploadRun, report_upload,
+};
 use norn_api::uploads::{self, LoadRequest, S3Config, Store, Table, URL_SECONDS};
 use norn_cell::engine::SqlEngine;
 use serde_json::{Value, json};
@@ -53,7 +55,11 @@ pub struct Routed {
 
 impl Routed {
     fn reply(response: Response) -> Self {
-        Self { response, start_sync: None, then: None }
+        Self {
+            response,
+            start_sync: None,
+            then: None,
+        }
     }
 }
 
@@ -61,14 +67,20 @@ struct Upload {
     store: Store,
     key: String,
     file_name: String,
-    actor: String,
     uri: String,
     completed: Option<(String, u64, bool)>,
 }
 
 enum Waiting {
-    Complete { upload: String },
-    Load { upload: String, request: LoadRequest, actor: String, started_ms: u64 },
+    Complete {
+        upload: String,
+    },
+    Load {
+        upload: String,
+        request: LoadRequest,
+        actor: String,
+        started_ms: u64,
+    },
 }
 
 /// The cell's connections, uploads and in-flight continuations.
@@ -82,7 +94,10 @@ pub struct Connect {
 }
 
 fn json_response(status: u16, body: &Value) -> Response {
-    Response { status, body: body.to_string() }
+    Response {
+        status,
+        body: body.to_string(),
+    }
 }
 
 fn refused(status: u16, code: &str, message: &str) -> Response {
@@ -130,7 +145,10 @@ fn route_of(path: &str) -> Option<Route<'_>> {
 }
 
 fn scope_of(query: &str) -> ScopeQuery {
-    let mut scope = ScopeQuery { org_id: None, environment_id: None };
+    let mut scope = ScopeQuery {
+        org_id: None,
+        environment_id: None,
+    };
     for (key, value) in form_urlencoded::parse(query.as_bytes()) {
         match key.as_ref() {
             "orgId" => scope.org_id = Some(value.into_owned()),
@@ -231,7 +249,13 @@ impl Connect {
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
         let allowed = host.filter(|host| {
             request.method == "POST"
-                && authorize(*host, &scope_of(request.query), actor.as_deref(), Operation::SyncSource(target.clone())).is_ok()
+                && authorize(
+                    *host,
+                    &scope_of(request.query),
+                    actor.as_deref(),
+                    Operation::SyncSource(target.clone()),
+                )
+                .is_ok()
         });
         let (Some(host), Some(actor)) = (allowed, actor) else {
             return Some(Routed::reply(server::outside::<E>(request)));
@@ -243,15 +267,28 @@ impl Connect {
                     start_sync: Some(id.to_owned()),
                     then: None,
                 },
-                Err(ClaimError::Running) => Routed::reply(refused(409, "source.sync_running", "a sync of this connection is running")),
-                Err(ClaimError::Unknown) => Routed::reply(refused(404, "source.unknown", "no such connection")),
+                Err(ClaimError::Running) => Routed::reply(refused(
+                    409,
+                    "source.sync_running",
+                    "a sync of this connection is running",
+                )),
+                Err(ClaimError::Unknown) => {
+                    Routed::reply(refused(404, "source.unknown", "no such connection"))
+                }
             },
-            Route::Begin => Routed::reply(self.begin(host, &actor, request.body, now_ms)),
-            Route::Complete(id) => self.fetch_object(id, now_ms, |upload| Waiting::Complete { upload }),
+            Route::Begin => Routed::reply(self.begin(host, request.body, now_ms)),
+            Route::Complete(id) => {
+                self.fetch_object(id, now_ms, |upload| Waiting::Complete { upload })
+            }
             Route::Load(id) => match serde_json::from_str::<LoadRequest>(request.body) {
                 Ok(load) => {
                     let actor = actor.clone();
-                    self.fetch_object(id, now_ms, |upload| Waiting::Load { upload, request: load, actor, started_ms: now_ms })
+                    self.fetch_object(id, now_ms, |upload| Waiting::Load {
+                        upload,
+                        request: load,
+                        actor,
+                        started_ms: now_ms,
+                    })
                 }
                 Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
             },
@@ -259,7 +296,7 @@ impl Connect {
         })
     }
 
-    fn begin<E: SqlEngine>(&mut self, host: &DevHost<E>, actor: &str, body: &str, now_ms: u64) -> Response {
+    fn begin<E: SqlEngine>(&mut self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
         let begin: Begin = match serde_json::from_str(body) {
             Ok(begin) => begin,
             Err(e) => return refused(400, "upload.invalid_request", &e.to_string()),
@@ -267,7 +304,11 @@ impl Connect {
         // The server picks the bucket by the file's kind; the client never names one.
         let store = Store::for_content_type(&begin.content_type);
         let Some(s3) = self.store(store).cloned() else {
-            return refused(503, "upload.storage_unconfigured", "this server has no storage for this kind of file");
+            return refused(
+                503,
+                "upload.storage_unconfigured",
+                "this server has no storage for this kind of file",
+            );
         };
         if begin.size > uploads::MAX_OBJECT_BYTES {
             return refused(413, "upload.too_large", "uploads are at most 20 MB");
@@ -275,13 +316,33 @@ impl Connect {
         let name: String = begin
             .file_name
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .take(100)
             .collect();
         let prefix = match begin.prefix.as_deref() {
             None => format!("uploads/{}", host.scope().key()),
-            Some(p) if p.starts_with("synthetic/") && p.len() <= 100 && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_')) && !p.contains("//") => p.trim_end_matches('/').to_owned(),
-            Some(_) => return refused(400, "upload.invalid_prefix", "a prefix is synthetic/… of letters, digits, '-', '_' and '/'"),
+            Some(p)
+                if p.starts_with("synthetic/")
+                    && p.len() <= 100
+                    && p.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'))
+                    && !p.contains("//") =>
+            {
+                p.trim_end_matches('/').to_owned()
+            }
+            Some(_) => {
+                return refused(
+                    400,
+                    "upload.invalid_prefix",
+                    "a prefix is synthetic/… of letters, digits, '-', '_' and '/'",
+                );
+            }
         };
         let id = self.token(now_ms);
         // Seeded synthetic objects keep their names, so their URIs are known in
@@ -293,23 +354,37 @@ impl Connect {
         };
         let put_url = s3.presign("PUT", &key, now_ms, URL_SECONDS);
         let uri = s3.uri(&key);
-        self.uploads.insert(id.clone(), Upload {
-            store,
-            key,
-            file_name: begin.file_name,
-            actor: actor.to_owned(),
-            uri: uri.clone(),
-            completed: None,
-        });
-        json_response(200, &json!({
-            "uploadId": id, "uri": uri, "putUrl": put_url,
-            "putHeaders": {"Content-Type": begin.content_type},
-            "expiresAt": norn_api::sources::rfc3339(now_ms.saturating_add(u64::from(URL_SECONDS).saturating_mul(1000))),
-        }))
+        self.uploads.insert(
+            id.clone(),
+            Upload {
+                store,
+                key,
+                file_name: begin.file_name,
+                uri: uri.clone(),
+                completed: None,
+            },
+        );
+        json_response(
+            200,
+            &json!({
+                "uploadId": id, "uri": uri, "putUrl": put_url,
+                "putHeaders": {"Content-Type": begin.content_type},
+                "expiresAt": norn_api::sources::rfc3339(now_ms.saturating_add(u64::from(URL_SECONDS).saturating_mul(1000))),
+            }),
+        )
     }
 
-    fn fetch_object(&mut self, id: &str, now_ms: u64, waiting: impl FnOnce(String) -> Waiting) -> Routed {
-        let Some((s3, upload)) = self.uploads.get(id).and_then(|u| Some((self.store(u.store)?, u))) else {
+    fn fetch_object(
+        &mut self,
+        id: &str,
+        now_ms: u64,
+        waiting: impl FnOnce(String) -> Waiting,
+    ) -> Routed {
+        let Some((s3, upload)) = self
+            .uploads
+            .get(id)
+            .and_then(|u| Some((self.store(u.store)?, u)))
+        else {
             return Routed::reply(refused(404, "upload.not_found", "no such upload"));
         };
         let url = s3.presign("GET", &upload.key, now_ms, URL_SECONDS);
@@ -318,7 +393,15 @@ impl Connect {
         Routed {
             response: refused(500, "host.error", "the host did not complete the read"),
             start_sync: None,
-            then: Some((token, HttpRequest { method: "GET", url, headers: Vec::new(), body: None })),
+            then: Some((
+                token,
+                HttpRequest {
+                    method: "GET",
+                    url,
+                    headers: Vec::new(),
+                    body: None,
+                },
+            )),
         }
     }
 
@@ -328,26 +411,35 @@ impl Connect {
         let not_found = || refused(404, "upload.not_found", "no such upload");
         let request: Value = serde_json::from_str(body).unwrap_or_default();
         let found = if let Some(id) = request.get("uploadId").and_then(Value::as_str) {
-            self.uploads.get(id).and_then(|u| Some((self.store(u.store)?, u.key.clone())))
+            self.uploads
+                .get(id)
+                .and_then(|u| Some((self.store(u.store)?, u.key.clone())))
         } else {
             let own = format!("uploads/{}/", host.scope().key());
-            let uri = request.get("uri").and_then(Value::as_str).unwrap_or_default();
+            let uri = request
+                .get("uri")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             [Store::Uploads, Store::Documents]
                 .into_iter()
                 .filter_map(|store| self.store(store))
                 .find_map(|s3| {
                     let key = uri.strip_prefix(&format!("s3://{}/", s3.bucket))?;
-                    ((key.starts_with(&own) || key.starts_with("synthetic/")) && !key.contains(".."))
-                        .then(|| (s3, key.to_owned()))
+                    ((key.starts_with(&own) || key.starts_with("synthetic/"))
+                        && !key.contains(".."))
+                    .then(|| (s3, key.to_owned()))
                 })
         };
         let Some((s3, key)) = found else {
             return not_found();
         };
-        json_response(200, &json!({
-            "getUrl": s3.presign("GET", &key, now_ms, 300),
-            "expiresAt": norn_api::sources::rfc3339(now_ms.saturating_add(300_000)),
-        }))
+        json_response(
+            200,
+            &json!({
+                "getUrl": s3.presign("GET", &key, now_ms, 300),
+                "expiresAt": norn_api::sources::rfc3339(now_ms.saturating_add(300_000)),
+            }),
+        )
     }
 
     /// Continue the request whose fetch `token` the host just performed.
@@ -363,7 +455,11 @@ impl Connect {
             return refused(404, "upload.not_found", "no such continuation");
         };
         if status != 200 {
-            return refused(502, "upload.read_failed", &format!("the storage answered HTTP {status}"));
+            return refused(
+                502,
+                "upload.read_failed",
+                &format!("the storage answered HTTP {status}"),
+            );
         }
         if u64::try_from(body.len()).unwrap_or(u64::MAX) > uploads::MAX_OBJECT_BYTES {
             return refused(413, "upload.too_large", "uploads are at most 20 MB");
@@ -371,33 +467,55 @@ impl Connect {
         let sha256 = uploads::sha256_hex(body);
         let size = u64::try_from(body.len()).unwrap_or(u64::MAX);
         match waiting {
-            Waiting::Complete { upload } => self.complete(&upload, body, sha256, size),
-            Waiting::Load { upload, request, actor, started_ms } => {
-                self.load(host, &upload, &request, &actor, body, &sha256, (started_ms, now_ms))
-            }
+            Waiting::Complete { upload } => self.complete(&upload, body, &sha256, size),
+            Waiting::Load {
+                upload,
+                request,
+                actor,
+                started_ms,
+            } => self.load(
+                host,
+                &upload,
+                &request,
+                &actor,
+                body,
+                &sha256,
+                (started_ms, now_ms),
+            ),
         }
     }
 
-    fn complete(&mut self, id: &str, body: &[u8], sha256: String, size: u64) -> Response {
+    fn complete(&mut self, id: &str, body: &[u8], sha256: &str, size: u64) -> Response {
         let Some(upload) = self.uploads.get_mut(id) else {
             return refused(404, "upload.not_found", "no such upload");
         };
         let table = std::str::from_utf8(body).ok().map(uploads::parse_csv);
         let csv = matches!(table, Some(Ok(_)));
-        upload.completed = Some((sha256.clone(), size, csv));
-        let mut document = json!({"uploadId": id, "uri": upload.uri, "sha256": sha256, "size": size});
+        upload.completed = Some((sha256.to_owned(), size, csv));
+        let mut document = serde_json::Map::new();
+        document.insert("uploadId".into(), json!(id));
+        document.insert("uri".into(), json!(upload.uri));
+        document.insert("sha256".into(), json!(sha256));
+        document.insert("size".into(), json!(size));
         match table {
             Some(Ok(Table { columns, rows })) => {
-                document["rows"] = json!(rows.len());
-                document["columns"] = json!(columns);
+                document.insert("rows".into(), json!(rows.len()));
+                document.insert("columns".into(), json!(columns));
             }
-            Some(Err(reason)) => document["csvError"] = json!(reason),
-            None => document["csvError"] = json!("the object is not UTF-8 text"),
+            Some(Err(reason)) => {
+                document.insert("csvError".into(), json!(reason));
+            }
+            None => {
+                document.insert("csvError".into(), json!("the object is not UTF-8 text"));
+            }
         }
-        json_response(200, &document)
+        json_response(200, &Value::Object(document))
     }
 
-    #[allow(clippy::too_many_arguments, reason = "one continuation's whole context")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one continuation's whole context"
+    )]
     fn load<E: SqlEngine>(
         &mut self,
         host: &DevHost<E>,
@@ -414,16 +532,26 @@ impl Connect {
         // UPLOAD-DIGEST-1: the object read now is the one profiled.
         match &upload.completed {
             Some((recorded, _, true)) if recorded == sha256 => {}
-            Some((_, _, true)) => return refused(409, "upload.changed", "the object changed since it was completed"),
+            Some((_, _, true)) => {
+                return refused(
+                    409,
+                    "upload.changed",
+                    "the object changed since it was completed",
+                );
+            }
             Some((_, _, false)) => return refused(422, "upload.not_csv", "only CSV uploads load"),
             None => return refused(409, "upload.not_completed", "complete the upload first"),
         }
-        let table = match std::str::from_utf8(body).map_err(|e| e.to_string()).and_then(uploads::parse_csv) {
+        let table = match std::str::from_utf8(body)
+            .map_err(|e| e.to_string())
+            .and_then(uploads::parse_csv)
+        {
             Ok(table) => table,
             Err(reason) => return refused(422, "upload.not_csv", &reason),
         };
         let observed_at = norn_api::sources::rfc3339(now_ms);
-        let generated = match uploads::generate(&table, request, &upload.uri, sha256, &observed_at) {
+        let generated = match uploads::generate(&table, request, &upload.uri, sha256, &observed_at)
+        {
             Ok(generated) => generated,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
@@ -431,29 +559,39 @@ impl Connect {
             Ok(version) => version,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
-        let loaded = match uploads::load_rows(host, &generated, &table, &upload.uri, sha256, now_ms) {
+        let loaded = match uploads::load_rows(host, &generated, &table, &upload.uri, sha256, now_ms)
+        {
             Ok(loaded) => loaded,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
         let connection = format!("upload.{}", request.type_name.to_ascii_lowercase());
-        report_upload(host, &UploadRun {
-            id: &connection,
-            label: &upload.file_name,
-            uri: &upload.uri,
-            sha256,
-            mapping: &generated.mapping,
-            actor,
-            started_ms,
-            ended_ms: now_ms,
-            counts: (loaded.rows_read, loaded.rows_landed, loaded.rows_quarantined),
-            reasons: loaded.quarantine_reasons.clone(),
-        });
-        let _owner = &upload.actor;
-        json_response(200, &json!({
-            "connectionId": connection, "objectType": generated.object_type, "definitionsVersion": version,
-            "rowsRead": loaded.rows_read, "rowsLanded": loaded.rows_landed,
-            "rowsQuarantined": loaded.rows_quarantined, "quarantineReasons": loaded.quarantine_reasons,
-        }))
+        report_upload(
+            host,
+            &UploadRun {
+                id: &connection,
+                label: &upload.file_name,
+                uri: &upload.uri,
+                sha256,
+                mapping: &generated.mapping,
+                actor,
+                started_ms,
+                ended_ms: now_ms,
+                counts: (
+                    loaded.rows_read,
+                    loaded.rows_landed,
+                    loaded.rows_quarantined,
+                ),
+                reasons: loaded.quarantine_reasons.clone(),
+            },
+        );
+        json_response(
+            200,
+            &json!({
+                "connectionId": connection, "objectType": generated.object_type, "definitionsVersion": version,
+                "rowsRead": loaded.rows_read, "rowsLanded": loaded.rows_landed,
+                "rowsQuarantined": loaded.rows_quarantined, "quarantineReasons": loaded.quarantine_reasons,
+            }),
+        )
     }
 }
 
@@ -464,12 +602,27 @@ mod tests {
 
     #[test]
     fn only_the_declared_routes_are_this_modules() {
-        assert!(matches!(route_of("/v1/sources/erpnext.sandbox:sync"), Some(Route::Sync("erpnext.sandbox"))));
+        assert!(matches!(
+            route_of("/v1/sources/erpnext.sandbox:sync"),
+            Some(Route::Sync("erpnext.sandbox"))
+        ));
         assert!(matches!(route_of("/v1/uploads:begin"), Some(Route::Begin)));
         assert!(matches!(route_of("/v1/uploads:read"), Some(Route::Read)));
-        assert!(matches!(route_of("/v1/uploads/abc:complete"), Some(Route::Complete("abc"))));
-        assert!(matches!(route_of("/v1/uploads/abc:load"), Some(Route::Load("abc"))));
-        for other in ["/v1/sources/a/b:sync", "/v1/sources/:sync", "/v1/uploads/a/b:load", "/v1/uploads/abc:delete", "/v1/objects/x"] {
+        assert!(matches!(
+            route_of("/v1/uploads/abc:complete"),
+            Some(Route::Complete("abc"))
+        ));
+        assert!(matches!(
+            route_of("/v1/uploads/abc:load"),
+            Some(Route::Load("abc"))
+        ));
+        for other in [
+            "/v1/sources/a/b:sync",
+            "/v1/sources/:sync",
+            "/v1/uploads/a/b:load",
+            "/v1/uploads/abc:delete",
+            "/v1/objects/x",
+        ] {
             assert!(route_of(other).is_none(), "{other}");
         }
         let scope = scope_of("orgId=org_a&environmentId=prod&x=1");
