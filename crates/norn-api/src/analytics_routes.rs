@@ -567,3 +567,150 @@ pub fn load_dataset<E: SqlEngine>(
         millis: loaded.millis,
     })
 }
+
+/// HOST-READ-5 on the engine (D102): the profile of every row of
+/// `object_type` the caller may read, in the exact profile's shape and
+/// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
+/// Tukey far-out values), computed by the tenant's engine over the same
+/// snapshot an export reads. A caller without Values on the type sees the
+/// rows counted as withheld and no value statistic.
+///
+/// # Errors
+/// A denied gate (one opaque 403), an unknown type (404), or an unreachable engine.
+pub fn profile_objects<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+    transport: &dyn Transport,
+) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
+    use crate::object_profile::{
+        NornBin, NornHistogram, NornObjectProfile, NornOutlier, NornOutliers,
+        NornPropertyProfile, NornQuantile, kind_of,
+    };
+    use norn_cell::analytics::{
+        PROFILE_OUTLIER_K, PROFILE_QUANTILES, ProfileRequest, ProfileResponse, Value, bin_ranks,
+        nearest_rank, runtime_value,
+    };
+    let values = uniform_gate(host, scope, actor, object_type, access)?;
+    let guard = host.cell()?;
+    let store = guard.store();
+    let declared = store
+        .model()
+        .effective_property_types(object_type)
+        .map_err(|_unknown| crate::object_routes::not_found())?;
+    let table = store.analytics_table(object_type).map_err(engine_failure)?;
+    let tenant = TenantId::of_scope(&host.scope().key());
+    let (source, _snapshot) = store
+        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
+        .map_err(engine_failure)?;
+    let call = EngineCall::new(
+        "profile",
+        &ProfileRequest {
+            tenant: tenant.clone(),
+            source: source.clone(),
+            columns: table.columns.iter().map(|c| c.id.clone()).collect(),
+        },
+    )
+    .map_err(engine_failure)?;
+    let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
+        .map_err(engine_failure)?;
+    if answer.status != 200 {
+        return Err(engine_failure(refused(&answer.body)));
+    }
+    let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
+    let value = |v: &Value| runtime_value(v).map_err(Refusal::host);
+    let mut properties = Vec::with_capacity(declared.len());
+    for (property, declared_type) in &declared {
+        let kind = kind_of(declared_type.as_ref());
+        let column = profile.columns.iter().find(|c| &c.column == property).filter(|_| values);
+        let mut out = NornPropertyProfile {
+            property: property.clone(),
+            kind: kind.to_owned(),
+            count: column.map_or(0, |c| c.count),
+            nulls: column.map_or(if values { profile.rows } else { 0 }, |c| c.nulls),
+            distinct: column.map_or(0, |c| c.distinct),
+            min: None,
+            max: None,
+            quantiles: Vec::new(),
+            histogram: None,
+            outliers: None,
+        };
+        if let Some(column) = column.filter(|c| c.count > 0 && (kind == "numeric" || kind == "temporal")) {
+            let n = column.count;
+            let at = |rank: u64| column.ranks.get(&rank).map(value).transpose();
+            out.min = at(1)?;
+            out.max = at(n)?;
+            for percent in PROFILE_QUANTILES {
+                if let Some(v) = at(nearest_rank(percent, n))? {
+                    out.quantiles.push(NornQuantile { percent, value: v });
+                }
+            }
+            if kind == "numeric" {
+                let mut bins = Vec::new();
+                for (first, last) in bin_ranks(n) {
+                    if let (Some(lower), Some(upper)) = (at(first)?, at(last)?) {
+                        bins.push(NornBin {
+                            lower,
+                            upper,
+                            count: last.saturating_sub(first).saturating_add(1),
+                        });
+                    }
+                }
+                out.histogram = Some(NornHistogram {
+                    kind: "equal_population".into(),
+                    bins,
+                });
+                if let (Some(found), Some(q1), Some(q3)) = (
+                    &column.outliers,
+                    at(nearest_rank(25, n))?,
+                    at(nearest_rank(75, n))?,
+                ) {
+                    let number = |text: &str| {
+                        norn_ir::Decimal::parse(text)
+                            .map(norn_ir::RuntimeValue::Number)
+                            .map_err(Refusal::host)
+                    };
+                    out.outliers = Some(NornOutliers {
+                        method: "tukey_far_out".into(),
+                        k: PROFILE_OUTLIER_K.to_string(),
+                        q1,
+                        q3,
+                        lower_fence: number(&found.lower)?,
+                        upper_fence: number(&found.upper)?,
+                        count: found.count,
+                        examples: found
+                            .examples
+                            .iter()
+                            .map(|(id, v)| Ok(NornOutlier { id: id.clone(), value: number(v)? }))
+                            .collect::<Result<_, Refusal>>()?,
+                    });
+                }
+            } else if let Some((kind, labels)) = &column.labels {
+                out.histogram = Some(NornHistogram {
+                    kind: kind.clone(),
+                    bins: labels
+                        .iter()
+                        .map(|(label, rows)| NornBin {
+                            lower: norn_ir::RuntimeValue::String(label.clone()),
+                            upper: norn_ir::RuntimeValue::String(label.clone()),
+                            count: *rows,
+                        })
+                        .collect(),
+                });
+            }
+        }
+        properties.push(out);
+    }
+    Ok(NornObjectProfile {
+        object_type: object_type.to_owned(),
+        rows: if values { profile.rows } else { 0 },
+        withheld_rows: if values { 0 } else { profile.rows },
+        quarantined_rows: profile.quarantined,
+        approximate: false,
+        scan_limit: profile.rows,
+        engine: "duckdb".into(),
+        properties,
+    })
+}

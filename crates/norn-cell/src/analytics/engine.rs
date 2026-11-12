@@ -361,7 +361,12 @@ impl Engine {
                 .iter()
                 .map(|id| profile_column(conn, &scope, id, rows))
                 .collect::<Outcome<_>>()?;
-            Ok(ProfileResponse { rows, columns })
+            let quarantined = u64::try_from(scope.excluded_present(conn)?.len()).unwrap_or(u64::MAX);
+            Ok(ProfileResponse {
+                rows,
+                quarantined,
+                columns,
+            })
         })
     }
 
@@ -1578,81 +1583,163 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
     let column = scope.column(id)?.clone();
     let c = ident(id);
     let temporal = matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date);
-    let (t, n) = if temporal {
-        (derived(id, "t"), derived(id, "n"))
-    } else {
-        (
-            "CAST(NULL AS BIGINT)".to_owned(),
-            "CAST(NULL AS INTEGER)".to_owned(),
-        )
-    };
-    let (order, distinct_of) = if temporal {
-        (format!("{t}, {n}"), format!("({t}, {n})"))
-    } else {
-        (c.clone(), c.clone())
-    };
+    let numeric = matches!(column.kind, ColumnKind::Integer | ColumnKind::Decimal { .. });
     let counts = Frag::fmt(
-        &format!(
-            "SELECT count({c}), count(DISTINCT {distinct_of}) FROM {} WHERE {{}}",
-            scope.table
-        ),
+        &format!("SELECT count({c}), count(DISTINCT {c}) FROM {} WHERE {{}}", scope.table),
         &[&scope.population],
     );
     let mut statement = db(conn.prepare(&counts.text))?;
-    let (count, distinct): (u64, u64) = db(statement
-        .query_row(params_from_iter(counts.params), |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        }))?;
-    let ordered = matches!(
-        column.kind,
-        ColumnKind::Integer | ColumnKind::Decimal { .. } | ColumnKind::Timestamp | ColumnKind::Date
-    );
-    let mut quantiles = Vec::new();
-    if ordered && count > 0 {
-        // Nearest rank: the smallest value with at least p% of values at or below it.
-        let ranks: Vec<(u32, u64)> = [0u32, 25, 50, 75, 100]
-            .into_iter()
-            .map(|p| (p, u64::from(p).saturating_mul(count).div_ceil(100).max(1)))
-            .collect();
+    let (count, distinct): (u64, u64) = db(statement.query_row(params_from_iter(counts.params), |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    }))?;
+    let mut ranks = BTreeMap::new();
+    if (numeric || temporal) && count > 0 {
         let wanted = Frag::join(
-            &ranks
-                .iter()
-                .map(|(_, rank)| Frag::bind("?", Sql::UBigInt(*rank)))
+            &super::profile_ranks(count)
+                .into_iter()
+                .map(|rank| Frag::bind("?", Sql::UBigInt(rank)))
                 .collect::<Vec<_>>(),
             ", ",
         );
+        let (t, n) = if temporal {
+            (derived(id, "t"), derived(id, "n"))
+        } else {
+            ("CAST(NULL AS BIGINT)".to_owned(), "CAST(NULL AS INTEGER)".to_owned())
+        };
+        // Temporal values are ordered by their text, as the exact profile orders them.
         let sql = Frag::fmt(
             &format!(
-                "SELECT rn, CAST(v AS VARCHAR), t, n FROM (SELECT {c} AS v, {t} AS t, {n} AS n, row_number() OVER (ORDER BY {order}) AS rn FROM {} WHERE {{}} AND {c} IS NOT NULL) AS x WHERE rn IN ({{}})",
+                "SELECT rn, CAST(v AS VARCHAR), t, n FROM (SELECT {c} AS v, {t} AS t, {n} AS n, row_number() OVER (ORDER BY {c}) AS rn FROM {} WHERE {{}} AND {c} IS NOT NULL) AS x WHERE rn IN ({{}})",
                 scope.table
             ),
             &[&scope.population, &wanted],
         );
         let mut statement = db(conn.prepare(&sql.text))?;
-        let found: BTreeMap<u64, Option<Value>> =
-            db(db(statement.query_map(params_from_iter(sql.params), |row| {
-                let rank: u64 = row.get(0)?;
-                Ok((
-                    rank,
-                    present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?),
-                ))
-            }))?
-            .collect::<Result<_, _>>())?;
-        for (percent, rank) in ranks {
-            if let Some(Some(value)) = found.get(&rank) {
-                quantiles.push((percent, value.clone()));
-            }
-        }
+        let found: Vec<(u64, Option<Value>)> = db(db(statement.query_map(params_from_iter(sql.params), |row| {
+            Ok((row.get::<_, u64>(0)?, present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?)))
+        }))?
+        .collect::<Result<_, _>>())?;
+        ranks.extend(found.into_iter().filter_map(|(rank, value)| value.map(|v| (rank, v))));
     }
-    let min = quantiles.first().map(|(_, v)| v.clone());
-    let max = quantiles.last().map(|(_, v)| v.clone());
+    let labels = if temporal && count > 0 {
+        Some(temporal_labels(conn, scope, &c)?)
+    } else {
+        None
+    };
+    let outliers = match column.kind {
+        ColumnKind::Integer if count > 0 => outliers(conn, scope, &c, 0, &ranks, count)?,
+        ColumnKind::Decimal { scale } if count > 0 => outliers(conn, scope, &c, scale, &ranks, count)?,
+        ColumnKind::Integer
+        | ColumnKind::Decimal { .. }
+        | ColumnKind::Text
+        | ColumnKind::Boolean
+        | ColumnKind::Timestamp
+        | ColumnKind::Date
+        | ColumnKind::Opaque => None,
+    };
     Ok(ColumnProfile {
         column: id.to_owned(),
         count,
         nulls: rows.saturating_sub(count),
         distinct,
-        min,
-        max,
-        quantiles,
+        ranks,
+        labels,
+        outliers,
     })
+}
+
+/// Day labels (the text's first 10 characters) when there are at most
+/// [`super::PROFILE_DAY_BINS`], else month labels (the first 7).
+fn temporal_labels(conn: &Connection, scope: &Scope, c: &str) -> Outcome<(String, Vec<(String, u64)>)> {
+    let read = |width: u32| -> Outcome<Vec<(String, u64)>> {
+        let sql = Frag::fmt(
+            &format!(
+                "SELECT left({c}, {width}) AS label, count(*) FROM {} WHERE {{}} AND {c} IS NOT NULL GROUP BY label ORDER BY label",
+                scope.table
+            ),
+            &[&scope.population],
+        );
+        let mut statement = db(conn.prepare(&sql.text))?;
+        let rows = db(statement.query_map(params_from_iter(sql.params), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+        }))?;
+        db(rows.collect())
+    };
+    let days = read(10)?;
+    if days.len() <= super::PROFILE_DAY_BINS {
+        Ok(("day".to_owned(), days))
+    } else {
+        Ok(("month".to_owned(), read(7)?))
+    }
+}
+
+/// Tukey's far-out values: fences from the nearest-rank quartiles in exact
+/// decimal arithmetic; none when a fence cannot be held exactly.
+fn outliers(
+    conn: &Connection,
+    scope: &Scope,
+    c: &str,
+    scale: u32,
+    ranks: &BTreeMap<u64, Value>,
+    count: u64,
+) -> Outcome<Option<super::OutlierSummary>> {
+    let quartile = |percent| match ranks.get(&super::nearest_rank(percent, count)) {
+        Some(Value::Number(text)) => norn_ir::Decimal::parse(text).ok(),
+        _ => None,
+    };
+    let (Some(q1), Some(q3)) = (quartile(25), quartile(75)) else {
+        return Ok(None);
+    };
+    let fences = q3.checked_sub(q1).and_then(|iqr| {
+        let span = (1..super::PROFILE_OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
+        Some((q1.checked_sub(span)?, q3.checked_add(span)?))
+    });
+    let Some((lower, upper)) = fences else {
+        return Ok(None);
+    };
+    let (lower, upper) = (lower.canonical(), upper.canonical());
+    // Fences of declared-scale quartiles keep that scale; wider than the
+    // column's storage they cannot be compared exactly, so none is reported.
+    if [&lower, &upper].iter().any(|fence| norn_ir::Decimal::parse(fence).map_or(true, |d| d.scale() > scale)) {
+        return Ok(None);
+    }
+    let typed = format!("CAST(? AS DECIMAL(38,{scale}))");
+    let fence = |text: &String| Frag::bind(&typed, Sql::Text(text.clone()));
+    let bounds = |sql: &str| Frag::fmt(sql, &[&scope.population, &fence(&lower), &fence(&upper)]);
+    let total = query_u64(
+        conn,
+        &bounds(&format!(
+            "SELECT count(*) FROM {} WHERE {{}} AND ({c} < {{}} OR {c} > {{}})",
+            scope.table
+        )),
+    )?;
+    let examples_sql = Frag::fmt(
+        &format!(
+            "SELECT {}, CAST({c} AS VARCHAR) FROM {} WHERE {{}} AND ({c} < {{}} OR {c} > {{}}) ORDER BY CASE WHEN {c} < {{}} THEN {{}} - {c} ELSE {c} - {{}} END DESC, {} LIMIT {}",
+            ident(":id"),
+            scope.table,
+            ident(":id"),
+            super::PROFILE_OUTLIER_EXAMPLES
+        ),
+        &[
+            &scope.population,
+            &fence(&lower),
+            &fence(&upper),
+            &fence(&lower),
+            &fence(&lower),
+            &fence(&upper),
+        ],
+    );
+    let mut statement = db(conn.prepare(&examples_sql.text))?;
+    let examples: Vec<(String, String)> = db(db(statement.query_map(params_from_iter(examples_sql.params), |row| {
+        let value: String = row.get(1)?;
+        Ok((row.get::<_, String>(0)?, norn_ir::Decimal::parse(&value).map_or(value, |d| d.canonical())))
+    }))?
+    .collect::<Result<_, _>>())?;
+    Ok(Some(super::OutlierSummary {
+        lower,
+        upper,
+        count: total,
+        examples,
+    }))
 }

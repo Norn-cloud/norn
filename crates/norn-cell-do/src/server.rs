@@ -1131,17 +1131,42 @@ pub fn analytics<E: SqlEngine>(
         now,
         body,
     } = *request;
-    let export = path
-        .strip_prefix("/v1/objects/")
-        .and_then(|rest| rest.strip_suffix(":export"))
-        .filter(|kind| !kind.is_empty() && !kind.contains('/'));
-    if export.is_none() && path != "/v1/datasets:load" {
+    let leaf = |suffix: &str| {
+        path.strip_prefix("/v1/objects/")
+            .and_then(|rest| rest.strip_suffix(suffix))
+            .filter(|kind| !kind.is_empty() && !kind.contains('/'))
+    };
+    let export = leaf(":export");
+    let profile = leaf(":profile");
+    if export.is_none() && profile.is_none() && path != "/v1/datasets:load" {
         return None;
     }
+    let decode = |kind: &str| {
+        percent_encoding::percent_decode_str(kind)
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))
+    };
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
-    let result = match (method, export, uploads) {
+    let result = match (method, export.or(profile), uploads) {
+        ("GET", Some(kind), _) if profile.is_some() => parse(query, &["orgId", "environmentId"])
+            .and_then(|fields| {
+                let scope = ScopeQuery {
+                    org_id: fields.get("orgId").cloned(),
+                    environment_id: fields.get("environmentId").cloned(),
+                };
+                norn_api::analytics_routes::profile_objects(
+                    host,
+                    &scope,
+                    actor,
+                    &decode(kind)?,
+                    &CellObjectAccess,
+                    transport,
+                )
+            })
+            .and_then(|document| document_json(&document)),
         ("GET", Some(kind), _) => parse(query, &["orgId", "environmentId", "columns", "format"])
             .and_then(|mut fields| {
                 let query = norn_api::analytics_routes::ExportQuery {
@@ -1150,14 +1175,11 @@ pub fn analytics<E: SqlEngine>(
                     columns: fields.remove("columns").unwrap_or_default(),
                     format: fields.remove("format"),
                 };
-                let kind = percent_encoding::percent_decode_str(kind)
-                    .decode_utf8()
-                    .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))?;
                 norn_api::analytics_routes::export_objects(
                     host,
                     &query,
                     actor,
-                    &kind,
+                    &decode(kind)?,
                     &CellObjectAccess,
                     transport,
                 )

@@ -549,8 +549,66 @@ pub struct ProfileRequest {
     pub columns: Vec<String>,
 }
 
-/// One column's profile over the source's rows: counts, distinct values and,
-/// for numeric and temporal columns, extremes and nearest-rank quantiles.
+/// The percentiles a profile reports, by nearest rank.
+pub const PROFILE_QUANTILES: [u32; 5] = [0, 25, 50, 75, 100];
+/// Equal-population bins of a numeric histogram.
+pub const PROFILE_BINS: u64 = 10;
+/// A temporal histogram counts per day up to this many days, else per month.
+pub const PROFILE_DAY_BINS: usize = 62;
+/// Outliers lie more than this many interquartile ranges outside the quartiles.
+pub const PROFILE_OUTLIER_K: u8 = 3;
+/// Most outlier rows a profile names.
+pub const PROFILE_OUTLIER_EXAMPLES: u64 = 20;
+
+/// The 1-based rank of nearest-rank `percent` among `n` sorted values.
+#[must_use]
+pub fn nearest_rank(percent: u32, n: u64) -> u64 {
+    u64::from(percent).saturating_mul(n).div_ceil(100).max(1)
+}
+
+/// The `[first, last]` 1-based ranks of each non-empty equal-population bin
+/// of `n` sorted values.
+#[must_use]
+pub fn bin_ranks(n: u64) -> Vec<(u64, u64)> {
+    (0..PROFILE_BINS)
+        .filter_map(|bin| {
+            let start = bin.saturating_mul(n) / PROFILE_BINS;
+            let end = bin.saturating_add(1).saturating_mul(n) / PROFILE_BINS;
+            (end > start).then(|| (start.saturating_add(1), end))
+        })
+        .collect()
+}
+
+/// Every rank a profile of `n` sorted values reads.
+#[must_use]
+pub fn profile_ranks(n: u64) -> std::collections::BTreeSet<u64> {
+    let mut ranks: std::collections::BTreeSet<u64> =
+        PROFILE_QUANTILES.iter().map(|p| nearest_rank(*p, n)).collect();
+    for (first, last) in bin_ranks(n) {
+        ranks.insert(first);
+        ranks.insert(last);
+    }
+    ranks
+}
+
+/// Tukey's far-out values of a numeric column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutlierSummary {
+    /// `q1 − k·(q3 − q1)`, canonical.
+    pub lower: String,
+    /// `q3 + k·(q3 − q1)`, canonical.
+    pub upper: String,
+    /// Rows outside a fence.
+    pub count: u64,
+    /// `(id, value)` of the furthest from their fence first, then by id.
+    pub examples: Vec<(String, String)>,
+}
+
+/// One column's profile over the source's rows, as the exact profile reads
+/// it: counts, distinct values, and for ordered columns the sorted values at
+/// [`profile_ranks`] (temporal columns sorted by their text), day or month
+/// label counts of temporal columns, and numeric outliers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ColumnProfile {
@@ -560,14 +618,14 @@ pub struct ColumnProfile {
     pub count: u64,
     /// Rows without one.
     pub nulls: u64,
-    /// Distinct present values.
+    /// Distinct present values (text compared as written).
     pub distinct: u64,
-    /// The smallest value.
-    pub min: Option<Value>,
-    /// The largest value.
-    pub max: Option<Value>,
-    /// `(percent, value)` at nearest rank, for 0, 25, 50, 75 and 100.
-    pub quantiles: Vec<(u32, Value)>,
+    /// Sorted values at their 1-based ranks.
+    pub ranks: BTreeMap<u64, Value>,
+    /// `day` or `month` and the count per label (temporal columns).
+    pub labels: Option<(String, Vec<(String, u64)>)>,
+    /// Numeric columns with a computable fence.
+    pub outliers: Option<OutlierSummary>,
 }
 
 /// The profile of a source.
@@ -576,6 +634,8 @@ pub struct ColumnProfile {
 pub struct ProfileResponse {
     /// Rows profiled.
     pub rows: u64,
+    /// Rows the cell excluded (open quarantining findings).
+    pub quarantined: u64,
     /// Per requested column.
     pub columns: Vec<ColumnProfile>,
 }

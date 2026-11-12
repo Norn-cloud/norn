@@ -626,7 +626,7 @@ proptest::proptest! {
                     })
                     .expect("profile");
                 proptest::prop_assert_eq!(
-                    profile.columns[0].min.clone(),
+                    profile.columns[0].ranks.get(&1).cloned(),
                     Some(norn_cell::analytics::Value::Instant { text, secs, nanos })
                 );
             }
