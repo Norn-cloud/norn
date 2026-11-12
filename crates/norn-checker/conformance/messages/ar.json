@@ -2366,6 +2366,10 @@
       "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
       "review": "needs_review"
     },
+    "widget.machine.control_without_event": {
+      "message": "عنصر تحكم في الصفحة لا يطلق أي حدث من ترسيمة الصفحة: {$detail}",
+      "review": "needs_review"
+    },
     "widget.machine.duplicate_id": {
       "message": "ترسيمة الصفحة تعلن المعرّف نفسه لحقل أو حدث أو حالة أو انتقال مرتين: {$detail}",
       "review": "needs_review"

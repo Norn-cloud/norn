@@ -1775,6 +1775,9 @@
     "widget.machine.cancel_outside_pending": {
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
     },
+    "widget.machine.control_without_event": {
+      "message": "a page control raises no event of the page machine: {$detail}"
+    },
     "widget.machine.duplicate_id": {
       "message": "a page machine declares one field, event, state or transition id twice: {$detail}"
     },
