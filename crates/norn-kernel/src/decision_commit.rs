@@ -2617,9 +2617,9 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    let commit = decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
     let counts = EnvelopeCounts::new(
-        prepared.events.len(),
+        commit.events.len(),
         output.commands.len(),
         output.timers.len(),
     );
@@ -2632,16 +2632,6 @@ where
                 actual: exceeded.actual,
             })?;
     }
-    let commit = CellCommit {
-        consumes: prepared.consumes,
-        reads: prepared.reads,
-        writes: prepared.writes,
-        events: prepared.events.into_iter().map(Into::into).collect(),
-        effects: prepared.effects.into_iter().map(widen_effect).collect(),
-        links: Vec::new(),
-        link_reads: Vec::new(),
-        predicate_reads: Vec::new(),
-    };
     match host.commit(commit) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -2664,6 +2654,37 @@ where
         }
         Err(error) => Err(DecisionRefusal::from_commit(error)),
     }
+}
+
+/// The whole commit [`commit_decision`] would submit, for a host that commits
+/// a decision through a host-specific verb (RUN-LEDGER-1's run start). The
+/// host commit still runs every commit check; nothing is committed here.
+///
+/// # Errors
+/// The [`DecisionRefusal`] of preparation.
+pub fn decision_cell_commit<E, C, T, X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<CellCommit<E, C, T>, DecisionRefusal<X>>
+where
+    E: From<FactEvent>,
+    C: From<JsonObject>,
+    T: From<JsonObject>,
+{
+    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    Ok(CellCommit {
+        consumes: prepared.consumes,
+        reads: prepared.reads,
+        writes: prepared.writes,
+        events: prepared.events.into_iter().map(Into::into).collect(),
+        effects: prepared.effects.into_iter().map(widen_effect).collect(),
+        links: Vec::new(),
+        link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
+    })
 }
 
 pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
