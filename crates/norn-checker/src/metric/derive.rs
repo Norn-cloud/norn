@@ -109,7 +109,10 @@ impl MetricSpace {
             .filter(|candidate| selected.contains(candidate.definition.name.as_str()))
             .flat_map(|candidate| &candidate.unit_partition)
         {
-            let fixed = question.dimensions.iter().any(|dimension| &dimension.path == path)
+            let fixed = question
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.path == path)
                 || question.filters.iter().any(|filter| {
                     &filter.path == path && matches!(filter.operator, FilterOperator::Eq)
                 });
