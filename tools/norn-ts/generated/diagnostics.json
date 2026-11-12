@@ -3220,7 +3220,7 @@
       "code": "metric.validation.partial_path",
       "tier": "T3",
       "severity": "error",
-      "message": "Mandatory time, currency and rate inputs require total paths.",
+      "message": "Currency and rate inputs require total paths.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },

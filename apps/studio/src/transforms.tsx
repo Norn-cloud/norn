@@ -2,16 +2,17 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edg
 import "@xyflow/react/dist/style.css"
 import { Link, useParams } from "@tanstack/react-router"
 import { Blend, GitBranch, ListTree, Rows3 } from "lucide-react"
-import { useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { member } from "@/lib/exact"
+import { member, type Read } from "@/lib/exact"
 import { NotServed } from "@/lib/live-transport"
-import { exactValue, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode } from "@/lib/transforms"
+import { exactValue, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
+import { cn } from "@/lib/utils"
 import { useCatalog } from "./sources.tsx"
 
 /** A refusal or an unserved read, said plainly. */
@@ -64,6 +65,59 @@ function ColumnHead({ column }: { readonly column: TransformColumn }) {
   )
 }
 
+/** The first column stays put while the others scroll sideways, as in the records grid. */
+const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+
+const numeric = (column: TransformColumn) => column.type.startsWith("decimal") || column.type === "integer" || column.type === "number"
+
+/** One page of rows. While columns are hidden past the right edge, the edge fades, as the records grid's does. */
+function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>; readonly page: TransformPage; readonly onTrace: (rowId: string) => void }) {
+  const frame = useRef<HTMLDivElement>(null)
+  const [right, setRight] = useState(false)
+  useEffect(() => {
+    const scroller = frame.current?.querySelector<HTMLElement>("[data-slot=table-container]")
+    if (scroller === null || scroller === undefined) return
+    const measure = () => setRight(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1)
+    measure()
+    scroller.addEventListener("scroll", measure, { passive: true })
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure)
+    observer?.observe(scroller)
+    return () => {
+      scroller.removeEventListener("scroll", measure)
+      observer?.disconnect()
+    }
+  }, [page.rows.length, page.columns.length])
+  return (
+    <div ref={frame} className="relative">
+      <TableCard>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {page.columns.map((column, at) => (
+                <TableHead scope="col" key={column.name} className={cn(at === 0 && cn(STICKY, "bg-surface-subtle"), numeric(column) && "text-right")}><ColumnHead column={column} /></TableHead>
+              ))}
+              <TableHead scope="col">Lineage</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {page.rows.map((row, index) => (
+              <TableRow key={row.rowId}>
+                {page.columns.map((column, at) => (
+                  <TableCell key={column.name} className={cn(at === 0 && cn(STICKY, "bg-card font-medium"), numeric(column) && "text-right font-mono tabular-nums")}>
+                    {exactValue(read, `/rows/${index}/values/${member(column.name)}`, row.values[column.name], scaleOf(column.type))}
+                  </TableCell>
+                ))}
+                <TableCell><Button variant="ghost" size="sm" onClick={() => onTrace(row.rowId)}>{row.memberCount} {row.memberCount === 1 ? "record" : "records"}</Button></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableCard>
+      {right && <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px right-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />}
+    </div>
+  )
+}
+
 /** The rows tab: one page at a time, each row a link to its lineage. */
 function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowId: string) => void }) {
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
@@ -81,23 +135,7 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
         {withheld.map(([input, count]) => <Badge key={input} variant="outline">{count} {input} withheld</Badge>)}
         {page.excluded > 0 && <Badge variant="outline">{page.excluded} quarantined</Badge>}
       </div>
-      <TableCard>
-        <Table>
-          <TableHeader><TableRow>{page.columns.map((column) => <TableHead scope="col" key={column.name}><ColumnHead column={column} /></TableHead>)}<TableHead scope="col">Lineage</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {page.rows.map((row, index) => (
-              <TableRow key={row.rowId}>
-                {page.columns.map((column) => (
-                  <TableCell key={column.name} className={column.type.startsWith("decimal") || column.type === "integer" || column.type === "number" ? "text-right font-mono tabular-nums" : undefined}>
-                    {exactValue(rows.data, `/rows/${index}/values/${member(column.name)}`, row.values[column.name])}
-                  </TableCell>
-                ))}
-                <TableCell><Button variant="ghost" size="sm" onClick={() => onTrace(row.rowId)}>{row.memberCount} records</Button></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableCard>
+      <RowsGrid read={rows.data} page={page} onTrace={onTrace} />
       <div className="flex gap-2">
         <Button variant="outline" size="sm" disabled={cursors.length === 1} onClick={() => setCursors(cursors.slice(0, -1))}>Previous</Button>
         <Button variant="outline" size="sm" disabled={page.nextAfter === null} onClick={() => page.nextAfter !== null && setCursors([...cursors, page.nextAfter])}>Next</Button>
@@ -109,6 +147,13 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
 /** The lineage tab: the input records one row derives from, each a link to its record page. */
 function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string | undefined }) {
   const lineage = useTransformLineage(id, rowId)
+  const plan = useTransformPlan(id)
+  const planDocument = plan.data?.document
+  const output = planDocument === undefined ? undefined : planDocument.nodes.find((node) => node.id === planDocument.output)
+  const scale = (name: string) => {
+    const column = output?.columns.find((candidate) => candidate.name === name)
+    return column === undefined ? undefined : scaleOf(column.type)
+  }
   if (rowId === undefined) return <EmptyState icon={ListTree} title="Pick a row">Choose a row's records on the Rows tab to see where it comes from.</EmptyState>
   if (lineage.isPending) return <p className="text-muted-foreground">Reading lineage…</p>
   if (lineage.isError) return <ReadError error={lineage.error} />
@@ -117,7 +162,7 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
     <div className="space-y-3">
       <Well className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-sm">
         {Object.entries(document.values).map(([name, value]) => (
-          <span key={name}><span className="text-muted-foreground">{name}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value)}</span></span>
+          <span key={name}><span className="text-muted-foreground">{name}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
         ))}
       </Well>
       <TableCard>

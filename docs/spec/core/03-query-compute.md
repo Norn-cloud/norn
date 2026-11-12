@@ -102,6 +102,28 @@ class pair is admitted exactly when the requirement is undeclared or equal),
 non-numeric type, or against a declared one, refuses), and
 **METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
 
+**METRIC-GRAIN-LINK-1:** a sum's time may be a property of an object reached
+through one to-one link from the measured object (a posting's time is its
+event's). The linked property must be a stored, non-null timestamp or date.
+METRIC-DERIVE-1 uses a linked time only for an object with no time property of
+its own: for each additive property it derives one sum per time property one
+to-one hop away ("<property> by <link>.<time>"). Through a required link every
+row has a time. Through an optional link, a row whose link is absent has no
+time. It is treated exactly like a null measured value: skipped, never given an
+invented time, and counted, with the answer reporting the count as `unlinked`.
+Each row reads the linked object's current version at the answer's frontier,
+so correcting an event's time moves its rows. A snapshot
+(METRIC-SNAPSHOT-ASOF-1) keeps its own valid time: a question over a snapshot
+whose time is linked still refuses `question.validation.snapshot_aggregation`. The question window applies to the linked time. The exact engine
+supports one hop, sums rather than ratios, and a time grouping on that same
+path; anything else refuses as an unsupported engine shape.
+
+Named scenarios: **METRIC-LINK-TIME** (a posting is bucketed by its event's
+time), **METRIC-LINK-UNLINKED** (a row whose optional link is absent is
+skipped and counted, never bucketed), **METRIC-LINK-MOVES** (correcting the
+linked time moves the row), and **METRIC-LINK-OWN-FIRST** (an object with its
+own time derives no linked-time sum).
+
 **METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
 `unitSource`: one or more distinct sibling properties whose values together
 are its unit (canon's quantities take theirs from `unit` or, for money,

@@ -26,15 +26,80 @@ pub fn project(
     plan: &QuestionPlan,
     row: &RuntimeObject,
 ) -> Result<Option<Contribution>, &'static str> {
-    // A snapshot sum reads each subject's versions, never one row in isolation.
-    if plan.as_of() {
+    // A snapshot sum reads each subject's versions, and a linked time its
+    // linked object; neither projects one row in isolation.
+    if plan.as_of() || plan.time_link().is_some() {
         return Err(UNSUPPORTED_ENGINE);
     }
+    project_row(plan, row, None)
+}
+
+/// What a row whose time is its linked object's contributes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Linked {
+    /// The row contributes in its bucket.
+    Contribution(Contribution),
+    /// The row does not count: a filter excludes it, or its time is outside
+    /// the window.
+    Excluded,
+    /// The row would count but its optional link is absent, so it has no
+    /// time: skipped and counted, never given an invented time.
+    Unlinked,
+}
+
+/// METRIC-GRAIN-LINK-1: project one row whose time is a property of the
+/// object its to-one time link reaches. `linked` holds that object's current
+/// values, or `None` when the link is absent.
+///
+/// # Errors
+/// Refuses a plan without a linked time, and what [`project`] refuses.
+pub fn project_linked(
+    plan: &QuestionPlan,
+    row: &RuntimeObject,
+    linked: Option<&RuntimeObject>,
+) -> Result<Linked, &'static str> {
+    let link = plan.time_link().ok_or(UNSUPPORTED_ENGINE)?;
+    let Some(target) = linked else {
+        let counts = matches_filters(plan, row, &plan.question().filters)?
+            && plan
+                .sums()
+                .iter()
+                .map(|sum| matches_filters(plan, row, &sum.filters))
+                .collect::<Result<Vec<_>, _>>()?
+                .contains(&true);
+        return Ok(if counts {
+            Linked::Unlinked
+        } else {
+            Linked::Excluded
+        });
+    };
+    Ok(
+        project_row(plan, row, Some((link, target)))?
+            .map_or(Linked::Excluded, Linked::Contribution),
+    )
+}
+
+fn project_row(
+    plan: &QuestionPlan,
+    row: &RuntimeObject,
+    linked: Option<(&super::LinkedTime, &RuntimeObject)>,
+) -> Result<Option<Contribution>, &'static str> {
     if !matches_filters(plan, row, &plan.question().filters)? {
         return Ok(None);
     }
     let first = plan.sums().first().ok_or(UNSUPPORTED_ENGINE)?;
-    let at = instant(plan, row, first.time_property.as_str())?;
+    let linked_at = linked
+        .map(|(link, target)| {
+            let value = target
+                .get(link.property.id.as_str())
+                .ok_or(UNSUPPORTED_ENGINE)?;
+            instant_of(&link.property, value)
+        })
+        .transpose()?;
+    let at = match linked_at {
+        Some(at) => at,
+        None => instant(plan, row, first.time_property.as_str())?,
+    };
     let parse = norn_expr::temporal::timestamp_ordering_key;
     let start =
         parse(plan.question().time_window.start.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
@@ -50,9 +115,13 @@ pub fn project(
         .question()
         .dimensions
         .iter()
-        .map(|dimension| match dimension.grain {
-            None => Ok(value(plan, row, dimension.path.property.as_str())?.clone()),
-            Some(grain) => {
+        .map(|dimension| match (dimension.grain, linked_at) {
+            (None, _) => Ok(value(plan, row, dimension.path.property.as_str())?.clone()),
+            // Admission keeps a linked path for the linked time alone.
+            (Some(grain), Some(at)) if !dimension.path.links.is_empty() => {
+                Ok(RuntimeValue::from(period_start(at.0, grain)?))
+            }
+            (Some(grain), _) => {
                 let seconds = instant(plan, row, dimension.path.property.as_str())?.0;
                 Ok(RuntimeValue::from(period_start(seconds, grain)?))
             }
@@ -289,12 +358,23 @@ fn value<'a>(
 }
 
 fn instant(plan: &QuestionPlan, row: &RuntimeObject, id: &str) -> Result<(i64, u32), &'static str> {
-    let text = value(plan, row, id)?.as_str().ok_or(UNSUPPORTED_ENGINE)?;
     let property = plan
         .properties
         .iter()
         .find(|p| p.id.as_str() == id)
         .ok_or(UNSUPPORTED_ENGINE)?;
+    instant_of(property, value(plan, row, id)?)
+}
+
+/// The exact UTC instant of a stored date or timestamp `value` of `property`.
+fn instant_of(
+    property: &crate::entity_instance::EffectiveProperty,
+    value: &RuntimeValue,
+) -> Result<(i64, u32), &'static str> {
+    if property.computed || property.check_runtime_value(value).is_err() {
+        return Err(UNSUPPORTED_ENGINE);
+    }
+    let text = value.as_str().ok_or(UNSUPPORTED_ENGINE)?;
     let date = matches!(property.kind, EffectiveKind::Base(PropertyType::Date {}));
     norn_expr::temporal::timestamp_ordering_key(&if date {
         format!("{text}T00:00:00Z")
