@@ -47,6 +47,8 @@ pub mod question_routes;
 pub mod routes;
 /// In-cell source sync over the pull engine: claims, steps and run reports.
 pub mod sources;
+/// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
+pub mod uploads;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 

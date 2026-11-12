@@ -20,6 +20,8 @@ http = "1.5.0"
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
 serde_json = "1.0.150"
+# Upload digests and SigV4 request signing.
+sha2 = "0.10.9"
 utoipa = "6.0.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

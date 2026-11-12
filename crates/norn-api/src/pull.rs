@@ -593,11 +593,11 @@ pub fn observation(
     })
 }
 
+/// A page's rows and its last item's keyset position (version, id).
+type Page = (Vec<Row>, Option<(String, Value)>);
+
 /// A page's items as rows, and the last item's keyset position.
-fn project_page(
-    feed: &Feed,
-    items: &[RuntimeValue],
-) -> Result<(Vec<Row>, Option<(String, Value)>), PullError> {
+fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> {
     let shape = |reason: String| PullError::Shape {
         dataset: feed.dataset.clone(),
         reason,

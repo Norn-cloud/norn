@@ -376,12 +376,7 @@ fn begin<E: SqlEngine>(
 ) -> Result<Option<HttpRequest>, Failure> {
     let connector = host
         .installed_artifact(&config.connector)
-        .map_err(|_| {
-            fail(
-                "source.connector_missing",
-                "the definitions could not be read",
-            )
-        })?
+        .map_err(|refusal| fail("source.connector_missing", refusal.message))?
         .ok_or_else(|| {
             fail(
                 "source.connector_missing",
