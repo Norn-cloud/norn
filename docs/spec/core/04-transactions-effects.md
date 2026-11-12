@@ -118,6 +118,33 @@ exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a r
 guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
 **RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
 
+### RUN-ROUTES-1 — starting and reading runs
+
+`POST /v1/runs` with `{flow, runId}` starts a run of an installed, active flow,
+named by its definition id; the flow's rule is `<flow>.flow.rule`. Scope and
+authority are decided together and refuse with one opaque 403: the host
+authorizer decides `StartRun(flow)` (in the DO cell, the declared starters of
+`norn-cell-do-run-grants/1` that also hold the Values grant). A run holds no grants
+of its own. `runId` is 1-128 bytes of `[A-Za-z0-9._:-]`. The flow's `decide` rule
+evaluates its start turn (`{kind: "start", runId}` over an absent run,
+FLOW-TURN-1), and the cell commits the run object, its first commands and its
+ledger row in one commit (RUN-LEDGER-1). An exact retry returns the existing run
+with 200; the same id under another flow refuses `run.exists`; an unknown or
+retired flow refuses `run.flow_not_found`; a refused turn returns
+`run.start_refused`, `run.flow_inadmissible` or the kernel's code, without its
+detail. `GET /v1/runs/{id}` reads a run. A run passes the ordinary `values` read gate
+on its object type; an unreadable run is `run.not_found`, exactly like an absent one. A run document carries
+`terminal` (its state is a terminal state of its lifecycle) and its step
+timeline, folded from the run object's committed versions: a lifecycle state
+that waits on a step opens it, the next state closes it, and `completed` or
+`failed_<tag>` ends the run. A step the cell does not move itself waits on a
+`decision`, an `executor` or a `timer`; that is a state, not an error. An install
+that changes the model tells the host's authorizer under the definitions write
+epoch (`Authorizer::model_changed`), so the DO cell's read rules cover a flow's
+Run type before any request sees it. Named scenarios
+(`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**, **RUN-START-REFUSE**,
+**RUN-READ-GATED**.
+
 ### PARKED-1 — parked perform commands
 
 A perform of a built-in that a person resolves (`norn.decision@1`,
