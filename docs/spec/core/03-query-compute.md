@@ -120,9 +120,10 @@ the metric's default filters. `eq null` counts, because question filters
 compare nulls as values. Otherwise the question refuses
 `metric.validation.mixed_unit`. A reaggregation never rolls up across a
 source property, and ratio operands are checked the same way. Derived
-candidates expose their source paths as `unit_partition`. While the exact
-engine admits one grouping dimension, the shape it supports is the time
-dimension plus `eq` filters on each source.
+candidates expose their source paths as `unit_partition`, and a question
+admitted through the derived metric space is grouped by every source it
+leaves free (within the engine's grouping bound), so rows split by unit
+rather than refuse.
 
 Named scenarios: **METRIC-UNIT-GROUPED** and **METRIC-UNIT-FIXED** (grouping
 by or fixing every source admits), **METRIC-UNIT-MIXED** (leaving any source

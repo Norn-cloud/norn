@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
-    AdditivityAxis, DimensionPath, MeasureAggregate, MetricAdditivity, MetricAggregationParams,
-    MetricNorn, MetricType, MetricTypeParams, NonAdditiveDimension, Reaggregate, TimeGrain,
-    WindowChoice,
+    AdditivityAxis, DimensionPath, FilterOperator, MeasureAggregate, MetricAdditivity,
+    MetricAggregationParams, MetricNorn, MetricType, MetricTypeParams, NonAdditiveDimension,
+    QuestionDimension, Reaggregate, TimeGrain, WindowChoice,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
@@ -44,8 +44,9 @@ pub struct MetricCandidate {
     /// Conservation evidence, when the law supplies term additivity.
     pub conservation: Vec<ConservationSource>,
     /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit.
-    /// A question selecting this candidate groups by each, or fixes it with
-    /// an `eq` filter (`eq null` included), or admission refuses `mixed_unit`.
+    /// [`MetricSpace::admit`] groups by each one a question neither groups by
+    /// nor fixes with an `eq` filter (`eq null` included); a question admitted
+    /// any other way that leaves one free refuses `mixed_unit`.
     pub unit_partition: Vec<DimensionPath>,
 }
 
@@ -100,12 +101,31 @@ impl MetricSpace {
                 pending.extend(definition.type_params.denominator.as_deref());
             }
         }
+        // METRIC-UNIT-PARTITION-1: group by each unit source the question leaves free.
+        let mut question = question.clone();
+        for path in self
+            .candidates
+            .iter()
+            .filter(|candidate| selected.contains(candidate.definition.name.as_str()))
+            .flat_map(|candidate| &candidate.unit_partition)
+        {
+            let fixed = question.dimensions.iter().any(|dimension| &dimension.path == path)
+                || question.filters.iter().any(|filter| {
+                    &filter.path == path && matches!(filter.operator, FilterOperator::Eq)
+                });
+            if !fixed && question.dimensions.len() < compute::MAX_GROUP_BY {
+                question.dimensions.push(QuestionDimension {
+                    path: path.clone(),
+                    grain: None,
+                });
+            }
+        }
         let definitions: Vec<_> = selected
             .into_iter()
             .filter_map(|name| by_name.get(name))
             .map(|definition| (**definition).clone())
             .collect();
-        compute::admit(&definitions, question, &self.catalog, max_items)
+        compute::admit(&definitions, &question, &self.catalog, max_items)
     }
 }
 

@@ -53,8 +53,12 @@ fn context() -> QueryContext {
     }
 }
 
-/// The derived snapshot question: weekly over five weeks, optionally only `north`.
-fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::QuestionPlan) {
+/// The derived snapshot question over five weeks, grouped by `group_by`,
+/// optionally only `north`.
+fn grouped(
+    north_only: bool,
+    group_by: &serde_json::Value,
+) -> (CellStore, norn_checker::metric::compute::QuestionPlan) {
     let object = object_type();
     let artifact: ArtifactEnvelope = serde_json::from_value(json!({
         "irVersion": "0.1", "artifactId": "demo.Stock.entity", "kind": "entity", "namespace": "demo",
@@ -86,7 +90,7 @@ fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::Ques
     let question: QuestionIR = serde_json::from_value(json!({
         "irVersion": "0.1", "name": "demo.stock_week", "objectSet": TYPE,
         "aggregate": [{"metric": metric.definition.name}],
-        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
+        "groupBy": group_by,
         "filter": filters,
         "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
         "freshness": {"kind": "live", "maxAgeMs": 5000},
@@ -98,6 +102,14 @@ fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::Ques
     assert!(plan.as_of());
     let model = Model::from_definitions(&[object_type()], &[]).expect("model");
     (CellStore::open_in_memory(model).expect("cell"), plan)
+}
+
+/// The weekly snapshot question, optionally only `north`.
+fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::QuestionPlan) {
+    grouped(
+        north_only,
+        &json!([{"path": {"property": "observed_at"}, "grain": "week"}]),
+    )
 }
 
 fn commit(
@@ -157,26 +169,32 @@ fn answer(
         .collect()
 }
 
+/// The scenario history, in commit order.
+const HISTORY: [(&str, Option<i64>, &str, &str); 9] = [
+    ("s1", Some(10), "2026-07-07T10:00:00Z", "north"),
+    ("s1", Some(5), "2026-07-14T09:00:00Z", "north"),
+    ("s1", Some(7), "2026-07-16T09:00:00Z", "north"),
+    ("s2", Some(100), "2026-07-22T00:00:00Z", "north"),
+    ("s1", Some(3), "2026-07-28T00:00:00Z", "south"),
+    // Committed later but observed earlier: valid time orders the series.
+    ("s2", Some(50), "2026-07-21T00:00:00Z", "north"),
+    // Before the window, then a tie on the same instant: the later version wins.
+    ("s3", Some(1), "2026-06-01T00:00:00Z", "north"),
+    ("s3", Some(2), "2026-06-01T00:00:00Z", "north"),
+    ("s4", None, "2026-07-08T00:00:00Z", "north"),
+];
+
+fn load(store: &mut CellStore) {
+    for (tick, (key, quantity, at, location)) in (1u64..).zip(HISTORY) {
+        commit(store, tick, key, quantity, at, location);
+    }
+}
+
 #[test]
 fn a_stock_carries_its_last_valid_time_value_forward_and_sums_across_subjects() {
     for north_only in [false, true] {
         let (mut store, plan) = question(north_only);
-        let history = [
-            ("s1", Some(10), "2026-07-07T10:00:00Z", "north"),
-            ("s1", Some(5), "2026-07-14T09:00:00Z", "north"),
-            ("s1", Some(7), "2026-07-16T09:00:00Z", "north"),
-            ("s2", Some(100), "2026-07-22T00:00:00Z", "north"),
-            ("s1", Some(3), "2026-07-28T00:00:00Z", "south"),
-            // Committed later but observed earlier: valid time orders the series.
-            ("s2", Some(50), "2026-07-21T00:00:00Z", "north"),
-            // Before the window, then a tie on the same instant: the later version wins.
-            ("s3", Some(1), "2026-06-01T00:00:00Z", "north"),
-            ("s3", Some(2), "2026-06-01T00:00:00Z", "north"),
-            ("s4", None, "2026-07-08T00:00:00Z", "north"),
-        ];
-        for (tick, (key, quantity, at, location)) in (1u64..).zip(history) {
-            commit(&mut store, tick, key, quantity, at, location);
-        }
+        load(&mut store);
         let s1_moves_south = if north_only { 102 } else { 105 };
         let expected: BTreeMap<String, (String, u64)> = [
             (WEEKS[0], 12),
@@ -190,6 +208,19 @@ fn a_stock_carries_its_last_valid_time_value_forward_and_sums_across_subjects() 
         .collect();
         assert_eq!(answer(&store, &plan), expected, "north only: {north_only}");
     }
+}
+
+/// Grouped by a non-time property, the stock is read as of the window's end,
+/// and each subject is in the group its as-of version names.
+#[test]
+fn a_stock_grouped_by_location_is_read_as_of_the_windows_end() {
+    let (mut store, plan) = grouped(false, &json!([{"path": {"property": "location"}}]));
+    load(&mut store);
+    let expected = BTreeMap::from([
+        ("north".to_owned(), ("102".to_owned(), 1)),
+        ("south".to_owned(), ("3".to_owned(), 0)),
+    ]);
+    assert_eq!(answer(&store, &plan), expected);
 }
 
 /// Observation instants spanning the window, two before it and one at a week boundary.
