@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
-import { Braces, Database, GitBranch, History, KeyRound, Link2, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { Braces, Database, GitBranch, History, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -61,6 +61,9 @@ export function ObjectPage() {
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <CopyId value={id} />
             <span className="text-meta">version {data.object.document.version}</span>
+            {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={() => void reads.refetch()} title="Read this record from the cell again">
+              <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
+            </Button>}
           </div>}
           {data && concept && <div className="flex flex-wrap gap-1.5 pt-1">
             {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}

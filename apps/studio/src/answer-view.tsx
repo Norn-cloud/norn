@@ -40,11 +40,20 @@ function amounts(read: Read<Trace>, index: number) {
 /** How a bucket's records are read: the published question's trace by name, or a built question's own (POST :trace). */
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
-export function LiveRecords({ question, lineageRef, bucket, fetchTrace }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace }) {
+/** Refusals that mean the cell committed since this answer: its trace handle no longer names this number. */
+const MOVED = new Set(["question.answer_moved", "core.projection.lineage_incomplete"])
+
+export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
   if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
   if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
+  if (data.kind === "refused" && MOVED.has(data.refusal.code)) return (
+    <div role="status" className="space-y-2 rounded-md border p-3 text-sm">
+      <p><span className="font-medium">The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
+      {onStale ? <button type="button" className="font-medium underline underline-offset-4" onClick={onStale}>Ask again for the current number</button> : <p className="text-muted-foreground">Run the question again to trace the current number.</p>}
+    </div>
+  )
   if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
   const read = data.read
   return (
@@ -81,7 +90,7 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
   )
 }
 
-function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace } }) {
+function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void } }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
       <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
@@ -92,7 +101,7 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
           </SheetHeader>
           <div className="px-4">
             <p className="pb-3 text-sm text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
-            {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} fetchTrace={live.fetchTrace} /> : <>
+            {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} fetchTrace={live.fetchTrace} onStale={live.onStale} /> : <>
             <TableCard><Table>
               <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
@@ -118,13 +127,15 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace }: {
+export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale }: {
   readonly read: QuestionAnswer
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
   /** The server's refusal of the live read, shown over the recording. */
   readonly refusal?: Refusal
+  /** Ask the question again, when a drill-down finds the cell has committed since this answer. */
+  readonly onStale?: () => void
   /** How a bucket's records are read for a question that is not published. */
   readonly fetchTrace?: FetchTrace
 }) {
@@ -200,7 +211,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           </TableBody>
         </Table></TableCard>
       </Panel>
-      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace } : undefined} />
+      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>
   )
 }
