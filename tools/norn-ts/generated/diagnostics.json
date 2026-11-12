@@ -3121,6 +3121,14 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "metric.validation.mixed_unit",
+      "tier": "T3",
+      "severity": "error",
+      "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units.",
+      "fix": "Add each unit-source property of the measure to the question's grouping, or filter it with eq to one value (eq null included); while the engine admits one grouping dimension, filter: for example unit eq \"g\" and currency eq null.",
+      "no_fix": null
+    },
+    {
       "code": "metric.validation.ontology_projection",
       "tier": "T3",
       "severity": "error",
@@ -4046,6 +4054,14 @@
       "severity": "error",
       "message": "unit code {unit} must be non-blank without whitespace",
       "fix": "Correct the member at the reported path to match its declared type, schema and constraints.",
+      "no_fix": null
+    },
+    {
+      "code": "property_type.validation.invalid_unit_source",
+      "tier": "T2",
+      "severity": "error",
+      "message": "unit source {detail}",
+      "fix": "Name distinct sibling properties that hold the unit as codes (text, enum or a code type), on a decimal with no static unit, currencySource or perUnit, and keep any unit source the referenced or overridden type declares.",
       "no_fix": null
     },
     {

@@ -304,6 +304,13 @@
             },
             "unit": {
               "$ref": "#/$defs/UnitRef"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the sibling properties whose values\ntogether are this quantity's unit, when it has no static `unit`.\nAggregating questions must group by or fix each of them.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
@@ -470,6 +477,13 @@
             "name": {
               "description": "The referenced [`PropertyTypeDef`] name.",
               "$ref": "#/$defs/PropertyTypeName"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the unit source at this use site, for a\nref that resolves to a decimal declaring none of its own.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
