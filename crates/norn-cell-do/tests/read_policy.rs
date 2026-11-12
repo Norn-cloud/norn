@@ -115,11 +115,7 @@ fn each_capability_is_granted_only_where_the_policy_grants_it() {
     let scope = host.scope().clone();
     for capability in ALL {
         assert_eq!(
-            gate(
-                &host,
-                &access("admin@demo", capability, &scope),
-                capability
-            ),
+            gate(&host, &access("admin@demo", capability, &scope), capability),
             None
         );
         let guest = gate(&host, &access("guest@demo", capability, &scope), capability);
