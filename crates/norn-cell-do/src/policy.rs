@@ -12,9 +12,16 @@
 //! [`Operation::ReadDefinitions`], granted to any principal the table grants
 //! (every granted role holds Population). Definition writes (admit, install,
 //! retire) are [`Operation::WriteDefinitions`], granted only to the table's
-//! declared writer roles.
+//! declared writer roles. Starting a flow run is [`Operation::StartRun`],
+//! granted only to the declared starter roles of [`RUN_STARTERS`] that also
+//! hold the Values grant (a starter can read the run it starts). Deciding a
+//! decision is [`Operation::Decide`], granted to a caller holding one of the
+//! decision's declared roles. Creating a cell is [`Operation::ProvisionCell`],
+//! granted only to the table's declared provisioner roles: a scope with no
+//! cell has no definitions, so this one authority is the host's
+//! ([`Provisioners`] decides it before a cell exists, [`ReadPolicy`] after).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest};
 use norn_api::refusal::Refusal;
@@ -52,9 +59,23 @@ pub struct GrantTable {
     /// Norn roles that may write retained definitions (admit, install,
     /// retire); a writer must also hold a read grant.
     pub definition_writers: &'static [&'static str],
+    /// Norn roles that may provision the cell of their own organization's
+    /// scope; a provisioner must also hold a read grant.
+    pub provisioners: &'static [&'static str],
 }
 
 impl GrantTable {
+    /// Whether `roles` include a declared provisioner that also holds a
+    /// read grant.
+    #[must_use]
+    pub fn provisions(&self, roles: &[String]) -> bool {
+        !self.capabilities(roles).is_empty()
+            && self
+                .provisioners
+                .iter()
+                .any(|provisioner| roles.iter().any(|held| held == provisioner))
+    }
+
     /// The capabilities `roles` hold together; undeclared roles add nothing.
     #[must_use]
     pub fn capabilities(&self, roles: &[String]) -> Vec<ReadCapability> {
@@ -88,9 +109,11 @@ impl GrantTable {
 /// The demo cells' table over `studio-roles/1` Norn roles: a viewer sees which
 /// members exist, a member also their values, an admin or owner also sources.
 /// Admins and owners write retained definitions (dashboards, agents); `/2`
-/// added that grant to `/1`'s read mapping, unchanged.
+/// added that grant to `/1`'s read mapping, unchanged. `/3` adds the
+/// provisioner grant: an owner alone creates the cell of its organization's
+/// scope. Reads and definition writes are as in `/2`.
 pub const DEMO_GRANTS: GrantTable = GrantTable {
-    version: "norn-cell-do-grants/2",
+    version: "norn-cell-do-grants/3",
     entries: &[
         ("viewer", &[ReadCapability::Population]),
         (
@@ -115,7 +138,39 @@ pub const DEMO_GRANTS: GrantTable = GrantTable {
         ),
     ],
     definition_writers: &["admin", "owner"],
+    provisioners: &["owner"],
 };
+
+/// Declared roles that may start a run of an installed flow (RUN-ROUTES-1).
+/// A run holds no grants: its steps act under the starter's own authority, so
+/// this decides only who may start one. A change is a new version.
+#[derive(Debug)]
+pub struct RunStarters {
+    /// Identity of this table.
+    pub version: &'static str,
+    /// Norn roles that may start runs.
+    pub roles: &'static [&'static str],
+}
+
+/// The demo cells' run starters over `studio-roles/1`: members, admins and
+/// owners; a viewer, who cannot read a run's values, starts none.
+pub const RUN_STARTERS: RunStarters = RunStarters {
+    version: "norn-cell-do-run-grants/1",
+    roles: &["member", "admin", "owner"],
+};
+
+impl RunStarters {
+    /// Whether `roles` include a declared starter that also holds the Values
+    /// grant in `table`.
+    #[must_use]
+    pub fn starts(&self, table: &GrantTable, roles: &[String]) -> bool {
+        table.capabilities(roles).contains(&ReadCapability::Values)
+            && self
+                .roles
+                .iter()
+                .any(|starter| roles.iter().any(|held| held == starter))
+    }
+}
 
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,10 +206,68 @@ impl CallerSlot {
     }
 }
 
+/// The compiled read rules with no grant, one per object type of the cell's
+/// model. They are recompiled when an install changes the model
+/// ([`Authorizer::model_changed`]), so a type added after the cell opened (a
+/// flow's Run type) is decided like every other; until then it is denied.
+struct ReadRules(RwLock<Pdp>);
+
+impl ReadRules {
+    fn compile<'a>(
+        object_types: impl IntoIterator<Item = &'a ObjectTypeDef>,
+    ) -> Result<Pdp, SeedError> {
+        let types: Vec<ObjectTypeDef> = object_types.into_iter().cloned().collect();
+        let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
+        let host = norn_projections::project_host_access_schema(&types);
+        let schema =
+            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+                .map_err(|e| SeedError(format!("read schema: {e}")))?;
+        let policy = AccessIr {
+            access_version: IrVersion01::V0_1,
+            policy_id: READ_POLICY_ID.into(),
+            rules: types
+                .iter()
+                .map(|object_type| AccessRule {
+                    rule_id: format!("read_{}", object_type.name.as_str()),
+                    actions: vec![READ_ACTION.into()],
+                    resource_type: object_type.name.clone(),
+                    scope: AccessScope {
+                        dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
+                    },
+                    all_of: vec![],
+                })
+                .collect(),
+            generic_rules: vec![],
+            extensions: None,
+        };
+        let compiled =
+            authz::compile(&schema, &policy).map_err(|e| SeedError(format!("read policy: {e}")))?;
+        Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("read policy: {e}")))
+    }
+
+    /// Recompile the rules over the model's current `object_types`. On a
+    /// refusal the previous rules stay in force, so a new type stays denied.
+    ///
+    /// # Errors
+    /// The projected schema or the policy does not compile.
+    fn recompile<'a>(
+        &self,
+        object_types: impl IntoIterator<Item = &'a ObjectTypeDef>,
+    ) -> Result<(), SeedError> {
+        let compiled = Self::compile(object_types)?;
+        let mut rules = self
+            .0
+            .write()
+            .map_err(|_poisoned| SeedError("read rules: poisoned".to_owned()))?;
+        *rules = compiled;
+        Ok(())
+    }
+}
+
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
-    /// The compiled policy with no grant; each request adds its caller's.
-    base: Pdp,
+    /// The compiled rules with no grant; each request adds its caller's.
+    base: ReadRules,
     key: ScopeKey,
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
@@ -182,39 +295,20 @@ impl ReadPolicy {
         scope: &CellScope,
         table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
-        let types: Vec<ObjectTypeDef> = object_types.into_iter().cloned().collect();
-        let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
-        let host = norn_projections::project_host_access_schema(&types);
-        let schema =
-            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
-                .map_err(|e| SeedError(format!("read schema: {e}")))?;
-        let policy = AccessIr {
-            access_version: IrVersion01::V0_1,
-            policy_id: READ_POLICY_ID.into(),
-            rules: types
-                .iter()
-                .map(|object_type| AccessRule {
-                    rule_id: format!("read_{}", object_type.name.as_str()),
-                    actions: vec![READ_ACTION.into()],
-                    resource_type: object_type.name.clone(),
-                    scope: AccessScope {
-                        dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
-                    },
-                    all_of: vec![],
-                })
-                .collect(),
-            generic_rules: vec![],
-            extensions: None,
-        };
-        let compiled =
-            authz::compile(&schema, &policy).map_err(|e| SeedError(format!("read policy: {e}")))?;
-        let base = Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("read policy: {e}")))?;
         Ok(Self {
-            base,
+            base: ReadRules(RwLock::new(ReadRules::compile(object_types)?)),
             key: scope_key(scope),
             table,
             caller: Arc::default(),
         })
+    }
+
+    /// Read the request's verified principal from `slot` instead of this
+    /// policy's own: a cell whose resolver existed before its policy.
+    #[must_use]
+    pub fn with_caller(mut self, slot: Arc<CallerSlot>) -> Self {
+        self.caller = slot;
+        self
     }
 
     /// The slot this policy reads the request's verified principal from; the
@@ -236,7 +330,7 @@ impl ReadPolicy {
             return None;
         }
         Pdp::new(
-            self.base.policy_set().clone(),
+            self.base.0.read().ok()?.policy_set().clone(),
             &[CapabilityGrant {
                 subject_id: caller.subject_id,
                 actor_kind: ActorKind::User,
@@ -253,6 +347,45 @@ impl ReadPolicy {
     }
 }
 
+/// Whether the request's verified principal is `actor` and holds a declared
+/// provisioner role.
+fn provisioner(table: &GrantTable, caller: &CallerSlot, actor: &str) -> bool {
+    caller
+        .current()
+        .filter(|caller| caller.subject_id == actor)
+        .is_some_and(|caller| table.provisions(&caller.roles))
+}
+
+/// The server policy of a scope with no cell: the declared provisioners may
+/// create it, and nothing else is granted to anyone.
+pub struct Provisioners {
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
+}
+
+impl Provisioners {
+    /// The provisioner grant of `table`, read against the principal the
+    /// resolver records in `caller`.
+    #[must_use]
+    pub const fn new(table: &'static GrantTable, caller: Arc<CallerSlot>) -> Self {
+        Self { table, caller }
+    }
+}
+
+impl Authorizer for Provisioners {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        let granted = matches!(request.operation, Operation::ProvisionCell)
+            && request
+                .actor
+                .is_some_and(|actor| provisioner(self.table, &self.caller, actor));
+        if granted {
+            Ok(())
+        } else {
+            DenyAll.authorize(request)
+        }
+    }
+}
+
 impl Authorizer for ReadPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         let granted = match request.operation {
@@ -265,13 +398,38 @@ impl Authorizer for ReadPolicy {
                     .filter(|caller| caller.subject_id == actor)
                     .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
             }),
+            Operation::ProvisionCell => request
+                .actor
+                .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
             Operation::CallAction(_) => false,
+            Operation::StartRun(_) => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| RUN_STARTERS.starts(self.table, &caller.roles))
+            }),
+            // A decider holds one of the decision's declared roles, verified
+            // for this request, and some grant of the table.
+            Operation::Decide { ref roles, .. } => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| {
+                        !self.table.capabilities(&caller.roles).is_empty()
+                            && caller.roles.iter().any(|held| roles.contains(held))
+                    })
+            }),
         };
         if granted {
             Ok(())
         } else {
             DenyAll.authorize(request)
         }
+    }
+
+    fn model_changed(&self, object_types: &[ObjectTypeDef]) {
+        // A failed recompile keeps the previous rules: the new types stay denied.
+        let _kept = self.base.recompile(object_types);
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {

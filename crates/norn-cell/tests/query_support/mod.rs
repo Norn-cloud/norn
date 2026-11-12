@@ -485,6 +485,7 @@ pub(crate) mod fanout {
             currency_source: None,
             per_unit: None,
             rounding: None,
+            unit_source: Vec::new(),
         };
         holding.links = vec![Link {
             id: LinkId("tags".into()),

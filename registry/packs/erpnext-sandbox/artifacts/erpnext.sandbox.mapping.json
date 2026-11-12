@@ -1,0 +1,332 @@
+{
+  "artifactId": "erpnext.sandbox.mapping",
+  "dependencies": [
+    {
+      "artifactId": "erpnext.sandbox.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Catalog.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Resource.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Agent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.AgentRole.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Commitment.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Item.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Holding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Party.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.PartyRole.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "ERPNext sandbox observations to the REA canon",
+  "namespace": "erpnext",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "canon.Catalog.interface",
+      "core.Resource.interface",
+      "core.Agent.interface",
+      "core.AgentRole.interface",
+      "core.Commitment.interface"
+    ],
+    "maps": [
+      {
+        "id": "item",
+        "ignoredFields": [
+          {
+            "field": "sku",
+            "reason": "Alias only; duplicate SKUs do not establish identity."
+          },
+          {
+            "field": "price",
+            "reason": "Sales price is not stock cost, valuation or a ledger effect."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.custom_norn_ref"
+          },
+          {
+            "property": "code",
+            "value": "input.code"
+          },
+          {
+            "property": "label",
+            "value": "input.label"
+          }
+        ],
+        "source": {
+          "dataset": "Item"
+        },
+        "sourceRecord": "'erpnext/sandbox/Item/' + input.name",
+        "subject": "input.custom_norn_ref",
+        "target": {
+          "entity": "canon.Item.entity",
+          "interface": "canon.Catalog.interface"
+        }
+      },
+      {
+        "id": "holding",
+        "links": [
+          {
+            "key": "input.item_ref",
+            "link": "item",
+            "targetMap": "item"
+          },
+          {
+            "key": "input.owner_ref",
+            "link": "owner",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.custodian_ref",
+            "link": "custodian",
+            "targetMap": "party"
+          }
+        ],
+        "properties": [
+          {
+            "property": "resource_code",
+            "value": "input.resource_code"
+          },
+          {
+            "property": "quantity",
+            "value": "input.quantity"
+          },
+          {
+            "property": "unit",
+            "value": "input.unit"
+          },
+          {
+            "property": "currency",
+            "value": "null"
+          },
+          {
+            "property": "valuation_method",
+            "value": "input.valuation_method"
+          },
+          {
+            "property": "location",
+            "value": "input.location"
+          },
+          {
+            "property": "quantity_basis",
+            "value": "'on_hand'"
+          },
+          {
+            "property": "stock_cost",
+            "value": "input.stock_cost"
+          },
+          {
+            "property": "cost_currency",
+            "value": "input.cost_currency"
+          }
+        ],
+        "source": {
+          "dataset": "Warehouse Lot Balance"
+        },
+        "sourceRecord": "'erpnext/sandbox/Warehouse Lot Balance/' + input.name",
+        "subject": "input.custom_norn_ref",
+        "target": {
+          "entity": "canon.Holding.entity",
+          "interface": "core.Resource.interface"
+        }
+      },
+      {
+        "id": "party",
+        "ignoredFields": [
+          {
+            "field": "role",
+            "reason": "Mapped separately as an AgentRole; a customer role is not an Agent subtype."
+          }
+        ],
+        "properties": [
+          {
+            "property": "display_name",
+            "value": "input.label"
+          },
+          {
+            "property": "kind",
+            "value": "'organization'"
+          }
+        ],
+        "source": {
+          "dataset": "Party"
+        },
+        "sourceRecord": "'erpnext/sandbox/Customer/' + input.name",
+        "subject": "input.custom_norn_ref",
+        "target": {
+          "entity": "canon.Party.entity",
+          "interface": "core.Agent.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "counterparty",
+            "note": "The role is scoped to the demo organisation, not an inferred bilateral legal relationship.",
+            "reason": "not_in_source"
+          }
+        ],
+        "id": "party_role",
+        "ignoredFields": [
+          {
+            "field": "label",
+            "reason": "Agent label is mapped by party."
+          }
+        ],
+        "links": [
+          {
+            "key": "input.custom_norn_ref",
+            "link": "agent",
+            "targetMap": "party"
+          }
+        ],
+        "properties": [
+          {
+            "property": "role",
+            "value": "input.role"
+          },
+          {
+            "property": "valid_from",
+            "value": "null"
+          },
+          {
+            "property": "valid_to",
+            "value": "null"
+          }
+        ],
+        "source": {
+          "dataset": "Party"
+        },
+        "sourceRecord": "'erpnext/sandbox/Customer/' + input.name",
+        "subject": "input.custom_norn_ref + '/role/' + input.role",
+        "target": {
+          "entity": "canon.PartyRole.entity",
+          "interface": "core.AgentRole.interface"
+        }
+      },
+      {
+        "id": "order",
+        "links": [
+          {
+            "key": "input.provider_ref",
+            "link": "provider",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.receiver_ref",
+            "link": "receiver",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.holding_ref",
+            "link": "resource",
+            "targetMap": "holding"
+          }
+        ],
+        "properties": [
+          {
+            "property": "quantity",
+            "value": "input.quantity"
+          },
+          {
+            "property": "unit",
+            "value": "input.unit"
+          },
+          {
+            "property": "currency",
+            "value": "null"
+          },
+          {
+            "property": "status",
+            "value": "'promised'"
+          },
+          {
+            "property": "due_at",
+            "value": "timestamp(input.due_at)"
+          }
+        ],
+        "source": {
+          "dataset": "Sales Order Item"
+        },
+        "sourceRecord": "'erpnext/sandbox/Sales Order Item/' + input.name",
+        "subject": "input.custom_norn_ref",
+        "target": {
+          "entity": "canon.OrderLine.entity",
+          "interface": "core.Commitment.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "erpnext.sandbox.source",
+      "sha256": "21fcae139208fef42c7e10329a303d80484a1d870ffc169760c1427eb04f1834",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext-sandbox/artifacts/erpnext.sandbox.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

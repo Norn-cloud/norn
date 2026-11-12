@@ -3,7 +3,7 @@
 import { statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
-import { compileQuestions } from "./compiler/definitions.ts"
+import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
 import { admit, compilePack } from "./pack.ts"
 
@@ -53,8 +53,8 @@ function option(name: string): string | undefined {
   const index = flags.indexOf(name)
   return index < 0 ? undefined : flags[index + 1]
 }
-if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n")
+if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n")
   process.exit(2)
 }
 if (command === "profile") {
@@ -72,11 +72,26 @@ if (command === "question") {
   else process.stdout.write(document)
   process.exit(0)
 }
+if (command === "dashboard") {
+  if (!statSync(input).isFile()) { process.stderr.write("dashboard expects one TypeScript module\n"); process.exit(2) }
+  const result = compileDashboards(resolve(input))
+  if (!result.ok) { process.stdout.write(`${JSON.stringify(result)}\n`); process.exit(1) }
+  const document = `${JSON.stringify(result.dashboards)}\n`
+  const output = option("--out")
+  if (output) writeFileSync(output, document)
+  else process.stdout.write(document)
+  process.exit(0)
+}
 const orgId = option("--org")
 const environmentId = option("--env")
 if (!orgId || !environmentId) {
   process.stderr.write("--org and --env are required\n")
   process.exit(2)
+}
+if (command === "check") {
+  // Before compiling: a project whose sources do not compile is told too.
+  const { warnAuthoringVersion } = await import("./authoring-version.ts")
+  warnAuthoringVersion(resolve(input))
 }
 const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
 if (!pack.ok) {

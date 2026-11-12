@@ -334,12 +334,16 @@
       "message": "الاستخدام: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
       "review": "needs_review"
     },
+    "cli.setup.authoring_version_mismatch": {
+      "message": "إصدار @norn/authoring المثبَّت في المشروع يختلف عن إصدار هذه الواجهة؛ يستخدم القبول أنواع التأليف الخاصة بالواجهة.",
+      "review": "needs_review"
+    },
     "cli.setup.checker_unavailable": {
       "message": "حزمة WASM الخاصة بالمدقِّق غير متاحة؛ ابنِها واضبط NORN_CHECKER_WASM_PKG.",
       "review": "needs_review"
     },
     "cli.setup.host_unavailable": {
-      "message": "لا يوجد مضيف Norn محلي؛ ابنِه بالأمر `cargo build -p norn-cell-do --bin norn-dev-host` واضبط NORN_DEV_HOST_BIN على target/debug/norn-dev-host.",
+      "message": "لا يوجد مضيف Norn محلي؛ ابنِ norn-dev-host من مستودع Norn (لواجهة سطر أوامر منشورة: عند الإيداع الذي يطبعه `norn --version`) واضبط NORN_DEV_HOST_BIN على مساره المطلق.",
       "review": "needs_review"
     },
     "cli.setup.unpublished": {
@@ -1562,6 +1566,10 @@
       "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
       "review": "needs_review"
     },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: وحدة المقياس مخزنة في خصائص مجاورة؛ جمّع حسب كل منها أو ثبّت كلًّا منها بمرشح eq، حتى لا يخلط أي تجميع بين الوحدات.",
+      "review": "needs_review"
+    },
     "metric.validation.ontology_projection": {
       "message": "مجموعات البيانات أو العلاقات الدلالية المُولَّدة تختلف عن الأنطولوجيا.",
       "review": "needs_review"
@@ -2024,6 +2032,10 @@
     },
     "property_type.validation.invalid_unit": {
       "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_unit_source": {
+      "message": "مصدر الوحدة {$detail}",
       "review": "needs_review"
     },
     "property_type.validation.inverted_range": {

@@ -2250,9 +2250,16 @@ impl<E: SqlEngine> CellStore<E> {
         source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<(), CellError> {
         validate_store_format(conn)?;
-        for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+        for statement in SYSTEM_DDL
+            .iter()
+            .chain(&crate::flow_run::DDL)
+            .chain(&crate::decision_ledger::DDL)
+        {
             conn.execute_batch(statement)?;
         }
+        // Claim endpoints of bundles consumed before the table existed; a
+        // no-op for every bundle already indexed.
+        conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
@@ -2879,7 +2886,10 @@ impl<E: SqlEngine> CellStore<E> {
                 } else {
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
-                    for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+                    for statement in SYSTEM_DDL
+            .iter()
+            .chain(&crate::flow_run::DDL)
+            .chain(&crate::decision_ledger::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
                     crate::retained::init(&self.conn)?;
@@ -3109,8 +3119,10 @@ impl<E: SqlEngine> CellStore<E> {
                 writer.admit_created_identities()?;
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
+            crate::decision_ledger::check(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
+            crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

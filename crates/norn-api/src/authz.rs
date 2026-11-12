@@ -13,6 +13,22 @@ pub enum Operation {
     CallAction(String),
     /// Admit, install or retire a retained (non-kernel) definition.
     WriteDefinitions,
+    /// Start a run of the named installed flow (RUN-ROUTES-1). A run holds no
+    /// grants of its own: this decides only who may start one.
+    StartRun(String),
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
+    /// Decide a decision a flow run waits on, whose request declares these
+    /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
+    /// run; it grants the run nothing.
+    Decide {
+        /// The roles the request declares; the caller must hold one.
+        roles: Vec<String>,
+        /// The law the request names, if any.
+        law: Option<String>,
+    },
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -94,6 +110,14 @@ pub trait Authorizer: Send + Sync {
     ) -> Result<(), norn_kernel::ActionDenial> {
         Err(norn_kernel::ActionDenial::Invisible)
     }
+
+    /// The cell's model changed: an install committed new object types (a
+    /// flow's Run type, for one). Called under the definitions write epoch,
+    /// before any request sees the new model, so a policy compiled over the
+    /// model's types recompiles here and decides the new types like the
+    /// others. A policy that cannot recompile keeps its rules, so the new
+    /// types stay denied.
+    fn model_changed(&self, _object_types: &[norn_ir::ObjectTypeDef]) {}
 
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
     /// Action/read grants do not imply this decision; absent policy denies.
@@ -180,6 +204,12 @@ mod tests {
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
+                Operation::StartRun("demo.flow".into()),
+                Operation::ProvisionCell,
+                Operation::Decide {
+                    roles: vec!["viewer".into()],
+                    law: None,
+                },
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

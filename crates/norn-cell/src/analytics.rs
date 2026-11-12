@@ -307,21 +307,37 @@ pub struct Window {
     pub end: (i64, u32),
 }
 
-/// The output grouping.
+/// A calendar period, in UTC; weeks are ISO weeks from Monday.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Grain {
+    /// A day.
+    Day,
+    /// An ISO week.
+    Week,
+    /// A month.
+    Month,
+    /// A quarter.
+    Quarter,
+    /// A year.
+    Year,
+}
+
+/// One output dimension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", deny_unknown_fields)]
-pub enum Bucket {
-    /// One ungrouped bucket.
-    None,
+pub enum Dimension {
     /// The property's value.
     Column {
         /// The property.
         column: String,
     },
-    /// The UTC Monday of the property's instant.
-    Week {
+    /// The first UTC day of the period holding the property's instant.
+    Period {
         /// The timestamp or date property.
         column: String,
+        /// The period.
+        grain: Grain,
     },
 }
 
@@ -344,8 +360,9 @@ pub struct Lowered {
     pub filters: Vec<Filter>,
     /// The time window of the first operand's effective time.
     pub window: Window,
-    /// The grouping.
-    pub bucket: Bucket,
+    /// The grouping, in the question's order: none buckets everything
+    /// together, one by its value, more by the tuple of their values.
+    pub dimensions: Vec<Dimension>,
     /// One operand, or numerator then denominator.
     pub operands: Vec<Operand>,
 }
@@ -378,8 +395,15 @@ pub enum GroupKey {
     Number(String),
     /// The text of the bucket's first member by identity.
     Text(String),
-    /// The UTC seconds of a week's Monday.
-    Week(i64),
+    /// The first day of a period, in days since 1970-01-01.
+    Period {
+        /// The period.
+        grain: Grain,
+        /// Days since the epoch.
+        day: i64,
+    },
+    /// The values of several dimensions, in the question's order.
+    Tuple(Vec<GroupKey>),
 }
 
 /// One contributing member: identity, version and operand coefficients

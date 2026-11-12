@@ -256,6 +256,58 @@ fn admit_runs_the_dashboard_validator_without_side_effects() {
     );
 }
 
+/// A view must fit the answer it draws: a number shows one value per measure
+/// (no group-by); a pie shows the parts of one whole (one summable, non-ratio
+/// measure over one category, no time grain). Each refusal names the view.
+#[test]
+fn a_view_is_admitted_only_when_it_can_draw_its_question_honestly() {
+    let cell = cell(DefinitionKinds::default());
+    let tile = |metric: &str, group_by: Value, view: Value| {
+        let mut question = question();
+        question["aggregate"] = json!([{ "metric": metric }]);
+        question["groupBy"] = group_by;
+        json!({ "id": "t1", "title": "Tile", "question": question, "view": view, "layout": { "x": 0, "y": 0, "w": 1, "h": 1 } })
+    };
+    let admit = |tile: Value| {
+        let body = json!({ "kind": "dashboard", "id": "studio.dashboard.views", "payload": { "title": "Views", "tiles": [tile] } });
+        let (status, document) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert_eq!(status, 200, "{document}");
+        document
+    };
+    let by_metal = json!([{ "path": { "property": "metal" } }]);
+    let by_week = json!([{ "path": { "property": "occurred_at" }, "grain": "week" }]);
+    let number = json!({ "kind": "number" });
+    let pie = json!({ "kind": "chart", "chart": "pie" });
+    for admitted in [
+        tile("demo.yield", json!([]), number.clone()),
+        tile("demo.recovered", by_metal.clone(), pie.clone()),
+    ] {
+        let document = admit(admitted.clone());
+        assert_eq!(document["admitted"], json!(true), "{admitted} {document}");
+    }
+    for refused in [
+        tile("demo.yield", by_week.clone(), number),
+        tile("demo.yield", by_metal.clone(), pie.clone()),
+        tile("demo.recovered", by_week, pie.clone()),
+        tile("demo.recovered", json!([]), pie),
+        tile(
+            "demo.recovered",
+            by_metal,
+            json!({ "kind": "number", "chart": "pie" }),
+        ),
+    ] {
+        let document = admit(refused.clone());
+        assert_eq!(document["admitted"], json!(false), "{refused} {document}");
+        assert!(
+            pointers(&document).contains(&(
+                "definition.view_invalid".to_owned(),
+                "/tiles/0/view".to_owned()
+            )),
+            "{refused} {document}"
+        );
+    }
+}
+
 #[test]
 fn writes_need_a_writer_grant_and_every_denial_is_the_same_document() {
     let cell = cell(DefinitionKinds::default());
@@ -2105,4 +2157,76 @@ fn binding_strings_and_member_names_are_nfc_so_the_stored_manifest_keeps_its_dig
     )
     .unwrap();
     assert_eq!(stored["manifestDigest"], json!(recomputed));
+}
+
+/// A dashboard may name who authored this version; only an assistant's
+/// origin carries a proposal, model and request, each bounded text.
+#[test]
+fn a_dashboard_origin_names_its_author_and_only_an_assistant_names_a_request() {
+    let cell = cell(DefinitionKinds::default());
+    let admit = |origin: Value| {
+        let mut payload = dashboard("Origins");
+        payload["origin"] = origin;
+        let body =
+            json!({ "kind": "dashboard", "id": "studio.dashboard.origin", "payload": payload });
+        let (status, document) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert_eq!(status, 200, "{document}");
+        document
+    };
+    for admitted in [
+        json!({ "by": "studio" }),
+        json!({ "by": "code" }),
+        json!({ "by": "assistant", "proposal": "prop_1", "model": "claude-sonnet-5-5", "request": "Weekly gold yield\nand inputs" }),
+    ] {
+        assert_eq!(
+            admit(admitted.clone())["admitted"],
+            json!(true),
+            "{admitted}"
+        );
+    }
+    for (refused, pointer) in [
+        (json!({ "by": "robot" }), "/origin/by"),
+        (
+            json!({ "by": "studio", "request": "why" }),
+            "/origin/request",
+        ),
+        (json!({ "by": "assistant", "model": "" }), "/origin/model"),
+        (
+            json!({ "by": "assistant", "request": "x".repeat(2001) }),
+            "/origin/request",
+        ),
+        (json!({ "by": "assistant", "note": "x" }), "/origin/note"),
+    ] {
+        let document = admit(refused.clone());
+        assert_eq!(document["admitted"], json!(false), "{refused}");
+        assert!(
+            pointers(&document)
+                .contains(&("definition.invalid_payload".to_owned(), pointer.to_owned())),
+            "{refused} {document}"
+        );
+    }
+}
+
+/// DASHBOARD-LOWER-1: the dashboard `Norn.dashboard` compiles to
+/// (tools/norn-ts/fixtures/dashboards) is admitted like one saved in Studio,
+/// and the checker's words say it was written as code.
+#[test]
+fn a_code_dashboard_is_admitted_like_one_saved_in_studio() {
+    let cell = cell(
+        DefinitionKinds::default().with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    let compiled: Value = serde_json::from_str(include_str!(
+        "../../../tools/norn-ts/fixtures/dashboards/refinery.dashboard.json"
+    ))
+    .unwrap();
+    let body =
+        json!({ "kind": "dashboard", "id": "code.dashboard.refinery", "payload": compiled[0] });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(admitted["admitted"], json!(true), "{admitted}");
+    let words = admitted["restatement"].as_str().unwrap();
+    assert!(
+        words.starts_with("Refinery weekly\nWritten as code.\n1. Recovered in total: "),
+        "{words}"
+    );
 }

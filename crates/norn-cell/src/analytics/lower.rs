@@ -8,7 +8,8 @@ use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{PropertyType, RuntimeValue};
 
 use super::{
-    Bucket, Column, ColumnKind, Filter, Literal, Lowered, Operand, TableSchema, Test, Window,
+    Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, TableSchema, Test,
+    Window,
 };
 use crate::CellError;
 
@@ -148,24 +149,34 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
         start: instant_key(question.time_window.start.as_str(), false).ok_or_else(refused)?,
         end: instant_key(question.time_window.end.as_str(), false).ok_or_else(refused)?,
     };
-    let bucket = match question.dimensions.as_slice() {
-        [] => Bucket::None,
-        [dimension] if !dimension.path.links.is_empty() => return Err(refused()),
-        [dimension] => match dimension.grain {
-            Some(TimeGrain::Week) => Bucket::Week {
-                column: instant_column(plan, dimension.path.property.as_str())?,
-            },
-            None => {
-                let column = dimension.path.property.as_str();
-                kind(plan, column)?;
-                Bucket::Column {
-                    column: column.to_owned(),
-                }
+    let dimensions = question
+        .dimensions
+        .iter()
+        .map(|dimension| {
+            if !dimension.path.links.is_empty() {
+                return Err(refused());
             }
-            Some(_) => return Err(refused()),
-        },
-        _ => return Err(refused()),
-    };
+            let column = dimension.path.property.as_str();
+            Ok(match dimension.grain {
+                None => {
+                    kind(plan, column)?;
+                    Dimension::Column {
+                        column: column.to_owned(),
+                    }
+                }
+                Some(grain) => Dimension::Period {
+                    column: instant_column(plan, column)?,
+                    grain: match grain {
+                        TimeGrain::Day => Grain::Day,
+                        TimeGrain::Week => Grain::Week,
+                        TimeGrain::Month => Grain::Month,
+                        TimeGrain::Quarter => Grain::Quarter,
+                        TimeGrain::Year => Grain::Year,
+                    },
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, CellError>>()?;
     let operands = plan
         .sums()
         .iter()
@@ -198,7 +209,7 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
             .map(|f| filter(plan, f))
             .collect::<Result<_, _>>()?,
         window,
-        bucket,
+        dimensions,
         operands,
     })
 }

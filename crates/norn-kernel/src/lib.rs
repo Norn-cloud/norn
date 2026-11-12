@@ -66,6 +66,7 @@ pub mod decision_commit;
 mod effect;
 mod envelope;
 pub mod flow_identity;
+pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
 pub mod limits;
@@ -100,9 +101,10 @@ pub use action_commit::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
     ActionOutcome, ActionPreconditionOutcome, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    ActionRefusal, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, commit_action,
-    commit_action_with_limits, commit_action_with_meter, commit_action_with_preparation,
-    owned_rows_manifest_key, prepare_action_input, prepare_action_input_for_call,
+    ActionRefusal, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, actor_derived_fields,
+    commit_action, commit_action_with_limits, commit_action_with_meter,
+    commit_action_with_preparation, owned_rows_manifest_key, prepare_action_input,
+    prepare_action_input_for_call,
 };
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
@@ -119,8 +121,8 @@ pub use decider::{
 pub use decision_commit::{
     DataQualityRuleClassification, DecisionRefusal, DecisionTurn, EffectiveValuesError, FactEvent,
     FactSlice, PreparedDecision, TypeCatalog, commit_decision, commit_decision_with_limits,
-    commit_decision_with_meter, load_slice, prepare_decision, prepare_decision_with_limits,
-    prepare_decision_with_source_owned_targets,
+    commit_decision_with_meter, decision_cell_commit, load_slice, prepare_decision,
+    prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
 pub use effect::{
     Command, CommandId, DependencyToken, Effect, FreshnessPolicy, Generation, IdempotencyKey,

@@ -53,7 +53,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/datasets:load": {
+    "/v1/cell:provision": {
         parameters: {
             query?: never;
             header?: never;
@@ -63,17 +63,68 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * BULK-LOAD-1: load a completed upload into the tenant's engine as the
-         *     dataset `objectType`, typed by that admitted definition. The engine reads
-         *     the object through a presigned URL, verifies its SHA-256, types every row,
-         *     and quarantines a row it cannot type (or that misses a required value)
-         *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Only an admin or owner may load.
-         * @description # Errors
-         *     A denied caller (one opaque 403), an unknown upload or type (404), a
-         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         * Provision the scope's cell from the caller's definitions (owner only).
+         * @description One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the
+         *     scope binding, a fresh cell identity, the definitions, their receipt and
+         *     the ledger commit together, or nothing. The host calls this on a fresh
+         *     engine after [`authorize`] and [`admit_submission`]; `now_ms` is the host
+         *     clock (Unix milliseconds), recorded as the install time.
+         *
+         *     # Errors
+         *     `cell.provision_conflict` (409) when the engine already holds a cell
+         *     provisioned from something else; `host.error` (500) for a storage failure,
+         *     which leaves the engine as it was.
          */
-        post: operations["load_dataset"];
+        post: operations["provision_cell"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions?state=pending`: the open decisions the caller may
+         *     decide, soonest deadline first, ties to the oldest request, then id.
+         * @description # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     state, limit or cursor; a host failure.
+         */
+        get: operations["list_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions/{id}:decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/decisions/{id}:decide`.
+         * @description # Errors
+         *     In this order: 404 `decision.not_found` (also for a caller who may not
+         *     decide it), 409 `decision.resolved`, 410 `decision.expired`, 403
+         *     `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
+         *     `decision.note_too_long` (`/note`) or `request.invalid`, 409
+         *     `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
+         *     run's result turn; a host failure.
+         */
+        post: operations["decide"];
         delete?: never;
         options?: never;
         head?: never;
@@ -382,33 +433,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/objects/{type}:export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * D102: every row of `object_type` the caller may read, with the named
-         *     properties plus `id` and `version`, from the tenant's engine, exact at the
-         *     cell's verified head (or a dataset's current load). The caller needs
-         *     Population and Values on the type; quarantined rows are left out, as on a
-         *     page. The host streams the engine's file; the snapshot it is exact at is
-         *     the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
-         * @description # Errors
-         *     A denied gate (one opaque 403), an unknown type (404), an unknown column
-         *     or format (400), or an unreachable engine.
-         */
-        get: operations["export_objects"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/objects/{type}:profile": {
         parameters: {
             query?: never;
@@ -497,6 +521,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+         *     an ad-hoc question is built from, for this caller (D67: only what the
+         *     caller may read the population of).
+         *     # Errors
+         *     No actor or a scope that is not this cell's (one opaque 403), or a host
+         *     failure reading the model.
+         */
+        get: operations["question_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions:evaluate": {
         parameters: {
             query?: never;
@@ -569,6 +617,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/runs`: start a run of an installed flow.
+         * @description # Errors
+         *     Missing or foreign scope or a denied caller (one opaque 403), an invalid
+         *     body, an unknown or retired flow (`run.flow_not_found`), a run id already
+         *     started for another flow (`run.exists`), a refused start turn
+         *     (`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),
+         *     a concurrent change (`run.start_conflict`), or a host failure.
+         */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs/{id}`.
+         * @description # Errors
+         *     Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+         */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -622,8 +716,19 @@ export interface components {
         AdHocTraceRequest: {
             /** @description Canonical bucket key from that answer. */
             bucket: string;
+            /**
+             * Format: int64
+             * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+             *     given, even after the cell has committed since.
+             */
+            knownAsOf?: number | null;
             /** @description The `lineageRef` handle that answer returned. */
             lineageRef: string;
+            /**
+             * Format: int64
+             * @description The answer's `nowMs`, with `knownAsOf`.
+             */
+            nowMs?: number | null;
             /** @description The same `QuestionIR` the answer was evaluated from. */
             question: {
                 [key: string]: unknown;
@@ -654,12 +759,226 @@ export interface components {
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
         };
-        /** @description `POST /v1/datasets:load` body. */
-        DatasetLoadRequest: {
-            /** @description The admitted object type the rows are typed by. */
+        /**
+         * @description One object type an ad-hoc question may range over, with every effective
+         *     property and its resolved type (`null` for a registry or unresolved type).
+         */
+        CatalogObjectType: {
+            /** @description The object type's name: a question's `objectSet`. */
+            name: string;
+            /** @description Its effective properties, in declaration order. */
+            properties: components["schemas"]["CatalogProperty"][];
+        };
+        /** @description One effective property: its id and its resolved type, as declared. */
+        CatalogProperty: {
+            /** @description The property id: what a group-by or filter path names. */
+            id: string;
+            /** @description The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type. */
+            type?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * @description Whether this call decided, or replayed an identical earlier call.
+         * @enum {string}
+         */
+        DecideOutcome: "decided" | "replayed";
+        /**
+         * @description A refused decide call: the shared refusal, and on `decision.resolved` who
+         *     resolved the decision first.
+         */
+        DecideRefusal: components["schemas"]["Refusal"] & {
+            resolution?: components["schemas"]["DecisionResolution"] | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` body. */
+        DecideRequest: {
+            /** @description One of the decision's option ids. */
+            choice: string;
+            /** @description The caller's retry key: the same key and body replays the decision. */
+            idempotencyKey: string;
+            /** @description A note, at most 500 characters. */
+            note?: string | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` response. */
+        Decided: {
+            /** @description The decision. */
+            decision: components["schemas"]["DecidedDecision"];
+            /** @description Decided now, or replayed. */
+            outcome: components["schemas"]["DecideOutcome"];
+            /** @description Its commit. */
+            receipt: components["schemas"]["DecidedReceipt"];
+            /** @description The run. */
+            run: components["schemas"]["DecidedRun"];
+        };
+        /** @description The decision as decided. */
+        DecidedDecision: {
+            /** @description The chosen option id. */
+            choice: string;
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            decidedAtMs: number;
+            /** @description Who decided, in display words, never an id. */
+            decidedBy: string;
+            /** @description The decision id. */
+            id: string;
+            /** @description The note. */
+            note?: string | null;
+        };
+        /** @description The commit that recorded the decision. */
+        DecidedReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /** @description The run after the decision. */
+        DecidedRun: {
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description What the decision is about. Empty in this version. */
+        DecisionContext: {
+            /** @description The objects the decision concerns. */
+            subjects: components["schemas"]["DecisionSubject"][];
+        };
+        /** @description One open decision. */
+        DecisionDocument: {
+            /** @description An agent's recommended option id; a recommendation, never a decision. */
+            agentPick?: string | null;
+            /** @description What it is about. */
+            context: components["schemas"]["DecisionContext"];
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds), at most seven days
+             *     after it was asked.
+             */
+            expiresAtMs: number;
+            /** @description The run's flow. */
+            flow: components["schemas"]["DecisionFlow"];
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description Reserved; always `null` in this version. */
+            inputSchema?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The options. */
+            options: components["schemas"]["DecisionOptionDocument"][];
+            /** @description The question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the run asked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description The run waiting on it. */
+            run: components["schemas"]["DecisionRun"];
+            /** @description The step that asks. */
+            step: components["schemas"]["DecisionStep"];
+        };
+        /** @description The flow a decision belongs to. */
+        DecisionFlow: {
+            /** @description The flow's `decide` rule artifact id. */
+            ruleId: string;
+            /** @description The flow's display title. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One option a decider may choose. */
+        DecisionOptionDocument: {
+            /** @description What it does. */
+            effect: components["schemas"]["DecisionOptionEffect"];
+            /** @description The option id `choice` names. */
+            id: string;
+            /** @description What the decider reads. */
+            label: string;
+            /** @description How far it reaches, in the decider's words. */
+            scope: string;
+        };
+        /** @description What choosing an option does: exactly one of an action or a binding. */
+        DecisionOptionEffect: {
+            /** @description The action the option starts. */
+            action?: string | null;
+            /** @description The binding the option sets. */
+            binding?: string | null;
+        };
+        /** @description Who resolved a decision first (409 `decision.resolved`). */
+        DecisionResolution: {
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            atMs: number;
+            /** @description Who, in display words, never an id. */
+            by?: string | null;
+            /** @description The chosen option, only for a reader who may read the run. */
+            choice?: string | null;
+            /** @description How it was resolved. */
+            resolution: string;
+        };
+        /**
+         * @description How much is at stake.
+         * @enum {string}
+         */
+        DecisionRisk: "low" | "medium" | "high";
+        /** @description The run a decision belongs to. */
+        DecisionRun: {
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description The step that asks. */
+        DecisionStep: {
+            /** @description The step id. */
+            id: string;
+            /** @description Its display label. */
+            label?: string | null;
+        };
+        /** @description One object a decision concerns. */
+        DecisionSubject: {
+            /** @description Its id. */
+            id: string;
+            /** @description Its object type. */
             objectType: string;
-            /** @description A completed upload of this cell. */
-            uploadId: string;
+        };
+        /** @description One page of open decisions. */
+        DecisionsPage: {
+            /** @description The decisions, soonest deadline first, ties to the oldest request. */
+            items: components["schemas"]["DecisionDocument"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last page. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /**
+             * Format: int64
+             * @description How many open decisions the caller may decide.
+             */
+            total: number;
+            /** @description `total` is a lower bound: more were not examined. */
+            totalCapped?: boolean;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -969,7 +1288,7 @@ export interface components {
             description?: string | null;
             /** @description How its effect changes that object. */
             effect: components["schemas"]["NornActionEffect"];
-            /** @description The admitted input schema, in the action's closed input dialect. */
+            /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
             inputSchema: {
                 [key: string]: unknown;
             };
@@ -1361,41 +1680,6 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
-        /** @description The outcome of `POST /v1/datasets:load`. */
-        NornDatasetLoad: {
-            /**
-             * Format: int64
-             * @description File size in bytes.
-             */
-            bytes: number;
-            /** @description The load identity; answers over the dataset name it. */
-            load: string;
-            /**
-             * Format: int64
-             * @description Load time in milliseconds.
-             */
-            millis: number;
-            /** @description The dataset's object type. */
-            objectType: string;
-            /** @description Quarantined rows per reason code (`bulk.*`). */
-            reasons: {
-                [key: string]: number;
-            };
-            /**
-             * Format: int64
-             * @description Rows quarantined.
-             */
-            rejected: number;
-            /**
-             * Format: int64
-             * @description Rows admitted.
-             */
-            rows: number;
-            /** @description The file's SHA-256, verified by the engine. */
-            sha256: string;
-            /** @description The file's durable URI. */
-            uri: string;
-        };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
             /**
@@ -6775,6 +7059,11 @@ export interface components {
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
             name: string;
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the unit source at this use site, for a
+             *     ref that resolves to a decimal declaring none of its own.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /**
          * @description An exact decimal with a fixed number of fraction digits, optionally a
@@ -6806,6 +7095,12 @@ export interface components {
              */
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the sibling properties whose values
+             *     together are this quantity's unit, when it has no static `unit`.
+             *     Aggregating questions must group by or fix each of them.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {
@@ -6954,6 +7249,12 @@ export interface components {
          *     (`core.compute.bound_exceeded`), never truncated.
          */
         NornIrQuestionLimits: {
+            /**
+             * Format: uint64
+             * @description Maximum stored bytes those records may decode to: the scan's memory
+             *     bound.
+             */
+            max_scanned_bytes: number;
             /**
              * Format: uint32
              * @description Maximum source records one evaluation of a question may scan.
@@ -9969,25 +10270,12 @@ export interface components {
         };
         /** @description One output bucket, with its exact sums beside its value. */
         NornQueryRow: {
-            /** @description Scalar grouping value. */
+            /** @description Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group). */
             bucket: unknown;
-            /**
-             * Format: int64
-             * @description D102: contributing members, present when `members` is not listed
-             *     because the population exceeds the question's bound (the analytics
-             *     engine answered); the trace pages them.
-             */
-            memberCount?: number | null;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
-            /**
-             * @description MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each
-             *     as `<identity bytes>:<identity>,<version>` then `,<coefficient>` per
-             *     operand (empty when absent) and `;`. Present with `memberCount`.
-             */
-            membershipDigest?: string | null;
             /**
              * @description Per operand, in `totals` order: how many members' measured value was
              *     null. A null is skipped by the sum, never read as 0. Absent when no
@@ -10076,6 +10364,63 @@ export interface components {
                 commit: string;
             };
         };
+        /**
+         * @description Whether the call provisioned the cell or found it provisioned.
+         * @enum {string}
+         */
+        ProvisionOutcome: "provisioned" | "replayed";
+        /** @description The provisioned cell. */
+        ProvisionReceipt: {
+            /** @description The trusted base the set was admitted against. */
+            baseSha256: string;
+            /** @description The cell's logical identity, bound when it was created. */
+            cellId: string;
+            /**
+             * Format: int64
+             * @description The definitions version the submission was installed as.
+             */
+            definitionsVersion: number;
+            /** @description Whether this call created the cell. */
+            outcome: components["schemas"]["ProvisionOutcome"];
+            /** @description The checker's admission receipt digest for the installed set. */
+            receiptSha256: string;
+        };
+        /** @description `POST /v1/cell:provision`. */
+        ProvisionRequest: {
+            /** @description The tenant's artifact envelopes; none in a reserved namespace (core., std.). */
+            artifacts: components["schemas"]["NornArtifactEnvelope"][];
+            /**
+             * @description Lower-case hex SHA-256 of the trusted base the artifacts were
+             *     authored against; it must be the host's.
+             */
+            baseSha256: string;
+        };
+        /**
+         * @description `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+         *     from, and what this cell's engine admits. Every metric and object type
+         *     listed is one the caller may read the population of (D67): a ratio only
+         *     when both its operands are, a type only when it is a readable metric's
+         *     population. Nothing listed is a promise: `:evaluate` still admits.
+         */
+        QuestionCatalog: {
+            /**
+             * @description Calendar grains a group-by may bucket a time property by; a group-by
+             *     without a grain groups by the property's values.
+             */
+            grains: string[];
+            /** @description Most buckets one answer may have (above it, 413). */
+            maxBuckets: number;
+            /** @description Most group-bys one question may have. */
+            maxGroupBy: number;
+            /** @description The listed metrics, as declared, in name order. */
+            metrics: {
+                [key: string]: unknown;
+            }[];
+            /** @description The object types the listed metrics range over. */
+            objectTypes: components["schemas"]["CatalogObjectType"][];
+            /** @description Filter operators the engine admits. */
+            operators: string[];
+        };
         /** @description A refused request. */
         Refusal: ({
             /**
@@ -10154,6 +10499,115 @@ export interface components {
              */
             expectedVersion: number;
         };
+        /** @description The open decision a run waits on. */
+        RunDecision: {
+            /**
+             * Format: int64
+             * @description When it expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
+            id: string;
+        };
+        /** @description One run, as the routes return it. */
+        RunDocument: {
+            /**
+             * Format: int64
+             * @description Start time (logical milliseconds).
+             */
+            createdAtMs: number;
+            /**
+             * Format: int64
+             * @description The starting commit.
+             */
+            createdCommitSeq: number;
+            decision?: components["schemas"]["RunDecision"] | null;
+            /** @description The flow it runs. */
+            flow: components["schemas"]["RunFlow"];
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description The run's object type. */
+            objectType: string;
+            /** @description Its lifecycle state; `null` once the run object is deleted. */
+            state?: string | null;
+            /** @description The steps the run reached, in order. */
+            steps: components["schemas"]["RunStep"][];
+            /** @description The run has ended and will not change. */
+            terminal: boolean;
+            /**
+             * Format: int64
+             * @description Last write time (logical milliseconds).
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description The last commit that wrote the run object.
+             */
+            updatedCommitSeq: number;
+            /**
+             * Format: int64
+             * @description The run object's version.
+             */
+            version: number;
+        };
+        /** @description The flow a run executes. */
+        RunFlow: {
+            /** @description The flow's definition id. */
+            id: string;
+            /** @description The flow's `decide` rule artifact id (`<id>.flow.rule`). */
+            ruleId: string;
+            /** @description The flow's display title, when it has one. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One step of a run's timeline. */
+        RunStep: {
+            /**
+             * Format: int64
+             * @description When the run left it.
+             */
+            endedAtMs?: number | null;
+            error?: components["schemas"]["RunStepError"] | null;
+            /** @description The flow's step id (`succeed` or `fail` for the run's end). */
+            id: string;
+            /** @description What the step is. */
+            kind: components["schemas"]["RunStepKind"];
+            /** @description The step's display label from the flow, when it has one. */
+            label?: string | null;
+            /** @description The step's receipts the caller may see; none are disclosed yet. */
+            receipts: components["schemas"]["StepReceipt"][];
+            /**
+             * Format: int64
+             * @description When the run reached it (logical milliseconds).
+             */
+            startedAtMs?: number | null;
+            /** @description Where it stands. */
+            status: components["schemas"]["RunStepStatus"];
+            waitingOn?: components["schemas"]["StepWait"] | null;
+        };
+        /** @description Why a step or run failed. */
+        RunStepError: {
+            /** @description The failed lifecycle state. */
+            code: string;
+            /** @description Display words. */
+            message: string;
+        };
+        /**
+         * @description What a step is.
+         * @enum {string}
+         */
+        RunStepKind: "perform" | "decide" | "wait" | "succeed" | "fail";
+        /**
+         * @description Where a step stands.
+         * @enum {string}
+         */
+        RunStepStatus: "running" | "waiting" | "done" | "failed";
         /** @description A recorded sign-off: every field set by the host. */
         SignoffDocument: {
             /** @description Lower-case hex SHA-256 of the host-recomputed restatement. */
@@ -10171,6 +10625,48 @@ export interface components {
             /** @description Lower-case hex SHA-256 of the UTF-8 restatement. */
             restatementSha256: string;
         };
+        /** @description `POST /v1/runs` body. */
+        StartRunRequest: {
+            /**
+             * @description The installed flow's definition id (`flow.id`); its rule is
+             *     `<flow>.flow.rule`.
+             */
+            flow: string;
+            /**
+             * @description The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
+             *     with the same id and flow returns the existing run.
+             */
+            runId: string;
+        };
+        /** @description One receipt behind a step, as the caller may see it. */
+        StepReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description Who acted, in display words, never an id. */
+            executor?: string | null;
+            /** @description What it records. */
+            kind: components["schemas"]["StepReceiptKind"];
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /**
+         * @description What a step receipt records.
+         * @enum {string}
+         */
+        StepReceiptKind: "function" | "decision" | "commit";
+        /**
+         * @description What a waiting step waits on.
+         * @enum {string}
+         */
+        StepWait: "decision" | "executor" | "timer";
     };
     responses: never;
     parameters: never;
@@ -10334,7 +10830,7 @@ export interface operations {
             };
         };
     };
-    load_dataset: {
+    provision_cell: {
         parameters: {
             query: {
                 /** @description Organization (required). */
@@ -10348,17 +10844,113 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DatasetLoadRequest"];
+                "application/json": components["schemas"]["ProvisionRequest"];
             };
         };
         responses: {
-            /** @description The load. */
+            /** @description The cell was provisioned, or already holds exactly this submission. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NornDatasetLoad"];
+                    "application/json": components["schemas"]["ProvisionReceipt"];
+                };
+            };
+            /** @description The request was refused as invalid, or carries an artifact in a reserved namespace. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell holds other definitions, or the submission names another trusted base. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the definitions are not admissible. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description `pending` (required): only open decisions are listed. */
+                state?: string;
+                /** @description Only decisions of runs of this flow (its definition id). */
+                flow?: string;
+                /** @description The previous page's `nextCursor`. */
+                cursor?: string;
+                /** @description Page size, 0 to 200 (default 50); 0 returns only the count. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the open decisions the caller may decide. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionsPage"];
                 };
             };
             /** @description The request was refused as invalid. */
@@ -10379,7 +10971,66 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: not found. */
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    decide: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The decision id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecideRequest"];
+            };
+        };
+        responses: {
+            /** @description Decided, or replayed an identical earlier call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Decided"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied, or the decider law is not satisfied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such open decision waits on the caller. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -10388,7 +11039,25 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The file was refused. */
+            /** @description Someone resolved it first, or the key was used for another answer. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecideRefusal"];
+                };
+            };
+            /** @description The decision expired. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The choice or note was refused. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -11481,74 +12150,6 @@ export interface operations {
             };
         };
     };
-    export_objects: {
-        parameters: {
-            query: {
-                /** @description Organization scope. */
-                orgId?: string;
-                /** @description Environment scope. */
-                environmentId?: string;
-                /** @description Comma-separated property ids; each row also carries `id` and `version`. */
-                columns: string;
-                /** @description `parquet` (the default) or `jsonl`. */
-                format?: string;
-            };
-            header?: never;
-            path: {
-                /** @description The concept to export. */
-                type: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.apache.parquet": unknown;
-                };
-            };
-            /** @description The request was refused as invalid. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Refusal"];
-                };
-            };
-            /** @description The request was refused: scope or authority denied. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Refusal"];
-                };
-            };
-            /** @description The request was refused: not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Refusal"];
-                };
-            };
-            /** @description The request was refused: host failure. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Refusal"];
-                };
-            };
-        };
-    };
     get_object_profile: {
         parameters: {
             query: {
@@ -11785,6 +12386,14 @@ export interface operations {
                 lineageRef: string;
                 /** @description Canonical bucket key from that result. */
                 bucket: string;
+                /**
+                 * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+                 *     given, even after the cell has committed since. Without them the
+                 *     trace is of the cell's current answer.
+                 */
+                knownAsOf?: number;
+                /** @description The answer's `nowMs`, with `knownAsOf`. */
+                nowMs?: number;
             };
             header?: never;
             path: {
@@ -11841,6 +12450,58 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    question_catalog: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The question catalog for this caller. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12032,6 +12693,162 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description A retry with the same run id and flow: the existing run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The run started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such installed flow. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The run id is taken, or the cell changed while the run started. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The flow refused to start. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The run id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such run is visible to the caller. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

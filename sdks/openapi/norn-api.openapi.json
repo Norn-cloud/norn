@@ -242,14 +242,14 @@
         ]
       }
     },
-    "/v1/datasets:load": {
+    "/v1/cell:provision": {
       "post": {
         "tags": [
-          "crate::analytics_routes"
+          "crate::provision"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Only an admin or owner may load.",
-        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
-        "operationId": "load_dataset",
+        "summary": "Provision the scope's cell from the caller's definitions (owner only).",
+        "description": "One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the\nscope binding, a fresh cell identity, the definitions, their receipt and\nthe ledger commit together, or nothing. The host calls this on a fresh\nengine after [`authorize`] and [`admit_submission`]; `now_ms` is the host\nclock (Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
+        "operationId": "provision_cell",
         "parameters": [
           {
             "name": "orgId",
@@ -274,7 +274,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DatasetLoadRequest"
+                "$ref": "#/components/schemas/ProvisionRequest"
               }
             }
           },
@@ -282,11 +282,166 @@
         },
         "responses": {
           "200": {
-            "description": "The load.",
+            "description": "The cell was provisioned, or already holds exactly this submission.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NornDatasetLoad"
+                  "$ref": "#/components/schemas/ProvisionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid, or carries an artifact in a reserved namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the cell holds other definitions, or the submission names another trusted base.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: the definitions are not admissible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions": {
+      "get": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`GET /v1/decisions?state=pending`: the open decisions the caller may\ndecide, soonest deadline first, ties to the oldest request, then id.",
+        "description": "# Errors\nMissing or foreign scope; a missing caller (one opaque 403); an invalid\nstate, limit or cursor; a host failure.",
+        "operationId": "list_decisions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`pending` (required): only open decisions are listed.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flow",
+            "in": "query",
+            "description": "Only decisions of runs of this flow (its definition id).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `nextCursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 0 to 200 (default 50); 0 returns only the count.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the open decisions the caller may decide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionsPage"
                 }
               }
             }
@@ -311,8 +466,124 @@
               }
             }
           },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions/{id}:decide": {
+      "post": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`POST /v1/decisions/{id}:decide`.",
+        "description": "# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The decision id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decided, or replayed an identical earlier call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decided"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope denied, or the decider law is not satisfied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
           "404": {
-            "description": "The request was refused: not found.",
+            "description": "No such open decision waits on the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Someone resolved it first, or the key was used for another answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideRefusal"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The decision expired.",
             "content": {
               "application/json": {
                 "schema": {
@@ -322,7 +593,7 @@
             }
           },
           "422": {
-            "description": "The file was refused.",
+            "description": "The choice or note was refused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1986,120 +2257,10 @@
         ]
       }
     },
-    "/v1/objects/{type}:export": {
-      "get": {
-        "tags": [
-          "crate::analytics_routes"
-        ],
-        "summary": "D102: every row of `object_type` the caller may read, with the named\nproperties plus `id` and `version`, from the tenant's engine, exact at the\ncell's verified head (or a dataset's current load). The caller needs\nPopulation and Values on the type; quarantined rows are left out, as on a\npage. The host streams the engine's file; the snapshot it is exact at is\nthe `Norn-Snapshot` header (`c<commit>` or `l<load>`).",
-        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown column\nor format (400), or an unreachable engine.",
-        "operationId": "export_objects",
-        "parameters": [
-          {
-            "name": "type",
-            "in": "path",
-            "description": "The concept to export.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "orgId",
-            "in": "query",
-            "description": "Organization scope.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "environmentId",
-            "in": "query",
-            "description": "Environment scope.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "columns",
-            "in": "query",
-            "description": "Comma-separated property ids; each row also carries `id` and `version`.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "format",
-            "in": "query",
-            "description": "`parquet` (the default) or `jsonl`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at.",
-            "content": {
-              "application/vnd.apache.parquet": {}
-            }
-          },
-          "400": {
-            "description": "The request was refused as invalid.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The request was refused: scope or authority denied.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The request was refused: not found.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The request was refused: host failure.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "hostToken": []
-          }
-        ]
-      }
-    },
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
-          "crate::object_profile"
+          "crate::object_routes"
         ],
         "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
         "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
@@ -2465,6 +2626,28 @@
             }
           },
           {
+            "name": "knownAsOf",
+            "in": "query",
+            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since. Without them the\ntrace is of the cell's current answer.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "nowMs",
+            "in": "query",
+            "description": "The answer's `nowMs`, with `knownAsOf`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
             "name": "question",
             "in": "path",
             "required": true,
@@ -2526,6 +2709,82 @@
           },
           "422": {
             "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/questions:catalog": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "`GET /v1/questions:catalog`: the metrics, object types and engine bounds\nan ad-hoc question is built from, for this caller (D67: only what the\ncaller may read the population of).\n# Errors\nNo actor or a scope that is not this cell's (one opaque 403), or a host\nfailure reading the model.",
+        "operationId": "question_catalog",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The question catalog for this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2829,6 +3088,229 @@
           }
         ]
       }
+    },
+    "/v1/runs": {
+      "post": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`POST /v1/runs`: start a run of an installed flow.",
+        "description": "# Errors\nMissing or foreign scope or a denied caller (one opaque 403), an invalid\nbody, an unknown or retired flow (`run.flow_not_found`), a run id already\nstarted for another flow (`run.exists`), a refused start turn\n(`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),\na concurrent change (`run.start_conflict`), or a host failure.",
+        "operationId": "start_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A retry with the same run id and flow: the existing run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such installed flow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run id is taken, or the cell changed while the run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The flow refused to start.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`GET /v1/runs/{id}`.",
+        "description": "# Errors\nMissing or foreign scope; `run.not_found` for an absent or unreadable run.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run is visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2934,9 +3416,27 @@
             "type": "string",
             "description": "Canonical bucket key from that answer."
           },
+          "knownAsOf": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since.",
+            "minimum": 0
+          },
           "lineageRef": {
             "type": "string",
             "description": "The `lineageRef` handle that answer returned."
+          },
+          "nowMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The answer's `nowMs`, with `knownAsOf`.",
+            "minimum": 0
           },
           "question": {
             "type": "object",
@@ -3008,24 +3508,539 @@
           }
         }
       },
-      "DatasetLoadRequest": {
+      "CatalogObjectType": {
         "type": "object",
-        "description": "`POST /v1/datasets:load` body.",
+        "description": "One object type an ad-hoc question may range over, with every effective\nproperty and its resolved type (`null` for a registry or unresolved type).",
         "required": [
-          "uploadId",
-          "objectType"
+          "name",
+          "properties"
         ],
         "properties": {
-          "objectType": {
+          "name": {
             "type": "string",
-            "description": "The admitted object type the rows are typed by."
+            "description": "The object type's name: a question's `objectSet`."
           },
-          "uploadId": {
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProperty"
+            },
+            "description": "Its effective properties, in declaration order."
+          }
+        }
+      },
+      "CatalogProperty": {
+        "type": "object",
+        "description": "One effective property: its id and its resolved type, as declared.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
             "type": "string",
-            "description": "A completed upload of this cell."
+            "description": "The property id: what a group-by or filter path names."
+          },
+          "type": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "DecideOutcome": {
+        "type": "string",
+        "description": "Whether this call decided, or replayed an identical earlier call.",
+        "enum": [
+          "decided",
+          "replayed"
+        ]
+      },
+      "DecideRefusal": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Refusal",
+            "description": "The refusal."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "resolution": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DecisionResolution",
+                    "description": "Who resolved the decision first; on `decision.resolved` only."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A refused decide call: the shared refusal, and on `decision.resolved` who\nresolved the decision first."
+      },
+      "DecideRequest": {
+        "type": "object",
+        "description": "`POST /v1/decisions/{id}:decide` body.",
+        "required": [
+          "choice",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "One of the decision's option ids."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's retry key: the same key and body replays the decision."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A note, at most 500 characters."
           }
         },
         "additionalProperties": false
+      },
+      "Decided": {
+        "type": "object",
+        "description": "`POST /v1/decisions/{id}:decide` response.",
+        "required": [
+          "outcome",
+          "decision",
+          "receipt",
+          "run"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DecidedDecision",
+            "description": "The decision."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DecideOutcome",
+            "description": "Decided now, or replayed."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/DecidedReceipt",
+            "description": "Its commit."
+          },
+          "run": {
+            "$ref": "#/components/schemas/DecidedRun",
+            "description": "The run."
+          }
+        }
+      },
+      "DecidedDecision": {
+        "type": "object",
+        "description": "The decision as decided.",
+        "required": [
+          "id",
+          "choice",
+          "decidedBy",
+          "decidedAtMs"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "The chosen option id."
+          },
+          "decidedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When (logical milliseconds).",
+            "minimum": 0
+          },
+          "decidedBy": {
+            "type": "string",
+            "description": "Who decided, in display words, never an id."
+          },
+          "id": {
+            "type": "string",
+            "description": "The decision id."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The note."
+          }
+        }
+      },
+      "DecidedReceipt": {
+        "type": "object",
+        "description": "The commit that recorded the decision.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash, or its keyed handle (D53)."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was recorded (logical milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "DecidedRun": {
+        "type": "object",
+        "description": "The run after the decision.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state."
+          }
+        }
+      },
+      "DecisionContext": {
+        "type": "object",
+        "description": "What the decision is about. Empty in this version.",
+        "required": [
+          "subjects"
+        ],
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionSubject"
+            },
+            "description": "The objects the decision concerns."
+          }
+        }
+      },
+      "DecisionDocument": {
+        "type": "object",
+        "description": "One open decision.",
+        "required": [
+          "id",
+          "run",
+          "flow",
+          "step",
+          "question",
+          "risk",
+          "options",
+          "requestedAtMs",
+          "expiresAtMs",
+          "context"
+        ],
+        "properties": {
+          "agentPick": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An agent's recommended option id; a recommendation, never a decision."
+          },
+          "context": {
+            "$ref": "#/components/schemas/DecisionContext",
+            "description": "What it is about."
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the decision expires (logical milliseconds), at most seven days\nafter it was asked.",
+            "minimum": 0
+          },
+          "flow": {
+            "$ref": "#/components/schemas/DecisionFlow",
+            "description": "The run's flow."
+          },
+          "id": {
+            "type": "string",
+            "description": "The opaque decision id."
+          },
+          "inputSchema": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Reserved; always `null` in this version.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionOptionDocument"
+            },
+            "description": "The options."
+          },
+          "question": {
+            "type": "string",
+            "description": "The question."
+          },
+          "requestedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the run asked (logical milliseconds).",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/DecisionRisk",
+            "description": "How much is at stake."
+          },
+          "run": {
+            "$ref": "#/components/schemas/DecisionRun",
+            "description": "The run waiting on it."
+          },
+          "step": {
+            "$ref": "#/components/schemas/DecisionStep",
+            "description": "The step that asks."
+          }
+        }
+      },
+      "DecisionFlow": {
+        "type": "object",
+        "description": "The flow a decision belongs to.",
+        "required": [
+          "ruleId",
+          "version"
+        ],
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "description": "The flow's `decide` rule artifact id."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The flow's display title."
+          },
+          "version": {
+            "type": "string",
+            "description": "The rule version the run is pinned to."
+          }
+        }
+      },
+      "DecisionOptionDocument": {
+        "type": "object",
+        "description": "One option a decider may choose.",
+        "required": [
+          "id",
+          "label",
+          "scope",
+          "effect"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/DecisionOptionEffect",
+            "description": "What it does."
+          },
+          "id": {
+            "type": "string",
+            "description": "The option id `choice` names."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the decider reads."
+          },
+          "scope": {
+            "type": "string",
+            "description": "How far it reaches, in the decider's words."
+          }
+        }
+      },
+      "DecisionOptionEffect": {
+        "type": "object",
+        "description": "What choosing an option does: exactly one of an action or a binding.",
+        "properties": {
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action the option starts."
+          },
+          "binding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The binding the option sets."
+          }
+        }
+      },
+      "DecisionResolution": {
+        "type": "object",
+        "description": "Who resolved a decision first (409 `decision.resolved`).",
+        "required": [
+          "resolution",
+          "atMs"
+        ],
+        "properties": {
+          "atMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When (logical milliseconds).",
+            "minimum": 0
+          },
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who, in display words, never an id."
+          },
+          "choice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chosen option, only for a reader who may read the run."
+          },
+          "resolution": {
+            "type": "string",
+            "description": "How it was resolved."
+          }
+        }
+      },
+      "DecisionRisk": {
+        "type": "string",
+        "description": "How much is at stake.",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "DecisionRun": {
+        "type": "object",
+        "description": "The run a decision belongs to.",
+        "required": [
+          "id",
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state."
+          }
+        }
+      },
+      "DecisionStep": {
+        "type": "object",
+        "description": "The step that asks.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The step id."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its display label."
+          }
+        }
+      },
+      "DecisionSubject": {
+        "type": "object",
+        "description": "One object a decision concerns.",
+        "required": [
+          "objectType",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Its id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Its object type."
+          }
+        }
+      },
+      "DecisionsPage": {
+        "type": "object",
+        "description": "One page of open decisions.",
+        "required": [
+          "items",
+          "total",
+          "serverNowMs"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionDocument"
+            },
+            "description": "The decisions, soonest deadline first, ties to the oldest request."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last page."
+          },
+          "serverNowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cell's clock when the page was read (logical milliseconds).",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many open decisions the caller may decide.",
+            "minimum": 0
+          },
+          "totalCapped": {
+            "type": "boolean",
+            "description": "`total` is a lower bound: more were not examined."
+          }
+        }
       },
       "DefinitionDocument": {
         "type": "object",
@@ -3706,7 +4721,7 @@
           },
           "inputSchema": {
             "type": "object",
-            "description": "The admitted input schema, in the action's closed input dialect.",
+            "description": "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
             "additionalProperties": true
           },
           "objectIdField": {
@@ -4724,75 +5739,6 @@
           "T6",
           "T7"
         ]
-      },
-      "NornDatasetLoad": {
-        "type": "object",
-        "description": "The outcome of `POST /v1/datasets:load`.",
-        "required": [
-          "objectType",
-          "load",
-          "uri",
-          "sha256",
-          "rows",
-          "rejected",
-          "reasons",
-          "bytes",
-          "millis"
-        ],
-        "properties": {
-          "bytes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "File size in bytes.",
-            "minimum": 0
-          },
-          "load": {
-            "type": "string",
-            "description": "The load identity; answers over the dataset name it."
-          },
-          "millis": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Load time in milliseconds.",
-            "minimum": 0
-          },
-          "objectType": {
-            "type": "string",
-            "description": "The dataset's object type."
-          },
-          "reasons": {
-            "type": "object",
-            "description": "Quarantined rows per reason code (`bulk.*`).",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
-            },
-            "propertyNames": {
-              "type": "string"
-            }
-          },
-          "rejected": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows quarantined.",
-            "minimum": 0
-          },
-          "rows": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Rows admitted.",
-            "minimum": 0
-          },
-          "sha256": {
-            "type": "string",
-            "description": "The file's SHA-256, verified by the engine."
-          },
-          "uri": {
-            "type": "string",
-            "description": "The file's durable URI."
-          }
-        }
       },
       "NornDefinitionsCatalog": {
         "type": "object",
@@ -18567,6 +19513,13 @@
             "type": "string",
             "description": "The referenced [`PropertyTypeDef`] name.",
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          },
+          "unitSource": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            },
+            "description": "METRIC-UNIT-PARTITION-1: the unit source at this use site, for a\nref that resolves to a decimal declaring none of its own."
           }
         },
         "additionalProperties": false
@@ -18616,6 +19569,13 @@
           },
           "unit": {
             "$ref": "#/components/schemas/NornIrUnitRef"
+          },
+          "unitSource": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            },
+            "description": "METRIC-UNIT-PARTITION-1: the sibling properties whose values\ntogether are this quantity's unit, when it has no static `unit`.\nAggregating questions must group by or fix each of them."
           }
         },
         "additionalProperties": false
@@ -19011,9 +19971,16 @@
         "type": "object",
         "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
         "required": [
-          "max_scanned_records"
+          "max_scanned_records",
+          "max_scanned_bytes"
         ],
         "properties": {
+          "max_scanned_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum stored bytes those records may decode to: the scan's memory\nbound.",
+            "minimum": 0
+          },
           "max_scanned_records": {
             "type": "integer",
             "format": "uint32",
@@ -27269,16 +28236,7 @@
         ],
         "properties": {
           "bucket": {
-            "description": "Scalar grouping value."
-          },
-          "memberCount": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "D102: contributing members, present when `members` is not listed\nbecause the population exceeds the question's bound (the analytics\nengine answered); the trace pages them.",
-            "minimum": 0
+            "description": "Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group)."
           },
           "members": {
             "type": "object",
@@ -27289,13 +28247,6 @@
             "propertyNames": {
               "type": "string"
             }
-          },
-          "membershipDigest": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each\nas `<identity bytes>:<identity>,<version>` then `,<coefficient>` per\noperand (empty when absent) and `;`. Present with `memberCount`."
           },
           "nullCounts": {
             "type": "array",
@@ -27543,6 +28494,125 @@
         ],
         "description": "An execution world."
       },
+      "ProvisionOutcome": {
+        "type": "string",
+        "description": "Whether the call provisioned the cell or found it provisioned.",
+        "enum": [
+          "provisioned",
+          "replayed"
+        ]
+      },
+      "ProvisionReceipt": {
+        "type": "object",
+        "description": "The provisioned cell.",
+        "required": [
+          "outcome",
+          "cellId",
+          "definitionsVersion",
+          "receiptSha256",
+          "baseSha256"
+        ],
+        "properties": {
+          "baseSha256": {
+            "type": "string",
+            "description": "The trusted base the set was admitted against."
+          },
+          "cellId": {
+            "type": "string",
+            "description": "The cell's logical identity, bound when it was created."
+          },
+          "definitionsVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The definitions version the submission was installed as.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ProvisionOutcome",
+            "description": "Whether this call created the cell."
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "The checker's admission receipt digest for the installed set."
+          }
+        }
+      },
+      "ProvisionRequest": {
+        "type": "object",
+        "description": "`POST /v1/cell:provision`.",
+        "required": [
+          "baseSha256",
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornArtifactEnvelope"
+            },
+            "description": "The tenant's artifact envelopes; none in a reserved namespace (core., std.)."
+          },
+          "baseSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the trusted base the artifacts were\nauthored against; it must be the host's."
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuestionCatalog": {
+        "type": "object",
+        "description": "`GET /v1/questions:catalog`: what this caller may build an ad-hoc question\nfrom, and what this cell's engine admits. Every metric and object type\nlisted is one the caller may read the population of (D67): a ratio only\nwhen both its operands are, a type only when it is a readable metric's\npopulation. Nothing listed is a promise: `:evaluate` still admits.",
+        "required": [
+          "objectTypes",
+          "metrics",
+          "grains",
+          "operators",
+          "maxGroupBy",
+          "maxBuckets"
+        ],
+        "properties": {
+          "grains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Calendar grains a group-by may bucket a time property by; a group-by\nwithout a grain groups by the property's values."
+          },
+          "maxBuckets": {
+            "type": "integer",
+            "description": "Most buckets one answer may have (above it, 413).",
+            "minimum": 0
+          },
+          "maxGroupBy": {
+            "type": "integer",
+            "description": "Most group-bys one question may have.",
+            "minimum": 0
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+              "additionalProperties": true
+            },
+            "description": "The listed metrics, as declared, in name order."
+          },
+          "objectTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogObjectType"
+            },
+            "description": "The object types the listed metrics range over."
+          },
+          "operators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter operators the engine admits."
+          }
+        }
+      },
       "Refusal": {
         "allOf": [
           {
@@ -27730,6 +28800,269 @@
         },
         "additionalProperties": false
       },
+      "RunDecision": {
+        "type": "object",
+        "description": "The open decision a run waits on.",
+        "required": [
+          "id",
+          "expiresAtMs"
+        ],
+        "properties": {
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
+      "RunDocument": {
+        "type": "object",
+        "description": "One run, as the routes return it.",
+        "required": [
+          "id",
+          "generation",
+          "flow",
+          "objectType",
+          "version",
+          "createdAtMs",
+          "createdCommitSeq",
+          "updatedAtMs",
+          "updatedCommitSeq",
+          "terminal",
+          "steps"
+        ],
+        "properties": {
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start time (logical milliseconds).",
+            "minimum": 0
+          },
+          "createdCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The starting commit.",
+            "minimum": 0
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision",
+                "description": "The open decision the run waits on, when the caller may decide it;\n`null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flow": {
+            "$ref": "#/components/schemas/RunFlow",
+            "description": "The flow it runs."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The run's object type."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state; `null` once the run object is deleted."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "description": "The steps the run reached, in order."
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "The run has ended and will not change."
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last write time (logical milliseconds).",
+            "minimum": 0
+          },
+          "updatedCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last commit that wrote the run object.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run object's version.",
+            "minimum": 0
+          }
+        }
+      },
+      "RunFlow": {
+        "type": "object",
+        "description": "The flow a run executes.",
+        "required": [
+          "id",
+          "ruleId",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The flow's definition id."
+          },
+          "ruleId": {
+            "type": "string",
+            "description": "The flow's `decide` rule artifact id (`<id>.flow.rule`)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The flow's display title, when it has one."
+          },
+          "version": {
+            "type": "string",
+            "description": "The rule version the run is pinned to."
+          }
+        }
+      },
+      "RunStep": {
+        "type": "object",
+        "description": "One step of a run's timeline.",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "receipts"
+        ],
+        "properties": {
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run left it.",
+            "minimum": 0
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStepError",
+                "description": "Why it failed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The flow's step id (`succeed` or `fail` for the run's end)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunStepKind",
+            "description": "What the step is."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step's display label from the flow, when it has one."
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepReceipt"
+            },
+            "description": "The step's receipts the caller may see; none are disclosed yet."
+          },
+          "startedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run reached it (logical milliseconds).",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStepStatus",
+            "description": "Where it stands."
+          },
+          "waitingOn": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StepWait",
+                "description": "What a waiting step waits on."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RunStepError": {
+        "type": "object",
+        "description": "Why a step or run failed.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The failed lifecycle state."
+          },
+          "message": {
+            "type": "string",
+            "description": "Display words."
+          }
+        }
+      },
+      "RunStepKind": {
+        "type": "string",
+        "description": "What a step is.",
+        "enum": [
+          "perform",
+          "decide",
+          "wait",
+          "succeed",
+          "fail"
+        ]
+      },
+      "RunStepStatus": {
+        "type": "string",
+        "description": "Where a step stands.",
+        "enum": [
+          "running",
+          "waiting",
+          "done",
+          "failed"
+        ]
+      },
       "SignoffDocument": {
         "type": "object",
         "description": "A recorded sign-off: every field set by the host.",
@@ -27768,6 +29101,82 @@
           }
         },
         "additionalProperties": false
+      },
+      "StartRunRequest": {
+        "type": "object",
+        "description": "`POST /v1/runs` body.",
+        "required": [
+          "flow",
+          "runId"
+        ],
+        "properties": {
+          "flow": {
+            "type": "string",
+            "description": "The installed flow's definition id (`flow.id`); its rule is\n`<flow>.flow.rule`."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry\nwith the same id and flow returns the existing run."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StepReceipt": {
+        "type": "object",
+        "description": "One receipt behind a step, as the caller may see it.",
+        "required": [
+          "kind",
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit.",
+            "minimum": 0
+          },
+          "executor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who acted, in display words, never an id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StepReceiptKind",
+            "description": "What it records."
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash, or its keyed handle (D53)."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was recorded (logical milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "StepReceiptKind": {
+        "type": "string",
+        "description": "What a step receipt records.",
+        "enum": [
+          "function",
+          "decision",
+          "commit"
+        ]
+      },
+      "StepWait": {
+        "type": "string",
+        "description": "What a waiting step waits on.",
+        "enum": [
+          "decision",
+          "executor",
+          "timer"
+        ]
       }
     },
     "securitySchemes": {

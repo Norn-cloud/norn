@@ -207,7 +207,12 @@ export const CorrectScannedDocument = Norn.action({
     correction_reason: { title: "Reason", description: "Why the imported value is wrong, kept with the correction." },
     correction_evidence: { title: "Evidence", description: "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value." },
   },
-  slice: [{ name: "document", type: ScannedDocument, key: { property: { from: "input", property: "id" } } }],
+  slice: [
+    { name: "document", type: ScannedDocument, key: { property: { from: "input", property: "id" } } },
+    // The cited evidence is read in the same commit: a correction that cites
+    // no evidence object refuses, and a catalog reader learns the field takes one.
+    { name: "evidence", type: FieldEvidence, key: { property: { from: "input", property: "correction_evidence" } } },
+  ],
   derive: [{ field: "corrected_by", inputRequired: false,
     expression: Norn.expression(Schema.Struct({ actor: Schema.Struct({ subjectId: Schema.String }) }), context => context.actor.subjectId, { root: "context" }) }],
   preconditions: [Norn.expression(Schema.Struct({ input: CorrectionInput }), x => x.input.correction_reason !== "" && x.input.correction_evidence !== "")],

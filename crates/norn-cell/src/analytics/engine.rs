@@ -750,16 +750,52 @@ fn query_u64(conn: &Connection, sql: &Frag) -> Outcome<u64> {
 struct Projection {
     sql: Frag,
     arity: usize,
-    group: GroupKind,
+    /// One per dimension, in the question's order (`g{i}`, `r{i}`).
+    groups: Vec<GroupKind>,
 }
 
 #[derive(Clone, Copy)]
 enum GroupKind {
-    None,
-    Week,
+    Period(super::Grain),
     Text,
     Number,
     Bool,
+}
+
+impl Projection {
+    /// The grouping columns.
+    fn group_by(&self) -> String {
+        (0..self.groups.len())
+            .map(|i| format!("g{i}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The bucket order, the same for every pass.
+    fn group_order(&self) -> String {
+        if self.groups.is_empty() {
+            return "1".to_owned();
+        }
+        (0..self.groups.len())
+            .map(|i| format!("g{i} NULLS FIRST"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// The first day of `grain`'s UTC period holding the instant `t` (seconds),
+/// in days since the epoch, in integer and calendar arithmetic only.
+fn period_sql(t: &str, grain: super::Grain) -> String {
+    let day = format!("(({t} - ((({t} % 86400) + 86400) % 86400)) // 86400)");
+    let date = format!("(DATE '1970-01-01' + CAST({day} AS INTEGER))");
+    let part = match grain {
+        super::Grain::Day => return format!("CAST({day} AS BIGINT)"),
+        super::Grain::Week => "week",
+        super::Grain::Month => "month",
+        super::Grain::Quarter => "quarter",
+        super::Grain::Year => "year",
+    };
+    format!("datediff('day', DATE '1970-01-01', CAST(date_trunc('{part}', {date}) AS DATE))")
 }
 
 /// A filter's truth on a row, and when reaching it refuses the question.
@@ -869,41 +905,40 @@ impl Projection {
                 &instant_bound(&window.column, window.end, "<"),
             ],
         );
-        let (group_expr, rep_expr, group) = match &query.bucket {
-            super::Bucket::None => (Frag::raw("NULL"), Frag::raw("NULL"), GroupKind::None),
-            super::Bucket::Week { column } => {
-                if !matches!(scope.column(column)?.kind, ColumnKind::Timestamp | ColumnKind::Date) {
-                    return Err(refusal(UNSUPPORTED, "a week of a value that is not an instant"));
-                }
-                let t = derived(column, "t");
-                let monday = Frag::raw(format!("({t} - ((({t} - 345600) % 604800) + 604800) % 604800)"));
-                (monday.clone(), monday, GroupKind::Week)
-            }
-            super::Bucket::Column { column } => {
-                let c = ident(column);
-                match scope.column(column)?.kind {
-                    ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date => {
-                        (Frag::raw(format!("nfc_normalize({c})")), Frag::raw(c), GroupKind::Text)
-                    }
-                    ColumnKind::Integer | ColumnKind::Decimal { .. } => (
-                        Frag::raw(c.clone()),
-                        Frag::raw(format!("CAST({c} AS VARCHAR)")),
-                        GroupKind::Number,
-                    ),
-                    ColumnKind::Boolean => (Frag::raw(c.clone()), Frag::raw(c), GroupKind::Bool),
-                    ColumnKind::Opaque => return Err(refusal(UNSUPPORTED, "an opaque bucket")),
-                }
-            }
-        };
         let mut select = vec![
             Frag::raw(format!("{} AS id", ident(":id"))),
             Frag::raw(format!("{} AS v", ident(":v"))),
-            Frag::fmt("{} AS g", &[&group_expr]),
-            Frag::fmt("{} AS r", &[&rep_expr]),
         ];
         let mut refusals = vec![Frag::raw("\":qr\""), Frag::fmt("({} AND {} IS NULL)", &[&q, &time])];
-        if let super::Bucket::Week { column } = &query.bucket {
-            refusals.push(Frag::fmt("({} AND {} IS NULL)", &[&reach, &Frag::raw(ident(column))]));
+        let mut groups = Vec::new();
+        for (i, dimension) in query.dimensions.iter().enumerate() {
+            let (group, representative, kind) = match dimension {
+                super::Dimension::Period { column, grain } => {
+                    if !matches!(scope.column(column)?.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+                        return Err(refusal(UNSUPPORTED, "a period of a value that is not an instant"));
+                    }
+                    // Reaching a row without the instant refuses, as the exact engine does.
+                    refusals.push(Frag::fmt("({} AND {} IS NULL)", &[&reach, &Frag::raw(ident(column))]));
+                    let start = period_sql(&derived(column, "t"), *grain);
+                    (start.clone(), start, GroupKind::Period(*grain))
+                }
+                super::Dimension::Column { column } => {
+                    let c = ident(column);
+                    match scope.column(column)?.kind {
+                        ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date => {
+                            (format!("nfc_normalize({c})"), c, GroupKind::Text)
+                        }
+                        ColumnKind::Integer | ColumnKind::Decimal { .. } => {
+                            (c.clone(), format!("CAST({c} AS VARCHAR)"), GroupKind::Number)
+                        }
+                        ColumnKind::Boolean => (c.clone(), c, GroupKind::Bool),
+                        ColumnKind::Opaque => return Err(refusal(UNSUPPORTED, "an opaque bucket")),
+                    }
+                }
+            };
+            select.push(Frag::raw(format!("{group} AS g{i}")));
+            select.push(Frag::raw(format!("{representative} AS r{i}")));
+            groups.push(kind);
         }
         for (k, operand) in query.operands.iter().enumerate() {
             let column = scope.column(&operand.column)?;
@@ -957,27 +992,36 @@ impl Projection {
             &format!("SELECT *, ({contributes}) AS contributes FROM (SELECT {{}}, ({{}}) AS refuse FROM ({{}}) AS base) AS p"),
             &[&Frag::join(&select, ", "), &Frag::join(&refusals, " OR "), &base],
         );
-        Ok(Self { sql, arity, group })
+        Ok(Self { sql, arity, groups })
     }
 
+    /// The bucket's key from its representatives, read from `index` on.
     fn group_key(&self, row: &duckdb::Row<'_>, index: usize) -> duckdb::Result<GroupKey> {
-        Ok(match self.group {
-            GroupKind::None => GroupKey::Null,
-            GroupKind::Week => row
-                .get::<_, Option<i64>>(index)?
-                .map_or(GroupKey::Null, GroupKey::Week),
-            GroupKind::Text => row
-                .get::<_, Option<String>>(index)?
-                .map_or(GroupKey::Null, GroupKey::Text),
-            GroupKind::Number => match row.get::<_, Option<String>>(index)? {
-                None => GroupKey::Null,
-                Some(text) => GroupKey::Number(
-                    norn_ir::Decimal::parse(&text).map_or(text, |d| d.canonical()),
-                ),
-            },
-            GroupKind::Bool => row
-                .get::<_, Option<bool>>(index)?
-                .map_or(GroupKey::Null, GroupKey::Bool),
+        let mut members = Vec::with_capacity(self.groups.len());
+        for (offset, kind) in self.groups.iter().enumerate() {
+            let at = index.saturating_add(offset);
+            members.push(match kind {
+                GroupKind::Period(grain) => row
+                    .get::<_, Option<i64>>(at)?
+                    .map_or(GroupKey::Null, |day| GroupKey::Period { grain: *grain, day }),
+                GroupKind::Text => row
+                    .get::<_, Option<String>>(at)?
+                    .map_or(GroupKey::Null, GroupKey::Text),
+                GroupKind::Number => match row.get::<_, Option<String>>(at)? {
+                    None => GroupKey::Null,
+                    Some(text) => GroupKey::Number(
+                        norn_ir::Decimal::parse(&text).map_or(text, |d| d.canonical()),
+                    ),
+                },
+                GroupKind::Bool => row
+                    .get::<_, Option<bool>>(at)?
+                    .map_or(GroupKey::Null, GroupKey::Bool),
+            });
+        }
+        Ok(match <[GroupKey; 1]>::try_from(members) {
+            Ok([one]) => one,
+            Err(members) if members.is_empty() => GroupKey::Null,
+            Err(members) => GroupKey::Tuple(members),
         })
     }
 
@@ -1016,21 +1060,35 @@ impl Projection {
             aggregates.push(format!("CAST(COALESCE(sum(abs(CAST(a{k} AS HUGEINT))), 0) AS VARCHAR)"));
             aggregates.push(format!("CAST(sum(n{k}) AS UBIGINT)"));
         }
+        // One representative per dimension, all from the bucket's first member.
+        let representatives = (0..self.groups.len()).fold(String::new(), |mut out, i| {
+            out.push_str("arg_min(r");
+            out.push_str(&i.to_string());
+            out.push_str(", id), ");
+            out
+        });
+        let dims = self.groups.len();
+        let group_by = if dims == 0 {
+            String::new()
+        } else {
+            format!(" GROUP BY {}", self.group_by())
+        };
         let sql = format!(
-            "SELECT arg_min(r, id) AS rep, count(*) AS c, sha256(string_agg({}, '' ORDER BY id)) AS digest, {} FROM \":p\" WHERE contributes GROUP BY g ORDER BY g NULLS FIRST",
+            "SELECT {representatives}count(*) AS c, sha256(string_agg({}, '' ORDER BY id)) AS digest, {} FROM \":p\" WHERE contributes{group_by} ORDER BY {}",
             self.member_line(),
-            aggregates.join(", ")
+            aggregates.join(", "),
+            self.group_order(),
         );
         let mut statement = db(conn.prepare(&sql))?;
         let arity = self.arity;
         let rows = db(statement.query_map([], |row| {
             let group = self.group_key(row, 0)?;
-            let count: u64 = row.get(1)?;
-            let digest: String = row.get(2)?;
+            let count: u64 = row.get(dims)?;
+            let digest: String = row.get(dims.saturating_add(1))?;
             let mut totals = Vec::with_capacity(arity);
             let mut magnitude = Vec::with_capacity(arity);
             let mut nulls = Vec::with_capacity(arity);
-            let mut column = 3;
+            let mut column = dims.saturating_add(2);
             for _ in 0..arity {
                 totals.push(row.get::<_, String>(column)?);
                 magnitude.push(row.get::<_, String>(column.saturating_add(1))?);
@@ -1052,7 +1110,8 @@ impl Projection {
             return Ok(buckets);
         }
         let sql = format!(
-            "SELECT dense_rank() OVER (ORDER BY g NULLS FIRST) AS gk, id, v, {} FROM \":p\" WHERE contributes ORDER BY gk, id",
+            "SELECT dense_rank() OVER (ORDER BY {}) AS gk, id, v, {} FROM \":p\" WHERE contributes ORDER BY gk, id",
+            self.group_order(),
             self.amounts()
         );
         let mut statement = db(conn.prepare(&sql))?;
@@ -1083,18 +1142,33 @@ impl Projection {
         after: Option<&str>,
         limit: u32,
     ) -> Outcome<Vec<MemberRow>> {
-        let matches = match (group, self.group) {
-            (GroupKey::Null, _) => Frag::raw("g IS NULL"),
-            (GroupKey::Bool(flag), GroupKind::Bool) => Frag::bind("g = ?", Sql::Boolean(*flag)),
-            (GroupKey::Number(text), GroupKind::Number) => {
-                Frag::bind("CAST(g AS VARCHAR) = ?", Sql::Text(text.clone()))
-            }
-            (GroupKey::Text(text), GroupKind::Text) => {
-                Frag::bind("g = nfc_normalize(?)", Sql::Text(text.clone()))
-            }
-            (GroupKey::Week(monday), GroupKind::Week) => Frag::bind("g = ?", Sql::BigInt(*monday)),
-            _ => return Err(refusal(UNSUPPORTED, "a bucket of another kind")),
+        let members: Vec<&GroupKey> = match (group, self.groups.len()) {
+            (_, 0) => Vec::new(),
+            (GroupKey::Tuple(members), n) if n > 1 && members.len() == n => members.iter().collect(),
+            (one, 1) => vec![one],
+            _ => return Err(refusal(UNSUPPORTED, "a bucket of another shape")),
         };
+        let mut conditions = vec![Frag::raw("TRUE")];
+        for (i, (member, kind)) in members.into_iter().zip(&self.groups).enumerate() {
+            let g = format!("g{i}");
+            conditions.push(match (member, kind) {
+                (GroupKey::Null, _) => Frag::raw(format!("{g} IS NULL")),
+                (GroupKey::Bool(flag), GroupKind::Bool) => {
+                    Frag::bind(&format!("{g} = ?"), Sql::Boolean(*flag))
+                }
+                (GroupKey::Number(text), GroupKind::Number) => {
+                    Frag::bind(&format!("{g} = ?"), Sql::Text(text.clone()))
+                }
+                (GroupKey::Text(text), GroupKind::Text) => {
+                    Frag::bind(&format!("{g} = nfc_normalize(?)"), Sql::Text(text.clone()))
+                }
+                (GroupKey::Period { grain, day }, GroupKind::Period(kind)) if grain == kind => {
+                    Frag::bind(&format!("{g} = ?"), Sql::BigInt(*day))
+                }
+                (_, _) => return Err(refusal(UNSUPPORTED, "a bucket of another kind")),
+            });
+        }
+        let matches = Frag::join(&conditions, " AND ");
         let after = after.map_or_else(
             || Frag::raw("TRUE"),
             |after| Frag::bind("id > ?", Sql::Text(after.to_owned())),

@@ -102,6 +102,20 @@ test("METRIC-ADDITIVITY-REF-1 a ref carries a use-site class; undeclared is the 
   for (const options of [', {additivity:{kind:"guess"}}', ', {unit:"g"}']) expect(authored(options).ok).toBe(false)
 })
 
+test("METRIC-UNIT-PARTITION-1 decimals and refs carry a unit source; malformed sources refuse", () => {
+  const scope = { orgId: "org_demo", environmentId: "dev" }
+  const authored = (schema: string) => compileModule(source("6").replace(/Norn\.rate\(6,.*?\) /, `${schema} `), scope)
+  const price = (result: ReturnType<typeof authored>) => {
+    if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
+    return JSON.parse(JSON.stringify(result.artifacts)).flatMap((artifact: { payload: { objectType?: { properties: Array<{ id: string; type: unknown }> } } }) => artifact.payload.objectType?.properties ?? []).find((property: { id: string }) => property.id === "price")?.type
+  }
+  expect(price(authored('Norn.ref("core.quantity", {unitSource:["currency"]})'))).toEqual({ kind: "ref", name: "core.quantity", unitSource: ["currency"] })
+  expect(price(authored('Norn.decimal(6, {unitSource:["currency"]})'))).toEqual({ kind: "decimal", scale: 6, unitSource: ["currency"] })
+  for (const options of ['{unitSource:[]}', '{unitSource:["Currency"]}', '{unitSource:["currency","currency"]}', '{unitSource:"currency"}']) {
+    expect(authored(`Norn.ref("core.quantity", ${options})`).ok).toBe(false)
+  }
+})
+
 test("METRIC-ADDITIVITY-1 ratio operands must be complete PropertyId values", () => {
   for (const field of ["numerator", "denominator"]) {
     for (const value of ["bad.path", "Uppercase", "", "input\n"]) {

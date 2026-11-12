@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { cpSync, existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { celldConfig, celldStudio, writeSecretConfig } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
@@ -16,8 +16,7 @@ import { awaitServed, entryChunk } from "./served-build.ts"
 //
 // Environment (see #1027): STUDIO_STAGE, BETTER_AUTH_URL, BETTER_AUTH_SECRET,
 // STUDIO_DEFAULT_ORG, NORN_HOST_SERVICE, STUDIO_MCP (on: /mcp for assistants, needs migration 0007),
-// AI_GATEWAY_URL + AI_GATEWAY_TOKEN +
-// NORN_CHECKER_WASM_PKG (the assistant), CELLD_BUCKET, S3_ENDPOINT, AWS_REGION,
+// AI_GATEWAY_URL + AI_GATEWAY_TOKEN (the assistant), CELLD_BUCKET, S3_ENDPOINT, AWS_REGION,
 // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. `celld` and `esbuild` on PATH.
 
 /** The Studio app directory to build: `--app <dir>`, or this script's own. */
@@ -91,11 +90,6 @@ async function main(argv: readonly string[]) {
   const git = (...args: string[]) => execFileSync("git", args, { cwd: app, encoding: "utf8" }).trim()
   const commit = pinnedCommit(argv, git("rev-parse", "HEAD"), git("status", "--porcelain"))
   const studio = celldStudio({ ...process.env, STUDIO_BUILD: commit })
-  if (studio.agent !== undefined) {
-    const pkg = process.env.NORN_CHECKER_WASM_PKG
-    if (pkg === undefined || !existsSync(join(pkg, "norn_checker_wasm_bg.wasm"))) throw new Error("NORN_CHECKER_WASM_PKG must name the built checker package (crates/norn-checker-wasm/scripts/build-pkg.sh)")
-    cpSync(pkg, join(app, "worker/checker"), { recursive: true })
-  }
   const { ok, lines } = await deployThenCheck({
     build: () => {
       execFileSync("./node_modules/.bin/vite", ["build"], { cwd: app, stdio: "inherit", env: { ...process.env, NODE_ENV: "production" } })

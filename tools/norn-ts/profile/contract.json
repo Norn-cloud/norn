@@ -15,6 +15,7 @@
     "`@norn/authoring#Norn.perform`",
     "`@norn/authoring#Norn.fn`",
     "`@norn/authoring#Norn.question`",
+    "`@norn/authoring#Norn.dashboard`",
     "`@norn/authoring#Norn.type`",
     "`@norn/authoring#Norn.interfaceType`",
     "`@norn/authoring#Norn.action`",

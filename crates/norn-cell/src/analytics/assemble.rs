@@ -7,12 +7,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_checker::metric::compute::contribution::week_label;
+use norn_checker::metric::compute::contribution::period_start;
 use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE, arithmetic as math};
 use norn_ir::{Decimal, RuntimeValue};
 
+use norn_ir::metric::TimeGrain;
+
 use super::{
-    BucketTotals, EvaluateRequest, EvaluateResponse, GroupKey, MemberRow, MembershipDigest, Source,
+    BucketTotals, Grain, EvaluateRequest, EvaluateResponse, GroupKey, MemberRow, MembershipDigest, Source,
     TenantId, lower::lower,
 };
 use crate::compute::{Engine, Member, QueryContext, QueryResult, QueryRow, decimal, refused};
@@ -31,7 +33,20 @@ pub fn bucket_value(group: &GroupKey) -> Result<RuntimeValue, CellError> {
         GroupKey::Bool(flag) => RuntimeValue::Bool(*flag),
         GroupKey::Number(text) => RuntimeValue::Number(Decimal::parse(text)?),
         GroupKey::Text(text) => RuntimeValue::String(text.clone()),
-        GroupKey::Week(monday) => week_label(*monday).ok_or_else(|| refused(UNSUPPORTED_ENGINE))?,
+        GroupKey::Period { grain, day } => {
+            let grain = match grain {
+                Grain::Day => TimeGrain::Day,
+                Grain::Week => TimeGrain::Week,
+                Grain::Month => TimeGrain::Month,
+                Grain::Quarter => TimeGrain::Quarter,
+                Grain::Year => TimeGrain::Year,
+            };
+            let seconds = day.checked_mul(86_400).ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+            RuntimeValue::from(period_start(seconds, grain).map_err(refused)?)
+        }
+        GroupKey::Tuple(members) => {
+            RuntimeValue::Array(members.iter().map(bucket_value).collect::<Result<_, _>>()?)
+        }
     })
 }
 

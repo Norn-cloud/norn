@@ -206,10 +206,6 @@ pub(crate) struct SourceDisputeIndex {
     identities: BTreeSet<[String; 5]>,
     conflicts: BTreeSet<[String; 5]>,
     roots_by_key: BTreeMap<String, BTreeSet<String>>,
-    /// Consumed claim bundles by the source key of a claim they carry.
-    pub(crate) claim_sources: BTreeMap<String, BTreeMap<(u64, String), u64>>,
-    /// Consumed claim bundles by the target key of a claim they carry.
-    pub(crate) claim_targets: BTreeMap<String, BTreeMap<(u64, String), u64>>,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -243,45 +239,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &guard.bundle.input,
             )?);
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
-        }
-        let rows = self.conn.query(&format!("SELECT observation_id, consumed_commit_seq, octet_length(observed), json_extract(record.value, '$.key'), record.value FROM {INBOX}, json_each(observed, '$.input.records') AS record WHERE observation_id LIKE 'mapping-bundle:%' AND consumed_commit_seq IS NOT NULL AND (json_array_length(json_extract(record.value, '$.links')) > 0 OR json_array_length(json_extract(record.value, '$.clearedLinks')) > 0)"), params![])?;
-        for values in rows {
-            let row = crate::engine::SqlRow(values);
-            let id: String = row.get(0)?;
-            let seq = crate::read::to_u64(row.get(1)?, "claim sequence")?;
-            let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
-            let record: serde_json::Value = serde_json::from_str(&row.get::<String>(4)?)?;
-            let (mut sources, mut targets) = (BTreeSet::new(), BTreeSet::new());
-            if record
-                .get("clearedLinks")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|links| !links.is_empty())
-            {
-                sources.insert(row.get::<String>(3)?);
-            }
-            for link in record
-                .get("links")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(key) = link.get("key").and_then(serde_json::Value::as_str) {
-                    sources.insert(key.to_owned());
-                }
-                if let Some(key) = link.get("targetKey").and_then(serde_json::Value::as_str) {
-                    targets.insert(key.to_owned());
-                }
-            }
-            for (side, keys) in [
-                (&mut index.claim_sources, sources),
-                (&mut index.claim_targets, targets),
-            ] {
-                for key in keys {
-                    side.entry(key)
-                        .or_default()
-                        .insert((seq, id.clone()), bytes);
-                }
-            }
         }
         Ok(index)
     }

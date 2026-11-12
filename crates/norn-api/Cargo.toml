@@ -8,7 +8,9 @@ description = "Generated core IR and checker API contracts"
 
 [dependencies]
 # Host token verification (HOST-PRINCIPAL, #817): Ed25519 JWTs, pure Rust, wasm32-clean.
-base64 = "0.22.1"
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+# RFC 3339 times of source sync reports, from the host clock.
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", features = ["derive"] }
 norn-cell = { path = "../norn-cell", default-features = false }
@@ -18,6 +20,8 @@ http = "1.5.0"
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
 serde_json = "1.0.150"
+# Upload digests and SigV4 request signing.
+sha2 = "0.10.9"
 utoipa = "6.0.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

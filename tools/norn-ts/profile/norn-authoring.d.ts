@@ -69,7 +69,7 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string } | { readonly unitSource: ReadonlyArray<string> }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
     function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
@@ -80,9 +80,11 @@ declare module "@norn/authoring" {
      * local shared type. The checker resolves the name. `additivity` declares
      * the aggregation contract at this use site (METRIC-ADDITIVITY-REF-1): it
      * applies only to an integer or decimal type that declares none itself,
-     * so a flow and a stock can share one value type.
+     * so a flow and a stock can share one value type. `unitSource` names the
+     * sibling properties holding a decimal's unit (METRIC-UNIT-PARTITION-1):
+     * a question aggregating it groups by or fixes each of them.
      */
-    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity }): S
+    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): S
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String
@@ -155,6 +157,24 @@ declare module "@norn/authoring" {
     }
     /** Syntax only: authored modules and callbacks never execute. */
     function question(meta: QuestionMeta): QuestionDefinition
+
+    /** Candidate dashboard definition; the cell's checker admits each tile's question and view. */
+    interface DashboardDefinition { readonly _tag: "NornDashboard" }
+    interface DashboardTile {
+      readonly title: string
+      /** A Norn.question declared in the same module. */
+      readonly question: QuestionDefinition
+      /** number: one value (no group-by); pie: parts of one whole (one summable measure by a category). */
+      readonly view: "number" | "line" | "area" | "bar" | "pie" | "table"
+      /** Half or full width; numbers and pies default to half, the rest to full. */
+      readonly width?: "half" | "full"
+    }
+    interface DashboardMeta {
+      readonly title: string
+      readonly tiles: ReadonlyArray<DashboardTile>
+    }
+    /** Syntax only: lowers to the cell's `dashboard` definition, admitted like one built in Studio. */
+    function dashboard(meta: DashboardMeta): DashboardDefinition
 
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
@@ -780,6 +800,23 @@ declare module "@norn/authoring" {
       readonly deadLetterPolicy?: { readonly maxFailures: number; readonly route: "ledger" | "queue" }
       /** Ordered feeds lower to the existing provider-neutral norn.poll/1 extension. */
       readonly poll?: { readonly feeds: ReadonlyArray<{ readonly resourceId: string; readonly recordKeyPath?: string; readonly fanout?: { readonly parentResourceId: string; readonly pathBinding: string; readonly keyPath: string } }> }
+      /** A generic HTTP pull profile (dataset feeds with request templates, paging and field pointers); lowers to the norn.pull/1 extension. */
+      readonly pull?: {
+        readonly source: string
+        readonly pipeline: string
+        readonly feeds: ReadonlyArray<{
+          readonly dataset: string
+          readonly request: { readonly method: "GET" | "POST"; readonly path: string; readonly query?: Readonly<Record<string, string>>; readonly headers?: Readonly<Record<string, string>>; readonly body?: unknown }
+          readonly itemsPath: string
+          readonly paging: { readonly kind: "keyset"; readonly size: number } | { readonly kind: "cursor"; readonly size: number; readonly nextCursorPath: string; readonly hasNextPath: string }
+          readonly idPath: string
+          readonly versionPath: string
+          readonly fields: Readonly<Record<string, string>>
+          readonly initial: { readonly version: string; readonly id: string | number }
+        }>
+        /** Where an oauth2 (client credentials) access token is sent. */
+        readonly token?: { readonly header: string; readonly prefix?: string }
+      }
     }
     interface ConnectorDefinition { readonly _tag: "NornConnector" }
     /** Declarative read-only connector; host configuration supplies endpoints and secret resolution. */

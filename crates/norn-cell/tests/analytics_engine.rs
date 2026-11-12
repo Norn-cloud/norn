@@ -118,6 +118,11 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
 /// The fixture's type with `recovered` nullable, asked as a sum of `recovered`
 /// (or the yield ratio) grouped by `metal`.
 fn by_metal(sum: bool, max_items: u32) -> (CellStore, QuestionPlan, QueryContext) {
+    shaped(sum, max_items, &serde_json::json!([{"path": {"property": "metal"}}]))
+}
+
+/// As [`by_metal`], grouped by `dimensions` (a `QuestionIR` dimension list).
+fn shaped(sum: bool, max_items: u32, dimensions: &serde_json::Value) -> (CellStore, QuestionPlan, QueryContext) {
     let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
@@ -149,8 +154,7 @@ fn by_metal(sum: bool, max_items: u32) -> (CellStore, QuestionPlan, QueryContext
     let catalog = EffectiveCatalog::from_artifacts(&artifacts[..1]);
     let mut question = plan.question().clone();
     question.filters.clear();
-    question.dimensions[0].path.property = norn_ir::PropertyId("metal".into());
-    question.dimensions[0].grain = None;
+    question.dimensions = serde_json::from_value(dimensions.clone()).expect("dimensions");
     if sum {
         question.metrics[0].metric = "demo.recovered".into();
     }
@@ -202,21 +206,25 @@ const TIMES: [&str; 5] = [
 const METALS: [&str; 4] = ["gold", "silver", "e\u{301}", "\u{e9}"];
 
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(36))]
     /// QUERY-THREE: generated populations, then corrections and retractions,
     /// agree exactly after every commit: nulls, NFC buckets, window edges,
-    /// filters, sums and ratios.
+    /// filters, sums and ratios, by none, one or two dimensions and every
+    /// calendar grain the shapes name.
     #[test]
     fn generated_histories_match_exact_envelopes(
         rows in proptest::collection::vec((0u8..12, -5000i64..5000, proptest::option::of(-5000i64..5000), 0usize..5, 0usize..4), 1..20),
         edits in proptest::collection::vec((0u8..12, proptest::option::of((-5000i64..5000, 0usize..4))), 0..8),
-        shape in 0u8..3,
+        shape in 0u8..6,
     ) {
         let (_dir, engine) = engine();
         let (mut store, plan, context) = match shape {
             0 => fixture(),
             1 => by_metal(true, 100),
-            _ => by_metal(false, 100),
+            2 => by_metal(false, 100),
+            3 => shaped(true, 100, &serde_json::json!([{"path": {"property": "occurred_at"}, "grain": "month"}, {"path": {"property": "metal"}}])),
+            4 => shaped(false, 100, &serde_json::json!([{"path": {"property": "occurred_at"}, "grain": "day"}])),
+            _ => shaped(true, 100, &serde_json::json!([])),
         };
         let nullable = shape != 0;
         let writes: BTreeMap<u8, FactWriteRow> = rows
