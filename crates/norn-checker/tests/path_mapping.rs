@@ -759,8 +759,10 @@ fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
 }
 
 /// A self-link with two images under one long path equation has 2^32 rule
-/// choices. The certificate attempt counts them and gives up before
-/// enumerating, so admission still answers within its budget.
+/// choices. The certificate attempt gives up without enumerating them (the
+/// unit test `a_choice_product_beyond_the_limit_is_never_enumerated` pins
+/// that), and the bounded search then refuses on its own facts budget, as it
+/// did before certificates existed.
 #[test]
 fn many_rule_choices_are_counted_not_enumerated() {
     let node = |ns: &str, equations: Value| -> Vec<ArtifactEnvelope> {
@@ -794,16 +796,9 @@ fn many_rule_choices_are_counted_not_enumerated() {
         &BTreeSet::new(),
         ChaseBudget::default(),
     );
-    match result {
-        Ok(evidence) => assert_eq!(
-            evidence.evidence,
-            norn_checker::consistency::PreservationClass::BoundedNoCounterexample
-        ),
-        Err(findings) => assert!(
-            findings
-                .iter()
-                .all(|d| d.code.as_str() == codes::CHASE_REFUSED),
-            "{findings:?}"
-        ),
-    }
+    let findings = result.unwrap_err();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let refusal = &findings[0];
+    assert_eq!(refusal.code.as_str(), codes::CHASE_REFUSED);
+    assert!(refusal.message.contains("facts budget"), "{refusal:?}");
 }

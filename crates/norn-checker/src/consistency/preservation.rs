@@ -344,3 +344,40 @@ pub(crate) fn certified(
     }
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AdmissionWork, Atom, MAX_CASES, Rule, case_count, certify};
+
+    /// Two rules produce each of 32 body atoms: 2^32 choices. The count
+    /// exceeds the limit, and `certify` gives up with no admission work at
+    /// all: enumerating even one choice would charge it and fail instead.
+    #[test]
+    fn a_choice_product_beyond_the_limit_is_never_enumerated() {
+        let rule = || Rule {
+            body: vec![Atom {
+                rel: 0,
+                args: vec![0, 1],
+            }],
+            head: Atom {
+                rel: 1,
+                args: vec![0, 1],
+            },
+        };
+        let rules = [rule(), rule()];
+        let body: Vec<Atom> = (0..32_usize)
+            .map(|v| Atom {
+                rel: 1,
+                args: vec![v, v.saturating_add(1)],
+            })
+            .collect();
+        let first = |n: usize| body.iter().take(n).cloned().collect::<Vec<_>>();
+        assert_eq!(case_count(&rules, &body), None);
+        assert_eq!(case_count(&rules, &first(6)), Some(MAX_CASES));
+        assert_eq!(case_count(&rules, &first(7)), None);
+        let exhausted = AdmissionWork::new(0);
+        assert_eq!(certify(&[], &rules, &body, 0, 32, &exhausted), Ok(None));
+        // Within the limit the choices are enumerated, which is charged.
+        assert!(certify(&[], &rules, &first(1), 0, 1, &exhausted).is_err());
+    }
+}
