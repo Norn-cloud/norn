@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A document's printed total equals the sum of its printed lines.",
+  "name": "A document's printed total must equal the sum of its printed lines; when they differ, a digit was usually misread or a decimal point dropped.",
   "namespace": "docs",
   "payload": {
     "condition": "self.lines_total != null",
@@ -25,7 +25,7 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/documents/documents.ts"
     },
-    "rationale": "A document's printed total equals the sum of its printed lines.",
+    "rationale": "A document's printed total must equal the sum of its printed lines; when they differ, a digit was usually misread or a decimal point dropped.",
     "response": {
       "expression": "self.total == (self.lines_total ?? self.total)",
       "kind": "predicate"

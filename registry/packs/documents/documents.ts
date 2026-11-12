@@ -67,7 +67,7 @@ export const TotalMatchesLines = Norn.law("total_matches_lines", {
   on: ScannedDocument,
   when: self => self.lines_total !== null,
   must: self => self.total === (self.lines_total ?? self.total),
-  because: "A document's printed total equals the sum of its printed lines.",
+  because: "A document's printed total must equal the sum of its printed lines; when they differ, a digit was usually misread or a decimal point dropped.",
 })
 
 export const Source = Norn.sourceSchema({

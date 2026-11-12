@@ -556,36 +556,41 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     )
     .expect("a consistent, explained correction commits");
 
-    let cell = host.cell().expect("cell");
-    let reader = cell.store().read();
-    let corrected = reader
-        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117")
-        .expect("read")
-        .expect("corrected");
-    assert_eq!(text(&corrected, "total"), "72");
-    assert_eq!(text(&corrected, "corrected_by"), STEWARD);
-    assert_eq!(
-        text(&corrected, "correction_evidence"),
-        "SCAN-RPT-0117~total"
-    );
-    assert_eq!(
-        text(&corrected, "extractor"),
-        "legacy-ocr",
-        "a patch keeps the other values"
-    );
-    assert!(corrected.version > slipped);
-    // The original version is history, not overwritten.
-    let original = reader
-        .object_at_version(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117", slipped)
-        .expect("read")
-        .expect("original version");
-    assert_eq!(text(&original, "total"), "720");
-    drop(reader);
-    drop(cell);
+    corrected_with_history(&host, slipped);
+}
 
-    // The history shows both values and what wrote each.
+/// After the RPT-0117 correction: the corrected values, the original version
+/// kept as history, and the history read naming what wrote each version.
+fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
+    use crate::object_review::NornVersionWriter::{Action, Mapping, Other};
+    {
+        let cell = host.cell().expect("cell");
+        let reader = cell.store().read();
+        let corrected = reader
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117")
+            .expect("read")
+            .expect("corrected");
+        assert_eq!(text(&corrected, "total"), "72");
+        assert_eq!(text(&corrected, "corrected_by"), STEWARD);
+        assert_eq!(
+            text(&corrected, "correction_evidence"),
+            "SCAN-RPT-0117~total"
+        );
+        assert_eq!(
+            text(&corrected, "extractor"),
+            "legacy-ocr",
+            "a patch keeps the other values"
+        );
+        assert!(corrected.version > slipped);
+        // The original version is history, not overwritten.
+        let original = reader
+            .object_at_version(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117", slipped)
+            .expect("read")
+            .expect("original version");
+        assert_eq!(text(&original, "total"), "720");
+    }
     let history = crate::object_review::get_object_history(
-        &host,
+        host,
         &scope_query(),
         Some(STEWARD),
         DOCUMENT,
@@ -596,7 +601,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     assert_eq!(history.versions.len(), 2, "{history:#?}");
     let (newest, oldest) = (&history.versions[0], &history.versions[1]);
     match &newest.writer {
-        crate::object_review::NornVersionWriter::Action {
+        Action {
             action_id,
             actor,
             input,
@@ -610,13 +615,11 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
                 Some("The scan reads 72.0; the import dropped the decimal point.")
             );
         }
-        other => panic!("the correction is the action's: {other:?}"),
+        other @ (Mapping { .. } | Other) => panic!("the correction is the action's: {other:?}"),
     }
     match &oldest.writer {
-        crate::object_review::NornVersionWriter::Mapping { lineage } => {
-            assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping");
-        }
-        other => panic!("the import is the mapping's: {other:?}"),
+        Mapping { lineage } => assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping"),
+        other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),
     }
     let value = |version: &crate::object_review::NornObjectVersion| match version
         .values
@@ -631,7 +634,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         ("72", "720")
     );
     crate::object_review::get_object_lineage_at(
-        &host,
+        host,
         &scope_query(),
         Some(STEWARD),
         (DOCUMENT, "SCAN-RPT-0117", slipped),

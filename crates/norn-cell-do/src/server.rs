@@ -431,6 +431,64 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     Some((kind, id, leaf))
 }
 
+/// HOST-READ-4/6: an object's `/lineage` (optionally `?version=`),
+/// `/findings` and `/history`, scoped by the query string.
+fn review<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (object_type, id, leaf): (&str, &str, &str),
+    query: &str,
+) -> Result<String, Refusal> {
+    let allowed: &[&str] = if leaf == "lineage" {
+        &["orgId", "environmentId", "version"]
+    } else {
+        &["orgId", "environmentId"]
+    };
+    let fields = parse(query, allowed)?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    match (leaf, fields.get("version")) {
+        ("findings", _) => document_json(&get_object_findings(
+            host,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+        ("history", _) => document_json(&get_object_history(
+            host,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+        (_, Some(version)) => {
+            let version = version
+                .parse::<u64>()
+                .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
+            document_json(&get_object_lineage_at(
+                host,
+                &scope,
+                actor,
+                (object_type, id, version),
+                &CellObjectAccess,
+            )?)
+        }
+        (_, None) => document_json(&get_object_lineage(
+            host,
+            &scope,
+            actor,
+            object_type,
+            id,
+            &CellObjectAccess,
+        )?),
+    }
+}
+
 /// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
 /// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
 /// the query string.
@@ -482,60 +540,8 @@ fn objects<E: SqlEngine>(
             &CellObjectAccess,
         )?);
     }
-    if let (Some(id), Some(leaf @ ("findings" | "history"))) = (id, leaf) {
-        let fields = parse(query, &["orgId", "environmentId"])?;
-        let scope = ScopeQuery {
-            org_id: fields.get("orgId").cloned(),
-            environment_id: fields.get("environmentId").cloned(),
-        };
-        let id = decoded(id)?;
-        return if leaf == "findings" {
-            document_json(&get_object_findings(
-                host,
-                &scope,
-                actor,
-                &object_type,
-                &id,
-                &CellObjectAccess,
-            )?)
-        } else {
-            document_json(&get_object_history(
-                host,
-                &scope,
-                actor,
-                &object_type,
-                &id,
-                &CellObjectAccess,
-            )?)
-        };
-    }
-    if let (Some(id), Some(_lineage)) = (id, leaf) {
-        let fields = parse(query, &["orgId", "environmentId", "version"])?;
-        let scope = ScopeQuery {
-            org_id: fields.get("orgId").cloned(),
-            environment_id: fields.get("environmentId").cloned(),
-        };
-        let id = decoded(id)?;
-        if let Some(version) = fields.get("version") {
-            let version = version
-                .parse::<u64>()
-                .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
-            return document_json(&get_object_lineage_at(
-                host,
-                &scope,
-                actor,
-                (&object_type, &id, version),
-                &CellObjectAccess,
-            )?);
-        }
-        return document_json(&get_object_lineage(
-            host,
-            &scope,
-            actor,
-            &object_type,
-            &id,
-            &CellObjectAccess,
-        )?);
+    if let (Some(id), Some(leaf @ ("findings" | "history" | "lineage"))) = (id, leaf) {
+        return review(host, actor, (&object_type, &decoded(id)?, leaf), query);
     }
     if let Some(id) = id {
         let fields = parse(query, &["orgId", "environmentId"])?;
