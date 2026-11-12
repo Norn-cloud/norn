@@ -214,7 +214,7 @@ PY
       CODEGRAPH_BIN=$("$NORN_PORT_PYTHON" tools/norn-port/codegraph.py --fetch "$upstream/codegraph")
       [[ -x $CODEGRAPH_BIN ]]
       export CODEGRAPH_BIN
-      "$NORN_PORT_PYTHON" -m unittest discover -s tools/norn-port -p 'code_ontology_test.py'
+      "$NORN_PORT_PYTHON" -m unittest discover -s tools/norn-port -p '*_test.py'
       "$NORN_BIN" port code-ontology tools/norn-port/code-ontology-fixtures/demo --codegraph "$CODEGRAPH_BIN" --revision fixture \
         | cmp - tools/norn-port/code-ontology-fixtures/golden.json
       ;;

@@ -1,9 +1,11 @@
 //! `norn port`: forward to the porting tools shipped with this binary.
 //!
-//! The CLI links none of that code. It finds the tool directory from the Norn
-//! installation, never from the working directory or the tree being analysed,
+//! The CLI links none of that code. It finds the tool directory from an
+//! explicit absolute path, the installed layout, or the checkout it was built
+//! from, never from the working directory or the tree being analysed; refuses
+//! a directory, script or interpreter that someone else could have written;
 //! runs the tool with an isolated interpreter and a short explicit
-//! environment, and exits with the tool's own status.
+//! environment; and exits with the tool's own status.
 //!
 //! `code-ontology` reads source as data and never imports or executes it.
 //! `parity` is different: it EXECUTES the original function it is given, in a
@@ -66,8 +68,16 @@ impl Tool {
     }
 }
 
-/// The tool directory: `explicit` when given, otherwise a fixed place
-/// relative to the running binary. The working directory is never consulted.
+/// The checkout this binary was built from, fixed at build time. Runtime
+/// location of the binary plays no part in it.
+const CHECKOUT_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/norn-port");
+
+/// The tool directory, checked by [`trusted_tools`] before it is returned.
+///
+/// In order: `explicit` (`NORN_PORT_HOME`, absolute); for a binary installed
+/// as `<prefix>/bin/norn`, exactly `<prefix>/share/norn/port` when that
+/// directory exists; otherwise the checkout the binary was built from. The
+/// working directory and any other place near the binary are never searched.
 fn home(explicit: Option<OsString>, binary: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(explicit) = explicit {
         let explicit = PathBuf::from(explicit);
@@ -77,35 +87,154 @@ fn home(explicit: Option<OsString>, binary: Option<&Path>) -> Result<PathBuf, St
                 explicit.display()
             ));
         }
-        return Ok(explicit);
+        return trusted_tools(&explicit);
     }
-    let prefix = binary
+    let installed = binary
         .and_then(Path::parent)
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "bin"))
         .and_then(Path::parent)
-        .ok_or("the running binary's location is unknown")?;
-    // An installed `<prefix>/bin/norn` keeps the tools in `<prefix>/share`.
-    let installed = prefix.join("share/norn/port");
-    if installed.join("port.py").is_file() {
-        return Ok(installed);
-    }
-    // A Cargo build at `<checkout>/target/<profile>/norn`.
-    let checkout = prefix.parent().map(|root| root.join("tools/norn-port"));
-    if let Some(checkout) = checkout
-        && checkout.join("port.py").is_file()
+        .map(|prefix| prefix.join("share/norn/port"));
+    if let Some(installed) = installed
+        && installed.exists()
     {
-        return Ok(checkout);
+        return trusted_tools(&installed);
+    }
+    let checkout = Path::new(CHECKOUT_TOOLS);
+    if checkout.join("port.py").is_file() {
+        return trusted_tools(checkout);
     }
     Err(format!(
-        "the porting tools are not installed with this binary (no {}); set {HOME} to the absolute path of tools/norn-port in a Norn checkout",
-        installed.display()
+        "the porting tools are not installed with this binary and its build checkout is gone; install them at <prefix>/share/norn/port beside <prefix>/bin/norn, or set {HOME} to the absolute path of tools/norn-port in a Norn checkout"
     ))
+}
+
+/// The canonical tool directory, once it and its ancestors pass the checks in
+/// [`trust`].
+fn trusted_tools(directory: &Path) -> Result<PathBuf, String> {
+    let canonical = std::fs::canonicalize(directory)
+        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    trust::directory(&canonical)?;
+    Ok(canonical)
+}
+
+/// Whether a file or directory may supply code that runs as this user.
+///
+/// An object passes when it is owned by this user or root and is not writable
+/// by group or others; every directory above it must be owned by this user or
+/// root too, and may be writable by group or others only when it is owned by
+/// root and has the sticky bit (as `/tmp` is): there, nobody else can remove or
+/// replace the entry below it, which itself must pass. The tool directory
+/// itself and each file are held to the strict rule, sticky or not. A symlink
+/// is checked where it sits (owner only, since its own mode means nothing) and
+/// again at its canonical target. Off Unix there is no check.
+mod trust {
+    use std::path::Path;
+
+    #[cfg(unix)]
+    fn owner_ok(uid: u32) -> bool {
+        uid == 0 || uid == rustix::process::geteuid().as_raw()
+    }
+
+    #[cfg(unix)]
+    fn refuse(path: &Path, why: &str) -> String {
+        format!(
+            "{} {why}; code from there could have been planted by another user, so norn port refuses to run it",
+            path.display()
+        )
+    }
+
+    /// `path` itself under the strict rule.
+    #[cfg(unix)]
+    fn strict(path: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata =
+            std::fs::metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        if !owner_ok(metadata.uid()) {
+            return Err(refuse(path, "is owned by another user"));
+        }
+        if metadata.mode() & 0o022 != 0 {
+            return Err(refuse(path, "is writable by group or others"));
+        }
+        Ok(())
+    }
+
+    /// Every directory above the canonical `path`.
+    #[cfg(unix)]
+    fn ancestors(path: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        for ancestor in path.ancestors().skip(1) {
+            let metadata = std::fs::metadata(ancestor)
+                .map_err(|error| format!("{}: {error}", ancestor.display()))?;
+            if !owner_ok(metadata.uid()) {
+                return Err(refuse(ancestor, "is owned by another user"));
+            }
+            let sticky_root = metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+            if metadata.mode() & 0o022 != 0 && !sticky_root {
+                return Err(refuse(ancestor, "is writable by group or others"));
+            }
+        }
+        Ok(())
+    }
+
+    /// A canonical directory: itself strictly, its ancestors as above.
+    #[cfg(unix)]
+    pub(super) fn directory(canonical: &Path) -> Result<(), String> {
+        strict(canonical)?;
+        ancestors(canonical)
+    }
+
+    /// A file that will be executed or read as code, possibly through links.
+    #[cfg(unix)]
+    pub(super) fn file(path: &Path) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+        let parent = std::fs::canonicalize(parent)
+            .map_err(|error| format!("{}: {error}", parent.display()))?;
+        // The directory that holds the entry decides who can replace it.
+        if let Err(error) = strict(&parent) {
+            let sticky_root = std::fs::metadata(&parent)
+                .is_ok_and(|metadata| metadata.uid() == 0 && metadata.mode() & 0o1000 != 0);
+            if !sticky_root {
+                return Err(error);
+            }
+        }
+        ancestors(&parent)?;
+        let link = path
+            .file_name()
+            .map(|name| parent.join(name))
+            .ok_or_else(|| format!("{} names no file", path.display()))?;
+        let metadata = std::fs::symlink_metadata(&link)
+            .map_err(|error| format!("{}: {error}", link.display()))?;
+        if !owner_ok(metadata.uid()) {
+            return Err(refuse(&link, "is owned by another user"));
+        }
+        if metadata.file_type().is_symlink() {
+            let target = std::fs::canonicalize(&link)
+                .map_err(|error| format!("{}: {error}", link.display()))?;
+            return file(&target);
+        }
+        strict(&link)
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn directory(_canonical: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn file(_path: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The interpreter: `explicit` when given, otherwise the first `python3` in
 /// an absolute `PATH` entry. A relative entry would resolve against the
-/// working directory, so it is skipped.
+/// working directory, so it is skipped. Either way it must pass the same
+/// ownership check as the tools, at its own location and at its target.
 fn interpreter(explicit: Option<OsString>, path: Option<&OsStr>) -> Result<PathBuf, String> {
-    if let Some(explicit) = explicit {
+    let chosen = if let Some(explicit) = explicit {
         let explicit = PathBuf::from(explicit);
         if !explicit.is_absolute() {
             return Err(format!(
@@ -113,18 +242,23 @@ fn interpreter(explicit: Option<OsString>, path: Option<&OsStr>) -> Result<PathB
                 explicit.display()
             ));
         }
-        return Ok(explicit);
-    }
-    path.into_iter()
-        .flat_map(|path| std::env::split_paths(path))
-        .filter(|directory| directory.is_absolute())
-        .map(|directory| directory.join("python3"))
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| {
-            format!(
-                "no python3 in an absolute PATH entry; set {PYTHON} to an interpreter's absolute path"
-            )
-        })
+        explicit
+    } else {
+        path.into_iter()
+            .flat_map(|path| std::env::split_paths(path))
+            .filter(|directory| directory.is_absolute())
+            .map(|directory| directory.join("python3"))
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                format!(
+                    "no python3 in an absolute PATH entry; set {PYTHON} to an interpreter's absolute path"
+                )
+            })?
+    };
+    trust::file(&chosen)?;
+    // Run it by the name it was found under: a virtual environment's python
+    // is a link, and Python finds the environment from that name.
+    Ok(chosen)
 }
 
 /// Every argument after the interpreter, in order.
@@ -139,6 +273,7 @@ fn arguments(
     if !script.is_file() {
         return Err(format!("{} is not a file", script.display()));
     }
+    trust::file(&script)?;
     // Isolated mode: no PYTHON* variables, no user site directory, and neither
     // the working directory nor the script directory on the module path.
     let mut command = vec![OsString::from("-I"), script.into_os_string()];
@@ -238,15 +373,21 @@ mod tests {
     }
 
     #[test]
-    fn without_an_explicit_home_only_the_binary_location_is_searched() {
-        // A Cargo build inside this checkout finds the checkout's tools.
-        let built = root().join("target/debug/norn");
-        let found = home(None, Some(&built)).expect("checkout layout");
-        assert_eq!(found, root().join("tools/norn-port"));
-        // A binary anywhere else finds nothing, whatever the working directory holds.
-        let error = home(None, Some(Path::new("/opt/elsewhere/bin/norn"))).expect_err("no tools");
-        assert!(error.contains("NORN_PORT_HOME"), "{error}");
-        assert!(home(None, None).is_err());
+    fn without_an_explicit_home_the_build_checkout_is_used_wherever_the_binary_is() {
+        let tools = root().join("tools/norn-port").canonicalize().unwrap();
+        for binary in [
+            root().join("target/debug/norn"),
+            PathBuf::from("/tmp/x/norn"),
+            PathBuf::from("/nonexistent/prefix/bin/norn"),
+        ] {
+            assert_eq!(
+                home(None, Some(&binary)).unwrap(),
+                tools,
+                "{}",
+                binary.display()
+            );
+        }
+        assert_eq!(home(None, None).unwrap(), tools);
     }
 
     #[test]

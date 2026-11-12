@@ -50,6 +50,7 @@ NOT_PARITY_VALUES = {
     "code_ontology.py",       # compares source syntax (node kinds, names), never parity wire values
     "code_ontology_test.py",  # asserts on that tool's facts
     "codegraph.py",           # compares a version string and file digests
+    "codegraph_test.py",      # asserts on file digests and refusals
 }
 NORN = ""
 

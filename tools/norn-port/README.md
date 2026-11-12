@@ -22,8 +22,8 @@ the application's repository, never here.
 
 `norn port <tool> ...` forwards to this directory's tools; `norn-cli` gains no
 dependency on them (see "Command" below). Today the tools ship only in a Norn
-source checkout: a packaged `norn` has no `norn port` until the tools and their
-Python dependencies are packaged with it.
+source checkout. A packaged `norn` has the command but refuses to run it until
+the tools and their Python dependencies are packaged with it.
 
 ## Inventory
 
@@ -89,9 +89,12 @@ For parity, a rule emits one **candidate data record** in `commands`:
 no facts or timers and has no trigger, so it is not a hosted business effect.
 The harness compares the result, typed refusal/reason, and input mutations.
 Every value equality uses the shared type-preserving comparator, including
-mutation detection and metadata comparisons. The harness self-test lints Python
-AST equality operators, with exemptions only for the comparator itself and the
-interpreter module-entrypoint check. A Norn evaluator/schema failure is an infrastructure failure; it cannot be
+mutation detection and metadata comparisons. The harness self-test lints every
+module in this directory for Python AST equality operators, except the
+comparator itself, the interpreter module-entrypoint check, and the modules in
+its commented `NOT_PARITY_VALUES` list, which compare source syntax, versions or
+digests rather than parity values. A new module is linted unless it is added to
+that list. A Norn evaluator/schema failure is an infrastructure failure; it cannot be
 miscounted as agreement with a source refusal. Domain refusals must be modeled
 in the candidate record. These draft comparison adapters are explicit in each
 rule and should become sub-decisions when the public result seam is settled.
@@ -208,8 +211,9 @@ JavaScript computed handlers and nested closures are not resolved. Client
 Script evidence uses the JSON document pointer plus `script_line`; the
 file line is 1 for that metadata document.
 
-Run goldens against the actual pinned binary:
-`CODEGRAPH_BIN=/path/to/codegraph python3 -m unittest discover -s tools/norn-port -p 'code_ontology_test.py'`.
+Run goldens against the actual pinned binary, and the pin's refusal tests
+(which need no binary):
+`CODEGRAPH_BIN=/path/to/codegraph python3 -m unittest discover -s tools/norn-port -p '*_test.py'`.
 The fixture includes all seven relations, hooks, field operations, literal form
 and Client Script targets, and unresolved/dynamic examples. No Frappe service
 or source module execution is needed.
@@ -221,18 +225,30 @@ or source module execution is needed.
 exits with the tool's own status (a signal is 128 plus its number). The CLI
 links none of this code.
 
-- **Where the tools come from.** From the Norn installation, never from the
-  working directory or the tree being analysed, which is data and is only ever
-  an argument. `NORN_PORT_HOME`, when set, must be an absolute path. Otherwise
-  the directory is fixed relative to the running binary: `share/norn/port`
-  beside an installed `bin/norn`, or `tools/norn-port` of the checkout for a
-  Cargo build at `target/<profile>/norn`. If neither is there the command
-  refuses.
+- **Where the tools come from.** Never from the working directory or the tree
+  being analysed, which is data and is only ever an argument. In order:
+  `NORN_PORT_HOME`, which must be an absolute path; for a binary installed as
+  `<prefix>/bin/norn` (its directory must be named `bin`), exactly
+  `<prefix>/share/norn/port` when that directory exists; otherwise the
+  checkout the binary was built from, fixed at build time. No other place near
+  the binary is searched. If none applies the command refuses.
+- **Who may have written them.** Before anything runs, the tool directory, the
+  script and the interpreter are checked. Each must be owned by you or root
+  and not writable by group or others. Every directory above them must be
+  owned by you or root, and may be writable by group or others only when it is
+  root's and has the sticky bit (as `/tmp` is), because then nobody else can
+  replace the entry below it, which is checked in turn. The tool directory
+  itself gets no sticky exception. Links are checked where they sit and at
+  their target. Anything else refuses with the path and the reason; a umask of
+  `002` leaves files group-writable, which this refuses (`chmod -R g-w`).
+  There is no check off Unix.
 - **Which interpreter.** `NORN_PORT_PYTHON`, when set, must be an absolute
   path. Otherwise it is the first `python3` in an absolute `PATH` entry;
   relative entries are skipped, so the working directory cannot supply it.
   `PATH` is the caller's own configuration: that interpreter and the packages
-  installed in it are trusted, as they would be if you ran the tool by hand.
+  installed in it are trusted, as they would be if you ran the tool by hand,
+  once it passes the ownership check above. It is run by the name it was
+  found under, so a virtual environment's `python3` keeps its packages.
 - **How it runs.** In Python's isolated mode (`-I`): `PYTHONPATH`,
   `PYTHONSTARTUP` and the other `PYTHON*` variables are ignored, the user site
   directory is off, and neither the working directory nor the script directory

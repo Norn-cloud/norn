@@ -43,13 +43,24 @@ impl Scratch {
             std::env::temp_dir().join(format!("norn-port-test-{}-{name}", std::process::id()));
         let _stale = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
+        mode(&path, 0o755);
         Self(path.canonicalize().unwrap())
     }
 
+    /// Write a file, creating its directories, with modes that pass the
+    /// ownership check whatever the umask is.
     fn write(&self, relative: &str, text: &str) {
         let path = self.0.join(relative);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
+        let parent = path.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        for directory in parent
+            .ancestors()
+            .take_while(|directory| *directory != self.0)
+        {
+            mode(directory, 0o755);
+        }
+        std::fs::write(&path, text).unwrap();
+        mode(&path, 0o644);
     }
 }
 
@@ -57,6 +68,21 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _gone = std::fs::remove_dir_all(&self.0);
     }
+}
+
+fn mode(path: &Path, bits: u32) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits)).unwrap();
+}
+
+/// A copy of the built `norn` at `relative` under `root`.
+fn copy_binary(root: &Scratch, relative: &str) -> PathBuf {
+    let target = root.0.join(relative);
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    mode(target.parent().unwrap(), 0o755);
+    std::fs::copy(env!("CARGO_BIN_EXE_norn"), &target).unwrap();
+    mode(&target, 0o755);
+    target
 }
 
 /// A tool directory whose every tool is the reporter.
@@ -96,7 +122,16 @@ fn executed(tree: &Scratch) -> Vec<String> {
 }
 
 fn norn(working: &Path, home: Option<&Path>, arguments: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_norn"));
+    norn_at(
+        Path::new(env!("CARGO_BIN_EXE_norn")),
+        working,
+        home,
+        arguments,
+    )
+}
+
+fn norn_at(binary: &Path, working: &Path, home: Option<&Path>, arguments: &[&str]) -> Output {
+    let mut command = Command::new(binary);
     command
         .current_dir(working)
         .arg("port")
@@ -164,6 +199,135 @@ fn the_analysed_tree_is_data_and_cannot_supply_the_tool_or_python_start_up() {
         assert!(!variables.contains(&dropped), "{dropped} reached the tool");
     }
     assert_eq!(executed(&tree), Vec::<String>::new());
+}
+
+#[test]
+fn the_decoy_does_run_when_it_is_executed_directly() {
+    // Positive control: every "never ran" assertion relies on this marker.
+    let tree = hostile_tree("control");
+    let status = Command::new("python3")
+        .arg("-I")
+        .arg(tree.0.join("tools/norn-port/code_ontology.py"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(executed(&tree), ["EXECUTED-code_ontology.py"]);
+}
+
+/// A decoy tool directory at `relative` under `root`, marking `root`.
+fn plant(root: &Scratch, relative: &str) {
+    root.write("DECOY-ROOT", "");
+    for script in ["port.py", "code_ontology.py", "selftest.py"] {
+        root.write(&format!("{relative}/{script}"), DECOY);
+    }
+}
+
+#[test]
+fn nothing_near_a_relocated_binary_is_searched() {
+    // A binary outside `bin/`, and one inside `bin/`, each with decoys at
+    // every place a lookup relative to the binary could reach.
+    let root = Scratch::new("relocated");
+    for decoy in [
+        "tools/norn-port",
+        "share/norn/port",
+        "x/tools/norn-port",
+        "x/share/norn/port",
+        "p/tools/norn-port",
+        "p/bin/tools/norn-port",
+    ] {
+        plant(&root, decoy);
+    }
+    for binary in ["x/norn", "x/y/norn", "p/bin/norn"] {
+        let binary = copy_binary(&root, binary);
+        for tool in ["scoreboard", "code-ontology"] {
+            let _output = norn_at(&binary, &root.0, None, &[tool]);
+        }
+    }
+    assert_eq!(executed(&root), Vec::<String>::new());
+}
+
+#[test]
+fn the_installed_layout_runs_only_when_nobody_else_can_write_it() {
+    let root = Scratch::new("installed");
+    plant(&root, "share/norn/port");
+    let binary = copy_binary(&root, "bin/norn");
+    let tools = root.0.join("share/norn/port");
+    for (path, bits, what) in [
+        (tools.clone(), 0o775, "group-writable tool directory"),
+        (tools.clone(), 0o777, "world-writable tool directory"),
+        (
+            tools.clone(),
+            0o1777,
+            "sticky world-writable tool directory",
+        ),
+        (root.0.join("share/norn"), 0o777, "world-writable parent"),
+        (tools.join("port.py"), 0o666, "world-writable script"),
+        (tools.join("port.py"), 0o664, "group-writable script"),
+    ] {
+        let original = if path.is_dir() { 0o755 } else { 0o644 };
+        mode(&path, bits);
+        let output = norn_at(&binary, &root.0, None, &["scoreboard"]);
+        mode(&path, original);
+        assert_eq!(output.status.code(), Some(1), "{what}");
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("writable by group or others"),
+            "{what}: {message}"
+        );
+        assert_eq!(executed(&root), Vec::<String>::new(), "{what}");
+    }
+    // Positive control: the same layout with safe modes runs the planted tool.
+    let output = norn_at(&binary, &root.0, None, &["scoreboard"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(executed(&root), ["EXECUTED-port.py"]);
+}
+
+#[test]
+fn an_explicit_home_and_interpreter_get_the_same_check() {
+    let home = reporter_home("explicit");
+    mode(&home.0, 0o777);
+    let output = norn(&home.0, Some(&home.0), &["scoreboard"]);
+    mode(&home.0, 0o755);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("writable by group or others"));
+    // An interpreter in a world-writable directory is refused before it runs.
+    let tree = hostile_tree("python");
+    tree.write(
+        "py/python3",
+        "#!/bin/sh\n: > \"$(dirname \"$0\")/../EXECUTED-python\"\n",
+    );
+    mode(&tree.0.join("py/python3"), 0o755);
+    mode(&tree.0.join("py"), 0o777);
+    let output = Command::new(env!("CARGO_BIN_EXE_norn"))
+        .current_dir(&tree.0)
+        .args(["port", "scoreboard"])
+        .env("NORN_PORT_HOME", &home.0)
+        .env("NORN_PORT_PYTHON", tree.0.join("py/python3"))
+        .output()
+        .unwrap();
+    mode(&tree.0.join("py"), 0o755);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("writable by group or others"));
+    assert_eq!(executed(&tree), Vec::<String>::new());
+}
+
+#[test]
+fn a_tool_directory_owned_by_another_user_is_refused() {
+    if rustix::process::geteuid().as_raw() != 0 {
+        // Giving a file away needs root; as an ordinary user this case cannot
+        // be set up, so it is covered only where the tests run as root.
+        eprintln!("skipped: not running as root, cannot create a file owned by another user");
+        return;
+    }
+    let home = reporter_home("foreign");
+    std::os::unix::fs::chown(&home.0, Some(65_534), Some(65_534)).unwrap();
+    let output = norn(&home.0, Some(&home.0), &["scoreboard"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("owned by another user"));
 }
 
 #[test]

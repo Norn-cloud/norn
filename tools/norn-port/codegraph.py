@@ -70,7 +70,7 @@ class CodeGraphRust:
             tools = Path(temp) / "bin"
             tools.mkdir()
             binary = self.verified(tools)
-            version = subprocess.check_output([binary, "--version"], text=True).strip()
+            version = subprocess.check_output([binary, "--version"], text=True, timeout=30).strip()
             if version.split()[-1] != VERSION:
                 raise ValueError(f"codegraph {VERSION} required, got {version}")
             root = Path(temp) / "src"

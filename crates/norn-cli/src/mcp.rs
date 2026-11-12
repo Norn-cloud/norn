@@ -180,16 +180,19 @@ mod tests {
             .map(|tool| tool.name)
             .collect();
         assert_eq!(names, ["norn.capabilities", "norn.check"]);
-        for arguments in [
-            RuntimeObject::new(),
-            RuntimeObject::from([("tool".into(), RuntimeValue::String("selftest".into()))]),
-        ] {
-            assert!(
-                Human
-                    .call("norn.port", arguments, RuntimeObject::new())
-                    .is_err()
-            );
-        }
+        // An empty key becomes `--`, so argv is `norn port -- selftest`: it
+        // parses as `port`, and the refusal comes from the dispatch arm.
+        let arguments =
+            RuntimeObject::from([(String::new(), RuntimeValue::String("selftest".into()))]);
+        let refusal = Human
+            .call("norn.port", arguments, RuntimeObject::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            refusal.explanation.contains("backend unavailable"),
+            "{}",
+            refusal.explanation
+        );
     }
 
     #[test]
