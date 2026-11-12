@@ -7,6 +7,10 @@ use norn_ir::explain::{ExplainFormat, ExplainKind, ExplainReport, ExplainUnknown
 use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, LawIR};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+/// The subject an explanation was asked for is not exactly one declaration of
+/// the definition set (a mistyped or ambiguous action, law or concept name).
+pub const UNKNOWN_SUBJECT: &str = "explain.selector.unknown_subject";
+
 /// Locale-map diagnostic identities, shared with structured-requirement rendering.
 pub mod wording_codes {
     /// Select an available BCP 47 tag from the pinned wording map; no fallback is applied.
@@ -81,7 +85,7 @@ pub fn explain(
         },
     )
     .map_err(closure_error)?;
-    let goals = crate::obligations::explain_induction(
+    let (induction_laws, goals) = crate::obligations::explain_induction(
         &pool,
         &closure.writers,
         &closure.open_boundaries,
@@ -89,7 +93,15 @@ pub fn explain(
     )
     .map_err(closure_error)?;
     let starts = subject_starts(&target, &catalog);
-    let mut laws = explain_laws(&pool, kind, &target, &catalog, &closure, &goals)?;
+    let mut laws = explain_laws(
+        &pool,
+        kind,
+        &target,
+        &catalog,
+        &closure,
+        &induction_laws,
+        &goals,
+    )?;
     let interpretations = declared_interpretations(&pool)?;
     if laws.len().saturating_mul(interpretations.len()) > 16_384 {
         return Err(closure_error(
@@ -176,24 +188,17 @@ fn explain_laws(
     target: &MemberRef,
     catalog: &DefinitionCatalog,
     closure: &crate::verification::LawClosure,
+    induction_laws: &[String],
     goals: &[serde_json::Value],
 ) -> Result<Vec<ExplainedLaw>, Vec<Diagnostic>> {
-    let mut law_ids: Vec<_> = catalog
-        .laws
-        .iter()
-        .map(|law| law.at.artifact_id.clone())
-        .collect();
-    law_ids.sort();
     let starts = subject_starts(target, catalog);
     let mut laws = Vec::new();
     for law in &catalog.laws {
         if kind == ExplainKind::Law && law.at != *target {
             continue;
         }
-        let index = law_ids
-            .iter()
-            .position(|id| id == &law.at.artifact_id)
-            .ok_or_else(|| {
+        let obligations =
+            law_goals(goals, induction_laws, &law.at.artifact_id).ok_or_else(|| {
                 refusal(
                     crate::verification::codes::CLOSURE_REFUSED,
                     "law index is unavailable",
@@ -201,13 +206,6 @@ fn explain_laws(
             })?;
         let owned: LawIR =
             serde_json::from_value(payload(pool, &law.at)?).map_err(document_error)?;
-        let obligations: Vec<_> = goals
-            .iter()
-            .filter(|goal| {
-                goal.get("law").and_then(serde_json::Value::as_u64) == u64::try_from(index).ok()
-            })
-            .cloned()
-            .collect();
         let why_unknown = unknowns(&obligations, &closure.writers, &closure.open_boundaries);
         let law_starts = if kind == ExplainKind::Law {
             vec![law.subject.clone()]
@@ -240,6 +238,27 @@ fn explain_laws(
         });
     }
     Ok(laws)
+}
+
+/// The goals the induction generated for one law, matched by artifact id.
+/// `induction_laws` is the generator's own order (every law artifact of the
+/// pool), which a goal's `law` index refers to. The catalog may list fewer
+/// laws than that, so an index rebuilt from the catalog would shift every
+/// later law onto its predecessor's goals.
+fn law_goals(
+    goals: &[serde_json::Value],
+    induction_laws: &[String],
+    artifact_id: &str,
+) -> Option<Vec<serde_json::Value>> {
+    let index = induction_laws.iter().position(|id| id == artifact_id)?;
+    let index = u64::try_from(index).ok()?;
+    Some(
+        goals
+            .iter()
+            .filter(|goal| goal.get("law").and_then(serde_json::Value::as_u64) == Some(index))
+            .cloned()
+            .collect(),
+    )
 }
 
 fn payload(
@@ -315,21 +334,21 @@ fn target(
             }
         }
     }
-    if matches.len() != 1 {
-        return Err(refusal(
-            crate::verification::codes::UNKNOWN_BINDING,
-            format!(
-                "expected one {kind:?} named {id:?}; found {}",
-                matches.len()
-            ),
-        ));
-    }
-    matches.pop().ok_or_else(|| {
+    let unknown = |found: usize| {
+        let kind = match kind {
+            ExplainKind::Action => "action",
+            ExplainKind::Law => "law",
+            ExplainKind::Concept => "concept",
+        };
         refusal(
-            crate::verification::codes::UNKNOWN_BINDING,
-            "target is missing",
+            UNKNOWN_SUBJECT,
+            format!("no single {kind} is named {id:?}; found {found}"),
         )
-    })
+    };
+    if matches.len() != 1 {
+        return Err(unknown(matches.len()));
+    }
+    matches.pop().ok_or_else(|| unknown(0))
 }
 
 fn type_name(at: &MemberRef) -> Option<&str> {
@@ -601,5 +620,31 @@ mod interpretation_tests {
             report[0].link.correspondences[0].from_term_id,
             "norn.shop.order"
         );
+    }
+}
+
+#[cfg(test)]
+mod law_goal_tests {
+    use super::law_goals;
+    use serde_json::json;
+
+    #[test]
+    fn a_law_the_catalog_omits_does_not_shift_the_next_law_onto_its_goals() {
+        // The induction indexes every law artifact of the pool: `a.law` is 0
+        // and `b.law` is 1. A catalog that dropped `a.law` lists `b.law` first;
+        // an index rebuilt from that catalog would hand `b.law` the goals of `a.law`.
+        let induction_laws = ["a.law".to_owned(), "b.law".to_owned()];
+        let first = json!({"law": 0, "goal": {"kind": "initialization"}});
+        let second = json!({"law": 1, "goal": {"kind": "non_vacuity"}});
+        let goals = [first.clone(), second.clone()];
+        assert_eq!(
+            law_goals(&goals, &induction_laws, "b.law"),
+            Some(vec![second])
+        );
+        assert_eq!(
+            law_goals(&goals, &induction_laws, "a.law"),
+            Some(vec![first])
+        );
+        assert_eq!(law_goals(&goals, &induction_laws, "c.law"), None);
     }
 }

@@ -22,7 +22,7 @@
 import { createHash } from "node:crypto"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
-import { compilePack, packModules } from "./pack.ts"
+import { compilePack, packModules, type PackResult } from "./pack.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
 
 export interface CompiledEvent {
@@ -106,11 +106,15 @@ export function sourceDigest(root: string, manifest: Project): string {
   return hash.digest("hex")
 }
 
+/** The project compiled as one pack: `norn dev` and `norn explain` both compile through here. */
+export function compileProjectPack(root: string, manifest: Project): PackResult {
+  return compilePack(root, { modules: projectModules(root, manifest), scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
+}
+
 /** Compile every top-level module of every source directory as one set. */
 export function compileProject(root: string, manifest: Project, gen: number): CompiledEvent {
   const digest = sourceDigest(root, manifest)
-  const modules = projectModules(root, manifest)
-  const pack = compilePack(root, { modules, scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
+  const pack = compileProjectPack(root, manifest)
   if (!pack.ok) {
     const diagnostics = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({
       ...diagnostic,

@@ -212,6 +212,9 @@
     "business_pack.validation.invalid_payload": {
       "message": "BusinessPackIR payload is invalid at {$path}: {$detail}"
     },
+    "cli.compile.source_refused": {
+      "message": "The project's sources did not compile: {$detail}"
+    },
     "cli.format.io": {
       "message": "Cannot format sources; check paths and permissions."
     },
@@ -421,6 +424,9 @@
     },
     "entity.validation.layer_scope_mismatch": {
       "message": "artifact scope.tenantId {$detail} does not match the {$layer} layer it is checked in"
+    },
+    "explain.selector.unknown_subject": {
+      "message": "no single {$kind} is named {$id}; found {$count}"
     },
     "function.invocation.blank_value": {
       "message": "{$member} must not be blank"

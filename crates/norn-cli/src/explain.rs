@@ -125,16 +125,21 @@ fn diagnostic_text(value: &serde_json::Value) -> String {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("")
             };
+            // A finding has a location only when it has a span, and exactly
+            // one of a fix or the reason there is none.
             let location = diagnostic
                 .pointer("/span/pointer")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
+                .map_or_else(String::new, |pointer| format!("\n  at {pointer}"));
+            let advice = if text("fix").is_empty() {
+                format!("no automatic fix: {}", text("no_fix"))
+            } else {
+                format!("fix: {}", text("fix"))
+            };
             format!(
-                "{}: {}\n  at {location}\n  {}{}",
+                "{}: {}{location}\n  {advice}",
                 text("code"),
-                text("message"),
-                text("fix"),
-                text("no_fix")
+                text("message")
             )
         })
         .collect::<Vec<_>>()

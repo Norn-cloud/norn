@@ -19,13 +19,7 @@ if (process.argv[2] === "fmt") {
 }
 if (process.argv[2] === "explain") {
   const { explain } = await import("./explain.ts")
-  const { ProjectError } = await import("./project.ts")
-  try { process.exit(await explain(process.argv.slice(3))) }
-  catch (error) {
-    if (!(error instanceof ProjectError)) throw error
-    process.stdout.write(`${JSON.stringify(error.diagnostic)}\n`)
-    process.exit(error.exitCode)
-  }
+  process.exit(await explain(process.argv.slice(3)))
 }
 if (process.argv[2] === "dev") {
   const { dev } = await import("./dev.ts")

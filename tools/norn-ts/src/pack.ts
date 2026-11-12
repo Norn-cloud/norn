@@ -207,11 +207,26 @@ export function checkPack(
   baseArtifacts: ReadonlyArray<Json> = [],
   flowSourceMap?: FlowSourceMap,
 ): CheckResult {
+  const input = admissionInput(artifacts, baseArtifacts, flowSourceMap)
+  return checker.checkArtifactSet(input.artifacts, input.context)
+}
+
+/**
+ * What the checker is given for a compiled pack: the candidates, and the
+ * context that carries the installed base (and the flow source map). `norn
+ * check` and `norn explain` both build their input here, so a base artifact is
+ * never a candidate in one and installed in the other.
+ */
+export function admissionInput(
+  artifacts: ReadonlyArray<Json>,
+  baseArtifacts: ReadonlyArray<Json> = [],
+  flowSourceMap?: FlowSourceMap,
+): { readonly artifacts: ReadonlyArray<Json>; readonly context: Readonly<Record<string, unknown>> | null } {
   const context = {
     ...(baseArtifacts.length > 0 ? { base: baseArtifacts } : {}),
     ...(flowSourceMap ? { flowSourceMap } : {}),
   }
-  return checker.checkArtifactSet(artifacts, Object.keys(context).length > 0 ? context : null)
+  return { artifacts, context: Object.keys(context).length > 0 ? context : null }
 }
 
 /** Bind draft flow projections only to hash refs the Rust checker already issued. */

@@ -33,7 +33,7 @@ pub use crate::envelope::IDENTIFIER_TOO_LONG;
 pub const INITIAL_SINCE: &str = "0.1.0";
 
 /// Format tag of the [`conformance_manifest`] document.
-pub const MANIFEST_FORMAT: &str = "norn-checker/diagnostic-codes@2";
+pub const MANIFEST_FORMAT: &str = "norn-checker/diagnostic-codes@1";
 
 /// The checker tier a code belongs to (2026-08-27 ruling, "Tiers").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -118,6 +118,9 @@ pub const fn severity_str(severity: &DiagnosticSeverity) -> &'static str {
 /// The conformance manifest: every registered code with its tier, severity,
 /// message template, and `since` version, in registry order. Checked in as
 /// `crates/norn-checker/conformance/diagnostic-codes/`.
+///
+/// The format stays `diagnostic-codes@1`: each code gains one optional member,
+/// `fix` or `no_fix`, which is an additive change to an open object (D84).
 #[must_use]
 pub fn conformance_manifest() -> serde_json::Value {
     let codes: Vec<serde_json::Value> = REGISTRY

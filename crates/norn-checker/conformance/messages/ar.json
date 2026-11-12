@@ -282,6 +282,10 @@
       "message": "حمولة BusinessPackIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
     },
+    "cli.compile.source_refused": {
+      "message": "تعذّر تصريف مصادر المشروع: {$detail}",
+      "review": "needs_review"
+    },
     "cli.format.io": {
       "message": "تعذّر تنسيق المصادر؛ تحقق من المسارات والأذونات.",
       "review": "needs_review"
@@ -560,6 +564,10 @@
     },
     "entity.validation.layer_scope_mismatch": {
       "message": "scope.tenantId للأداة {$detail} لا يطابق طبقة {$layer} التي تُفحص فيها",
+      "review": "needs_review"
+    },
+    "explain.selector.unknown_subject": {
+      "message": "لا يوجد {$kind} واحد بالاسم {$id}؛ وُجد {$count}",
       "review": "needs_review"
     },
     "function.invocation.blank_value": {

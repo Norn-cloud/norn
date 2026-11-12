@@ -53,6 +53,7 @@ const INTERPRETATION_GOAL_KINDS: [&str; 6] = [
 
 /// Reuse the production induction generator for a read-only explanation.
 /// This supplies no approval, solver evidence or activation authority.
+/// Returns the generator's law order (artifact ids) with its goals.
 /// # Errors
 /// Refuses incomplete or oversized writer relations.
 pub(crate) fn explain_induction(
@@ -60,7 +61,7 @@ pub(crate) fn explain_induction(
     writers: &BTreeSet<crate::verification::LawWriter>,
     boundaries: &BTreeSet<String>,
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
-) -> Result<Vec<Value>, ChallengeError> {
+) -> Result<(Vec<String>, Vec<Value>), ChallengeError> {
     let law_count = pool
         .iter()
         .filter(|artifact| artifact.kind() == ArtifactKind::Law)
@@ -82,7 +83,12 @@ pub(crate) fn explain_induction(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     preflight_goal_bytes(&laws, writers, boundaries)?;
-    Ok(induction::build(pool, &laws, writers, boundaries, registry)?.goals)
+    // A goal's `law` is an index into this order: every law artifact of the pool, by id.
+    let order = laws.keys().cloned().collect();
+    Ok((
+        order,
+        induction::build(pool, &laws, writers, boundaries, registry)?.goals,
+    ))
 }
 
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.

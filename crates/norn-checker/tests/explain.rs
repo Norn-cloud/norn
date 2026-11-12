@@ -126,23 +126,113 @@ fn containment_keeps_each_pinned_pack_on_the_path() {
 }
 
 #[test]
-fn unknown_selector_is_an_existing_diagnostic_with_guidance() {
+fn unknown_subject_has_its_own_code_and_exactly_that_codes_guidance() {
+    for (kind, name) in [
+        (ExplainKind::Law, "law"),
+        (ExplainKind::Action, "action"),
+        (ExplainKind::Concept, "concept"),
+    ] {
+        let errors = explain(
+            &pool(),
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+            kind,
+            "not-present",
+        )
+        .unwrap_err();
+        assert_eq!(errors.len(), 1);
+        let finding = errors[0].to_json_v2();
+        assert_eq!(finding["code"], "explain.selector.unknown_subject");
+        assert_eq!(
+            finding["message"],
+            format!("no single {name} is named \"not-present\"; found 0")
+        );
+        // The finding carries its own code's guidance, read back from the registry,
+        // and not the law-binding advice this refusal used to borrow.
+        let registered = norn_checker::codes::lookup("explain.selector.unknown_subject").unwrap();
+        let borrowed =
+            norn_checker::codes::lookup(norn_checker::verification::codes::UNKNOWN_BINDING).unwrap();
+        assert_eq!(finding["fix"], registered.fix.unwrap());
+        assert_ne!(registered.fix, borrowed.fix);
+        assert!(registered.fix.unwrap().contains("action, law and concept"));
+        assert_eq!(finding["no_fix"], serde_json::Value::Null);
+        assert_eq!(finding["format"], "norn/diagnostic@2");
+        assert_eq!(finding["phase"], finding["tier"]);
+        assert_eq!(finding["retryable"], false);
+    }
+}
+
+#[test]
+fn every_v2_finding_carries_the_guidance_registered_for_its_own_code() {
+    // An inadmissible set: the findings are the checker's own, projected as v2.
+    // The laws without the entities they are about.
+    let broken: Vec<ArtifactEnvelope> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).unwrap();
     let errors = explain(
-        &pool(),
+        &broken,
         &EntityArtifactSetContext {
             registry: &BTreeSet::new(),
             base: &[],
             tenant: None,
         },
         ExplainKind::Law,
-        "not-present",
+        "erpnext.no_unpaid_ship",
     )
     .unwrap_err();
-    assert_eq!(
-        errors[0].code.as_str(),
-        norn_checker::verification::codes::UNKNOWN_BINDING
-    );
-    assert!(errors[0].to_json_v2()["fix"].is_string());
+    assert!(!errors.is_empty());
+    for error in &errors {
+        let finding = error.to_json_v2();
+        let registered =
+            norn_checker::codes::lookup(error.code.as_str()).expect("a registered code");
+        assert_eq!(
+            finding["fix"],
+            registered.fix.map_or(serde_json::Value::Null, Into::into),
+            "{}",
+            error.code.as_str()
+        );
+        assert_eq!(
+            finding["no_fix"],
+            registered.no_fix.map_or(serde_json::Value::Null, Into::into),
+            "{}",
+            error.code.as_str()
+        );
+        assert!(finding["fix"].is_string() != finding["no_fix"].is_string());
+        assert_eq!(finding["tier"], registered.tier.as_str());
+    }
+}
+
+#[test]
+fn every_law_carries_its_own_obligations() {
+    // A goal's `law` is the law's position among every law artifact of the
+    // pool, by id; an explained law must hold only the goals with its own index.
+    let pool = pool();
+    let mut ids: Vec<_> = pool
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Law)
+        .map(|artifact| artifact.artifact_id.clone())
+        .collect();
+    ids.sort();
+    assert!(ids.len() >= 2);
+    let mut explained = 0;
+    for id in &ids {
+        let report = run(&pool, ExplainKind::Law, id);
+        for law in &report.laws {
+            let index = ids
+                .iter()
+                .position(|candidate| candidate == &law.declaration.artifact_id)
+                .unwrap();
+            assert!(!law.obligations.is_empty(), "{id}");
+            for obligation in &law.obligations {
+                let expected = norn_ir::RuntimeValue::from_json_text(index.to_string()).unwrap();
+                assert_eq!(obligation.get("law"), Some(&expected), "{id}");
+            }
+            explained += 1;
+        }
+    }
+    assert!(explained >= 2);
 }
 
 #[test]

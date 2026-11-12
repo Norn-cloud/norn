@@ -1,0 +1,108 @@
+{
+  "codes": [
+    {
+      "code": "cli.compile.source_refused",
+      "tier": "T0",
+      "severity": "error",
+      "message": "The project's sources did not compile: {detail}",
+      "fix": "Correct the source at the reported file and line; the detail carries the authoring compiler's own finding.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.format.io",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Cannot format sources; check paths and permissions.",
+      "fix": "Check that the named source paths exist and are readable and writable, then format again.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.format.usage",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Unknown formatter option; use norn fmt [path...] [--check] [--json].",
+      "fix": "Run norn fmt [path...] with only --check or --json as options.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.exists",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Target is not an empty directory; choose a new directory.",
+      "fix": "Choose a new or empty target directory for norn init.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.install",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Dependency installation failed; retry bun install in the project directory.",
+      "fix": "Run bun install in the project directory, or rerun norn init with --no-install and install later.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.invalid_manifest",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Invalid norn.json; use norn-project/1 with explicit sources, scope, dev and cell, and remove unknown keys.",
+      "fix": "Use norn-project/1 in norn.json with explicit sources, scope, dev and cell, and remove unknown keys.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.invalid_name",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Invalid namespace; use a lowercase letter followed by lowercase letters, digits or underscores.",
+      "fix": "Use a namespace that starts with a lowercase letter followed by lowercase letters, digits or underscores.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.io",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Cannot write project; check directory permissions.",
+      "fix": "Check write permissions for the target directory and run norn init again.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.not_found",
+      "tier": "T0",
+      "severity": "error",
+      "message": "No norn.json found; run norn init <dir> first.",
+      "fix": "Run norn init <dir> first, or run the command from a directory containing norn.json.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.project.usage",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
+      "fix": "Run norn init <dir> with only the documented options.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.setup.checker_unavailable",
+      "tier": "T0",
+      "severity": "error",
+      "message": "The checker WASM package is unavailable; build it and set NORN_CHECKER_WASM_PKG.",
+      "fix": "Build the checker package with crates/norn-checker-wasm/scripts/build-pkg.sh and set NORN_CHECKER_WASM_PKG to its directory.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.setup.host_unavailable",
+      "tier": "T0",
+      "severity": "error",
+      "message": "No native Norn host; build it with `cargo build -p norn-cell-do --bin norn-dev-host` and set NORN_DEV_HOST_BIN to target/debug/norn-dev-host.",
+      "fix": "Build the native host with cargo build -p norn-cell-do --bin norn-dev-host and set NORN_DEV_HOST_BIN to target/debug/norn-dev-host.",
+      "no_fix": null
+    },
+    {
+      "code": "cli.setup.unpublished",
+      "tier": "T0",
+      "severity": "error",
+      "message": "Published distribution is unavailable; run init from the repository.",
+      "fix": "Run norn init from a repository checkout until a published distribution is available.",
+      "no_fix": null
+    }
+  ]
+}

@@ -2,27 +2,38 @@
  * `norn explain <action|law|concept> <id>` (#517): compile the project's
  * sources and project one `norn/explain@2` report through the checker ABI's
  * `explainArtifactSet`, the same entry point the native `norn explain` calls.
- * A refusal is the checker's `norn/diagnostic@2` findings, each mapped back to
- * the TypeScript line that declared it; `--json` prints the response unchanged
- * apart from that `source` field.
  *
  *   norn explain <action|law|concept> <id> [--json] [--wording FILE --locale TAG]
+ *
+ * One diagnostic model. `--json` always prints one `norn/explain@2` response,
+ * and every entry of its `diagnostics` is `norn/diagnostic@2` with a
+ * registered code and the registry's `fix` or `no_fix`:
+ * - a checker refusal is the checker's own findings (the ones `norn check`
+ *   reports for the same sources), each with the TypeScript `source` line;
+ * - a source that does not compile is `cli.compile.source_refused`, one per
+ *   compiler finding, with its `source` line;
+ * - a usage or setup refusal is its registered `cli.*` code.
+ * Without `--json` the same findings print as code frames.
+ *
+ * The compile and the admission input are the ones `norn dev` and `norn
+ * check` use (`compileProjectPack`, `admissionInput`). Compiling evaluates the
+ * project's modules, as `norn dev` does; nothing is written and no cell is read.
  *
  * Exit status: 0 explained, 1 refused or not compiled, 2 usage, 3 setup.
  */
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
-import { loadChecker, sourceMappedDiagnostics, type CheckerDiagnostic } from "./checker-abi.ts"
-import { compilePack } from "./pack.ts"
+import { loadChecker, sourceMappedDiagnostics, type CheckerAbi, type DiagnosticV2 } from "./checker-abi.ts"
+import { cliCodes, cliDiagnostic } from "./cli-diagnostic.ts"
+import { admissionInput } from "./pack.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
-import { projectModules } from "./worker.ts"
+import { compileProjectPack } from "./worker.ts"
 import type { SourceLocation } from "./builder/diagnostics.ts"
 
 const USAGE = "Usage: norn explain <action|law|concept> <id> [--json] [--wording FILE --locale TAG]"
 
-interface Advice { readonly fix?: string | null; readonly no_fix?: string | null }
-type Finding = CheckerDiagnostic & Advice & { readonly source?: SourceLocation }
+type Finding = DiagnosticV2 & { readonly source?: SourceLocation }
 interface Unknown { readonly footprint: string; readonly reason: string; readonly fix: string; readonly writer?: unknown }
 interface Law {
   readonly law: { readonly id: string }
@@ -51,7 +62,7 @@ function parse(args: readonly string[]) {
     i++
   }
   if (options.has("--wording") !== options.has("--locale")) throw new ProjectError("cli.project.usage", "--wording and --locale go together.", 2)
-  return { kind, id, json: flags.includes("--json"), wording: options.get("--wording"), locale: options.get("--locale") }
+  return { kind, id, wording: options.get("--wording"), locale: options.get("--locale") }
 }
 
 /** One frame per finding: where, what, and the registry's fix or why there is none. */
@@ -82,38 +93,59 @@ function render(report: Report): string {
   return lines.join("\n")
 }
 
-export async function explain(args: readonly string[]): Promise<number> {
-  const { kind, id, json, wording, locale } = parse(args)
+/** The checker with its explain entry point, or the registered setup refusal with the reason. */
+async function explainingChecker(): Promise<CheckerAbi & { readonly explainArtifactSet: NonNullable<CheckerAbi["explainArtifactSet"]> }> {
+  const unavailable = (detail: string) =>
+    new ProjectError("cli.setup.checker_unavailable", `${cliCodes().get("cli.setup.checker_unavailable")?.message ?? ""} (${detail})`, 3)
+  let checker: CheckerAbi | undefined
+  try { checker = await loadChecker() }
+  catch (error) { throw unavailable(String(error)) }
+  if (!checker) throw unavailable("NORN_CHECKER_WASM_PKG is not set")
+  const { explainArtifactSet } = checker
+  if (!explainArtifactSet) throw unavailable("the package was built before explainArtifactSet existed; rebuild it")
+  return { ...checker, explainArtifactSet }
+}
+
+/** Refused: the response and its frames. Every finding is `norn/diagnostic@2`. */
+function refused(json: boolean, root: string, findings: ReadonlyArray<Finding>): void {
+  process.stdout.write(`${json
+    ? JSON.stringify({ format: "norn/explain@2", admitted: false, report: null, diagnostics: findings })
+    : findings.map((finding) => frame(root, finding)).join("\n")}\n`)
+}
+
+async function run(args: readonly string[], json: boolean): Promise<number> {
+  const { kind, id, wording, locale } = parse(args)
   const { root, manifest } = readProject()
   let requirements: unknown = []
   if (wording) {
     try { requirements = JSON.parse(readFileSync(resolve(wording), "utf8")) }
     catch (error) { throw new ProjectError("cli.project.usage", `Cannot read --wording ${wording} as JSON: ${String(error)}`, 2) }
   }
-  // The same confined module set `norn dev` compiles: nothing outside the project.
-  const pack = compilePack(root, { modules: projectModules(root, manifest), scope: manifest.scope, root })
-  const print = (value: unknown, text: string) => process.stdout.write(`${json ? JSON.stringify(value) : text}\n`)
+  const checker = await explainingChecker()
+  const pack = compileProjectPack(root, manifest)
   if (!pack.ok) {
-    const findings: Finding[] = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({
-      code: diagnostic.code, severity: "error", message: diagnostic.message,
-      source: { file: failure.file, line: diagnostic.start.line, column: diagnostic.start.column },
-    })))
-    print({ format: "norn/explain@2", admitted: false, report: null, diagnostics: findings }, findings.map((finding) => frame(root, finding)).join("\n"))
+    refused(json, root, pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => cliDiagnostic(
+      new ProjectError("cli.compile.source_refused", `The project's sources did not compile: ${diagnostic.code}: ${diagnostic.message}`),
+      { file: failure.file, line: diagnostic.start.line, column: diagnostic.start.column },
+    ))))
     return 1
   }
-  let checker: Awaited<ReturnType<typeof loadChecker>>
-  try { checker = await loadChecker() }
-  catch { checker = undefined }
-  if (!checker?.explainArtifactSet) {
-    throw new ProjectError("cli.setup.checker_unavailable",
-      "The checker WASM package is unavailable. Build it with `bash crates/norn-checker-wasm/scripts/build-pkg.sh \"$PWD/target/norn-checker-wasm/pkg\"` and set NORN_CHECKER_WASM_PKG to that directory.", 3)
-  }
-  const response = checker.explainArtifactSet([...pack.baseArtifacts, ...pack.artifacts], kind, id, { ...(locale ? { locale } : {}), requirements })
+  const input = admissionInput(pack.artifacts, pack.baseArtifacts)
+  const response = checker.explainArtifactSet(input.artifacts, input.context, kind, id, { ...(locale ? { locale } : {}), requirements })
   if (!response.admitted || !response.report) {
-    const findings = sourceMappedDiagnostics(response.diagnostics, pack.sourceMap) as ReadonlyArray<Finding>
-    print({ ...response, diagnostics: findings }, findings.map((finding) => frame(root, finding)).join("\n"))
+    refused(json, root, sourceMappedDiagnostics(response.diagnostics, pack.sourceMap))
     return 1
   }
-  print(response, render(response.report as Report))
+  process.stdout.write(`${json ? JSON.stringify(response) : render(response.report as Report)}\n`)
   return 0
+}
+
+export async function explain(args: readonly string[]): Promise<number> {
+  const json = args.includes("--json")
+  try { return await run(args, json) }
+  catch (error) {
+    if (!(error instanceof ProjectError)) throw error
+    refused(json, process.cwd(), [cliDiagnostic(error)])
+    return error.exitCode
+  }
 }

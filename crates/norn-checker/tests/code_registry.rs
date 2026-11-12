@@ -389,3 +389,171 @@ fn registry_is_strictly_ordered_for_binary_search() {
             .all(|entry| codes::lookup(entry.code).is_some())
     );
 }
+
+/// A `fix` used by codes of more than one family (the first code segment) is a
+/// generic sentence. Each one is listed here with the detail segments it fits,
+/// so generic advice cannot reach a code it is wrong for: an integrity
+/// mismatch must never be told to "correct the member" that holds the hash.
+/// A code with no accurate guidance yet carries a `no_fix` that says so.
+const SHARED_FIXES: [(&str, &str); 8] = [
+    (
+        "Correct the member at the reported path to match its declared type, schema and constraints.",
+        r"^invalid(_|$)",
+    ),
+    (
+        "Include the referenced declaration at its exact required identity, kind and version in the effective definition set.",
+        r"^(unknown|unresolved|undeclared|dangling)(_|$)",
+    ),
+    (
+        "Keep one declaration per reported identity; remove or rename the duplicate at the reported path.",
+        r"duplicate",
+    ),
+    (
+        "Declare the missing member at the reported path using the owning definition schema.",
+        r"^missing(_|$)|required",
+    ),
+    (
+        "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again.",
+        r"unsupported",
+    ),
+    (
+        "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set.",
+        r"cycle|cyclic",
+    ),
+    (
+        "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again.",
+        r"limit|budget|exhausted|too_long|too_many|exceeded",
+    ),
+    (
+        "Reference an existing declared lifecycle property, state or transition with its exact identity.",
+        r"lifecycle|transition|state",
+    ),
+];
+
+fn detail(code: &str) -> &str {
+    code.splitn(3, '.').nth(2).expect("code detail")
+}
+
+#[test]
+fn shared_fix_text_is_listed_and_fits_every_code_that_carries_it() {
+    let mut families: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for entry in REGISTRY {
+        if let Some(fix) = entry.fix {
+            families
+                .entry(fix)
+                .or_default()
+                .insert(entry.code.split('.').next().expect("code family"));
+        }
+    }
+    for entry in REGISTRY {
+        let Some(fix) = entry.fix else { continue };
+        let listed = SHARED_FIXES.iter().find(|(text, _)| *text == fix);
+        if families.get(fix).is_some_and(|family| family.len() > 1) {
+            assert!(
+                listed.is_some(),
+                "{} shares its fix with a code of another family; write specific guidance or list the sentence in SHARED_FIXES: {fix}",
+                entry.code
+            );
+        }
+        if let Some((_, pattern)) = listed {
+            let fits = regex_lite::Regex::new(pattern).expect("detail pattern");
+            assert!(
+                fits.is_match(detail(entry.code)),
+                "{} carries generic advice that does not fit it: {fix}",
+                entry.code
+            );
+        }
+    }
+}
+
+/// An integrity mismatch is never repaired by editing the recorded value, so
+/// no generic sentence may sit on a mismatch, hash or stale-evidence code.
+#[test]
+fn integrity_codes_carry_no_generic_fix() {
+    for entry in REGISTRY {
+        let segment = detail(entry.code);
+        if ["mismatch", "hash", "stale"]
+            .iter()
+            .any(|word| segment.contains(word))
+        {
+            assert!(
+                !SHARED_FIXES
+                    .iter()
+                    .any(|(text, _)| entry.fix == Some(*text)),
+                "{} is an integrity code with generic advice",
+                entry.code
+            );
+        }
+    }
+    for (code, forbidden) in [
+        ("ledger.certificate.hash_mismatch", "Correct the member"),
+        ("mapping.model.source_hash_mismatch", "Correct the member"),
+        ("function.receipt.dispatch_mismatch", "Correct the member"),
+        ("ledger.commit.evidence_mismatch", "Correct the member"),
+    ] {
+        let entry = codes::lookup(code).expect("registered integrity code");
+        let advice = entry.fix.or(entry.no_fix).expect("guidance");
+        assert!(!advice.contains(forbidden), "{code}: {advice}");
+        assert!(
+            advice.contains("Never") || advice.contains("Regenerate"),
+            "{code} must say to regenerate or re-obtain, never to edit: {advice}"
+        );
+    }
+}
+
+fn source_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("source directory should be readable") {
+        let path = entry.expect("directory entry should be readable").path();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if path.is_dir() {
+            if name != "node_modules" && name != "target" {
+                source_files(&path, extension, files);
+            }
+        } else if path.extension().is_some_and(|found| found == extension) {
+            files.push(path);
+        }
+    }
+}
+
+/// Guidance that names an environment variable must name one the code reads:
+/// following a fix that sets a variable nothing reads leaves the error in place.
+#[test]
+fn every_environment_variable_named_in_guidance_is_in_the_source() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    source_files(&root.join("crates"), "rs", &mut files);
+    source_files(&root.join("tools/norn-ts/src"), "ts", &mut files);
+    let source: String = files
+        .iter()
+        .map(|path| fs::read_to_string(path).expect("source file should be readable"))
+        .collect();
+    let variable = regex_lite::Regex::new(r"NORN_[A-Z0-9_]+").expect("variable pattern");
+    let mut named = BTreeSet::new();
+    for entry in REGISTRY {
+        for text in [Some(entry.message), entry.fix, entry.no_fix]
+            .into_iter()
+            .flatten()
+        {
+            named.extend(variable.find_iter(text).map(|found| found.as_str()));
+        }
+    }
+    assert!(
+        named.contains("NORN_DEV_HOST_BIN") && named.contains("NORN_CHECKER_WASM_PKG"),
+        "the scan found no variables: {named:?}"
+    );
+    for name in named {
+        // The name as a whole word: `NORN_HOST_BIN` is not inside `NORN_DEV_HOST_BIN`.
+        let bytes = source.as_bytes();
+        let whole = source.match_indices(name).any(|(at, _)| {
+            let before = at.checked_sub(1).and_then(|index| bytes.get(index));
+            let after = at
+                .checked_add(name.len())
+                .and_then(|index| bytes.get(index));
+            ![before, after]
+                .into_iter()
+                .flatten()
+                .any(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        });
+        assert!(whole, "guidance names {name}, which no source reads");
+    }
+}
