@@ -7,7 +7,7 @@
 //! items are in a response, how pages advance (a keyset over the source's own
 //! version and id, or a server cursor), and the JSON pointer of every dataset
 //! field inside an item. The host owns the network, the clock and the
-//! credentials: it sends each [`Request`] the engine plans (adding the
+//! credentials: it sends each [`Request`](crate::pull::Request) the engine plans (adding the
 //! connector's declared auth) and hands back the status and body. The engine
 //! never sees a secret.
 //!
