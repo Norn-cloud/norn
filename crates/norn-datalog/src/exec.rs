@@ -140,7 +140,12 @@ fn broken() -> Diagnostic {
     refusal(Code::ExecutorInvariant, None, None)
 }
 
-fn add(total: &mut usize, amount: usize, limit: usize, rule: Option<&str>) -> Result<(), Diagnostic> {
+fn add(
+    total: &mut usize,
+    amount: usize,
+    limit: usize,
+    rule: Option<&str>,
+) -> Result<(), Diagnostic> {
     match total.checked_add(amount) {
         Some(sum) if sum <= limit => {
             *total = sum;
@@ -164,9 +169,24 @@ impl Meter {
     fn derived(&mut self, rule: &str, width: usize, bytes: usize) -> Result<(), Diagnostic> {
         let budget = self.budget;
         let usage = &mut self.usage;
-        add(&mut usage.derived_facts, 1, budget.max_derived_facts, Some(rule))?;
-        add(&mut usage.derived_values, width, budget.max_derived_values, Some(rule))?;
-        add(&mut usage.result_bytes, bytes, budget.max_result_bytes, Some(rule))
+        add(
+            &mut usage.derived_facts,
+            1,
+            budget.max_derived_facts,
+            Some(rule),
+        )?;
+        add(
+            &mut usage.derived_values,
+            width,
+            budget.max_derived_values,
+            Some(rule),
+        )?;
+        add(
+            &mut usage.result_bytes,
+            bytes,
+            budget.max_result_bytes,
+            Some(rule),
+        )
     }
 }
 
@@ -285,7 +305,10 @@ impl Domain<'_> {
 /// and is not counted as work, so work does not depend on repeated facts.
 /// Distinct input rows by relation, as canonical keys, and every input
 /// constant by key. Each value is encoded once.
-type Inputs<'f> = (BTreeMap<String, BTreeSet<Vec<Vec<u8>>>>, BTreeMap<Vec<u8>, &'f Value>);
+type Inputs<'f> = (
+    BTreeMap<String, BTreeSet<Vec<Vec<u8>>>>,
+    BTreeMap<Vec<u8>, &'f Value>,
+);
 
 fn inputs<'f>(
     program: &Program,
@@ -536,7 +559,10 @@ impl Pass<'_, '_> {
             .get(rule.head.relation)
             .ok_or_else(broken)?
             .contains(&row);
-        let queue = pending.rows.get_mut(rule.head.relation).ok_or_else(broken)?;
+        let queue = pending
+            .rows
+            .get_mut(rule.head.relation)
+            .ok_or_else(broken)?;
         if known || queue.contains(&row) {
             return Ok(());
         }
@@ -602,7 +628,13 @@ fn saturate(
                                 full: &*full,
                                 delta: Some((position, recent)),
                             }
-                            .join(0, &mut binding, domain, &mut pending, meter)?;
+                            .join(
+                                0,
+                                &mut binding,
+                                domain,
+                                &mut pending,
+                                meter,
+                            )?;
                         }
                     }
                 }

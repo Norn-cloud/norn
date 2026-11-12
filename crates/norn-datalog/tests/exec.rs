@@ -428,6 +428,66 @@ fn result_size_and_rule_width_are_bounded_before_anything_large_is_held() {
     assert_eq!(refusal.code, Code::BudgetExhausted);
 }
 
+/// Two premises from the stratum being evaluated grow in the same round:
+/// `a` gains `2` and `b` gains `9` in round three, while `a` already holds
+/// `1`. `h(1, 9)` joins an old `a` with a new `b`, so it is found only if the
+/// new facts are tried at the second premise as well as the first. (Plain
+/// transitive closure cannot show this: it always has a derivation that only
+/// needs the first premise's new facts.)
+#[test]
+fn new_facts_are_tried_at_every_recursive_premise() {
+    let unary = |name: &str| predicate(name, 1, RelationKind::Derived);
+    let copy = |id: &str, head: &str, from: &str| {
+        rule(
+            id,
+            over(head, &["x"]),
+            vec![Literal::Positive(over(from, &["x"]))],
+        )
+    };
+    let program = Program {
+        version: Version::V1,
+        predicates: vec![
+            predicate("s", 1, RelationKind::Input),
+            predicate("s2", 1, RelationKind::Input),
+            predicate("s3", 1, RelationKind::Input),
+            unary("a"),
+            unary("b"),
+            unary("d1"),
+            unary("d2"),
+            unary("e1"),
+            unary("e2"),
+            predicate("h", 2, RelationKind::Derived),
+        ],
+        rules: vec![
+            copy("a.s", "a", "s"),
+            copy("d1", "d1", "s2"),
+            copy("d2", "d2", "d1"),
+            copy("a.d2", "a", "d2"),
+            copy("e1", "e1", "s3"),
+            copy("e2", "e2", "e1"),
+            copy("b", "b", "e2"),
+            rule(
+                "h",
+                over("h", &["x", "y"]),
+                vec![
+                    Literal::Positive(over("a", &["x"])),
+                    Literal::Positive(over("b", &["y"])),
+                ],
+            ),
+        ],
+    };
+    let facts = Facts::from([
+        ("s".to_owned(), vec![vec![text("1")]]),
+        ("s2".to_owned(), vec![vec![text("2")]]),
+        ("s3".to_owned(), vec![vec![text("9")]]),
+    ]);
+    let result = run(&program, &facts);
+    assert_eq!(
+        result.tuples("h").to_vec(),
+        vec![vec![text("1"), text("9")], vec![text("2"), text("9")]]
+    );
+}
+
 #[test]
 fn which_bad_fact_is_reported_does_not_depend_on_tuple_order() {
     let program = reachability();
