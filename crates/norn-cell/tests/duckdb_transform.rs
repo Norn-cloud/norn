@@ -217,7 +217,13 @@ fn load(store: &mut CellStore, customers: &[(u8, bool)], orders: &[Order]) {
             (
                 "amount",
                 V::from(
-                    Decimal::parse(&format!("{}.{:02}", cents / 100, cents % 100)).expect("amount"),
+                    Decimal::parse(&format!(
+                        "{}{}.{:02}",
+                        if *cents < 0 { "-" } else { "" },
+                        cents.abs() / 100,
+                        cents.abs() % 100
+                    ))
+                    .expect("amount"),
                 ),
             ),
             ("units", V::from(Decimal::from(*units))),
