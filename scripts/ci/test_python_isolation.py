@@ -112,6 +112,10 @@ class Runner(unittest.TestCase):
                                                     '        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)\n'
                                                     '        return 1\n',
                                                     '    subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env)\n')),
+                ("os.system first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                                 '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    os.system("true")\n')),
+                ("check_call first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                                  '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    subprocess.check_call(["true"])\n')),
                 ("not first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
                                            '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    subprocess.run(["true"])\n'))):
             self.assertTrue(isolation.runner_errors(mutated), label)
@@ -144,7 +148,10 @@ class ShellGates(unittest.TestCase):
                          "python3 -X pycache_prefix= x.py", 'python3 -X pycache_prefix="" x.py',
                          "python3 -X 'pycache_prefix=' x.py", 'python3 -X "pycache_prefix=" x.py',
                          'python3 - <<< "$code"', 'python3 - 0<<<"$code"', 'python3 -c "import coverage_manifest"',
-                         "python3 -I x.py", "python3 -IB x.py", '"$v/bin/python" -I -m pip', "python3 -B -I x.py"):
+                         "python3 -I x.py", "python3 -IB x.py", '"$v/bin/python" -I -m pip', "python3 -B -I x.py",
+                         "python3 -X dev -I x.py", "python3 -W error -I x.py", "python3 -B -E x.py",
+                         'python3 "-I" x.py', "python3 '-E' x.py", "python3 \"-X\" 'pycache_prefix=' x.py",
+                         'python3 -X pycache_prefix=/tmp/x x.py', '<<<"$code" python3 -', 'python3 - 00<<<"$code"'):
                 self.assertTrue(self.errors(path, text + line + "\n"), line)
             for body in ("import sys\nsys.path.insert(0, 'scripts')\n", "import coverage_manifest\n"):
                 tabbed = body.replace("\n", "\n\t")
@@ -172,6 +179,13 @@ class ShellGates(unittest.TestCase):
             env = {**os.environ, **{k: v for k, v in full.items() if k != drop}, **({drop: ""} if drop else {})}
             done = subprocess.run(["bash", "-c", assertion], capture_output=True, env=env)
             self.assertEqual(done.returncode, 0 if drop is None else 1, drop)
+
+
+class Flags(unittest.TestCase):
+    def test_ordinary_invocations_pass(self) -> None:
+        for line in ("python3 -m venv x", 'python3 - "$@" <<\'PY\'', "python3 -c 'import sys'",
+                     'python3 - a b 3<<<"$data" <<\'PY\'', '"$v/bin/python" -m pip install x==1', "python3 -B -W error x.py"):
+            self.assertEqual(isolation.python_flag_errors(line), [], line)
 
 
 class Shadows(unittest.TestCase):
@@ -249,6 +263,11 @@ class GatedPython(unittest.TestCase):
                 ("code = 'x = 1'\nexec(code)\n", "of anything but a string literal"),
                 ("eval(input())\n", "of anything but a string literal"),
                 ("globals()['x'] = 1\n", "writing through `globals()`"),
+                ("e = exec\ne('x = 1')\n", "may only be called directly"),
+                ("import builtins\nbuiltins.exec('x = 1')\n", "`builtins` is refused"),
+                ("getattr(builtins, 'exec')('x = 1')\n", "`builtins` is refused"),
+                ("__builtins__['exec']('x = 1')\n", "`builtins` is refused"),
+                ("import runpy\n@runpy.run_path\ndef f():\n    pass\n", "may only be called directly"),
                 ("locals().update(x=1)\n", "writing through `locals()`"),
                 ("from json import loads as _sibling\n", "only be bound by the pinned")):
             self.assertTrue(any(wanted in e for e in self.errors(body)), (body, wanted, self.errors(body)))

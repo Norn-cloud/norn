@@ -13,21 +13,35 @@ structural guarantees, which this check pins:
 - each gated shell script starts with the `HEADER` exports (`PYTHONSAFEPATH`,
   `PYTHONDONTWRITEBYTECODE`, a fresh `PYTHONPYCACHEPREFIX`) and the assertion that they
   took effect;
-- gated Python (files, and the heredoc and `-c` bodies of the gated shell scripts) never
-  touches `sys.path`, imports only the standard library or `THIRD_PARTY`, and loads
-  siblings only through `_sibling` (compiled from source, never from bytecode or by name
-  alone); `spec_from_file_location`, `run_path` and `_sibling` must name, through literals,
-  `__file__` and names bound once, a tracked gate file, or are refused; `exec`/`eval`/
-  `compile` of a file read and the dynamic import machinery are refused;
-- `_sibling` is only ever the pinned `def`, in every tracked Python file, gated or not;
 - no tracked file is bytecode or sits under `__pycache__`, and none is importable under a
-  standard-library or `THIRD_PARTY` name.
+  standard-library or `THIRD_PARTY` name;
+- `_sibling` is only ever the pinned `def` (compiled from source, never from bytecode or by
+  name alone), in every tracked Python file, gated or not;
+- every file named in `GATE_FILES` or under `GATE_DIRECTORIES` changes only with an
+  approved gate edit, so anything below that a gated file could do differently needs one.
 
-Best effort on top, text patterns rather than a shell or YAML parser: `ENV_DROPS` lists
-shell constructs that would drop the header's variables or hide Python input (here-strings,
-double-quoted `-c`); `python_heredocs` reads heredoc bodies fed to a command naming
-`python`; workflow lines are scanned for `python` without `-I`. An interpreter reached only
-through a variable (`"$PY"`) is not recognised by these patterns.
+Best effort on top, as defence in depth behind those guarantees and the review of every
+gated edit; none of it is a parser of shell, YAML or Python semantics:
+
+- gated Python (files, and the heredoc and `-c` bodies of the gated shell scripts) is
+  refused if it touches `sys.path`, imports anything but the standard library or
+  `THIRD_PARTY`, aliases, rebinds or passes a followed loader or `exec`/`eval`/`compile`,
+  names `builtins`, calls `getattr` on a loader module by its plain name, writes through
+  `globals()`/`locals()`/`vars()`, uses the dynamic import machinery, `exec`s or `eval`s
+  anything but a string literal, or calls `exec`/`eval`/`compile` with a file read in its
+  own arguments; and a `_sibling`, `spec_from_file_location`, `run_path` or `PATH_WRAPPERS`
+  load must resolve, through literals, `__file__` and names bound once, to a tracked gate
+  file. Known forms this does not catch: a wrapper rebinding its own path parameter; a
+  once-bound name rebound through `sys.modules[__name__]`, `setattr` or `__dict__`;
+  `getattr` on a loader module imported under another name; `runpy.__dict__[...]` or
+  `vars(runpy)[...]`; and `compile` of a non-literal run through `types.FunctionType`;
+- shell: `ENV_DROPS` and `python_flag_errors` refuse constructs that drop the header's
+  variables or hide Python input (`-I`/`-E` anywhere in a `python` command's flags, quoted
+  or not, `-X pycache_prefix`, here-strings on stdin, double-quoted `-c`);
+  `python_heredocs` and the base's `HEREDOC` matcher read heredoc bodies fed to a command
+  naming `python`. An interpreter reached only through a variable (`"$PY"`) is not
+  recognised;
+- workflow lines are scanned for `python` without `-I`.
 """
 
 from __future__ import annotations
@@ -35,6 +49,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -168,6 +183,14 @@ def workflow_errors(path: str, text: str) -> list[str]:
     return errors
 
 
+# Every way the runner could start a process before its isolation assertion.
+PROCESS_CALLS = frozenset({"subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output",
+                           "subprocess.Popen", "subprocess.getoutput", "subprocess.getstatusoutput", "os.system",
+                           "os.popen", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl", "os.execle",
+                           "os.execlp", "os.execlpe", "os.spawnv", "os.spawnve", "os.spawnvp", "os.spawnvpe",
+                           "os.spawnl", "os.spawnle", "os.spawnlp", "os.spawnlpe", "os.posix_spawn", "os.posix_spawnp"})
+
+
 def runner_errors(text: str) -> list[str]:
     tree = ast.parse(text)
     uses = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "executable"
@@ -183,7 +206,7 @@ def runner_errors(text: str) -> list[str]:
     gate = ast.unparse(ast.parse(RUNNER_GATE).body[0])
     main = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"), None)
     runs = [statement for statement in (main.body if main else [])
-            if any(isinstance(n, ast.Call) and ast.unparse(n.func) == "subprocess.run" for n in ast.walk(statement))]
+            if any(isinstance(n, ast.Call) and ast.unparse(n.func) in PROCESS_CALLS for n in ast.walk(statement))]
     gated = bool(runs) and ast.unparse(runs[0]) == gate
     if len(asserted) != 1 or len(checks) != 1 or not gated:
         errors.append(f"{RUNNER}: the first command `main` runs must be the pinned isolation assertion, "
@@ -192,6 +215,46 @@ def runner_errors(text: str) -> list[str]:
         if (isinstance(node, ast.List) and node.elts and isinstance(node.elts[0], ast.Constant)
                 and re.fullmatch(r"(?:.*/)?python3?(?:\.\d+)?", str(node.elts[0].value))):
             errors.append(f"{RUNNER}:{node.lineno}: a child Python must start with `*PYTHON`")
+    return errors
+
+
+FLAGS_WITH_ARGUMENT = frozenset({"-X", "-W", "--check-hash-based-pycs"})
+
+
+def python_flag_errors(line: str) -> list[str]:
+    """Refusals in the interpreter flags of each `python` command on one shell line, read as a
+    set wherever they sit (`-X dev -I`, `-W error -I`, `-B -E`, quoted `"-I"`), and
+    here-strings feeding the command's stdin (`<<<`, `0<<<`, `00<<<`, before or after it)."""
+    errors = []
+    for match in PYTHON_WORD.finditer(line):
+        rest = line[match.end():].lstrip("\"'}")
+        try:
+            words = shlex.split(rest, comments=True)
+        except ValueError:
+            words = rest.split()
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if not word.startswith("-") or word in ("-", "--") or word in ("-c", "-m") or \
+                    (word.startswith("-") and not word.startswith("--") and ("c" in word[1:] or "m" in word[1:])
+                     and word[1:].isalpha()):
+                break
+            value = None
+            if word in FLAGS_WITH_ARGUMENT:
+                value = words[index + 1] if index + 1 < len(words) else ""
+                index += 1
+            elif word.startswith(("-X", "-W")) and len(word) > 2:
+                value = word[2:]
+            letters = word[1:] if not word.startswith("--") and value is None else ""
+            if "I" in letters or "E" in letters:
+                errors.append(f"`python {word}` (-I/-E) would drop Python isolation in a gated script")
+            if word.startswith("-X") and (value or "").startswith("pycache_prefix"):
+                errors.append("a `-X pycache_prefix` override would drop Python isolation")
+            index += 1
+    if PYTHON_WORD.search(line):
+        for here in re.finditer(r"(?<!<)(\d*)<<<", line):
+            if not here.group(1) or int(here.group(1)) == 0:
+                errors.append("a here-string on Python's stdin is not read by this check")
     return errors
 
 
@@ -211,6 +274,7 @@ def shell_errors(root: Path, path: str, text: str, files: set[str], directories:
         for pattern, label in ENV_DROPS:
             if pattern.search(line):
                 errors.append(f"{path}:{number}: {label} would drop Python isolation")
+        errors += [f"{path}:{number}: {error}" for error in python_flag_errors(line)]
     bodies = dict((body, number) for number, body in python_heredocs(path, lines, errors))
     for match in HEREDOC.finditer(text):
         bodies.setdefault(match.group(3), text.count("\n", 0, match.start(3)) + 1)
@@ -332,7 +396,7 @@ DYNAMIC_IMPORTS = frozenset({"SourceFileLoader", "SourcelessFileLoader", "Extens
                              "path_importer_cache", "meta_path"})
 # Loaders this check follows: they may only be called directly, never aliased, rebound,
 # passed or reached through `getattr`, so every call is one the follower sees.
-LOADERS = frozenset({"_sibling", "spec_from_file_location", "run_path", *PATH_WRAPPERS})
+LOADERS = frozenset({"_sibling", "spec_from_file_location", "run_path", "exec", "eval", "compile", *PATH_WRAPPERS})
 LOADER_MODULES = frozenset({"importlib", "importlib.util", "importlib.machinery", "runpy", "pkgutil", "sys.modules"})
 FILE_READS = frozenset({"open", "read_text", "read_bytes", "read"})
 
@@ -389,10 +453,13 @@ def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files
         line = getattr(node, "lineno", 0)
         named = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
         parent = parents.get(node)
+        # A `_sibling` store is already refused by `sibling_errors`; nothing else is exempt.
         if named in LOADERS and not (isinstance(parent, ast.Call) and parent.func is node) \
-                and not (isinstance(parent, ast.FunctionDef) or (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-                                                              and named == "_sibling")):
+                and not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and named == "_sibling"):
             errors.append(f"{path}:{line}: `{named}` may only be called directly (no alias, rebinding or passing)")
+        if (isinstance(node, ast.Name) and node.id in ("builtins", "__builtins__")) or \
+                (isinstance(node, ast.alias) and node.name.split(".", 1)[0] == "builtins"):
+            errors.append(f"{path}:{line}: `builtins` is refused in gated Python")
         if isinstance(node, ast.alias) and node.name.rsplit(".", 1)[-1] in LOADERS and node.asname:
             errors.append(f"{path}:{line}: `{node.name}` may not be imported under another name")
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "getattr" and node.args \
