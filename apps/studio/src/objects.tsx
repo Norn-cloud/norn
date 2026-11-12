@@ -20,6 +20,7 @@ import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
+import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -42,6 +43,7 @@ export function ObjectPage() {
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
+  const live = useMode().data?.kind === "live"
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
@@ -77,7 +79,9 @@ export function ObjectPage() {
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
-      {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
+      {reads.isSuccess && data === null && (live
+        ? <QuarantinedRecord objectType={name} id={id} onDone={() => void reads.refetch()} />
+        : <p className="text-muted-foreground">This record is not available yet.</p>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
