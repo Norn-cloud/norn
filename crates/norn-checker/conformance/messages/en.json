@@ -5,6 +5,30 @@
     "action.validation.command_environment_underivable": {
       "message": "outbound command expressions require an object input schema with a derivable expression environment"
     },
+    "action.validation.input_enum_not_subset": {
+      "message": "ActionIR input {$field} admits {$values}, which its target property does not declare"
+    },
+    "action.validation.input_enum_unbound": {
+      "message": "ActionIR input {$field} declares an enum but writes no enum property"
+    },
+    "action.validation.input_group_duplicate_id": {
+      "message": "ActionIR input group id {$id} is used twice"
+    },
+    "action.validation.input_group_field_regrouped": {
+      "message": "ActionIR input field {$pointer} is in more than one group"
+    },
+    "action.validation.input_group_invalid_shape": {
+      "message": "ActionIR input x-norn.groups is not a list of \\{id, title, fields\\}: {$detail}"
+    },
+    "action.validation.input_group_title_invalid": {
+      "message": "An ActionIR input group title is not a display string of 1 to {$max} characters"
+    },
+    "action.validation.input_group_unknown_field": {
+      "message": "ActionIR input group field {$pointer} is not an input property"
+    },
+    "action.validation.input_label_invalid": {
+      "message": "An ActionIR input {$label} is not a display string of 1 to {$max} characters without control characters"
+    },
     "action.validation.invalid_effect_program": {
       "message": "payload.effectProgram is invalid: {$detail}"
     },

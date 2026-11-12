@@ -1636,6 +1636,88 @@
       },
       {
         "description": {
+          "ar": "سياسة تقييم المخزون"
+        },
+        "label": {
+          "ar": "سياسة تقييم المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.ValuationPolicy"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "طريقة التقييم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوارد أولًا يُصرف أولًا"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method",
+          "value": "fifo"
+        }
+      },
+      {
+        "label": {
+          "ar": "المتوسط المتحرك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method",
+          "value": "moving_average"
+        }
+      },
+      {
+        "description": {
           "ar": "تسوية مرصودة من المصدر"
         },
         "label": {
@@ -1714,6 +1796,21 @@
           "objectType": "canon.SettlementObservation",
           "property": "kind",
           "value": "refund"
+        }
+      },
+      {
+        "description": {
+          "ar": "إنشاء سياسة تقييم مخزون أو تحديثها."
+        },
+        "label": {
+          "ar": "تحديد سياسة تقييم المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "actionId": "canon.valuation_policy.set",
+          "kind": "action"
         }
       }
     ],

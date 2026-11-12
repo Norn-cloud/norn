@@ -6,6 +6,38 @@
       "message": "تعبيرات الأوامر الصادرة تتطلب مخطط مُدخل كائني ذا بيئة تعبيرات قابلة للاشتقاق",
       "review": "needs_review"
     },
+    "action.validation.input_enum_not_subset": {
+      "message": "مُدخل ActionIR {$field} يقبل {$values}، وهي قيم لا تعلنها الخاصية المستهدفة",
+      "review": "needs_review"
+    },
+    "action.validation.input_enum_unbound": {
+      "message": "مُدخل ActionIR {$field} يعلن تعدادًا لكنه لا يكتب أي خاصية تعداد",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_duplicate_id": {
+      "message": "معرّف مجموعة مُدخلات ActionIR {$id} مستخدم مرتين",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_field_regrouped": {
+      "message": "حقل مُدخل ActionIR {$pointer} موجود في أكثر من مجموعة",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_invalid_shape": {
+      "message": "x-norn.groups في مُدخلات ActionIR ليست قائمة من \\{id, title, fields\\}: {$detail}",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_title_invalid": {
+      "message": "عنوان مجموعة مُدخلات ActionIR ليس نص عرض من 1 إلى {$max} حرفًا",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_unknown_field": {
+      "message": "حقل مجموعة مُدخلات ActionIR {$pointer} ليس خاصية مُدخل",
+      "review": "needs_review"
+    },
+    "action.validation.input_label_invalid": {
+      "message": "{$label} لمُدخل ActionIR ليس نص عرض من 1 إلى {$max} حرفًا بلا محارف تحكم",
+      "review": "needs_review"
+    },
     "action.validation.invalid_effect_program": {
       "message": "payload.effectProgram غير صالح: {$detail}",
       "review": "needs_review"
