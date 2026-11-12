@@ -10,7 +10,7 @@ import { join } from "node:path"
 const [base, root] = process.argv.slice(2)
 const SCOPE = "orgId=org_demo&environmentId=analytics"
 const ADMIN = "Bearer fixture:viewer@demo"
-const LIST = `/v1/definitions:list?${SCOPE}`
+const LIST = `/v1/definitions:list?kind=dashboard&${SCOPE}`
 
 function question() {
   const q = JSON.parse(readFileSync(join(root, "fixtures/ir/metrics/sales-by-store-day.question.json"), "utf8"))
