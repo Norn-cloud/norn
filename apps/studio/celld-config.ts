@@ -88,10 +88,6 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
     assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: studio.mcp === true ? ["/api/*", "/mcp", "/.well-known/*"] : ["/api/*"] },
     d1_databases: [{ binding: "AUTH_DB", database_name: `norn-studio-auth-${studio.stage}`, migrations_dir: "worker/migrations" }],
     ...studio.host === undefined ? {} : { services: [{ binding: "NORN_HOST", service: studio.host }] },
-    ...studio.agent === undefined ? {} : {
-      durable_objects: { bindings: [{ name: "AGENT_BUDGET", class_name: "AgentBudget" }] },
-      migrations: [{ tag: "v1", new_sqlite_classes: ["AgentBudget"] }],
-    },
     vars,
   }
 }
