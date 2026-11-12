@@ -165,6 +165,12 @@ mod tests {
     }
 
     fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
+        host_with(dir, 0)
+    }
+
+    /// The test host, plus `extra` generated sales over the first week of
+    /// November in four regions, committed 1,000 at a time.
+    fn host_with(dir: &std::path::Path, extra: usize) -> DevHost<NativeEngine> {
         let admitted = super::super::admit::admit(&artifacts(true), 1_000)
             .ok()
             .expect("admitted");
@@ -189,6 +195,31 @@ mod tests {
                 ..CommitBatch::default()
             })
             .unwrap();
+        let regions = ["north", "south", "east", "west"];
+        let mut logical_time = 2_000;
+        for start in (0..extra).step_by(1_000) {
+            logical_time += 1;
+            let writes = (start..extra.min(start + 1_000))
+                .map(|i| {
+                    sale(
+                        &format!("m{i}"),
+                        &format!("{}.{:02}", i % 997, i % 100),
+                        "1.000",
+                        regions[i % 4],
+                        &format!("2026-11-{:02}T{:02}:00:00Z", 1 + i % 7, i % 24),
+                    )
+                })
+                .collect();
+            store
+                .commit(&CommitBatch {
+                    world: norn_cell::MAIN_WORLD.into(),
+                    scope: scope().key(),
+                    logical_time,
+                    writes,
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
         DevHost::from_store(store, scope(), |command| command.payload.clone())
             .expect("host")
             .with_authorizer(LocalDeveloper {
@@ -326,7 +357,8 @@ mod tests {
         assert_eq!(rows.len(), 2, "{answer}");
         let totals: Vec<String> = rows
             .values()
-            .map(|row| row["totals"][0].as_str().unwrap_or_default().to_owned())
+            // A total is a JSON number; its text keeps the digits.
+            .map(|row| row["totals"][0].to_string())
             .collect();
         assert!(
             totals.iter().any(|total| total.starts_with("15.5")),
@@ -346,10 +378,7 @@ mod tests {
         let (bucket, _) = rows
             .iter()
             .find(|(_, row)| {
-                row["totals"][0]
-                    .as_str()
-                    .unwrap_or_default()
-                    .starts_with("15.5")
+                row["totals"][0].to_string().starts_with("15.5")
             })
             .unwrap();
         let (status, trace) = call(
@@ -411,13 +440,57 @@ mod tests {
         );
     }
 
+    /// The measurement behind the question scan bound (ruling 2026-11-12):
+    /// `NORN_SCAN_ROWS=<n> cargo test --release -p norn-cell-do --lib
+    /// measure_question_scan -- --ignored --nocapture`, one process per `n`.
+    /// Prints the exact engine's time for one ad-hoc evaluation over `n` rows
+    /// and the process's peak resident memory during it (Linux only).
     #[test]
-    fn the_row_bound_is_the_kernel_slice_bound() {
+    #[ignore = "a measurement, run by hand on the cell host"]
+    fn measure_question_scan() {
+        fn status(field: &str) -> u64 {
+            std::fs::read_to_string("/proc/self/status")
+                .unwrap_or_default()
+                .lines()
+                .find_map(|line| line.strip_prefix(field))
+                .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+                .unwrap_or(0)
+        }
+        let rows: usize = std::env::var("NORN_SCAN_ROWS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(10_000);
+        let dir = tempfile::tempdir().unwrap();
+        let loaded = std::time::Instant::now();
+        let host = host_with(dir.path(), rows.saturating_sub(3));
+        let load = loaded.elapsed();
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let amount = metric(&metrics, &host, "amount", false);
+        let body = json!({"question": question(&amount)});
+        let before = status("VmRSS:");
+        // Reset the peak so it measures the evaluation, not the load.
+        drop(std::fs::write("/proc/self/clear_refs", "5"));
+        let mut timings = Vec::new();
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let (status_code, answer) = call(&host, &metrics, "/v1/questions:evaluate", &body);
+            timings.push(started.elapsed().as_millis());
+            assert_eq!(status_code, 200, "{answer}");
+        }
+        println!(
+            "rows={rows} load_s={:.1} evaluate_ms={timings:?} rss_before_kib={before} peak_kib={}",
+            load.as_secs_f64(),
+            status("VmHWM:")
+        );
+    }
+
+    #[test]
+    fn the_row_bound_is_the_profiles_question_bound() {
         assert_eq!(
             crate::questions::MAX_ROWS,
             norn_ir::ResourceLimitProfile::norn_limits_v1()
-                .slice
-                .max_records
+                .question_limits()
+                .max_scanned_records
         );
     }
 

@@ -144,9 +144,9 @@ fn derive(
     })
 }
 
-/// Rows an ad-hoc question may read per evaluation: the kernel limit
-/// profile's slice bound, above which admission refuses every question.
-pub const MAX_ROWS: u32 = 1_000;
+/// Rows an ad-hoc question may scan per evaluation: the limit profile's
+/// question bound, the most admission accepts.
+pub const MAX_ROWS: u32 = norn_ir::QuestionLimits::DEFAULT.max_scanned_records;
 /// Buckets an ad-hoc answer may hold.
 pub const MAX_BUCKETS: usize = 5_000;
 
