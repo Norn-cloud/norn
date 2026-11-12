@@ -31,8 +31,8 @@
 //! version; its next watermark is the greatest version it saw. Rows read twice
 //! are the same observation (same source, id and version) and the cell
 //! captures them once.
-//! PULL-BOUND-1: every feed stops after [`Limits::max_pages`] pages and every
-//! page after [`Limits::max_items`] items; a cursor or keyset that does not
+//! PULL-BOUND-1: every feed stops after [`Limits::max_pages`](crate::pull::Limits::max_pages) pages and every
+//! page after [`Limits::max_items`](crate::pull::Limits::max_items) items; a cursor or keyset that does not
 //! advance fails the feed instead of looping.
 //! PULL-FIELD-1: a payload carries exactly the declared fields, in the source
 //! schema's names; an absent pointer is `null`, which the mapping refuses or

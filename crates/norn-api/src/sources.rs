@@ -1,14 +1,14 @@
 //! In-cell source sync (#921): the cell pulls its connected source systems
 //! itself, through the generic engine ([`crate::pull`]), and lands every row
-//! through its own mapping path ([`DevHost::ingest`]).
+//! through its own mapping path ([`DevHost::ingest`](crate::host::DevHost::ingest)).
 //!
-//! The host owns the network: it asks [`Sources::step`] for the next request,
+//! The host owns the network: it asks [`Sources::step`](crate::sources::Sources::step) for the next request,
 //! sends it exactly as planned and hands back the status and body. Credentials
 //! are server configuration resolved here by the connector's secret reference
 //! (`NORN_SECRET_<REF>`); a request carries them and nothing else does.
 //!
-//! SYNC-ONE-1: a connection runs at most one sync. [`Sources::claim`] and
-//! [`Sources::due`] check and mark it in one call, so two requests can never
+//! SYNC-ONE-1: a connection runs at most one sync. [`Sources::claim`](crate::sources::Sources::claim) and
+//! [`Sources::due`](crate::sources::Sources::due) check and mark it in one call, so two requests can never
 //! start two syncs of one connection.
 //! SYNC-ACTOR-1: a scheduled sync runs as the connection's own principal
 //! (`connection:<id>`) and is recorded so; it never takes the rights of the
@@ -131,7 +131,7 @@ pub struct RunSummary {
 /// The host's next move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    /// Send this and call [`Sources::step`] with the response.
+    /// Send this and call [`Sources::step`](crate::sources::Sources::step) with the response.
     Request(HttpRequest),
     /// The run is over.
     Done(RunSummary),
