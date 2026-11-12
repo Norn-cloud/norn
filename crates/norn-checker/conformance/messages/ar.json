@@ -318,6 +318,10 @@
       "message": "الاستخدام: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
       "review": "needs_review"
     },
+    "cli.setup.host_unavailable": {
+      "message": "لا يوجد مضيف Norn محلي؛ ابنِه بالأمر `cargo build -p norn-cell-do --bin norn-dev-host` واضبط NORN_DEV_HOST_BIN على target/debug/norn-dev-host.",
+      "review": "needs_review"
+    },
     "cli.setup.unpublished": {
       "message": "التوزيعة المنشورة غير متاحة؛ شغّل init من المستودع.",
       "review": "needs_review"

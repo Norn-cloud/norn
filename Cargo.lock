@@ -2280,9 +2280,12 @@ name = "norn-cell-do"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "clap",
  "ed25519-dalek",
  "form_urlencoded",
+ "getrandom 0.3.4",
  "http",
+ "libc",
  "norn-api",
  "norn-cell",
  "norn-checker",
