@@ -4064,7 +4064,8 @@
               "object",
               "null"
             ],
-            "description": "The `derived` artifact the query declares; null when refused."
+            "description": "The `derived` artifact the query declares, as an artifact envelope; null when refused.",
+            "additionalProperties": true
           },
           "diagnostics": {
             "type": "array",

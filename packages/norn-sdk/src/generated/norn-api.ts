@@ -1158,8 +1158,10 @@ export interface components {
         NornCompiledTransform: {
             /** @description The checker admits the lowered plan against the installed definitions. */
             admitted: boolean;
-            /** @description The `derived` artifact the query declares; null when refused. */
-            artifact: Record<string, never> | null;
+            /** @description The `derived` artifact the query declares, as an artifact envelope; null when refused. */
+            artifact: {
+                [key: string]: unknown;
+            } | null;
             /** @description Every refusal, with its stable code; empty when admitted. */
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
             plan: components["schemas"]["NornTransformPlan"] | null;
