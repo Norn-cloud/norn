@@ -649,6 +649,10 @@ pub(crate) fn materialize(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one answer: buckets, totals, freshness and completeness, in order"
+)]
 pub(crate) fn finish(
     plan: &QuestionPlan,
     population: QuestionPopulation,
