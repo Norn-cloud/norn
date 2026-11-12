@@ -39,12 +39,18 @@ pub mod object_query;
 pub mod object_routes;
 /// Typed object, link and source-lineage reads for the Data Explorer.
 pub mod objects;
+/// The generic sans-IO pull engine for declared HTTP sources (`norn.pull/1`).
+pub mod pull;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
 /// Authorized read services shared by transports.
 pub mod routes;
+/// In-cell source sync over the pull engine: claims, steps and run reports.
+pub mod sources;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
+/// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
+pub mod uploads;
 
 /// The trusted transport's identity seam: verified host tokens to Norn principals.
 pub mod principal;

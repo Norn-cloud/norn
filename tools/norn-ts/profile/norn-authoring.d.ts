@@ -771,6 +771,23 @@ declare module "@norn/authoring" {
       readonly deadLetterPolicy?: { readonly maxFailures: number; readonly route: "ledger" | "queue" }
       /** Ordered feeds lower to the existing provider-neutral norn.poll/1 extension. */
       readonly poll?: { readonly feeds: ReadonlyArray<{ readonly resourceId: string; readonly recordKeyPath?: string; readonly fanout?: { readonly parentResourceId: string; readonly pathBinding: string; readonly keyPath: string } }> }
+      /** A generic HTTP pull profile (dataset feeds with request templates, paging and field pointers); lowers to the norn.pull/1 extension. */
+      readonly pull?: {
+        readonly source: string
+        readonly pipeline: string
+        readonly feeds: ReadonlyArray<{
+          readonly dataset: string
+          readonly request: { readonly method: "GET" | "POST"; readonly path: string; readonly query?: Readonly<Record<string, string>>; readonly headers?: Readonly<Record<string, string>>; readonly body?: unknown }
+          readonly itemsPath: string
+          readonly paging: { readonly kind: "keyset"; readonly size: number } | { readonly kind: "cursor"; readonly size: number; readonly nextCursorPath: string; readonly hasNextPath: string }
+          readonly idPath: string
+          readonly versionPath: string
+          readonly fields: Readonly<Record<string, string>>
+          readonly initial: { readonly version: string; readonly id: string | number }
+        }>
+        /** Where an oauth2 (client credentials) access token is sent. */
+        readonly token?: { readonly header: string; readonly prefix?: string }
+      }
     }
     interface ConnectorDefinition { readonly _tag: "NornConnector" }
     /** Declarative read-only connector; host configuration supplies endpoints and secret resolution. */

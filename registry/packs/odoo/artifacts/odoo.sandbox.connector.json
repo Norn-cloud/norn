@@ -1,0 +1,341 @@
+{
+  "artifactId": "odoo.sandbox.connector",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Odoo sandbox JSON-2 reads",
+  "namespace": "odoo",
+  "payload": {
+    "auth": {
+      "authId": "odoo_sandbox",
+      "kind": "api_key",
+      "name": "Authorization",
+      "placement": "header",
+      "prefix": "bearer ",
+      "secretRef": "odoo_sandbox_api_key"
+    },
+    "connectorVersion": "0.1",
+    "extensions": {
+      "norn.pull/1": {
+        "feeds": [
+          {
+            "dataset": "res.partner",
+            "fields": {
+              "id": "text:/id",
+              "label": "/name",
+              "role": "/x_norn_role",
+              "x_norn_ref": "/x_norn_ref"
+            },
+            "idPath": "/id",
+            "initial": {
+              "id": 0,
+              "version": "1970-01-01 00:00:00"
+            },
+            "itemsPath": "/records",
+            "paging": {
+              "kind": "keyset",
+              "size": 100
+            },
+            "request": {
+              "body": {
+                "domain": [
+                  [
+                    "x_norn_ref",
+                    "!=",
+                    false
+                  ],
+                  "|",
+                  [
+                    "write_date",
+                    ">",
+                    "{{version}}"
+                  ],
+                  "&",
+                  [
+                    "write_date",
+                    "=",
+                    "{{version}}"
+                  ],
+                  [
+                    "id",
+                    ">",
+                    "{{id}}"
+                  ]
+                ],
+                "limit": "{{size}}",
+                "order": "write_date asc, id asc",
+                "specification": {
+                  "name": {},
+                  "write_date": {},
+                  "x_norn_ref": {},
+                  "x_norn_role": {}
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "method": "POST",
+              "path": "/json/2/res.partner/web_search_read"
+            },
+            "versionPath": "/write_date"
+          },
+          {
+            "dataset": "product.product",
+            "fields": {
+              "code": "/default_code",
+              "id": "text:/id",
+              "label": "/name",
+              "price": "/list_price",
+              "sku": "/barcode",
+              "x_norn_ref": "/x_norn_ref"
+            },
+            "idPath": "/id",
+            "initial": {
+              "id": 0,
+              "version": "1970-01-01 00:00:00"
+            },
+            "itemsPath": "/records",
+            "paging": {
+              "kind": "keyset",
+              "size": 100
+            },
+            "request": {
+              "body": {
+                "domain": [
+                  [
+                    "x_norn_ref",
+                    "!=",
+                    false
+                  ],
+                  "|",
+                  [
+                    "write_date",
+                    ">",
+                    "{{version}}"
+                  ],
+                  "&",
+                  [
+                    "write_date",
+                    "=",
+                    "{{version}}"
+                  ],
+                  [
+                    "id",
+                    ">",
+                    "{{id}}"
+                  ]
+                ],
+                "limit": "{{size}}",
+                "order": "write_date asc, id asc",
+                "specification": {
+                  "barcode": {},
+                  "default_code": {},
+                  "list_price": {},
+                  "name": {},
+                  "write_date": {},
+                  "x_norn_ref": {}
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "method": "POST",
+              "path": "/json/2/product.product/web_search_read"
+            },
+            "versionPath": "/write_date"
+          },
+          {
+            "dataset": "stock.quant",
+            "fields": {
+              "cost_currency": "/x_cost_currency",
+              "custodian_ref": "/x_custodian_ref",
+              "id": "text:/id",
+              "item_ref": "/product_id/x_norn_ref",
+              "location": "/location_id/name",
+              "owner_ref": "/owner_id/x_norn_ref",
+              "quantity": "/quantity",
+              "resource_code": "/product_id/default_code",
+              "stock_cost": "/x_stock_cost",
+              "unit": "/product_uom_id/name",
+              "valuation_method": "/x_valuation_method",
+              "x_norn_ref": "/x_norn_ref"
+            },
+            "idPath": "/id",
+            "initial": {
+              "id": 0,
+              "version": "1970-01-01 00:00:00"
+            },
+            "itemsPath": "/records",
+            "paging": {
+              "kind": "keyset",
+              "size": 100
+            },
+            "request": {
+              "body": {
+                "domain": [
+                  [
+                    "x_norn_ref",
+                    "!=",
+                    false
+                  ],
+                  "|",
+                  [
+                    "write_date",
+                    ">",
+                    "{{version}}"
+                  ],
+                  "&",
+                  [
+                    "write_date",
+                    "=",
+                    "{{version}}"
+                  ],
+                  [
+                    "id",
+                    ">",
+                    "{{id}}"
+                  ]
+                ],
+                "limit": "{{size}}",
+                "order": "write_date asc, id asc",
+                "specification": {
+                  "location_id": {
+                    "fields": {
+                      "name": {}
+                    }
+                  },
+                  "owner_id": {
+                    "fields": {
+                      "x_norn_ref": {}
+                    }
+                  },
+                  "product_id": {
+                    "fields": {
+                      "default_code": {},
+                      "x_norn_ref": {}
+                    }
+                  },
+                  "product_uom_id": {
+                    "fields": {
+                      "name": {}
+                    }
+                  },
+                  "quantity": {},
+                  "write_date": {},
+                  "x_cost_currency": {},
+                  "x_custodian_ref": {},
+                  "x_norn_ref": {},
+                  "x_stock_cost": {},
+                  "x_valuation_method": {}
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "method": "POST",
+              "path": "/json/2/stock.quant/web_search_read"
+            },
+            "versionPath": "/write_date"
+          },
+          {
+            "dataset": "sale.order.line",
+            "fields": {
+              "due_at": "/x_due_at",
+              "holding_ref": "/x_holding_ref",
+              "id": "text:/id",
+              "provider_ref": "/x_provider_ref",
+              "quantity": "/product_uom_qty",
+              "receiver_ref": "/order_partner_id/x_norn_ref",
+              "unit": "/product_uom_id/name",
+              "x_norn_ref": "/x_norn_ref"
+            },
+            "idPath": "/id",
+            "initial": {
+              "id": 0,
+              "version": "1970-01-01 00:00:00"
+            },
+            "itemsPath": "/records",
+            "paging": {
+              "kind": "keyset",
+              "size": 100
+            },
+            "request": {
+              "body": {
+                "domain": [
+                  [
+                    "x_norn_ref",
+                    "!=",
+                    false
+                  ],
+                  "|",
+                  [
+                    "write_date",
+                    ">",
+                    "{{version}}"
+                  ],
+                  "&",
+                  [
+                    "write_date",
+                    "=",
+                    "{{version}}"
+                  ],
+                  [
+                    "id",
+                    ">",
+                    "{{id}}"
+                  ]
+                ],
+                "limit": "{{size}}",
+                "order": "write_date asc, id asc",
+                "specification": {
+                  "order_partner_id": {
+                    "fields": {
+                      "x_norn_ref": {}
+                    }
+                  },
+                  "product_uom_id": {
+                    "fields": {
+                      "name": {}
+                    }
+                  },
+                  "product_uom_qty": {},
+                  "write_date": {},
+                  "x_due_at": {},
+                  "x_holding_ref": {},
+                  "x_norn_ref": {},
+                  "x_provider_ref": {}
+                }
+              },
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "method": "POST",
+              "path": "/json/2/sale.order.line/web_search_read"
+            },
+            "versionPath": "/write_date"
+          }
+        ],
+        "pipeline": "norn-pull/1+odoo.sandbox.connector@0.1.0",
+        "source": "odoo"
+      }
+    },
+    "mappings": [],
+    "resources": [
+      {
+        "endpoint": "/json/2/{model}/web_search_read",
+        "itemsPath": "/records",
+        "kind": "paginated",
+        "method": "POST",
+        "pageParam": "offset",
+        "resourceId": "web_search_read"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/odoo/artifacts/odoo.sandbox.connector.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

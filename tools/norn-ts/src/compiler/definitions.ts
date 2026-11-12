@@ -1345,7 +1345,7 @@ class DefinitionCompiler {
   }
 
   private connector(call: ts.CallExpression): C.ConnectorDef {
-    const members = this.meta(call, ["id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll"])
+    const members = this.meta(call, ["id", "title", "version", "auth", "resources", "mappings", "cursor", "deadLetterPolicy", "poll", "pull"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     // Close every record even through const aliases: TypeScript excess-property
     // checks alone would allow an alias carrying undeclared credential material.
@@ -1378,7 +1378,19 @@ class DefinitionCompiler {
       if (kind !== "field" && kind !== "external_id") throw new CompileError("NORN-FLOW-LITERAL", "unknown connector mapping kind", mapping)
       this.closedRecord(mapping, ["kind", "resourceId", "sourcePath", "targetObjectKind", kind === "field" ? "targetField" : "externalSource"], ["kind", "resourceId", "sourcePath", "targetObjectKind"])
     }
-    const cursor = members.get("cursor"), deadLetter = members.get("deadLetterPolicy"), poll = members.get("poll")
+    const cursor = members.get("cursor"), deadLetter = members.get("deadLetterPolicy"), poll = members.get("poll"), pull = members.get("pull")
+    if (pull) {
+      const m = this.closedRecord(pull, ["source", "pipeline", "feeds", "token"], ["source", "pipeline", "feeds"])
+      const token = m.get("token")
+      if (token) this.closedRecord(token, ["header", "prefix"], ["header"])
+      for (const feed of this.list(m.get("feeds")!)) {
+        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        this.closedRecord(f.get("request")!, ["method", "path", "query", "headers", "body"], ["method", "path"])
+        const paging = this.closedRecord(f.get("paging")!, ["kind", "size", "nextCursorPath", "hasNextPath"], ["kind", "size"])
+        if (this.string(paging.get("kind")!) === "keyset") this.closedRecord(f.get("paging")!, ["kind", "size"], ["kind", "size"])
+        this.closedRecord(f.get("initial")!, ["version", "id"], ["version", "id"])
+      }
+    }
     if (cursor) this.closedRecord(cursor, ["cursorId", "resourceId", "storageKey"], ["cursorId", "resourceId", "storageKey"])
     if (deadLetter) this.closedRecord(deadLetter, ["maxFailures", "route"], ["maxFailures", "route"])
     if (poll) {
@@ -1396,7 +1408,8 @@ class DefinitionCompiler {
       mappings: this.json(need("mappings")) as unknown as C.ConnectorSpec["mappings"],
       ...(cursor ? { cursor: this.json(cursor) as unknown as NonNullable<C.ConnectorSpec["cursor"]> } : {}),
       ...(deadLetter ? { deadLetterPolicy: this.json(deadLetter) as unknown as NonNullable<C.ConnectorSpec["deadLetterPolicy"]> } : {}),
-      ...(poll ? { poll: this.json(poll) as unknown as NonNullable<C.ConnectorSpec["poll"]> } : {}), at: this.at(call),
+      ...(poll ? { poll: this.json(poll) as unknown as NonNullable<C.ConnectorSpec["poll"]> } : {}),
+      ...(pull ? { pull: this.json(pull) as unknown as NonNullable<C.ConnectorSpec["pull"]> } : {}), at: this.at(call),
     })
   }
 

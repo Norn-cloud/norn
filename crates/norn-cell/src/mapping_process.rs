@@ -15,13 +15,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Source deletes
     /// remain outside this mapping-bundle profile.
     pub fn process_mapping_bundle(&mut self, observation_id: &str) -> Result<bool, CellError> {
-        let Some(pending) = self
-            .store()
-            .read()
-            .pending_observations()?
-            .into_iter()
-            .find(|p| p.observation_id == observation_id)
-        else {
+        let Some(pending) = self.store().read().pending_observation(observation_id)? else {
             return Ok(false);
         };
         if observation_id.starts_with("mapping-conflict:")
@@ -112,6 +106,82 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         self.commit_observed_evidence(commit, &authorization, Some(&bundle))
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
+    }
+}
+
+/// What processing one captured source row did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MappingOutcome {
+    /// Its canonical objects were committed now.
+    Landed,
+    /// It was already consumed (the same source event, captured before).
+    AlreadyLanded,
+    /// It stays in the inbox as quarantined evidence, for these reasons
+    /// (mapping diagnostic codes, or the cell's refusal code).
+    Quarantined(Vec<String>),
+}
+
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// [`Self::process_mapping_bundle`] for a sync: a bundle the mapping or the
+    /// cell refuses is not an error but quarantined evidence, left pending in
+    /// the inbox with the reasons it was refused.
+    ///
+    /// # Errors
+    /// Store failures only.
+    pub fn process_mapping_outcome(
+        &mut self,
+        observation_id: &str,
+    ) -> Result<MappingOutcome, CellError> {
+        if observation_id.starts_with("mapping-conflict:")
+            || observation_id.starts_with("mapping-identity:")
+        {
+            let pending = self.store().read().pending_observation(observation_id)?;
+            return Ok(if pending.is_some() {
+                MappingOutcome::Quarantined(vec!["core.boundary.import_finding".into()])
+            } else {
+                MappingOutcome::AlreadyLanded
+            });
+        }
+        let Some(pending) = self.store().read().pending_observation(observation_id)? else {
+            return Ok(MappingOutcome::AlreadyLanded);
+        };
+        let observed: Observed<RuntimeValue> =
+            norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        if !bundle.diagnostics.is_empty() {
+            let mut codes: Vec<String> = bundle
+                .diagnostics
+                .iter()
+                .map(|d| {
+                    d.get("code")
+                        .and_then(RuntimeValue::as_str)
+                        .unwrap_or("mapping.refused")
+                        .to_owned()
+                })
+                .collect();
+            codes.sort();
+            codes.dedup();
+            return Ok(MappingOutcome::Quarantined(codes));
+        }
+        match self.process_mapping_bundle(observation_id) {
+            Ok(true) => Ok(MappingOutcome::Landed),
+            Ok(false) => Ok(MappingOutcome::AlreadyLanded),
+            Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
+            Err(error) => Ok(MappingOutcome::Quarantined(vec![refusal_code(&error)])),
+        }
+    }
+}
+
+/// The stable code of a cell refusal: the leading dotted code of its message
+/// when it has one, else a generic mapping refusal.
+fn refusal_code(error: &CellError) -> String {
+    let text = error.to_string();
+    let code = text.split([':', ' ']).next().unwrap_or_default();
+    if code.contains('.') && !code.is_empty() {
+        code.to_owned()
+    } else {
+        "core.boundary.mapping_refused".to_owned()
     }
 }
 
