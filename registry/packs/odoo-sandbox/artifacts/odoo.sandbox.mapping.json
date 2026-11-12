@@ -154,7 +154,7 @@
           },
           {
             "property": "observed_at",
-            "value": "timestamp(join(split(input.write_date, ' '), 'T') + 'Z')"
+            "value": "timestamp(take(input.write_date, 10) + 'T00:00:00Z')"
           },
           {
             "property": "unit",
