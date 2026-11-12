@@ -89,14 +89,16 @@ fn always_null(description: &str) -> utoipa::openapi::schema::Object {
 fn layout_diagnostics_schema() -> utoipa::openapi::schema::Object {
     always_null(
         "Always null: layout diagnostics are not retained with a revision, and this read does \
-         not re-run the checker. Kept for the shape readers already rely on.",
+         not re-run the checker. Kept for the shape readers already rely on; `null` is frozen, \
+         so real diagnostics would arrive as a new member.",
     )
 }
 
 fn diagnostics_schema() -> utoipa::openapi::schema::Object {
     always_null(
         "Always null: finding text is not retained with a revision; `receipt` carries the \
-         admission's digest. Kept for the shape readers already rely on.",
+         admission's digest. Kept for the shape readers already rely on; `null` is frozen, so \
+         real diagnostics would arrive as a new member.",
     )
 }
 

@@ -69,116 +69,72 @@ pub struct Request<'a> {
     pub body: &'a str,
 }
 
-/// Every route this host serves, and nothing else: [`handle_all`] refuses a
-/// path that [`Route::of`] does not name. The generated `OpenAPI` document is
-/// checked against this list (`tests/server.rs`), so a served route is either
-/// documented or named there as undocumented, with the reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Route {
+/// Declares [`Route`], [`Route::ALL`] and [`Route::signature`] from one list,
+/// so a route cannot exist without being in `ALL`.
+macro_rules! routes {
+    ($($(#[$doc:meta])* $name:ident => ($method:literal, $path:literal),)+) => {
+        /// Every route this host serves, and nothing else: [`handle_all`]
+        /// refuses a path that [`Route::of`] does not name. The generated
+        /// `OpenAPI` document is checked against this list (`tests/server.rs`),
+        /// so a served route is either documented or named there as
+        /// undocumented, with the reason.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum Route {
+            $($(#[$doc])* $name,)+
+        }
+
+        impl Route {
+            /// Every route, once, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$name,)+];
+
+            /// The method the route accepts and its path template, as the
+            /// `OpenAPI` document writes them.
+            #[must_use]
+            pub const fn signature(self) -> (&'static str, &'static str) {
+                match self {
+                    $(Self::$name => ($method, $path),)+
+                }
+            }
+        }
+    };
+}
+
+routes! {
     /// `GET /v1/access`, dispatched by the published host's entry point.
-    Access,
+    Access => ("GET", "/v1/access"),
     /// `POST /v1/actions/{actionId}`.
-    Action,
+    Action => ("POST", "/v1/actions/{actionId}"),
     /// `GET /v1/definitions`.
-    DefinitionsCatalog,
+    DefinitionsCatalog => ("GET", "/v1/definitions"),
     /// `POST /v1/definitions:admit`.
-    DefinitionsAdmit,
+    DefinitionsAdmit => ("POST", "/v1/definitions:admit"),
     /// `POST /v1/definitions:install`.
-    DefinitionsInstall,
+    DefinitionsInstall => ("POST", "/v1/definitions:install"),
     /// `GET /v1/definitions:list`.
-    DefinitionsList,
+    DefinitionsList => ("GET", "/v1/definitions:list"),
     /// `GET /v1/definitions/{id}`.
-    Definition,
+    Definition => ("GET", "/v1/definitions/{id}"),
     /// `POST /v1/definitions/{id}:retire`.
-    DefinitionRetire,
+    DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
     /// `GET /v1/objects/{type}`.
-    Objects,
+    Objects => ("GET", "/v1/objects/{type}"),
     /// `GET /v1/objects/{type}/{id}`.
-    Object,
+    Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
-    ObjectLinks,
+    ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
     /// `GET /v1/objects/{type}/{id}/lineage`.
-    ObjectLineage,
+    ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
     /// `GET /v1/questions/{question}/answer`.
-    QuestionAnswer,
+    QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
     /// `GET /v1/questions/{question}/trace`.
-    QuestionTrace,
+    QuestionTrace => ("GET", "/v1/questions/{question}/trace"),
     /// `POST /v1/questions:evaluate`.
-    QuestionsEvaluate,
+    QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
-    QuestionsTrace,
+    QuestionsTrace => ("POST", "/v1/questions:trace"),
 }
 
 impl Route {
-    /// Every route, once, in declaration order.
-    pub const ALL: [Self; 16] = [
-        Self::Access,
-        Self::Action,
-        Self::DefinitionsCatalog,
-        Self::DefinitionsAdmit,
-        Self::DefinitionsInstall,
-        Self::DefinitionsList,
-        Self::Definition,
-        Self::DefinitionRetire,
-        Self::Objects,
-        Self::Object,
-        Self::ObjectLinks,
-        Self::ObjectLineage,
-        Self::QuestionAnswer,
-        Self::QuestionTrace,
-        Self::QuestionsEvaluate,
-        Self::QuestionsTrace,
-    ];
-
-    /// This route's position in [`Route::ALL`]. The match is exhaustive, so a
-    /// new variant does not compile until it has a position; a test checks
-    /// that every position is filled, so it cannot be left out of the list.
-    #[must_use]
-    pub const fn index(self) -> usize {
-        match self {
-            Self::Access => 0,
-            Self::Action => 1,
-            Self::DefinitionsCatalog => 2,
-            Self::DefinitionsAdmit => 3,
-            Self::DefinitionsInstall => 4,
-            Self::DefinitionsList => 5,
-            Self::Definition => 6,
-            Self::DefinitionRetire => 7,
-            Self::Objects => 8,
-            Self::Object => 9,
-            Self::ObjectLinks => 10,
-            Self::ObjectLineage => 11,
-            Self::QuestionAnswer => 12,
-            Self::QuestionTrace => 13,
-            Self::QuestionsEvaluate => 14,
-            Self::QuestionsTrace => 15,
-        }
-    }
-
-    /// The method the route accepts and its path template, as the `OpenAPI`
-    /// document writes them.
-    #[must_use]
-    pub const fn signature(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Access => ("GET", "/v1/access"),
-            Self::Action => ("POST", "/v1/actions/{actionId}"),
-            Self::DefinitionsCatalog => ("GET", "/v1/definitions"),
-            Self::DefinitionsAdmit => ("POST", "/v1/definitions:admit"),
-            Self::DefinitionsInstall => ("POST", "/v1/definitions:install"),
-            Self::DefinitionsList => ("GET", "/v1/definitions:list"),
-            Self::Definition => ("GET", "/v1/definitions/{id}"),
-            Self::DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
-            Self::Objects => ("GET", "/v1/objects/{type}"),
-            Self::Object => ("GET", "/v1/objects/{type}/{id}"),
-            Self::ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
-            Self::ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
-            Self::QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
-            Self::QuestionTrace => ("GET", "/v1/questions/{question}/trace"),
-            Self::QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
-            Self::QuestionsTrace => ("POST", "/v1/questions:trace"),
-        }
-    }
-
     /// The route a request path names, if any.
     #[must_use]
     pub fn of(path: &str) -> Option<Self> {

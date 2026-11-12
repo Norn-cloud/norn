@@ -358,12 +358,8 @@ fn concrete(template: &str) -> String {
 /// does not serve, and each route's method is the one the router accepts.
 #[test]
 fn every_served_route_is_documented_or_named_as_undocumented() {
-    // `Route::index` is an exhaustive match, so every variant has a position;
-    // each position holds its own variant, so none is left out of `ALL`.
-    for (position, route) in server::Route::ALL.iter().enumerate() {
-        assert_eq!(route.index(), position, "{route:?}");
-    }
-
+    // `Route` and `Route::ALL` come from one list (`routes!`), so every
+    // variant is in `ALL`, once.
     let document: Value =
         serde_json::from_str(&norn_api::openapi::openapi_json().unwrap()).unwrap();
     let documented: std::collections::BTreeSet<(String, String)> = document["paths"]
@@ -391,7 +387,7 @@ fn every_served_route_is_documented_or_named_as_undocumented() {
     assert_eq!(documented, served);
 
     let demo = host(NativeEngine::open_in_memory().unwrap());
-    for route in server::Route::ALL {
+    for &route in server::Route::ALL {
         let (method, template) = route.signature();
         let path = concrete(template);
         // Each template names its own route, so the list and the router agree.
