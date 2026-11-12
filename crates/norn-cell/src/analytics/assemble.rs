@@ -79,27 +79,26 @@ impl<E: SqlEngine> CellStore<E> {
         let grain = plan.grain().as_str();
         // BULK-LINEAGE-1: a loaded dataset is read at its current load; its
         // rows are not cell facts, so no finding excludes them.
-        let (source, exclusions) = match self.analytics_dataset(grain)? {
-            Some(dataset) => (
+        let (source, exclusions) = if let Some(dataset) = self.analytics_dataset(grain)? {
+            (
                 Source::Dataset {
                     table: grain.to_owned(),
                     load: dataset.load,
                 },
                 BTreeMap::new(),
-            ),
-            None => {
-                let exclusions = self.analytics_exclusions(&context.world, grain)?;
-                (
-                    Source::Mirror {
-                        world: context.world.clone(),
-                        table: grain.to_owned(),
-                        frontier: revision.commits,
-                        scope: context.scope.clone(),
-                        excluded: exclusions.keys().cloned().collect(),
-                    },
-                    exclusions,
-                )
-            }
+            )
+        } else {
+            let exclusions = self.analytics_exclusions(&context.world, grain)?;
+            (
+                Source::Mirror {
+                    world: context.world.clone(),
+                    table: grain.to_owned(),
+                    frontier: revision.commits,
+                    scope: context.scope.clone(),
+                    excluded: exclusions.keys().cloned().collect(),
+                },
+                exclusions,
+            )
         };
         let (query_pin, definition_pin) = self.question_pins(plan, None)?;
         let request = EvaluateRequest {
@@ -117,6 +116,51 @@ impl<E: SqlEngine> CellStore<E> {
             query_pin,
             definition_pin,
         })
+    }
+
+    /// What a read of `object_type` reads, and the snapshot it is exact at:
+    /// a loaded dataset's current load (`l<load>`), or the governed mirror of
+    /// `scope` at the verified head without quarantined subjects (`c<commit>`).
+    ///
+    /// # Errors
+    /// A store error.
+    pub fn analytics_source(
+        &self,
+        world: &str,
+        scope: &str,
+        object_type: &str,
+    ) -> Result<(Source, String), CellError> {
+        if let Some(dataset) = self.analytics_dataset(object_type)? {
+            let snapshot = format!("l{}", dataset.load);
+            return Ok((
+                Source::Dataset {
+                    table: object_type.to_owned(),
+                    load: dataset.load,
+                },
+                snapshot,
+            ));
+        }
+        let head = self.verified_head()?.commits;
+        let exclusions = self.analytics_exclusions(world, object_type)?;
+        Ok((
+            Source::Mirror {
+                world: world.to_owned(),
+                table: object_type.to_owned(),
+                frontier: head,
+                scope: scope.to_owned(),
+                excluded: exclusions.into_keys().collect(),
+            },
+            format!("c{head}"),
+        ))
+    }
+
+    /// The analytical table of the admitted type `object_type`.
+    ///
+    /// # Errors
+    /// An unknown type.
+    pub fn analytics_table(&self, object_type: &str) -> Result<super::TableSchema, CellError> {
+        let contract = self.model().query_contract(object_type)?;
+        super::lower::table_schema(object_type, &contract.properties)
     }
 
     /// DATA-QUARANTINE: the grain's current subjects with an open quarantining

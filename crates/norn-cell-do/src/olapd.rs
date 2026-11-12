@@ -79,7 +79,7 @@ pub fn run(config: Config) -> std::io::Result<()> {
     for stream in listener.incoming().flatten() {
         if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
             active.fetch_sub(1, Ordering::SeqCst);
-            let _busy = respond(&stream, 503, "application/json", b"{\"code\":\"core.analytics.busy\"}");
+            let _busy = respond(&stream, 503, "application/json", b"{\"code\":\"analytics.busy\"}");
             continue;
         }
         let (engine, token, active) = (Arc::clone(&engine), Arc::clone(&token), Arc::clone(&active));
@@ -134,10 +134,10 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         return respond(stream, 200, "application/json", b"{\"ok\":true}");
     }
     if !authorized(request.authorization.as_deref(), token) {
-        return refuse(stream, 401, &refusal("core.analytics.unauthorized", "the caller is not the cell"));
+        return refuse(stream, 401, &refusal("analytics.unauthorized", "the caller is not the cell"));
     }
     if request.method != "POST" {
-        return refuse(stream, 404, &refusal("core.analytics.unknown", "no such operation"));
+        return refuse(stream, 404, &refusal("analytics.unknown", "no such operation"));
     }
     match request.path.as_str() {
         "/v1/frontier" => answer(stream, &request, |r: FrontierRequest| engine.frontier(&r)),
@@ -147,7 +147,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
         "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
-        _ => refuse(stream, 404, &refusal("core.analytics.unknown", "no such operation")),
+        _ => refuse(stream, 404, &refusal("analytics.unknown", "no such operation")),
     }
 }
 
@@ -188,12 +188,12 @@ fn answer<T: DeserializeOwned, R: Serialize>(
 ) -> std::io::Result<()> {
     let parsed: T = match serde_json::from_slice(&request.body) {
         Ok(parsed) => parsed,
-        Err(error) => return refuse(stream, 400, &refusal("core.analytics.invalid", &error.to_string())),
+        Err(error) => return refuse(stream, 400, &refusal("analytics.invalid", &error.to_string())),
     };
     match operation(parsed) {
         Ok(result) => match serde_json::to_string(&result) {
             Ok(body) => respond(stream, 200, "application/json", body.as_bytes()),
-            Err(error) => refuse(stream, 500, &refusal("core.analytics.engine", &error.to_string())),
+            Err(error) => refuse(stream, 500, &refusal("analytics.engine", &error.to_string())),
         },
         Err(refused) => refuse(stream, status_of(&refused), &refused),
     }
@@ -207,7 +207,7 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
         .timeout_global(Some(Duration::from_secs(600)))
         .build()
         .into();
-    let unreadable = |detail: String| refusal("core.bulk.unreadable", &detail);
+    let unreadable = |detail: String| refusal("bulk.unreadable", &detail);
     let mut response = agent
         .get(&request.file.url)
         .call()
@@ -233,7 +233,7 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
 fn export(stream: &TcpStream, request: &Request, engine: &Engine) -> std::io::Result<()> {
     let parsed: ExportRequest = match serde_json::from_slice(&request.body) {
         Ok(parsed) => parsed,
-        Err(error) => return refuse(stream, 400, &refusal("core.analytics.invalid", &error.to_string())),
+        Err(error) => return refuse(stream, 400, &refusal("analytics.invalid", &error.to_string())),
     };
     let kind = match parsed.format {
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
@@ -259,7 +259,7 @@ fn export(stream: &TcpStream, request: &Request, engine: &Engine) -> std::io::Re
 }
 
 fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
-    let invalid = |detail: String| (400, refusal("core.analytics.invalid", &detail));
+    let invalid = |detail: String| (400, refusal("analytics.invalid", &detail));
     let mut reader = BufReader::new(
         stream.take(u64::try_from(MAX_HEAD_BYTES.saturating_add(MAX_BODY_BYTES)).unwrap_or(u64::MAX)),
     );
@@ -301,7 +301,7 @@ fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
         }
     }
     if length > MAX_BODY_BYTES {
-        return Err((413, refusal("core.analytics.too_large", "the request body exceeds the bound")));
+        return Err((413, refusal("analytics.too_large", "the request body exceeds the bound")));
     }
     let mut body = vec![0_u8; length];
     reader

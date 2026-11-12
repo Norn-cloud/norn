@@ -6,6 +6,7 @@
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     missing_docs,
     reason = "QUERY-ENGINE-1 engine correspondence"
 )]
@@ -30,7 +31,6 @@ use norn_ir::{
     RuntimeValue,
 };
 use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
-use sha2::Digest as _;
 
 fn engine() -> (tempfile::TempDir, Engine) {
     let dir = tempfile::tempdir().expect("engine dir");
@@ -74,9 +74,10 @@ fn ask(store: &CellStore, engine: &Engine, plan: &QuestionPlan, context: QueryCo
 }
 
 fn code(error: &CellError) -> String {
-    match error {
-        CellError::ComputeRefused(code) => (*code).to_owned(),
-        other => format!("{other:?}"),
+    if let CellError::ComputeRefused(code) = error {
+        (*code).to_owned()
+    } else {
+        format!("{error:?}")
     }
 }
 
@@ -314,10 +315,10 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
         assert_eq!(row.totals, exact_row.totals);
         assert_eq!(row.null_counts, exact_row.null_counts);
         assert_eq!(row.member_count, Some(u64::try_from(exact_row.members.len()).expect("count")));
-        let group = match &row.bucket {
-            RuntimeValue::String(text) => GroupKey::Text(text.clone()),
-            other => panic!("bucket {other:?}"),
+        let RuntimeValue::String(text) = &row.bucket else {
+            panic!("a text bucket: {:?}", row.bucket);
         };
+        let group = GroupKey::Text(text.clone());
         let mut digest = MembershipDigest::default();
         let mut after = None;
         loop {
@@ -370,7 +371,7 @@ fn a_sync_that_skips_commits_is_refused() {
         through: 9,
         rows: Vec::new(),
     };
-    assert_eq!(engine.sync(&skipping).expect_err("refused").code, "core.analytics.frontier_moved");
+    assert_eq!(engine.sync(&skipping).expect_err("refused").code, "analytics.frontier_moved");
 }
 
 /// A CSV in the engine's scratch directory, the only place a load reads.
@@ -380,8 +381,7 @@ fn csv(engine: &Engine, lines: &[&str]) -> (tempfile::NamedTempFile, String) {
         writeln!(file, "{line}").expect("write");
     }
     file.flush().expect("flush");
-    let digest = sha2::Sha256::digest(std::fs::read(file.path()).expect("read"));
-    let hex = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = norn_cell::analytics::hex_digest(&std::fs::read(file.path()).expect("read"));
     (file, hex)
 }
 
@@ -425,17 +425,17 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     assert_eq!(
         response.reasons,
         BTreeMap::from([
-            ("core.bulk.not_decimal".into(), 1),
-            ("core.bulk.not_timestamp".into(), 2),
-            ("core.bulk.required".into(), 1),
-            ("core.bulk.scale_exceeded".into(), 1),
+            ("bulk.not_decimal".into(), 1),
+            ("bulk.not_timestamp".into(), 2),
+            ("bulk.required".into(), 1),
+            ("bulk.scale_exceeded".into(), 1),
         ])
     );
     let mut changed = load_request(&plan, "load-2", sha256);
     changed.file.sha256 = "0".repeat(64);
     assert_eq!(
         engine.load(&changed, file.path()).expect_err("digest").code,
-        "core.bulk.digest_mismatch"
+        "bulk.digest_mismatch"
     );
 }
 
@@ -454,7 +454,7 @@ proptest::proptest! {
         for (i, (input, recovered, at, metal)) in rows.iter().enumerate() {
             let text = |v: i64| Decimal::parse(&format!("{v}e-3")).expect("scale").canonical();
             lines.push(format!("{},{},{},{},0", METALS[*metal], TIMES[*at], text(*input), recovered.map_or(String::new(), text)));
-            writes.push(row(&(i + 1).to_string(), *input, *recovered, TIMES[*at], METALS[*metal]));
+            writes.push(row(&i.saturating_add(1).to_string(), *input, *recovered, TIMES[*at], METALS[*metal]));
         }
         let (file, sha256) = csv(&engine, &lines.iter().map(String::as_str).collect::<Vec<_>>());
         let loaded = engine.load(&load_request(&plan, "load-1", sha256), file.path()).expect("loaded");
@@ -518,7 +518,7 @@ proptest::proptest! {
         };
         let loaded = engine.load(&request, file.path()).expect("loaded");
         match expected {
-            None => proptest::prop_assert_eq!(loaded.reasons, BTreeMap::from([("core.bulk.not_timestamp".to_owned(), 1)])),
+            None => proptest::prop_assert_eq!(loaded.reasons, BTreeMap::from([("bulk.not_timestamp".to_owned(), 1)])),
             Some((secs, nanos)) => {
                 proptest::prop_assert_eq!(loaded.rows, 1);
                 let profile = engine
@@ -530,7 +530,7 @@ proptest::proptest! {
                     .expect("profile");
                 proptest::prop_assert_eq!(
                     profile.columns[0].min.clone(),
-                    Some(norn_cell::analytics::Value::Instant { text: text.clone(), secs, nanos })
+                    Some(norn_cell::analytics::Value::Instant { text, secs, nanos })
                 );
             }
         }
@@ -620,8 +620,7 @@ fn bulk_path_measurements() {
         .expect("export");
     let parquet_bytes = std::fs::metadata(&parquet).expect("size").len();
     println!("parquet export: {parquet_bytes} bytes, {:.3}s", started.elapsed().as_secs_f64());
-    let digest = sha2::Sha256::digest(std::fs::read(&parquet).expect("read"));
-    let mut request = load_request(&plan, "parquet", digest.iter().map(|b| format!("{b:02x}")).collect());
+    let mut request = load_request(&plan, "parquet", norn_cell::analytics::hex_digest(&std::fs::read(&parquet).expect("read")));
     request.file.format = FileFormat::Parquet;
     let started = Instant::now();
     let loaded = engine.load(&request, &parquet).expect("parquet load");

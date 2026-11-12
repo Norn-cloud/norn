@@ -86,19 +86,47 @@ export class Cell {
       return { status: response.status, body: await response.text() };
     } catch (error) {
       console.error(`analytics engine call failed: ${error}`);
-      return { status: 503, body: JSON.stringify({ code: "core.analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
     }
   }
-  /** Run the cell's engine calls until it answers; each re-entry is decided afresh. */
+  /** The engine's file for a streamed call, or its refusal for the cell to map. */
+  async stream(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      if (response.status !== 200) return { status: response.status, body: await response.text() };
+      const headers = { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", ...call.stream };
+      return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+      console.error(`analytics engine stream failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /**
+   * Run the cell's engine calls until it answers; each re-entry is decided afresh.
+   * A call marked `stream` (an export the cell authorized) is answered by
+   * streaming the engine's file to the caller with the cell's headers.
+   */
   async settle(request, body, reply) {
     const url = new URL(request.url);
     for (let step = 0; reply.engine !== undefined && step < ENGINE_STEPS; step++) {
       const call = JSON.parse(reply.engine);
+      if (call.stream !== undefined) {
+        const streamed = await this.stream(call);
+        if (streamed instanceof Response) return streamed;
+        reply = this.cell.resume(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, streamed.status, streamed.body);
+        continue;
+      }
       const answer = await this.engine(call);
       reply = this.cell.resume(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, answer.status, answer.body);
     }
     if (reply.engine !== undefined) {
-      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "core.analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
+      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
     }
     return reply;
   }
@@ -126,6 +154,7 @@ export class Cell {
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
     reply = await this.settle(request, body, reply);
+    if (reply instanceof Response) return reply;
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
 }

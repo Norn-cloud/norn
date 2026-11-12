@@ -205,9 +205,9 @@ impl NornCell {
     ) -> Reply {
         if let (Some(engine), Ok(call)) = (
             self.engine.as_ref(),
-            serde_json::from_str::<crate::olap::EngineCall>(call),
+            serde_json::from_str::<norn_api::analytics_routes::EngineCall>(call),
         ) {
-            engine.resume(crate::olap::EngineAnswer {
+            engine.resume(norn_api::analytics_routes::EngineAnswer {
                 op: call.op,
                 digest: call.digest,
                 status,
@@ -268,7 +268,7 @@ impl NornCell {
             .as_ref()
             .map(|questions| -> &dyn AdHocQuestions<WorkersEngine> { questions });
         let on_engine = match (questions, self.engine.as_ref()) {
-            (Some(inner), Some(engine)) => Some(crate::olap::EngineQuestions::new(
+            (Some(inner), Some(engine)) => Some(norn_api::analytics_routes::EngineQuestions::new(
                 inner,
                 engine,
                 self.host.scope(),
@@ -288,7 +288,13 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
-        let response = if path == "/v1/access" {
+        let analytics = self
+            .engine
+            .as_ref()
+            .and_then(|engine| server::analytics(&self.host, resolver, engine, None, &request));
+        let response = if let Some(response) = analytics {
+            response
+        } else if path == "/v1/access" {
             server::access(
                 &self.host,
                 resolver,

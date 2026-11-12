@@ -37,7 +37,7 @@ fn refusal(code: &str, detail: impl Into<String>) -> EngineRefusal {
 }
 
 fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
-    value.map_err(|error| refusal("core.analytics.engine", error.to_string()))
+    value.map_err(|error| refusal("analytics.engine", error.to_string()))
 }
 
 const UNSUPPORTED: &str = "core.compute.unsupported_engine";
@@ -201,7 +201,7 @@ impl Engine {
     /// Apply one sync batch in a single transaction.
     ///
     /// # Errors
-    /// `core.analytics.frontier_moved` when the batch does not continue the
+    /// `analytics.frontier_moved` when the batch does not continue the
     /// mirror's frontier, or an unknown table.
     pub fn sync(&self, request: &SyncRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
@@ -209,7 +209,7 @@ impl Engine {
             let current: u64 = meta(conn, &key)?.and_then(|v| v.parse().ok()).unwrap_or(0);
             if current != request.after || request.through < request.after {
                 return Err(refusal(
-                    "core.analytics.frontier_moved",
+                    "analytics.frontier_moved",
                     format!("the mirror is at {current}"),
                 ));
             }
@@ -234,7 +234,7 @@ impl Engine {
     ///
     /// # Errors
     /// The Core 03 refusals the exact engine would give, a frontier the
-    /// mirror has not reached (`core.analytics.frontier_behind`), or a stale load.
+    /// mirror has not reached (`analytics.frontier_behind`), or a stale load.
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
@@ -299,13 +299,13 @@ impl Engine {
     /// quarantined with the first reason, in column order.
     ///
     /// # Errors
-    /// `core.bulk.digest_mismatch`, an unreadable file, or an engine failure.
+    /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
     pub fn load(&self, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
         let started = Instant::now();
         let (digest, bytes) = sha256_file(file)
-            .map_err(|error| refusal("core.bulk.unreadable", error.to_string()))?;
+            .map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
         if digest != request.file.sha256 {
-            return Err(refusal("core.bulk.digest_mismatch", "the file is not the recorded upload"));
+            return Err(refusal("bulk.digest_mismatch", "the file is not the recorded upload"));
         }
         self.with(&request.tenant, |conn| {
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
@@ -471,12 +471,12 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
 }
 
 fn schema_text(table: &TableSchema) -> Outcome<String> {
-    serde_json::to_string(table).map_err(|e| refusal("core.analytics.engine", e.to_string()))
+    serde_json::to_string(table).map_err(|e| refusal("analytics.engine", e.to_string()))
 }
 
 fn schema_of(conn: &Connection, key: &str) -> Outcome<TableSchema> {
     let text = meta(conn, key)?.ok_or_else(|| refusal(UNSUPPORTED, "no such table"))?;
-    serde_json::from_str(&text).map_err(|e| refusal("core.analytics.engine", e.to_string()))
+    serde_json::from_str(&text).map_err(|e| refusal("analytics.engine", e.to_string()))
 }
 
 /// Encode one stored value for the all-text staging table.
@@ -499,7 +499,7 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {
         if row.commit_seq <= request.after || row.commit_seq > request.through {
-            return Err(refusal("core.analytics.frontier_moved", "a row outside the batch"));
+            return Err(refusal("analytics.frontier_moved", "a row outside the batch"));
         }
         by_table.entry(row.table.as_str()).or_default().push(row);
     }
@@ -529,7 +529,7 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
             for (ord, row) in rows.iter().enumerate() {
                 let tomb = row.values.is_none();
                 if row.values.as_ref().is_some_and(|v| v.len() != table.columns.len()) {
-                    return Err(refusal("core.analytics.engine", "values do not match the table"));
+                    return Err(refusal("analytics.engine", "values do not match the table"));
                 }
                 let mut values = vec![
                     Sql::UBigInt(u64::try_from(ord).unwrap_or(u64::MAX)),
@@ -667,7 +667,7 @@ impl Scope {
                     .unwrap_or(0);
                 if reached < *frontier {
                     return Err(refusal(
-                        "core.analytics.frontier_behind",
+                        "analytics.frontier_behind",
                         format!("the mirror is at {reached}"),
                     ));
                 }
@@ -1070,7 +1070,7 @@ impl Projection {
             buckets
                 .get_mut(index)
                 .and_then(|b| b.members.as_mut())
-                .ok_or_else(|| refusal("core.analytics.engine", "a member outside its bucket"))?
+                .ok_or_else(|| refusal("analytics.engine", "a member outside its bucket"))?
                 .push(member);
         }
         Ok(buckets)
@@ -1162,7 +1162,7 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             columns: vec![format!(
                 "CASE WHEN translate({c}, '0123456789', '') IN ('', '-', '+') THEN TRY_CAST({c} AS DECIMAL(38,0)) END AS {v}"
             )],
-            reason: format!("CASE WHEN {v} IS NULL THEN 'core.bulk.not_integer' END"),
+            reason: format!("CASE WHEN {v} IS NULL THEN 'bulk.not_integer' END"),
         },
         ColumnKind::Decimal { scale } => Parsed {
             columns: vec![
@@ -1175,14 +1175,14 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                 ),
             ],
             reason: format!(
-                "CASE WHEN NOT s{i} THEN 'core.bulk.not_decimal' WHEN NOT f{i} THEN 'core.bulk.scale_exceeded' WHEN {v} IS NULL THEN 'core.bulk.not_decimal' END"
+                "CASE WHEN NOT s{i} THEN 'bulk.not_decimal' WHEN NOT f{i} THEN 'bulk.scale_exceeded' WHEN {v} IS NULL THEN 'bulk.not_decimal' END"
             ),
         },
         ColumnKind::Boolean => Parsed {
             columns: vec![format!(
                 "CASE lower({c}) WHEN 'true' THEN TRUE WHEN 'false' THEN FALSE END AS {v}"
             )],
-            reason: format!("CASE WHEN {v} IS NULL THEN 'core.bulk.not_boolean' END"),
+            reason: format!("CASE WHEN {v} IS NULL THEN 'bulk.not_boolean' END"),
         },
         ColumnKind::Date => Parsed {
             columns: vec![
@@ -1193,7 +1193,7 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                 ),
                 format!("0 AS n{i}"),
             ],
-            reason: format!("CASE WHEN t{i} IS NULL THEN 'core.bulk.not_date' END"),
+            reason: format!("CASE WHEN t{i} IS NULL THEN 'bulk.not_date' END"),
         },
         ColumnKind::Timestamp => {
             // RFC 3339 as the cell reads it: `YYYY-MM-DDTHH:MM:SS`, then an
@@ -1223,7 +1223,7 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                         "CASE WHEN {shape} THEN CAST(rpad(substr({fraction}, 2), 9, '0') AS INTEGER) END AS n{i}"
                     ),
                 ],
-                reason: format!("CASE WHEN t{i} IS NULL THEN 'core.bulk.not_timestamp' END"),
+                reason: format!("CASE WHEN t{i} IS NULL THEN 'bulk.not_timestamp' END"),
             }
         }
     }
@@ -1266,7 +1266,7 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
     for (i, column) in request.table.columns.iter().enumerate() {
         let name = request.headers.get(&column.id).unwrap_or(&column.id);
         let Some(data_type) = present.get(name) else {
-            return Err(refusal("core.bulk.missing_column", format!("the file has no column {name}")));
+            return Err(refusal("bulk.missing_column", format!("the file has no column {name}")));
         };
         let f = ident(name);
         let text = match (column.kind, data_type.as_str()) {
@@ -1279,7 +1279,7 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         texts.push(format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"));
         let Parsed { columns, reason } = parse_sql(column.kind, i);
         parsed.extend(columns);
-        let missing = if column.nullable { "NULL" } else { "'core.bulk.required'" };
+        let missing = if column.nullable { "NULL" } else { "'bulk.required'" };
         reasons.push(format!("CASE WHEN c{i} IS NULL THEN {missing} ELSE {reason} END"));
     }
     let order = match request.file.format {

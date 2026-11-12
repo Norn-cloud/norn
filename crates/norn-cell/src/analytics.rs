@@ -584,7 +584,7 @@ pub struct ExportRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineRefusal {
-    /// `core.compute.*`, `core.analytics.*` or `core.bulk.*`.
+    /// `core.compute.*`, `analytics.*` or `bulk.*`.
     pub code: String,
     /// What was refused, for the operator; never row data.
     pub detail: String,

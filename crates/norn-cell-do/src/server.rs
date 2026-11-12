@@ -152,6 +152,12 @@ routes! {
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
     QuestionsMetrics => ("GET", "/v1/questions:metrics"),
+    /// `GET /v1/objects/{type}:export`, served by [`analytics`] on a host
+    /// with an analytics engine (D102).
+    ObjectExport => ("GET", "/v1/objects/{type}:export"),
+    /// `POST /v1/datasets:load`, served by [`analytics`] on a host with an
+    /// analytics engine and an object store (D102).
+    DatasetLoad => ("POST", "/v1/datasets:load"),
 }
 
 impl Route {
@@ -166,6 +172,7 @@ impl Route {
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
             crate::mcp::MCP_PATH => return Some(Self::Mcp),
             "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
+            "/v1/datasets:load" => return Some(Self::DatasetLoad),
             _ => {}
         }
         if let Some(route) = definitions_route(path) {
@@ -188,6 +195,7 @@ impl Route {
             return Some(match (id, leaf) {
                 (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
                 (None, _) if kind.ends_with(":quarantined") => Self::ObjectsQuarantined,
+                (None, _) if kind.ends_with(":export") => Self::ObjectExport,
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
@@ -274,6 +282,8 @@ pub fn handle_all<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let served = Route::of(path).is_some_and(|route| route != Route::Access);
+    let analytics = Route::of(path)
+        .filter(|route| matches!(route, Route::ObjectExport | Route::DatasetLoad));
     let result = if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -281,6 +291,23 @@ pub fn handle_all<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if let Some(route) = analytics {
+        // Served by [`analytics`] on a host with an engine; this one has none.
+        Err(if method == route.signature().0 {
+            Refusal::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "analytics.unconfigured",
+                "this host has no analytics engine",
+                "loads and exports run on the tenant analytics engine",
+            )
+        } else {
+            Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "an export takes GET; a load takes POST",
+            )
+        })
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
@@ -861,6 +888,91 @@ fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> 
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
+}
+
+/// D102: the routes of a host whose analytics run on the tenant's engine
+/// (`GET /v1/objects/{type}:export`, `POST /v1/datasets:load`), or `None`
+/// for any other request. `uploads` is the cell's completed uploads, when the
+/// host has an object store.
+pub fn analytics<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+    request: &Request<'_>,
+) -> Option<Response> {
+    let Request {
+        method,
+        path,
+        query,
+        authorization,
+        now,
+        body,
+    } = *request;
+    let export = path
+        .strip_prefix("/v1/objects/")
+        .and_then(|rest| rest.strip_suffix(":export"))
+        .filter(|kind| !kind.is_empty() && !kind.contains('/'));
+    if export.is_none() && path != "/v1/datasets:load" {
+        return None;
+    }
+    let _request = RequestScope::new(principals);
+    let actor = principals.resolve(authorization, now);
+    let actor = actor.as_deref();
+    let result = match (method, export, uploads) {
+        ("GET", Some(kind), _) => parse(query, &["orgId", "environmentId", "columns", "format"])
+            .and_then(|mut fields| {
+                let query = norn_api::analytics_routes::ExportQuery {
+                    org_id: fields.remove("orgId"),
+                    environment_id: fields.remove("environmentId"),
+                    columns: fields.remove("columns").unwrap_or_default(),
+                    format: fields.remove("format"),
+                };
+                let kind = percent_encoding::percent_decode_str(kind)
+                    .decode_utf8()
+                    .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))?;
+                norn_api::analytics_routes::export_objects(host, &query, actor, &kind, &CellObjectAccess, transport)
+            })
+            .map(|()| String::new()),
+        ("POST", None, Some(uploads)) => parse(query, &["orgId", "environmentId"]).and_then(|fields| {
+            let scope = ScopeQuery {
+                org_id: fields.get("orgId").cloned(),
+                environment_id: fields.get("environmentId").cloned(),
+            };
+            norn_api::analytics_routes::load_dataset(
+                host,
+                &scope,
+                actor,
+                body,
+                uploads,
+                transport,
+                now.saturating_mul(1000),
+            )
+            .and_then(|document| document_json(&document))
+        }),
+        ("POST", None, None) => Err(Refusal::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "dataset.uploads_unconfigured",
+            "this host has no object store for uploads",
+            "configure the host's upload bucket to load datasets",
+        )),
+        (_, _, _) => Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "an export takes GET; a load takes POST",
+        )),
+    };
+    Some(match result {
+        Ok(body) => Response {
+            status: StatusCode::OK.as_u16(),
+            body,
+        },
+        Err(refused) => Response {
+            status: refused.status,
+            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
+        },
+    })
 }
 
 fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
