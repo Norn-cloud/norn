@@ -1,4 +1,5 @@
 """What the demo must show, against the running dev host: run twice, then after a write."""
+import json
 import sys
 
 from norn_regression import Cell, check_regression
@@ -56,10 +57,11 @@ assert spec in set(cell.rows("stats.ModelSpec")["spec"])
 assert requests.loc["rq-demo-2", "status"] == "failed" and "nope" in requests.loc["rq-demo-2", "error"], requests
 assert requests.loc["rq-demo-2", "spec"] is None or requests.loc["rq-demo-2", "spec"] != requests.loc["rq-demo-2", "spec"], requests  # null, not ""
 assert requests.loc["rq-demo-1", "error"] is None or requests.loc["rq-demo-1", "error"] != requests.loc["rq-demo-1", "error"], requests
-# The done request links to its spec ("result"), so Studio can follow request → spec → checks.
+# The spec run for the request links to it ("request"), so Studio can follow request ↔ spec → checks.
 from norn_client.api.objects import get_object_links  # noqa: E402
 links = get_object_links.sync("stats.CheckRequest", "rq-demo-1", client=cell.client, **cell.where)
-assert any(edge.to_dict().get("link") == "result" for edge in links.items), [edge.to_dict() for edge in links.items]
+edges = [edge.to_dict() for edge in links.items]
+assert any(edge.get("link") == "request" and spec in json.dumps(edge) for edge in edges), edges
 # A second pass finds nothing queued.
 subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
 assert len(cell.rows("stats.CheckRequest")) == 2

@@ -19,12 +19,15 @@ const SpecFields = Schema.Struct({
   rows_used: Schema.Int,
   method: Schema.String,
   summary: Summary,
+  request: Schema.NullOr(Schema.String), // the stats.CheckRequest that asked for it; null for a run from Python
 })
 
 export const ModelSpec = Norn.type({
   name: "stats.ModelSpec", title: "Regression model spec", version: "0.1.0",
   properties: SpecFields,
   identity: [{ name: "primary", properties: ["spec"] }],
+  // A spec run for a Studio request links to it: request ↔ spec ↔ checks.
+  links: [{ id: "request", target: "stats.CheckRequest", cardinality: { to: "one", from: "many" } }],
 })
 
 const CheckFields = Schema.Struct({
@@ -46,6 +49,33 @@ export const AssumptionCheck = Norn.type({
   properties: CheckFields,
   identity: [{ name: "primary", properties: ["check"] }],
   links: [{ id: "model", target: "stats.ModelSpec", cardinality: { to: "one", from: "many" } }],
+})
+
+// A spec the worker records for a request: created with its link to that request.
+const RequestedSpecFields = Schema.Struct({
+  spec: Schema.String,
+  object_type: Schema.String,
+  target: Schema.String,
+  features: Schema.String,
+  order_field: Schema.NullOr(Schema.String),
+  dataset_revision: Schema.String,
+  rows: Schema.Int,
+  rows_used: Schema.Int,
+  method: Schema.String,
+  summary: Summary,
+  request: Schema.String,
+})
+
+export const RecordRequestedModelSpec = Norn.action({
+  id: "stats.modelspec.record_for_request", title: "Record a requested regression model spec", version: "0.1.0",
+  input: RequestedSpecFields,
+  output: Schema.Struct({ spec: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
+  slice: [{ name: "request", type: "stats.CheckRequest", key: { property: { from: "input", property: "request" } } }],
+  createLinks: [{ link: "request", targetType: "stats.CheckRequest", targetIdField: "request" }],
+  writes: [{ type: ModelSpec, change: "created" }],
+  effect: { kind: "upsert_input_object", type: ModelSpec, objectIdField: "spec", writeMode: { kind: "create_only" } },
 })
 
 export const RecordModelSpec = Norn.action({
@@ -91,8 +121,6 @@ export const CheckRequest = Norn.type({
   identity: [{ name: "primary", properties: ["request"] }],
   // A new request is queued; spec and error stay null (absent) until the worker sets them.
   defaults: { status: "queued" },
-  // Once done: the request → its model spec → that spec's checks.
-  links: [{ id: "result", target: "stats.ModelSpec", cardinality: { to: "one", from: "many" } }],
 })
 
 // The click: the person names the dataset and the model; Norn sets the rest.
@@ -121,38 +149,13 @@ export const SubmitCheckRequest = Norn.action({
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "create_only" } },
 })
 
-// The worker's progress: running, or failed with the reason.
+// The worker's progress: running, done with the spec it recorded, or failed with the reason.
 export const FinishCheckRequest = Norn.action({
   id: "stats.checkrequest.finish", title: "Report a regression check request's progress", version: "0.1.0",
   input: RequestFields,
   output: Schema.Struct({ request: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
-  writes: [{ type: CheckRequest, change: "created" }, { type: CheckRequest, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
-})
-
-// The worker's result: done, linked to the model spec it recorded. Here the
-// spec is required: the action reads it and links to it.
-const CompleteFields = Schema.Struct({
-  request: Schema.String,
-  object_type: Schema.String,
-  target: Schema.String,
-  features: Schema.String,
-  order_field: Schema.NullOr(Schema.String),
-  status: Schema.Literals(["queued", "running", "done", "failed"]),
-  spec: Schema.String,
-  error: Schema.NullOr(Schema.String),
-})
-
-export const CompleteCheckRequest = Norn.action({
-  id: "stats.checkrequest.complete", title: "Complete a regression check request", version: "0.1.0",
-  input: CompleteFields,
-  output: Schema.Struct({ request: Schema.String }),
-  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
-  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
-  slice: [{ name: "spec", type: ModelSpec, key: { property: { from: "input", property: "spec" } } }],
-  createLinks: [{ link: "result", targetType: ModelSpec, targetIdField: "spec" }],
   writes: [{ type: CheckRequest, change: "created" }, { type: CheckRequest, change: "modified" }],
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
 })
@@ -174,14 +177,14 @@ export const StatsAccess = Norn.access({
     },
     {
       ruleId: "report",
-      actions: [FinishCheckRequest, CompleteCheckRequest],
+      actions: [FinishCheckRequest],
       resourceType: CheckRequest,
       scope: { dimensions: ["org", "environment"] },
       allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],
     },
     {
       ruleId: "record-spec",
-      actions: [RecordModelSpec],
+      actions: [RecordModelSpec, RecordRequestedModelSpec],
       resourceType: ModelSpec,
       scope: { dimensions: ["org", "environment"] },
       allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],

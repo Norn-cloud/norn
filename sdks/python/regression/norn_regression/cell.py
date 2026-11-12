@@ -108,22 +108,25 @@ def revision(rows: pd.DataFrame) -> str:
     return hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
 
 
-def check_regression(object_type: str, target: str, features: list[str], *, cell: Cell, order: str | None = None) -> RegressionChecks:
-    """Run the assumption suite on one object type and record the results in the cell."""
+def check_regression(object_type: str, target: str, features: list[str], *, cell: Cell, order: str | None = None,
+                     request: str | None = None) -> RegressionChecks:
+    """Run the assumption suite on one object type and record the results in the cell.
+    `request`: the stats.CheckRequest this run answers (the worker passes it); the spec links to it."""
     rows = cell.rows(object_type)
     missing = [name for name in [target, *features, *([order] if order else [])] if name not in rows.columns]
     if missing:
         raise ValueError(f"{object_type} has no field {', '.join(missing)} (fields: {', '.join(c for c in rows.columns if c not in ('id', 'version'))})")
     dataset = revision(rows)
-    identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset], separators=(",", ":"))
+    identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset, *([request] if request else [])], separators=(",", ":"))
     spec_id = "ms-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
     checks, plots = assumption_suite(rows, target, list(features), order)
     spec = {"spec": spec_id, "object_type": object_type, "target": target, "features": ",".join(features),
             "order_field": order, "dataset_revision": dataset, "rows": int(len(rows)), "rows_used": int(plots["n"]),
-            "method": environment(), "summary": summary(checks)}
+            "method": environment(), "summary": summary(checks), "request": request}
     result = RegressionChecks(spec, checks, plots)
     # An absent value (no order field, no p-value) is recorded as null: the properties are nullable.
-    result.receipts.append(cell.call("stats.modelspec.record", spec, spec_id)["receipt"]["receiptHash"])
+    action = "stats.modelspec.record_for_request" if request else "stats.modelspec.record"
+    result.receipts.append(cell.call(action, spec, spec_id)["receipt"]["receiptHash"])
     for index, check in enumerate(checks):
         values = {"check": f"{spec_id}-{index:02d}", "spec": spec_id, "assumption": check.assumption, "test": check.test,
                   "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": check.p_value,

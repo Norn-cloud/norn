@@ -32,9 +32,7 @@ def present(value) -> str | None:
 def report(cell: Cell, request: dict, status: str, spec: str | None = None, error: str | None = None) -> None:
     values = {field: str(request[field]) for field in FIELDS} | {
         "order_field": present(request.get("order_field")), "status": status, "spec": spec, "error": error[:2000] if error else None}
-    # Done goes through complete, which links the request to its spec; running and failed through finish.
-    action = "stats.checkrequest.complete" if status == "done" else "stats.checkrequest.finish"
-    cell.call(action, values, f"{request['request']}-{status}")
+    cell.call("stats.checkrequest.finish", values, f"{request['request']}-{status}")
 
 
 def run(cell: Cell, request: dict) -> str:
@@ -42,7 +40,7 @@ def run(cell: Cell, request: dict) -> str:
     try:
         features = [name for name in str(request["features"]).split(",") if name]
         result = check_regression(str(request["object_type"]), str(request["target"]), features, cell=cell,
-                                  order=present(request.get("order_field")))
+                                  order=present(request.get("order_field")), request=str(request["request"]))
     except Exception as error:  # the reason goes to the request, where Studio shows it
         report(cell, request, "failed", error=f"{type(error).__name__}: {error}")
         return "failed"
