@@ -602,7 +602,7 @@ pub enum WidgetMachineCall {
     Action { binding_id: String },
     /// Read the declared data binding.
     Read { binding_id: String },
-    /// Call a host operation by its OpenAPI operation id.
+    /// Call a host operation by its `OpenAPI` operation id.
     Operation { operation_id: String },
 }
 

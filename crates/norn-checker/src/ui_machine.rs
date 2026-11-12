@@ -209,10 +209,10 @@ fn category_name(category: WidgetRefusalCategory) -> &'static str {
     }
 }
 
-fn show_outcome((outcome, category): &OutcomeValue) -> String {
+fn show_outcome((outcome, category): OutcomeValue) -> String {
     match category {
-        Some(category) => format!("{}:{}", outcome_name(*outcome), category_name(*category)),
-        None => outcome_name(*outcome).to_owned(),
+        Some(category) => format!("{}:{}", outcome_name(outcome), category_name(category)),
+        None => outcome_name(outcome).to_owned(),
     }
 }
 
@@ -926,7 +926,7 @@ impl<'m> MachineChecker<'m> {
                         format!(
                             "state `{from}` has {} unguarded transitions on outcome `{}`",
                             indexes.len(),
-                            show_outcome(value)
+                            show_outcome(*value)
                         ),
                     );
                 }
@@ -945,7 +945,7 @@ impl<'m> MachineChecker<'m> {
             let missing: Vec<String> = possible_outcomes(call, facts.cancellable.contains(id))
                 .iter()
                 .filter(|value| have.is_none_or(|have| !have.contains_key(*value)))
-                .map(show_outcome)
+                .map(|value| show_outcome(*value))
                 .collect();
             if !missing.is_empty() {
                 self.push(
