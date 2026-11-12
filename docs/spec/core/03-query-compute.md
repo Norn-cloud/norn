@@ -74,8 +74,9 @@ are its unit (canon's quantities take theirs from `unit` or, for money,
 `currency`). It is declared inline or at a `ref` use site, under the same
 chain rule as use-site additivity. A decimal declares at most one of a static
 `unit`, `currencySource`, `perUnit` or `unitSource`. Each source must be
-another stored property of the same object type whose values are codes (text,
-enum or a registry code type). A use site never contradicts the source the
+another stored property of the same object type whose values are codes: text
+or enum, or a type whose kind is judged where it is declared (a registry code
+type). A use site never contradicts the source the
 referenced type declares. Against a requirement or overridden property
 declared as a `ref`, a member keeps the declared source and may add one where
 none is declared. Any violation refuses

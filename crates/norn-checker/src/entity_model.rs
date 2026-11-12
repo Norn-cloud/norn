@@ -1719,8 +1719,9 @@ impl<'a> Checker<'a, '_> {
     /// Id grammar, duplicates, types, overrides, and member namespaces of the
     /// properties a type declares.
     /// METRIC-UNIT-PARTITION-1: each unit source names another stored
-    /// property of this type whose values are unit or currency codes (text,
-    /// enum or a registry code type).
+    /// property of this type whose values are unit or currency codes. A
+    /// source whose kind is not known here (a registry type, or a ref
+    /// resolved by another layer) is judged where its type is declared.
     fn check_unit_sources(&mut self, base: &[&str], def: &'a ObjectTypeDef, table: &Table<'a>) {
         for (position, property) in def.properties.iter().enumerate() {
             let Some(member) = table.get(&property.id) else {
@@ -1734,6 +1735,7 @@ impl<'a> Checker<'a, '_> {
                             || !matches!(
                                 source.ty.resolution,
                                 TypeResolution::Registry
+                                    | TypeResolution::Unresolved { .. }
                                     | TypeResolution::Base(
                                         PropertyType::Text { .. } | PropertyType::Enum { .. }
                                     )
@@ -1745,7 +1747,7 @@ impl<'a> Checker<'a, '_> {
                 self.out.push(error(
                     crate::property_types::codes::INVALID_UNIT_SOURCE,
                     format!(
-                        "property {:?} takes its unit from {:?}, which is not another stored text, enum or code property of {:?}",
+                        "property {:?} takes its unit from {:?}, which is not another stored code property (text, enum or a code type) of {:?}",
                         property.id.as_str(),
                         id.as_str(),
                         def.name.as_str()
