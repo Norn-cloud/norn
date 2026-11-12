@@ -28,7 +28,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::actions::{ActionQuery, ActionReceipt, call_action, decode_action_request};
+use crate::actions::{
+    ActionAnswer, ActionQuery, ActionReceipt, call_action, decode_action_request,
+};
 use crate::authz::{
     AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest,
     RefusalDetailRequest, read_denied,
@@ -407,7 +409,7 @@ fn correct(
         version: None,
     };
     let request = decode_action_request(body)?;
-    call_action(
+    match call_action(
         host,
         &query,
         Some(actor),
@@ -415,7 +417,10 @@ fn correct(
         &request,
         &Disclosure,
         LogicalTime::from_millis(1_800_000_000_000),
-    )
+    )? {
+        ActionAnswer::Receipt(receipt) => Ok(receipt),
+        ActionAnswer::Pending(_) => Err(Refusal::host("no approval gates the correction")),
+    }
 }
 
 /// A stored value as text. Decimals are stored by value (`72.00` is `72`);

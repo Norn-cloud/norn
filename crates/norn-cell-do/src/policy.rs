@@ -540,6 +540,13 @@ impl Authorizer for ReadPolicy {
         }
     }
 
+    fn verified_principal(&self, actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
+        let caller = self.caller.current();
+        caller
+            .filter(|caller| caller.subject_id == actor)
+            .map(crate::runs::principal_of)
+    }
+
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
             && request.access.action_id == READ_ACTION

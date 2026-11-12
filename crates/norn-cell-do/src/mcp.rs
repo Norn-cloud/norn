@@ -831,7 +831,9 @@ impl<E: SqlEngine> Backend for Loopback<'_, E> {
         let value = RuntimeValue::from_json_text(&response.body).map_err(Refusal::host)?;
         Ok(CallOutput {
             value,
-            is_error: response.status != StatusCode::OK.as_u16(),
+            // A route's success is any 2xx: a call an approval holds
+            // answers 202 (APPROVAL-1).
+            is_error: !(200..300).contains(&response.status),
         })
     }
 }
