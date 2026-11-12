@@ -51,6 +51,9 @@
         {
           "id": "quantity",
           "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
             "kind": "ref",
             "name": "core.quantity"
           }
@@ -118,6 +121,9 @@
           },
           "id": "stock_cost",
           "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
             "currencySource": {
               "links": [],
               "property": "cost_currency"
