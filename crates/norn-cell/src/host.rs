@@ -732,7 +732,7 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
             .map(FactVersion)
     }
 
-    fn object_values(&self, key: &FactKey) -> Result<Option<norn_kernel::JsonObject>, CellError> {
+    fn object_values(&self, key: &FactKey) -> Result<Option<norn_ir::RuntimeObject>, CellError> {
         Ok(self
             .0
             .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?

@@ -638,7 +638,7 @@ fn check_link_values<E, C, T, V: CommitView + ?Sized>(
 }
 
 /// LAW-LINK-1 bound: most subjects one written target re-checks in a commit.
-pub const MAX_LINK_LAW_SUBJECTS: usize = 4096;
+pub(crate) const MAX_LINK_LAW_SUBJECTS: usize = 4096;
 
 /// The live links touching `object` once the commit applies.
 fn links_after_commit<E, C, T, V: CommitView + ?Sized>(
@@ -695,7 +695,7 @@ fn values_after_commit<E, C, T, V: CommitView + ?Sized>(
 
 /// LAW-LINK-1: a subject's link targets as the commit leaves them, read
 /// through the host's view.
-pub struct CommitLinks<'r, 'a, E, C, T, V: CommitView + ?Sized> {
+pub(crate) struct CommitLinks<'r, 'a, E, C, T, V: CommitView + ?Sized> {
     commit: &'r CellCommit<E, C, T>,
     model: CommitModel<'r, 'a>,
     view: &'r V,
@@ -706,7 +706,7 @@ pub struct CommitLinks<'r, 'a, E, C, T, V: CommitView + ?Sized> {
 impl<'r, 'a, E, C, T, V: CommitView + ?Sized> CommitLinks<'r, 'a, E, C, T, V> {
     /// The links of `subject` once `commit` applies over `view`.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         commit: &'r CellCommit<E, C, T>,
         model: CommitModel<'r, 'a>,
         view: &'r V,
@@ -722,7 +722,7 @@ impl<'r, 'a, E, C, T, V: CommitView + ?Sized> CommitLinks<'r, 'a, E, C, T, V> {
     }
 
     /// The host failure a read hit, if any; the caller reports it as such.
-    pub fn take_host_error(&mut self) -> Option<V::Error> {
+    pub(crate) fn take_host_error(&mut self) -> Option<V::Error> {
         self.host.take()
     }
 }
