@@ -320,12 +320,14 @@ known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
 # Warm nextest runtimes and phase seconds: Boat run 41541177097;
-# heavy-3 and integration: repaired Boat run 41542781995.
+# heavy-3 and integration: repaired Boat run 41542781995. `phase/features` adds the
+# DuckDB backend's cold bundled C++ build (`cargo check -p norn-cell --features duckdb`,
+# measured on a default Boat VM, #1206): it is not cached, so it is charged in full.
 weights = {
     "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 89,
     "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
     "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
-    "phase/doctest": 6, "phase/features": 239, "phase/wasm": 97,
+    "phase/doctest": 6, "phase/features": 510, "phase/wasm": 97,
     "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
     "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
     # Estimate until the first Studio browser rows run in CI (#1113).
