@@ -59,3 +59,20 @@ export function percent(text: string, digits = 2): string {
   const negative = sign === "-" && rounded !== 0n
   return `${negative ? "-" : ""}${integer}${digits > 0 ? `.${decimals}` : ""}%`
 }
+
+/**
+ * How far the last sync read, in words: the connector's watermark is either one mark or, per kind
+ * of record, the source's own modified-since version; the latest of those is shown, with how many
+ * kinds it covers. The full mark stays in the cell's text, shown on hover.
+ */
+export function watermarkText(watermark: string | null | undefined): string {
+  if (!watermark) return "—"
+  let marks: unknown
+  try { marks = JSON.parse(watermark) } catch { return watermark }
+  if (marks === null || typeof marks !== "object" || Array.isArray(marks)) return watermark
+  const versions = Object.values(marks).flatMap((mark) => typeof (mark as { version?: unknown } | null)?.version === "string" ? [(mark as { version: string }).version] : [])
+  const kinds = Object.keys(marks).length
+  if (versions.length === 0) return `${kinds} kind${kinds === 1 ? "" : "s"} of record`
+  const latest = versions.reduce((a, b) => (b > a ? b : a))
+  return `${latest.slice(0, 16)} · ${kinds} kind${kinds === 1 ? "" : "s"} of record`
+}

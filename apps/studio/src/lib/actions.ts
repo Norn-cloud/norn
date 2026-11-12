@@ -24,6 +24,8 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
  *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
  *            carries none either.
+ *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
+ *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
  *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
@@ -80,8 +82,12 @@ export type CatalogRead =
   | { readonly kind: "unavailable" }
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string }
 
+/** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
+export interface PendingDecision { readonly id: string; readonly expiresAtMs: number }
+
 export type CallResult =
   | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
+  | { readonly kind: "pending"; readonly decision: PendingDecision }
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
   | { readonly kind: "no-cell" }
   | { readonly kind: "unavailable" }
@@ -141,6 +147,11 @@ export async function callAction(actionId: string, input: string, idempotencyKey
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
   })
   const text = await response.text()
+  if (response.status === 202) {
+    const pending = JSON.parse(text) as { readonly outcome?: unknown; readonly decision?: PendingDecision }
+    if (pending.outcome === "pending" && pending.decision !== undefined) return { kind: "pending", decision: pending.decision }
+    throw new CellUnavailable(response.status)
+  }
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }

@@ -1205,6 +1205,39 @@
     "metric.validation.unsupported_semantics": {
       "message": "Calculation requires semantics outside the admitted checker profile."
     },
+    "model.admission.feature_kind": {
+      "message": "a model's feature or target property has a kind a model cannot read"
+    },
+    "model.admission.unknown_feature": {
+      "message": "a model's feature or target is not a property of its input object type"
+    },
+    "model.admission.unknown_input": {
+      "message": "a model's input object type is not declared by the artifact set or the installed base"
+    },
+    "model.validation.duplicate_id": {
+      "message": "a model lists a feature, output or contract id twice"
+    },
+    "model.validation.invalid_contract": {
+      "message": "a model contract names no output or does not apply to its output's type"
+    },
+    "model.validation.invalid_id": {
+      "message": "a model, input, feature, target, output or contract id is malformed"
+    },
+    "model.validation.invalid_output": {
+      "message": "a model output is not an inline text, integer, decimal, boolean or enum column"
+    },
+    "model.validation.invalid_payload": {
+      "message": "model payload does not match its strict root"
+    },
+    "model.validation.target_in_features": {
+      "message": "a model's target is also one of its features"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "a contract_checked model declares no contract"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "a model's trust is not opaque or contract_checked"
+    },
     "object_type.validation.additivity_not_refined": {
       "message": "property {$property} declares an additivity other than the one {$owner} requires; a member may add additivity where the referenced type declares none, never change a declared one"
     },

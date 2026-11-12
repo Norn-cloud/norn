@@ -263,7 +263,7 @@ fn temporal_histogram(sorted: &[String]) -> NornHistogram {
     }
 }
 
-fn kind_of(property: Option<&PropertyType>) -> &'static str {
+pub(crate) fn kind_of(property: Option<&PropertyType>) -> &'static str {
     match property {
         Some(PropertyType::Integer { .. } | PropertyType::Decimal { .. }) => "numeric",
         Some(PropertyType::Timestamp { .. } | PropertyType::Date { .. }) => "temporal",

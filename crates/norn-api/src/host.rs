@@ -145,14 +145,18 @@ impl<E: SqlEngine> DevHost<E> {
         Ok(CellGuard(guard))
     }
 
-    /// Capture source rows and map them through the cell's own mapping path
-    /// (`inject_mapping_bundle`, then `process_mapping_bundle`), under the
-    /// definition epoch. The trusted host's sync calls this; no caller
+    /// Capture source rows and map them through the cell's own mapping path,
+    /// under the definition epoch, in OBS-PAGE-1 pages: consecutive rows with
+    /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
+    /// split at [`PAGE_ROWS`] and before a repeated source record, are
+    /// captured by `inject_mapping_page` and committed by
+    /// `process_mapping_page`. The trusted host's sync calls this; no caller
     /// supplies facts, and a refused row stays in the inbox as quarantined
     /// evidence with its reasons. Rows already captured are captured once.
+    /// Returns one outcome per row.
     /// # Errors
-    /// A row the cell cannot capture (framing or pins it refuses), or a store
-    /// failure; rows before it stay captured and processed.
+    /// A page the cell cannot capture (framing or pins it refuses), or a
+    /// store failure; pages before it stay captured and processed.
     pub fn ingest(
         &self,
         rows: &[(
@@ -172,30 +176,15 @@ impl<E: SqlEngine> DevHost<E> {
             E,
         > = cell.into_profile();
         let mut out = Vec::with_capacity(rows.len());
-        let mut failure = None;
-        for (raw, input) in rows {
-            let step = observing
-                .inject_mapping_bundle(raw, input)
-                .and_then(|(id, _new)| {
-                    let outcome = observing.process_mapping_outcome(&id)?;
-                    Ok(Ingested {
-                        observation_id: id,
-                        outcome,
-                    })
-                });
-            match step {
-                Ok(ingested) => out.push(ingested),
-                Err(error) => {
-                    failure = Some(error);
-                    break;
-                }
+        let mut result = Ok(());
+        for (input, page) in pages(rows) {
+            result = ingest_page(&mut observing, &page, input, &mut out);
+            if result.is_err() {
+                break;
             }
         }
         *slot = Some(observing.into_profile());
-        match failure {
-            Some(error) => Err(Refusal::host(error)),
-            None => Ok(out),
-        }
+        result.map(|()| out).map_err(Refusal::host)
     }
 
     /// One artifact of the active definitions, as its JSON envelope. For the
@@ -284,6 +273,24 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        // DEFS-REOPEN-1: a revision installs only under the model a restarted
+        // host rebuilds from its retained set (HOST-REOPEN-1); anything else
+        // would commit a layout the next open refuses. Checked before
+        // anything is written.
+        let reopened = crate::kernel_set::retained_artifacts(&input.canonical_set)
+            .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
+            .map_err(Refusal::host)?;
+        if reopened.model_hash() != candidate_model.model_hash()
+            || reopened.ddl_hash() != candidate_model.ddl_hash()
+        {
+            return Err(Refusal::host(format!(
+                "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
+                candidate_model.model_hash(),
+                reopened.model_hash(),
+                candidate_model.ddl_hash(),
+                reopened.ddl_hash()
+            )));
+        }
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
         let installed = cell
@@ -317,5 +324,156 @@ impl<E: SqlEngine> DevHost<E> {
         let types: Vec<norn_ir::ObjectTypeDef> =
             cell.store().model().object_types().cloned().collect();
         self.authorizer.model_changed(&types);
+    }
+}
+
+/// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
+pub const PAGE_ROWS: usize = 500;
+
+/// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
+/// [`PAGE_ROWS`] and before a source record the page already carries.
+fn pages(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> Vec<(
+    &norn_cell::mapping_bundle::MappingInput,
+    Vec<Observed<RuntimeValue>>,
+)> {
+    let mut pages: Vec<(
+        &norn_cell::mapping_bundle::MappingInput,
+        Vec<Observed<RuntimeValue>>,
+    )> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (raw, input) in rows {
+        let identity = raw.provenance.source_id.clone();
+        let split = pages.last().is_none_or(|(current, page)| {
+            *current != input || page.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+        });
+        if split {
+            seen = std::collections::BTreeSet::from([identity]);
+            pages.push((input, Vec::new()));
+        }
+        if let Some((_, page)) = pages.last_mut() {
+            page.push(raw.clone());
+        }
+    }
+    pages
+}
+
+/// Capture and commit one page, one outcome per row into `out`. A page over
+/// the cell's byte bound is halved. A row the page did not report (captured
+/// as a finding, or a page an earlier sync consumed) is processed on its own,
+/// as one-by-one delivery would.
+fn ingest_page<E: SqlEngine>(
+    cell: &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
+    page: &[Observed<RuntimeValue>],
+    input: &norn_cell::mapping_bundle::MappingInput,
+    out: &mut Vec<Ingested>,
+) -> Result<(), CellError> {
+    let captured = match cell.inject_mapping_page(page, input) {
+        Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
+            let (first, second) = page.split_at(page.len() / 2);
+            ingest_page(cell, first, input, out)?;
+            return ingest_page(cell, second, input, out);
+        }
+        other => other?,
+    };
+    // Each member this page consumed has its outcome; any other record (a
+    // conflict or identity finding, or a row consumed before) answers as it
+    // does one by one. One outcome per row, in row order.
+    let mut outcomes = std::collections::BTreeMap::new();
+    for (id, _new) in &captured.pages {
+        outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
+    }
+    for id in captured.records {
+        let outcome = match outcomes.remove(&id) {
+            Some(outcome) => outcome,
+            None => cell.process_mapping_outcome(&id)?,
+        };
+        out.push(Ingested {
+            observation_id: id,
+            outcome,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "page framing scenarios"
+)]
+mod page_tests {
+    use super::*;
+    use crate::pull::{PullProfile, Row, observation};
+    use norn_cell::mapping_bundle::MappingInput;
+
+    fn row(id: &str) -> Observed<RuntimeValue> {
+        let profile = PullProfile {
+            source: "erpnext".into(),
+            pipeline: "norn-pull/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let row = Row {
+            dataset: "items".into(),
+            source_id: id.into(),
+            version: "1".into(),
+            payload: RuntimeValue::Object(std::collections::BTreeMap::new()),
+        };
+        observation(&profile, &row, 0).expect("sealed")
+    }
+
+    fn input(dataset: &str) -> MappingInput {
+        MappingInput {
+            mapping: "erpnext.sandbox.mapping".into(),
+            dataset: dataset.into(),
+            connector_instance: "sandbox".into(),
+            partition: dataset.into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T00:00:00.000Z".into()),
+        }
+    }
+
+    /// OBS-PAGE-1 framing: a page is one mapping input, at most `PAGE_ROWS`
+    /// rows, and never carries one source record twice.
+    #[test]
+    fn pages_split_at_the_bound_a_new_input_and_a_repeated_record() {
+        let (items, bins) = (input("items"), input("bins"));
+        let many: Vec<_> = (0..1_200)
+            .map(|n| (row(&format!("r{n}")), items.clone()))
+            .collect();
+        let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
+        assert_eq!(sizes, [500, 500, 200]);
+
+        let mixed = vec![
+            (row("x"), items.clone()),
+            (row("y"), items.clone()),
+            (row("x"), items.clone()),
+            (row("z"), bins),
+            (row("z"), items),
+        ];
+        let framed: Vec<(String, Vec<String>)> = pages(&mixed)
+            .into_iter()
+            .map(|(input, page)| {
+                (
+                    input.dataset.clone(),
+                    page.iter()
+                        .map(|raw| raw.provenance.source_id.clone())
+                        .collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            framed,
+            [
+                ("items".to_owned(), vec!["x".to_owned(), "y".to_owned()]),
+                ("items".to_owned(), vec!["x".to_owned()]),
+                ("bins".to_owned(), vec!["z".to_owned()]),
+                ("items".to_owned(), vec!["z".to_owned()]),
+            ]
+        );
     }
 }
