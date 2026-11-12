@@ -608,6 +608,7 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let request = LoadRequest {
         type_name: "Sales".into(),
         columns: vec![],
+        sha256: None,
     };
     let generated =
         generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").expect("generated");

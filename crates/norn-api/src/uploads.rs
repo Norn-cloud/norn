@@ -1029,6 +1029,7 @@ mod tests {
             &LoadRequest {
                 type_name: "Points".into(),
                 columns: vec![],
+                sha256: None,
             },
             "s3://uploads/k.csv",
             &sha256_hex(b"x,y\n1,2.5\n"),
@@ -1047,7 +1048,8 @@ mod tests {
                 &table,
                 &LoadRequest {
                     type_name: "lower".into(),
-                    columns: vec![]
+                    columns: vec![],
+                    sha256: None,
                 },
                 "u",
                 "h",

@@ -162,7 +162,7 @@ fn unseal<'a>(
         _ => return None,
     };
     let digits: Vec<u32> = chars.map(|c| c.to_digit(16)).collect::<Option<_>>()?;
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return None;
     }
     let bytes: Vec<u8> = digits
@@ -276,31 +276,30 @@ impl Connect {
     /// serving `scope_key` writes: as remembered, or, after a restart, rebuilt
     /// from the id itself once its seal checks (UPLOAD-ID-1).
     fn resolve(&self, id: &str, scope_key: &str) -> Option<Upload> {
-        let upload = match self.uploads.get(id) {
-            Some(upload) => upload.clone(),
-            None => {
-                let (store, key) = unseal(id, |store| self.store(store))?;
-                let name = key.rsplit('/').next().unwrap_or_default();
-                // A person's upload is `<nonce>-<name>`; the nonce is the cell's.
-                let file_name = match name.split_once('-') {
-                    Some((nonce, rest))
-                        if key.starts_with("uploads/")
-                            && nonce.len() == 20
-                            && nonce.chars().all(|c| c.is_ascii_hexdigit()) =>
-                    {
-                        rest
-                    }
-                    _ => name,
-                };
-                Upload {
-                    store,
-                    file_name: file_name.to_owned(),
-                    content_type: String::new(),
-                    uri: self.store(store)?.uri(&key),
-                    key,
-                    completed: None,
-                    columns: Vec::new(),
+        let upload = if let Some(upload) = self.uploads.get(id) {
+            upload.clone()
+        } else {
+            let (store, key) = unseal(id, |store| self.store(store))?;
+            let name = key.rsplit('/').next().unwrap_or_default();
+            // A person's upload is `<nonce>-<name>`; the nonce is the cell's.
+            let file_name = match name.split_once('-') {
+                Some((nonce, rest))
+                    if key.starts_with("uploads/")
+                        && nonce.len() == 20
+                        && nonce.chars().all(|c| c.is_ascii_hexdigit()) =>
+                {
+                    rest
                 }
+                _ => name,
+            };
+            Upload {
+                store,
+                file_name: file_name.to_owned(),
+                content_type: String::new(),
+                uri: self.store(store)?.uri(&key),
+                key,
+                completed: None,
+                columns: Vec::new(),
             }
         };
         owns(&upload.key, scope_key).then_some(upload)
