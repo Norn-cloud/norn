@@ -540,8 +540,17 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     let laws = engine
         .load(&lawful, file.path())
         .expect("loaded under laws");
+    // The first reason in column order: `input` is checked before `occurred_at`.
     assert_eq!(laws.rows, 1, "{laws:?}");
-    assert_eq!(laws.reasons.get("bulk.below_min"), Some(&1), "{laws:?}");
+    assert_eq!(
+        laws.reasons,
+        BTreeMap::from([
+            ("bulk.below_min".into(), 3),
+            ("bulk.not_decimal".into(), 1),
+            ("bulk.required".into(), 1),
+            ("bulk.scale_exceeded".into(), 1),
+        ])
+    );
     let mut unchecked = load_request(&plan, "load-unchecked", sha256.clone());
     unchecked.table.columns[0].laws = vec![norn_cell::analytics::PointLaw::Unchecked];
     assert_eq!(

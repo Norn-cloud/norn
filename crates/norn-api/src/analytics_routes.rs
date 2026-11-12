@@ -645,7 +645,9 @@ fn property_profile(
     column: Option<&norn_cell::analytics::ColumnProfile>,
     rows: u64,
 ) -> Result<crate::object_profile::NornPropertyProfile, Refusal> {
-    use crate::object_profile::{NornBin, NornHistogram, NornPropertyProfile, NornQuantile, kind_of};
+    use crate::object_profile::{
+        NornBin, NornHistogram, NornPropertyProfile, NornQuantile, kind_of,
+    };
     use norn_cell::analytics::{PROFILE_QUANTILES, bin_ranks, nearest_rank, runtime_value};
     let kind = kind_of(declared);
     let mut out = NornPropertyProfile {

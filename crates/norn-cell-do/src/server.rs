@@ -1140,7 +1140,9 @@ pub fn analytics<E: SqlEngine>(
     let result = match (request.method, export, profile, uploads) {
         ("GET", None, Some(kind), _) => engine_profile(host, actor, transport, kind, request.query),
         ("GET", Some(kind), None, _) => engine_export(host, actor, transport, kind, request.query),
-        ("POST", None, None, Some(uploads)) => engine_load(host, actor, transport, uploads, request),
+        ("POST", None, None, Some(uploads)) => {
+            engine_load(host, actor, transport, uploads, request)
+        }
         ("POST", None, None, None) => Err(Refusal::new(
             StatusCode::NOT_IMPLEMENTED,
             "dataset.uploads_unconfigured",
