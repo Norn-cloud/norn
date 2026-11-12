@@ -1,11 +1,11 @@
-// The client side of live reads (UI-LIVE-1, `norn.live/1`): one socket per page, one wire
+// The client side of live reads (UI-LIVE-1, `norn.live.v1`): one socket per page, one wire
 // subscription per path however many views listen, and a cache that holds only what the cell last
 // sent for each path. It never polls and never computes data: a view shows the cell's answer or
 // says it has none yet. An expired token closes the socket with 4401 and the client reconnects at
 // once (the host mints a fresh token per upgrade); any other loss reconnects with backoff, and
 // after `maxFailures` failed opens the client reports `unavailable` so views can say so.
 
-export const LIVE_PROTOCOL = "norn.live/1"
+export const LIVE_PROTOCOL = "norn.live.v1"
 
 export interface LiveSnapshot {
   readonly status: number

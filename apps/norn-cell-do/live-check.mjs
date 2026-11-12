@@ -21,7 +21,7 @@ function question() {
 
 function open(authorization) {
   const url = `${base.replace(/^http/, "ws")}/v1/subscribe?${SCOPE}`
-  const ws = new WebSocket(url, { headers: authorization ? { authorization } : {}, protocols: ["norn.live/1"] })
+  const ws = new WebSocket(url, { headers: authorization ? { authorization } : {}, protocols: ["norn.live.v1"] })
   const inbox = []
   const waiters = []
   ws.addEventListener("message", (event) => {

@@ -3,7 +3,7 @@
 The Workers/Durable Objects host: one Norn tenant cell per Durable Object
 (#728, #819). It runs unchanged on self-hosted celld, workerd and Cloudflare.
 
-- `subscribe.mjs`: live reads (`norn.live/1`). A hibernating WebSocket on
+- `subscribe.mjs`: live reads (`norn.live.v1`). A hibernating WebSocket on
   `/v1/subscribe` names GET routes; after every commit the cell answers each
   one again as its subscriber and sends only changed answers. The cell's own
   handler and authorization decide every answer; an expired token closes the

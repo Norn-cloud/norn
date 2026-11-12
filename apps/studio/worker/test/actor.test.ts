@@ -118,7 +118,7 @@ test("a cookie-authenticated write from anywhere but the Studio origin never rea
 test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
   const { env, seen } = stage(() => new Response(null, { status: 204 }))
   const cookie = await signUp(env, "live@example.com")
-  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live/1" }
+  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
   // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
     const headers: Record<string, string> = { ...handshake }

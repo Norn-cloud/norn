@@ -1,4 +1,4 @@
-// Live reads over one hibernating WebSocket per client (UI-LIVE-1, protocol `norn.live/1`).
+// Live reads over one hibernating WebSocket per client (UI-LIVE-1, protocol `norn.live.v1`).
 //
 // A subscription names a GET route of this cell. The cell answers it the way it answers that GET:
 // the same Rust handler, the same principal, the same authorization, run again as the subscriber
@@ -12,7 +12,7 @@
 //                {"type":"refused","id","code","message"} for a subscription the protocol refuses,
 //                then close 4401 when the token no longer verifies.
 
-export const PROTOCOL = "norn.live/1";
+export const PROTOCOL = "norn.live.v1";
 /** Subscriptions per socket. The attachment (scope, token, subscriptions) must fit 2 KiB. */
 export const MAX_SUBSCRIPTIONS = 8;
 /** Sockets per cell object. */
