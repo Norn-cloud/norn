@@ -230,8 +230,11 @@ pub use theorem_input::{
     TheoremStateModel, TheoremVariable, TheoremVariableDomain, TheoremVariableType,
 };
 pub use view::{
-    CalcExpr, PrimitiveBasisClass, TemporalScope, TemporalScopeMode, ViewInputKind, ViewInputRef,
-    ViewIrPayload, ViewMaintenance,
+    AggregateFn, AggregateNode, CalcExpr, DedupeKeep, DedupeNode, FilterNode, GroupKey, JoinKind,
+    JoinNode, JoinOn, KeyJoin, LinkJoin, Measure, OrderKey, PrimitiveBasisClass, ProjectColumn,
+    ProjectNode, RelationalPlan, ScanNode, SortDirection, TemporalScope, TemporalScopeMode,
+    UnionNode, ViewInputKind, ViewInputRef, ViewIrPayload, ViewMaintenance, ViewNode, WindowColumn,
+    WindowFn, WindowNode,
 };
 pub use widget::{
     WidgetActionBinding, WidgetDataDependency, WidgetPermission, WidgetProjectionHints,

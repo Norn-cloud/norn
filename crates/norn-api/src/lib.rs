@@ -64,6 +64,8 @@ pub mod run_routes;
 pub mod sources;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
+/// Typed transform reads (`ViewIR` v1): rows, row lineage and the admitted plan.
+pub mod transform_routes;
 /// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
 pub mod uploads;
 

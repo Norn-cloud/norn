@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.union_shape",
+  "message": "a relational view unions inputs whose columns, types, contracts or grain differ",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
