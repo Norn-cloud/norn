@@ -337,7 +337,17 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
         return out;
     }
     let net = net(machine);
+    // D84: a chart that declares no LIFE-SOUND member keeps its admission output except for
+    // refuted findings; Unknown and a missing ending are reported once the chart opts in.
+    let opted_in = !machine.endings.is_empty()
+        || !machine.events.is_empty()
+        || machine.transitions.iter().any(|edge| {
+            edge.trigger.is_some() || edge.mode.is_some() || edge.compensated_by.is_some()
+        });
     if net.endings.iter().all(Option::is_none) {
+        if !opted_in {
+            return out;
+        }
         out.push(Finding {
             info: true,
             ..finding(
@@ -372,6 +382,7 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
                     &[],
                 ));
             }
+            Completion::Unknown if !opted_in => {}
             Completion::Unknown => out.push(Finding {
                 info: true,
                 ..finding(
@@ -673,7 +684,7 @@ mod tests {
         let mut chart = order(&json!({}));
         chart["transitions"][1]["guards"] = json!(["self.total == 0"]);
         chart["transitions"][0]["guards"] = json!(["self.total > 0"]);
-        let findings = check_machine(&Machine::declared(&lifecycle(chart), ORDER.to_vec()));
+        let findings = check_machine(&Machine::declared(&lifecycle(chart.clone()), ORDER.to_vec()));
         assert_eq!(
             findings
                 .iter()
@@ -681,6 +692,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(codes::COMPLETION_UNKNOWN, true)]
         );
+        // Without any LIFE-SOUND member the Unknown is left to the bounded graph.
+        let mut legacy = chart;
+        legacy["endings"] = json!([]);
+        if let Some(ship) = legacy["transitions"][2].as_object_mut() {
+            ship.remove("mode");
+        }
+        assert!(check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())).is_empty());
     }
 
     #[test]
@@ -863,10 +881,20 @@ mod tests {
             ]
         }));
         let states = ["active", "building"];
-        let found = check_machine(&Machine::declared(&chart, states.to_vec()));
+        // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
+        assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
+        let mut opted = chart.clone();
+        opted.events = vec![norn_ir::LifecycleEvent {
+            id: "audit".into(),
+            ignored_in: vec![norn_ir::LifecycleIgnore {
+                states: vec!["active".into(), "building".into()],
+                reason: "read only".into(),
+            }],
+        }];
+        let found = check_machine(&Machine::declared(&opted, states.to_vec()));
         assert_eq!(found.len(), 1);
         assert!(found[0].info && found[0].code == codes::NO_ENDING);
-        let mut resting = chart;
+        let mut resting = opted;
         resting.endings = vec![norn_ir::LifecycleEnding {
             state: "active".into(),
             outcome: LifecycleOutcome::Resting,

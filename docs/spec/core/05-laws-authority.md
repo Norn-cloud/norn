@@ -632,7 +632,11 @@ trigger, mode and compensation unless it states its own.
   A chart with no terminal and no resting state is
   `lifecycle.soundness.no_ending` (info): option to complete is vacuous, so a
   perpetual object declares its resting states. A state with no exit at all
-  stays `lifecycle.validation.dead_end_state`.
+  stays `lifecycle.validation.dead_end_state`. D84: the two infos are reported
+  once a chart declares any LIFE-SOUND member (an ending, an event, a trigger,
+  a mode or a compensation); a chart that declares none keeps its admission
+  output except for refuted findings, and its Unknowns are decided by the
+  bounded graph (LIFE-SOUND-4).
 - **LIFE-SOUND-2 (ending shape):** an ending names a state once; a final
   outcome is on a terminal state and `resting` on a non-terminal one
   (`lifecycle.soundness.invalid_ending`).
