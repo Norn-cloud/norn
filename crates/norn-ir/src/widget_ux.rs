@@ -238,6 +238,421 @@ pub struct WidgetPage {
     pub context_params: Vec<WidgetContextParam>,
     /// Root of the page component tree.
     pub root: WidgetNode,
+    /// What this page is in the UI ontology (UI-VIEW-1): a semantic view
+    /// kind bound to the domain concept it presents. Renderer-neutral.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetView")]
+    pub view: Option<WidgetView>,
+    /// Declared interaction statechart of this page (UI-MACHINE-1). The
+    /// renderer executes only this machine; the checker proves it has no
+    /// absorbing non-terminal state and that every pending state handles
+    /// every server outcome.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetMachine")]
+    pub machine: Option<WidgetMachine>,
+}
+
+/// A page's place in the UI ontology (UI-VIEW-1).
+///
+/// A view is a semantic, typed UI concept, never a visual one. Its four
+/// contracts are the page's typed data bindings (data), its `machine`
+/// (interaction), the `behaviors` on its nodes (accessibility), and the
+/// capability catalog derived by [`WidgetUx::renderer_capabilities`]
+/// (what a renderer must implement to draw it). Renderers are compile
+/// targets of this contract; swapping one never touches the page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetView {
+    /// Semantic kind of the view.
+    pub kind: WidgetViewKind,
+    /// The domain concept the view presents.
+    pub subject: WidgetViewSubject,
+}
+
+/// Closed semantic view kinds.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetViewKind {
+    /// Many objects of one type.
+    Collection,
+    /// One object.
+    Record,
+    /// Input to one action.
+    Form,
+    /// The answer to one question or transform.
+    Question,
+    /// A dashboard definition's tiles.
+    Dashboard,
+    /// One run of a flow, step by step.
+    Run,
+    /// Decisions waiting on the viewer.
+    DecisionInbox,
+    /// Where one object's values came from.
+    Lineage,
+}
+
+/// The domain concept a view presents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WidgetViewSubject {
+    /// An object type (entity artifact).
+    ObjectType { object: ArtifactRef },
+    /// An action artifact.
+    Action { action: ArtifactRef },
+    /// A retained question definition.
+    Question { definition_id: String },
+    /// A transform.
+    Transform { transform_id: String },
+    /// A retained dashboard definition.
+    Dashboard { definition_id: String },
+    /// A retained flow definition.
+    Flow { definition_id: String },
+    /// The viewer's decisions.
+    Decisions,
+}
+
+/// Accessibility behaviours a node requires, named as UI SDK's behaviour
+/// primitives (`@ui-sdk/core`). They say what the control must do for
+/// keyboard, focus and assistive technology, never how it looks.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetBehavior {
+    /// Focus is contained while open and restored on close.
+    FocusScope,
+    /// Arrow keys move focus among items; one tab stop.
+    RovingFocus,
+    /// Typing moves to the first matching item.
+    Typeahead,
+    /// Items can be selected and the selection is announced.
+    Selection,
+    /// Opens anchored to its invoker.
+    Popup,
+    /// Escape and outside press dismiss it.
+    Dismiss,
+    /// Items can be reordered or moved with pointer and keyboard.
+    DragAndDrop,
+    /// Changes are announced politely.
+    LiveRegion,
+}
+
+impl WidgetUx {
+    /// The renderer capability catalog this contract requires (UI-VIEW-1):
+    /// every view kind, component kind, behaviour, effect, event source and
+    /// outcome its pages use, as `<family>:<name>` strings. A renderer that
+    /// lacks one cannot draw the contract and must refuse it.
+    #[must_use]
+    pub fn renderer_capabilities(&self) -> std::collections::BTreeSet<String> {
+        fn name<T: Serialize>(value: &T) -> String {
+            match serde_json::to_value(value) {
+                Ok(serde_json::Value::String(name)) => name,
+                Ok(serde_json::Value::Object(object)) => object
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                _ => String::new(),
+            }
+        }
+        fn walk(node: &WidgetNode, out: &mut std::collections::BTreeSet<String>) {
+            out.insert(format!("component:{}", name(&node.component)));
+            for behavior in &node.behaviors {
+                out.insert(format!("behavior:{}", name(behavior)));
+            }
+            for child in &node.children {
+                walk(child, out);
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        for page in &self.pages {
+            walk(&page.root, &mut out);
+            if let Some(view) = &page.view {
+                out.insert(format!("view:{}", name(&view.kind)));
+            }
+            let Some(machine) = &page.machine else {
+                continue;
+            };
+            for event in &machine.events {
+                out.insert(format!("event:{}", name(&event.source)));
+                if let WidgetMachineEventSource::Outcome { outcome, .. } = &event.source {
+                    out.insert(format!("outcome:{}", name(outcome)));
+                }
+            }
+            for transition in &machine.transitions {
+                for effect in &transition.effects {
+                    match effect {
+                        WidgetMachineEffect::Start { call } => {
+                            out.insert(format!("effect:start:{}", name(call)));
+                        }
+                        other => {
+                            out.insert(format!("effect:{}", name(other)));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// A page's interaction statechart (UI-MACHINE-1).
+///
+/// Client state is the typed `fields` record, changed only by the `assign`
+/// of a transition that a declared event fires. Effects are closed: call a
+/// declared action binding, read a declared data binding, call a declared
+/// host operation, cancel the awaited call, or navigate. The machine grants
+/// no authority: the server decides every call and read it names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachine {
+    /// Version of the machine contract.
+    pub machine_version: IrVersion01,
+    /// State the page opens in; it must have the `idle` role.
+    pub initial_state_id: String,
+    /// Typed client-state fields.
+    pub fields: Vec<WidgetMachineField>,
+    /// Declared events and where each comes from.
+    pub events: Vec<WidgetMachineEvent>,
+    /// Declared states.
+    pub states: Vec<WidgetMachineState>,
+    /// Declared transitions.
+    pub transitions: Vec<WidgetMachineTransition>,
+}
+
+/// One typed client-state field, or one typed member of an event payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineField {
+    /// Stable field id, unique within its record.
+    pub field_id: String,
+    /// Scalar type.
+    #[serde(rename = "type")]
+    pub value_type: WidgetValueType,
+    /// Whether the value is always present (otherwise it may be null).
+    pub required: bool,
+    /// Initial value of a state field. Required fields need one; payload
+    /// members never carry one.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "JsonValue")]
+    pub initial: Option<JsonValue>,
+}
+
+/// One declared event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineEvent {
+    /// Stable event id.
+    pub event_id: String,
+    /// Where the event comes from.
+    pub source: WidgetMachineEventSource,
+    /// Typed payload members carried by a user or subscription event.
+    /// Outcome events carry the fixed payload of their outcome.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub payload: Vec<WidgetMachineField>,
+}
+
+/// Closed event sources. Every source is an input: a person, the server, a
+/// subscription, or a deadline the machine itself declared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WidgetMachineEventSource {
+    /// The page was opened by the host.
+    PageOpened,
+    /// A person used the control at `node_id` in this page's tree.
+    User { node_id: String },
+    /// The server answered the call or read the current state awaits.
+    Outcome {
+        outcome: WidgetCallOutcome,
+        /// For `refused` only: the refusal category matched. Omitted, it
+        /// matches every category.
+        #[serde(
+            default,
+            deserialize_with = "present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "WidgetRefusalCategory")]
+        category: Option<WidgetRefusalCategory>,
+    },
+    /// A subscribed data binding delivered a new snapshot.
+    Subscription { binding_id: String },
+    /// Fires `after_ms` after the source state of its transition is entered.
+    Timer { after_ms: WholeNumber },
+}
+
+/// Every way a call or read the page awaits can end.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetCallOutcome {
+    /// The server committed the call or answered the read.
+    Accepted,
+    /// The server refused with a coded refusal.
+    Refused,
+    /// The call waits for an approval decision (HTTP 202, APPROVAL-1).
+    PendingApproval,
+    /// The read's answer or snapshot moved under it (HTTP 409
+    /// `core.projection.answer_moved`, `object.snapshot_moved`).
+    AnswerMoved,
+    /// No answer arrived from the server (network failure, 5xx without a
+    /// coded refusal, route not served).
+    NetworkFailure,
+    /// The state's declared deadline passed first.
+    Timeout,
+    /// The page cancelled the call.
+    Cancelled,
+}
+
+/// Refusal categories, as the server's `norn/refusal@2` documents them.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetRefusalCategory {
+    /// The target is not visible to the caller.
+    Visibility,
+    /// The caller lacks permission.
+    Permission,
+    /// A precondition or law refused the call.
+    Precondition,
+    /// The call conflicts with current state.
+    Conflict,
+    /// The input is invalid.
+    Invalid,
+    /// A limit was reached.
+    Limit,
+    /// The server failed internally.
+    Internal,
+}
+
+/// The role of a state. Roles drive the checker's laws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetStateRole {
+    /// Waiting for a person or a subscription.
+    Idle,
+    /// Waiting for the server to answer the call or read in `awaits`.
+    Pending,
+    /// Showing a failure the person can recover from.
+    Error,
+    /// Done; the page has nothing left to do. No transition leaves it.
+    Terminal,
+}
+
+/// One declared state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineState {
+    /// Stable state id.
+    pub state_id: String,
+    /// Role of the state.
+    pub role: WidgetStateRole,
+    /// The call or read a `pending` state waits for.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetMachineCall")]
+    pub awaits: Option<WidgetMachineCall>,
+    /// Deadline of a `pending` state; when it passes the runtime cancels the
+    /// call and raises the `timeout` outcome.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WholeNumber")]
+    pub deadline_ms: Option<WholeNumber>,
+}
+
+/// A server call or read named by a pending state or an effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WidgetMachineCall {
+    /// Call the declared action binding.
+    Action { binding_id: String },
+    /// Read the declared data binding.
+    Read { binding_id: String },
+    /// Call a host operation by its OpenAPI operation id.
+    Operation { operation_id: String },
+}
+
+/// One declared transition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineTransition {
+    /// Stable transition id.
+    pub transition_id: String,
+    /// Source state.
+    pub from: String,
+    /// Triggering event.
+    pub on: String,
+    /// Target state.
+    pub target: String,
+    /// Boolean ZEN guard over `input.fields` and `input.event`. A guarded
+    /// transition refines; it never counts as covering an outcome.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ZenExpression")]
+    pub guard: Option<ZenExpression>,
+    /// New field values, each a ZEN expression over `input.fields` and
+    /// `input.event`, typed as the field.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub assign: BTreeMap<String, ZenExpression>,
+    /// Effects run when the transition fires, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<WidgetMachineEffect>,
+}
+
+/// Closed transition effects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WidgetMachineEffect {
+    /// Start the call or read; its outcome arrives as an `outcome` event.
+    Start { call: WidgetMachineCall },
+    /// Cancel the awaited call; its outcome arrives as `cancelled`.
+    Cancel,
+    /// Navigate to a declared navigation item.
+    Navigate { item_id: String },
 }
 
 /// One declared parameter in a page's context record.
@@ -303,6 +718,9 @@ pub struct WidgetNode {
     /// Effects handled by this component for actions in its subtree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handlers: Vec<WidgetEffectHandler>,
+    /// Accessibility behaviours this node requires (UI-VIEW-1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behaviors: Vec<WidgetBehavior>,
     /// Child components in presentation order.
     pub children: Vec<WidgetNode>,
 }

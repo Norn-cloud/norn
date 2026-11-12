@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.duplicate_id",
+  "message": "a page machine declares one field, event, state or transition id twice: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
