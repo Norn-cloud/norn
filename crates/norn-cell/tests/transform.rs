@@ -1,6 +1,7 @@
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::needless_pass_by_value,
     missing_docs,
     reason = "VIEW-ROWS-1 native conformance"
 )]

@@ -555,6 +555,6 @@ pub fn get_transform_plan<E: SqlEngine>(
             })
             .collect(),
         nodes,
-        output: plan.output.clone(),
+        output: plan.output,
     })
 }
