@@ -1,0 +1,39 @@
+"""What the demo must show, against the running dev host: run twice, then after a write."""
+import sys
+
+from norn_regression import Cell, check_regression
+
+cell = Cell.from_project(sys.argv[1])
+args = dict(target="y", features=["x1", "x2", "x3"], order="t", cell=cell)
+
+
+def status(result, test, subject=None):
+    [check] = [c for c in result.checks if c.test.startswith(test) and (subject is None or c.subject == subject)]
+    return check.status
+
+
+first = check_regression("lab.Sample", **args)
+assert status(first, "Breusch-Pagan") == "fail", first.frame()
+assert all(status(first, "variance inflation factor", f) == "fail" for f in ("x1", "x2", "x3"))
+assert status(first, "Durbin-Watson") == "fail"
+assert first.status == "fail"
+
+# Recorded in the cell, linked to the spec, with receipts.
+specs = cell.rows("stats.ModelSpec")
+checks = cell.rows("stats.AssumptionCheck")
+assert list(specs["spec"]) == [first.spec["spec"]], specs
+assert len(checks) == len(first.checks) and set(checks["spec"]) == {first.spec["spec"]}
+assert set(checks["status"]) <= {"pass", "warn", "fail", "not_applicable"}
+
+# Rerunning on the same revision replays: the same checks and the same receipts, nothing new.
+again = check_regression("lab.Sample", **args)
+assert [c.as_dict() for c in again.checks] == [c.as_dict() for c in first.checks]
+assert again.receipts == first.receipts
+assert len(cell.rows("stats.ModelSpec")) == 1 and len(cell.rows("stats.AssumptionCheck")) == len(first.checks)
+
+# A write to the dataset is a new revision, and a new spec beside the first.
+cell.call("lab.sample.add", {"sample": "s99999", "t": 99999, "x1": "1.0000", "x2": "2.0000", "x3": "3.0000", "y": "4.0000"}, "extra-row")
+later = check_regression("lab.Sample", **args)
+assert later.spec["datasetRevision"] != first.spec["datasetRevision"] and later.spec["spec"] != first.spec["spec"]
+assert len(cell.rows("stats.ModelSpec")) == 2
+print(f"regression demo: ok ({len(first.checks)} checks, {len(first.receipts)} receipts, replay identical, new revision recorded)")

@@ -1,0 +1,6 @@
+# The demo environment (the generated client's imports, pandas, mypy) plus the
+# regression suite's numerical stack. requirements.txt pins every package by
+# version and hash: uv pip compile --universal --generate-hashes --python-version 3.11
+-r ../examples/requirements.in
+statsmodels==0.15.0
+scipy
