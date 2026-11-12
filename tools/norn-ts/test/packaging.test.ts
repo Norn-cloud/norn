@@ -6,19 +6,22 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildInfo, parseBuildInfo, versionLine, type BuildInfo } from "../src/build-info.ts"
 import { CHECKER_PKG_ENV, checkerPackageDir } from "../src/checker-abi.ts"
-import { hostBinary, type HostLookup } from "../src/dev.ts"
+import { authoringVersionWarning } from "../src/authoring-version.ts"
+import { registeredCodes } from "../src/cli-diagnostic.ts"
+import { download, hostBinary, type HostLookup } from "../src/dev.ts"
 import { distribution, projectDependencies } from "../src/init.ts"
-import { TOOL_ROOT } from "../src/profile.ts"
+import { TOOL_ROOT, dependencyDir } from "../src/profile.ts"
 import { ProjectError } from "../src/project.ts"
 
 const scratch = () => mkdtempSync(join(tmpdir(), "norn-packaging-"))
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
 const HOST = new TextEncoder().encode("#!/bin/sh\necho norn-dev-host\n")
+const CLI_VERSION = (JSON.parse(readFileSync(join(TOOL_ROOT, "package.json"), "utf8")) as { version: string }).version
 
 function build(hosts: BuildInfo["hosts"]): BuildInfo {
   return { version: "0.1.0-alpha.7", commit: "0123456789abcdef0123456789abcdef01234567", toolchain: "1.98.0",
@@ -182,7 +185,8 @@ test("a released package knows its version, and a new project depends on that re
 
 test("an installed @norn/authoring is never what the checker reads: the intrinsics stay pinned", () => {
   // A project with its own installed `@norn/authoring` (what a package manager
-  // puts there for the editor), and a copy that differs from the CLI's own.
+  // puts there for the editor), whose declaration declares nothing: if the
+  // checker read it, the starter could not compile.
   const root = scratch()
   try {
     const dir = join(root, "shop")
@@ -191,10 +195,99 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     const installed = join(dir, "node_modules/@norn/authoring")
     mkdirSync(join(installed, "profile"), { recursive: true })
     writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: "0.0.0", types: "./profile/norn-authoring.d.ts" }))
-    writeFileSync(join(installed, "profile/norn-authoring.d.ts"), readFileSync(join(TOOL_ROOT, "profile/norn-authoring.d.ts"), "utf8"))
+    writeFileSync(join(installed, "profile/norn-authoring.d.ts"), 'declare module "@norn/authoring" {}\n')
     const compiled = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "compile", join(dir, "src"), "--org", "local", "--env", "dev"], { cwd: dir, encoding: "utf8" })
     expect({ status: compiled.status, err: compiled.stderr }).toEqual({ status: 0, err: "" })
     expect(compiled.stdout).not.toContain("NORN-FLOW-MODULE")
     expect(JSON.parse(compiled.stdout)).toHaveLength(2)
+    // The version differs from the CLI's: the editor's types are not the checker's, and that is said, as a warning.
+    const warning = authoringVersionWarning(dir)
+    expect(warning).toMatchObject({ code: "cli.setup.authoring_version_mismatch" })
+    expect(warning!.message).toContain("installed @norn/authoring is 0.0.0")
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION }))
+    expect(authoringVersionWarning(dir)).toBeUndefined()
   } finally { rmSync(root, { recursive: true }) }
 }, 60_000)
+
+test.skipIf(!process.env[CHECKER_PKG_ENV])("check prints the authoring version warning on stderr and still admits", () => {
+  const root = scratch()
+  try {
+    const dir = join(root, "shop")
+    expect(spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "init", dir, "--no-install"], { encoding: "utf8" }).status).toBe(0)
+    const installed = join(dir, "node_modules/@norn/authoring")
+    mkdirSync(installed, { recursive: true })
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: "0.0.0" }))
+    const checked = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "check", join(dir, "src"), "--org", "local", "--env", "dev"], { cwd: dir, encoding: "utf8" })
+    expect(checked.status).toBe(0)
+    expect(JSON.parse(checked.stdout).admitted).toBe(true)
+    expect(checked.stderr).toStartWith("warning[cli.setup.authoring_version_mismatch] ")
+  } finally { rmSync(root, { recursive: true }) }
+}, 60_000)
+
+test("dev host: an installed platform package runs only if it is the host the release records", async () => {
+  const root = scratch()
+  try {
+    const packaged = join(root, "pkg")
+    mkdirSync(join(packaged, "bin"), { recursive: true })
+    writeFileSync(join(packaged, "bin/norn-dev-host"), "a stale host")
+    const stale = await refusal(hostBinary(lookup(root, { packageDir: () => packaged })))
+    expect(stale).toMatchObject({ code: "cli.setup.host_unavailable", exitCode: 3 })
+    expect(stale.message).toContain("is not the host this release records")
+    // On the registry channel a host has a digest and no address: the installed package is the only source.
+    const registry = build({ "linux-x64": { sha256: sha256(HOST), size: HOST.length } })
+    writeFileSync(join(packaged, "bin/norn-dev-host"), HOST)
+    expect(await hostBinary(lookup(root, { packageDir: () => packaged, build: registry }))).toBe(join(packaged, "bin/norn-dev-host"))
+    const missing = await refusal(hostBinary(lookup(root, { build: registry })))
+    expect(missing.message).toContain("@norn/dev-host-linux-x64 is not installed")
+  } finally { rmSync(root, { recursive: true }) }
+})
+
+test("dev host: the download is bounded by the recorded size and by time", async () => {
+  const body = new Uint8Array(1024).fill(7)
+  const server = Bun.serve({
+    port: 0, hostname: "127.0.0.1",
+    fetch(request) {
+      const path = new URL(request.url).pathname
+      if (path === "/exact") return new Response(body)
+      if (path === "/declared-too-big") return new Response(body, { headers: { "content-length": String(body.length) } })
+      if (path === "/streamed-too-big") {
+        // No content-length: the reader has to stop at the limit on its own.
+        return new Response(new ReadableStream({ start(controller) { for (let i = 0; i < 64; i++) controller.enqueue(body); controller.close() } }))
+      }
+      if (path === "/stalled") return new Response(new ReadableStream({ start(controller) { controller.enqueue(body.subarray(0, 10)) } }))
+      return new Response("missing", { status: 404 })
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    expect(await download(`${base}/exact`, body.length)).toEqual(body)
+    await expect(download(`${base}/declared-too-big`, body.length - 1)).rejects.toThrow("the server offers 1024 bytes")
+    await expect(download(`${base}/streamed-too-big`, 4096)).rejects.toThrow("more than the 4096 bytes")
+    await expect(download(`${base}/stalled`, body.length, 300)).rejects.toThrow()
+    await expect(download(`${base}/absent`, 10)).rejects.toThrow("HTTP 404")
+  } finally { server.stop(true) }
+})
+
+test("dev host: the build-from-source instructions name this CLI's commit and are the registered ones", async () => {
+  const root = scratch()
+  try {
+    const mac = await refusal(hostBinary(lookup(root, { platform: "darwin-arm64" })))
+    const commit = build({}).commit
+    expect(mac.message).toContain(`git checkout ${commit}`)
+    expect(mac.message).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
+    expect(mac.message).toContain("NORN_DEV_HOST_BIN to target/release/norn-dev-host")
+    // The registered fix gives the same command and path, not another one.
+    const registered = registeredCodes().get("cli.setup.host_unavailable")!
+    expect(registered.fix).toContain("cargo build --release -p norn-cell-do --bin norn-dev-host")
+    expect(registered.fix).toContain("target/release/norn-dev-host")
+    expect(registered.fix).toContain("`norn --version`")
+  } finally { rmSync(root, { recursive: true }) }
+})
+
+test("pinned dependencies are real paths, as TypeScript resolves them", () => {
+  for (const name of ["effect", "typescript"]) {
+    const dir = dependencyDir(name)
+    expect(realpathSync(dir)).toBe(dir)
+  }
+  expect(realpathSync(TOOL_ROOT)).toBe(TOOL_ROOT)
+})

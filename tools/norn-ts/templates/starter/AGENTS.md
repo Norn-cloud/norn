@@ -7,20 +7,19 @@ Use Norn.type and Norn.action with the current authoring syntax.
 
 ## Loop
 
-Run norn fmt to format sources.
-Run norn fmt --check to check formatting without writing.
-Run norn check to compile and admit the project.
-Run norn dev to serve the local project and watch edits.
-Run norn plan to inspect a proposed revision.
-Run norn apply to install the reviewed plan.
-Run norn explain <id> to inspect diagnostics and evidence.
-The dev, project check, plan, apply and explain commands arrive in later units.
-Until then use the repository CLI with an explicit source directory and scope.
+The norn command is the installed @norn/cli; run it as bunx norn in this project.
+Run bunx norn fmt to format sources; add --check to check without writing.
+Run bunx norn check src --org <orgId> --env <environmentId> to compile and admit; the scope is in norn.json.
+Run bunx norn dev to serve the project's cell on loopback; every save is checked and installed or refused.
+Run bunx norn explain action|law|concept <id> to see what a declaration reads, writes and must preserve.
+Add --json to dev or explain for machine-readable output; check always prints JSON.
+Run bunx norn --version to see the CLI version and the commit it was built from.
+Plan, apply, deploy and an MCP endpoint are not available yet.
 
 ## Agents
 
-The dev MCP endpoint is http://127.0.0.1:4174/mcp when dev is available.
-Read .norn/dev.json for the actual running session and token file.
+Call actions over HTTP at the url in .norn/dev.json with the bearer token in .norn/dev.token.
+The .norn/dev.json format and the dev --json events are experimental.
 Use the same checked actions as a human.
 Do not edit .norn/ or generated IR.
 A refused edit leaves the last good revision serving.

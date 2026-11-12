@@ -89,6 +89,8 @@ if (command === "compile") {
   if (output) writeFileSync(output, document)
   else process.stdout.write(document)
 } else {
+  const { warnAuthoringVersion } = await import("./authoring-version.ts")
+  warnAuthoringVersion(resolve(input))
   let checker: Awaited<ReturnType<typeof loadChecker>>
   try {
     checker = await loadChecker()
