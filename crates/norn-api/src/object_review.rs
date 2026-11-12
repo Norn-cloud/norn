@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
+use norn_cell::read::LinkDirection;
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 use norn_ir::{DataQualityFinding, FactRef, RuntimeValue};
@@ -35,6 +36,20 @@ use crate::scope::ScopeQuery;
 
 /// Most versions one history lists, newest first.
 pub const MAX_HISTORY_VERSIONS: u64 = 64;
+/// Most evidence links one findings read lists.
+pub const MAX_EVIDENCE: usize = 200;
+/// The core interface of evidence objects (`registry/core/src/evidence.ts`).
+pub const SOURCE_EVIDENCE: &str = "norn.SourceEvidence";
+
+/// One evidence object linked to the subject: where one of its values was read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornEvidenceRef {
+    /// The evidence object's type (it implements `norn.SourceEvidence`).
+    pub object_type: String,
+    /// The evidence object's id.
+    pub id: String,
+}
 
 /// An object's quality findings (OBS-EVIDENCE-1), open and resolved.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -50,6 +65,11 @@ pub struct NornObjectFindings {
     /// correction resolves a finding without rewriting it.
     #[schema(schema_with = findings_schema)]
     pub findings: Vec<DataQualityFinding>,
+    /// The evidence objects linked to it that the caller may read (types
+    /// implementing `norn.SourceEvidence`), at most [`MAX_EVIDENCE`]. They are
+    /// read at `/v1/objects/{type}/{id}`; a quarantined subject's evidence is
+    /// not quarantined with it.
+    pub evidence: Vec<NornEvidenceRef>,
 }
 
 /// What wrote one version.
@@ -196,18 +216,55 @@ pub fn get_object_findings<E: SqlEngine>(
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
-    locked(host, access, &mut start, |reader| {
-        Ok(NornObjectFindings {
-            object_type: row.object_type.clone(),
-            id: row.id.clone(),
-            quarantined: reader
-                .observation_is_quarantined(MAIN_WORLD, &row)
-                .map_err(Refusal::host)?,
-            findings: reader
-                .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
-                .map_err(Refusal::host)?,
-        })
-    })
+    let (mut document, linked) = locked(host, access, &mut start, |reader| {
+        let page = reader
+            .links_touching_page(
+                MAIN_WORLD,
+                &row.object_type,
+                &row.id,
+                LinkDirection::In,
+                None,
+                None,
+                MAX_EVIDENCE,
+            )
+            .map_err(Refusal::host)?;
+        let linked: Vec<(String, String)> = page
+            .items
+            .into_iter()
+            .filter(|edge| reader.model().is_a(&edge.edge.source_type, SOURCE_EVIDENCE))
+            .map(|edge| (edge.edge.source_type, edge.edge.source))
+            .collect();
+        Ok((
+            NornObjectFindings {
+                object_type: row.object_type.clone(),
+                id: row.id.clone(),
+                quarantined: reader
+                    .observation_is_quarantined(MAIN_WORLD, &row)
+                    .map_err(Refusal::host)?,
+                findings: reader
+                    .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
+                    .map_err(Refusal::host)?,
+                evidence: Vec::new(),
+            },
+            linked,
+        ))
+    })?;
+    // Each evidence row is disclosed on its own Population and Values.
+    for (object_type, id) in linked {
+        let evidence = locked(host, access, &mut start, |reader| {
+            reader
+                .object(MAIN_WORLD, &object_type, &id)
+                .map_err(Refusal::host)
+        })?;
+        if let Some(evidence) = evidence
+            && [Population, Values]
+                .into_iter()
+                .all(|capability| permitted(host, access, &actor, &evidence, capability))
+        {
+            document.evidence.push(NornEvidenceRef { object_type, id });
+        }
+    }
+    Ok(document)
 }
 
 fn budget() -> DecodeBudget {

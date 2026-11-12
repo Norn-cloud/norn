@@ -655,6 +655,13 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     assert!(findings.quarantined);
     assert_eq!(findings.findings.len(), 1);
     assert!(
+        findings.evidence.iter().any(
+            |evidence| evidence.object_type == EVIDENCE && evidence.id == "SCAN-INV-0042~total"
+        ),
+        "the evidence of the quarantined total is listed: {:?}",
+        findings.evidence
+    );
+    assert!(
         crate::object_review::get_object_findings(
             &host,
             &scope_query(),
