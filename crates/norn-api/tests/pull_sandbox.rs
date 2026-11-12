@@ -799,7 +799,8 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         csv: true,
         columns: parse_csv(csv).expect("parsed").columns,
         owner: "user:owner".into(),
-        completed_at: "2026-11-12T12:00:05.000Z".into(),
+        // The cell keeps an instant in its canonical RFC 3339 form.
+        completed_at: "2026-11-12T12:00:05Z".into(),
     };
     assert_eq!(kept_upload(&host, &kept.upload_id).expect("read"), None);
     keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept");
