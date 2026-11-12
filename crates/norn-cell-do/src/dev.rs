@@ -283,6 +283,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     }
     let session = Session {
         loads: &loads,
+        loaded: std::cell::RefCell::new(None),
         root: &root,
         manifest: &manifest,
         scope: &scope,
@@ -406,6 +407,8 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
 
 struct Session<'a> {
     loads: &'a [PathBuf],
+    /// What a load during the first provision did, reported with its revision.
+    loaded: std::cell::RefCell<Option<load::Loaded>>,
     root: &'a Path,
     manifest: &'a Manifest,
     scope: &'a CellScope,
@@ -600,7 +603,15 @@ impl Session<'_> {
             None => self.provision(serving, cell_path, admitted),
         };
         match result {
-            Ok(installed) => Ok(Some(installed)),
+            Ok(installed) => {
+                if let Some(loaded) = self.loaded.take() {
+                    out.emit(
+                        &json!({ "event": "loaded", "files": loaded.files }),
+                        &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
+                    );
+                }
+                Ok(Some(installed))
+            }
             Err(refusal) => {
                 Self::rejected(
                     out,
@@ -636,7 +647,7 @@ impl Session<'_> {
         } else {
             let (store, loaded) = load::load(store, &self.scope.key(), self.loads)
                 .map_err(|message| json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message }))?;
-            eprintln!("{}", json!({ "event": "loaded", "files": loaded.files }));
+            self.loaded.replace(Some(loaded));
             store
         };
         let host =

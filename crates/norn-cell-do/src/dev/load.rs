@@ -127,8 +127,14 @@ pub(crate) fn load(
     paths: &[PathBuf],
 ) -> Result<(CellStore<NativeEngine>, Loaded), String> {
     let snapshots = paths.iter().map(|path| snapshot(path)).collect::<Result<Vec<_>, _>>()?;
-    let mut captured = Vec::new();
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
+    let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    // Each row is captured and mapped before the next is captured: mapping a
+    // bundle looks it up among the pending observations, so keeping that set
+    // at one row keeps a load linear in its rows.
     for snapshot in &snapshots {
+        let file = snapshot.path.display().to_string();
         for (dataset, record) in &snapshot.rows {
             let input = MappingInput {
                 mapping: snapshot.mapping.clone(),
@@ -137,28 +143,22 @@ pub(crate) fn load(
                 partition: "snapshot".into(),
                 recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
             };
-            let (id, _new) = store
-                .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
-                .map_err(|error| format!("{}: {dataset} row not captured: {error}", snapshot.path.display()))?;
             let label = record
                 .get("id")
                 .or_else(|| record.get("name"))
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            captured.push((format!("{}: {dataset} {label}", snapshot.path.display()), snapshot.path.display().to_string(), id));
-        }
-    }
-    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
-        SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
-    let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
-    for (row, file, id) in &captured {
-        let processed = cell
-            .process_mapping_bundle(id)
-            .map_err(|error| format!("{row} was refused by the mapping: {error}"))?;
-        let entry = mapped.entry(file.clone()).or_default();
-        entry.0 += 1;
-        if processed {
-            entry.1 += 1;
+            let (id, _new) = cell
+                .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
+                .map_err(|error| format!("{file}: {dataset} {label} not captured: {error}"))?;
+            let processed = cell
+                .process_mapping_bundle(&id)
+                .map_err(|error| format!("{file}: {dataset} {label} was refused by the mapping: {error}"))?;
+            let entry = mapped.entry(file.clone()).or_default();
+            entry.0 = entry.0.saturating_add(1);
+            if processed {
+                entry.1 = entry.1.saturating_add(1);
+            }
         }
     }
     let files = snapshots
