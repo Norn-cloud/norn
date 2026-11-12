@@ -1011,7 +1011,7 @@ fn end_state(cell: &Cell) -> Vec<String> {
         state.push(format!("claim {claim:?}"));
     }
     for entry in reader.ledger(0).expect("ledger") {
-        state.push(format!("event {}", entry.event));
+        state.push(format!("event {:?}", entry.event));
     }
     for pending in reader.pending_observations().expect("pending") {
         if !pending.observation_id.starts_with("mapping-page:") {
