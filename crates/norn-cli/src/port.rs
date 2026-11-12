@@ -86,6 +86,10 @@ pub(super) fn execute(args: &PortArgs) -> Result<(String, bool), String> {
         std::env::current_exe().ok(),
         &args.args,
     )?;
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "this command's one capability: running the named porting tool"
+    )]
     let status = Command::new(&python)
         .args(&command)
         .status()
@@ -106,8 +110,8 @@ mod tests {
     use std::path::PathBuf;
 
     /// The repository's own tool directory.
-    fn home() -> Option<OsString> {
-        Some(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/norn-port").into())
+    fn home() -> OsString {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/norn-port").into()
     }
 
     fn strings(values: &[OsString]) -> Vec<String> {
@@ -125,7 +129,7 @@ mod tests {
             (Tool::Scoreboard, "port.py", Some("scoreboard")),
             (Tool::CodeOntology, "code_ontology.py", None),
         ] {
-            let (python, command) = invocation(tool, home(), None, None, &passed).unwrap();
+            let (python, command) = invocation(tool, Some(home()), None, None, &passed).unwrap();
             assert_eq!(python, "python3");
             let command = strings(&command);
             assert!(command[0].ends_with(script), "{command:?}");
@@ -140,10 +144,10 @@ mod tests {
     fn selftest_names_the_running_binary_and_honours_the_interpreter_override() {
         let own = PathBuf::from("/opt/norn");
         let (python, command) =
-            invocation(Tool::Selftest, home(), Some("py".into()), Some(own), &[]).unwrap();
+            invocation(Tool::Selftest, Some(home()), Some("py".into()), Some(own), &[]).unwrap();
         assert_eq!(python, "py");
         assert_eq!(strings(&command)[1..], ["--norn", "/opt/norn"]);
-        assert!(invocation(Tool::Selftest, home(), None, None, &[]).is_err());
+        assert!(invocation(Tool::Selftest, Some(home()), None, None, &[]).is_err());
     }
 
     #[test]
