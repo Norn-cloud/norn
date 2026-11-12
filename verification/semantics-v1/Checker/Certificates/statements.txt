@@ -66,7 +66,7 @@
   {puts : Aeneas.Std.Slice (Aeneas.Std.Array Aeneas.Std.Usize 2#usize)}
   (h :
     norn_checker_lens.check_laws inst sources gets puts = Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ())),
-  ⋯.toLens.WellBehaved
+  (Norn.Checker.Certificates.Lens.check_laws_sound hEq h).toLens.WellBehaved
 Norn.Checker.Certificates.Algebra.check_correct : ∀ (operators : Aeneas.Std.Slice norn_checker_algebra.Operator)
   (signed : Bool),
   ∃ v,
