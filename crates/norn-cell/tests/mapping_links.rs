@@ -1294,7 +1294,7 @@ fn obs_page_members_trace_under_the_default_budget() {
             cell.process_mapping_page(&id).expect("page");
         }
     }
-    let mut raws = Vec::new();
+    let mut lines = Vec::new();
     let mut input = None;
     // A host page (norn_api's PAGE_ROWS, 64): its receipt fits the budget.
     for n in 1..=64 {
@@ -1302,7 +1302,7 @@ fn obs_page_members_trace_under_the_default_budget() {
         line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
         line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
         let (raw, page_input) = raw_of(&line, "1");
-        raws.push(raw);
+        lines.push(raw);
         input = Some(page_input);
     }
     let input = input.expect("input");

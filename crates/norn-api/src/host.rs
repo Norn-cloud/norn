@@ -427,11 +427,11 @@ mod page_tests {
     #[test]
     fn pages_split_at_the_bound_a_new_input_and_a_repeated_record() {
         let (items, bins) = (input("items"), input("bins"));
-        let many: Vec<_> = (0..1_200)
+        let many: Vec<_> = (0..150)
             .map(|n| (row(&format!("r{n}")), items.clone()))
             .collect();
         let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
-        assert_eq!(sizes, [500, 500, 200]);
+        assert_eq!(sizes, [PAGE_ROWS, PAGE_ROWS, 150 - 2 * PAGE_ROWS]);
 
         let mixed = vec![
             (row("x"), items.clone()),
