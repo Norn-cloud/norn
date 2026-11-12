@@ -2,8 +2,9 @@
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), the one governed action route,
-//! `POST /v1/actions/{actionId}`, and the run routes (`POST /v1/runs`,
-//! `GET /v1/runs/{id}`).
+//! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`), and the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -137,6 +138,10 @@ routes! {
     RunStart => ("POST", "/v1/runs"),
     /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
     Run => ("GET", "/v1/runs/{id}"),
+    /// `GET /v1/decisions` (DECISIONS-1).
+    Decisions => ("GET", "/v1/decisions"),
+    /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
+    Decide => ("POST", "/v1/decisions/{id}:decide"),
 }
 
 impl Route {
@@ -149,7 +154,15 @@ impl Route {
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
             "/v1/runs" => return Some(Self::RunStart),
+            "/v1/decisions" => return Some(Self::Decisions),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/decisions/")
+            .and_then(|rest| rest.strip_suffix(":decide"))
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Decide);
         }
         if path
             .strip_prefix("/v1/runs/")
@@ -242,7 +255,7 @@ pub fn handle_all<E: SqlEngine>(
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
-    if let Some(response) = crate::runs::dispatch(host, actor, request) {
+    if let Some(response) = crate::runs::dispatch(host, questions, actor, request) {
         return response;
     }
     let question = question_path(path);

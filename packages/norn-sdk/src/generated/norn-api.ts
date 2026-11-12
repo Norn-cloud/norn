@@ -32,6 +32,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions?state=pending`: the open decisions the caller may
+         *     decide, soonest deadline first, ties to the oldest request, then id.
+         * @description # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     state, limit or cursor; a host failure.
+         */
+        get: operations["list_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions/{id}:decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/decisions/{id}:decide`.
+         * @description # Errors
+         *     In this order: 404 `decision.not_found` (also for a caller who may not
+         *     decide it), 409 `decision.resolved`, 410 `decision.expired`, 403
+         *     `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
+         *     `decision.note_too_long` (`/note`) or `request.invalid`, 409
+         *     `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
+         *     run's result turn; a host failure.
+         */
+        post: operations["decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/definitions": {
         parameters: {
             query?: never;
@@ -487,6 +536,208 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /**
+         * @description Whether this call decided, or replayed an identical earlier call.
+         * @enum {string}
+         */
+        DecideOutcome: "decided" | "replayed";
+        /**
+         * @description A refused decide call: the shared refusal, and on `decision.resolved` who
+         *     resolved the decision first.
+         */
+        DecideRefusal: components["schemas"]["Refusal"] & {
+            resolution?: components["schemas"]["DecisionResolution"] | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` body. */
+        DecideRequest: {
+            /** @description One of the decision's option ids. */
+            choice: string;
+            /** @description The caller's retry key: the same key and body replays the decision. */
+            idempotencyKey: string;
+            /** @description A note, at most 500 characters. */
+            note?: string | null;
+        };
+        /** @description `POST /v1/decisions/{id}:decide` response. */
+        Decided: {
+            /** @description The decision. */
+            decision: components["schemas"]["DecidedDecision"];
+            /** @description Decided now, or replayed. */
+            outcome: components["schemas"]["DecideOutcome"];
+            /** @description Its commit. */
+            receipt: components["schemas"]["DecidedReceipt"];
+            /** @description The run. */
+            run: components["schemas"]["DecidedRun"];
+        };
+        /** @description The decision as decided. */
+        DecidedDecision: {
+            /** @description The chosen option id. */
+            choice: string;
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            decidedAtMs: number;
+            /** @description Who decided, in display words, never an id. */
+            decidedBy: string;
+            /** @description The decision id. */
+            id: string;
+            /** @description The note. */
+            note?: string | null;
+        };
+        /** @description The commit that recorded the decision. */
+        DecidedReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /** @description The run after the decision. */
+        DecidedRun: {
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description What the decision is about. Empty in this version. */
+        DecisionContext: {
+            /** @description The objects the decision concerns. */
+            subjects: components["schemas"]["DecisionSubject"][];
+        };
+        /** @description One open decision. */
+        DecisionDocument: {
+            /** @description An agent's recommended option id; a recommendation, never a decision. */
+            agentPick?: string | null;
+            /** @description What it is about. */
+            context: components["schemas"]["DecisionContext"];
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds), at most seven days
+             *     after it was asked.
+             */
+            expiresAtMs: number;
+            /** @description The run's flow. */
+            flow: components["schemas"]["DecisionFlow"];
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description Reserved; always `null` in this version. */
+            inputSchema?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The options. */
+            options: components["schemas"]["DecisionOptionDocument"][];
+            /** @description The question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the run asked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description The run waiting on it. */
+            run: components["schemas"]["DecisionRun"];
+            /** @description The step that asks. */
+            step: components["schemas"]["DecisionStep"];
+        };
+        /** @description The flow a decision belongs to. */
+        DecisionFlow: {
+            /** @description The flow's `decide` rule artifact id. */
+            ruleId: string;
+            /** @description The flow's display title. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One option a decider may choose. */
+        DecisionOptionDocument: {
+            /** @description What it does. */
+            effect: components["schemas"]["DecisionOptionEffect"];
+            /** @description The option id `choice` names. */
+            id: string;
+            /** @description What the decider reads. */
+            label: string;
+            /** @description How far it reaches, in the decider's words. */
+            scope: string;
+        };
+        /** @description What choosing an option does: exactly one of an action or a binding. */
+        DecisionOptionEffect: {
+            /** @description The action the option starts. */
+            action?: string | null;
+            /** @description The binding the option sets. */
+            binding?: string | null;
+        };
+        /** @description Who resolved a decision first (409 `decision.resolved`). */
+        DecisionResolution: {
+            /**
+             * Format: int64
+             * @description When (logical milliseconds).
+             */
+            atMs: number;
+            /** @description Who, in display words, never an id. */
+            by?: string | null;
+            /** @description The chosen option, only for a reader who may read the run. */
+            choice?: string | null;
+            /** @description How it was resolved. */
+            resolution: string;
+        };
+        /**
+         * @description How much is at stake.
+         * @enum {string}
+         */
+        DecisionRisk: "low" | "medium" | "high";
+        /** @description The run a decision belongs to. */
+        DecisionRun: {
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description Its lifecycle state. */
+            state?: string | null;
+        };
+        /** @description The step that asks. */
+        DecisionStep: {
+            /** @description The step id. */
+            id: string;
+            /** @description Its display label. */
+            label?: string | null;
+        };
+        /** @description One object a decision concerns. */
+        DecisionSubject: {
+            /** @description Its id. */
+            id: string;
+            /** @description Its object type. */
+            objectType: string;
+        };
+        /** @description One page of open decisions. */
+        DecisionsPage: {
+            /** @description The decisions, soonest deadline first, ties to the oldest request. */
+            items: components["schemas"]["DecisionDocument"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last page. */
+            nextCursor?: string | null;
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /**
+             * Format: int64
+             * @description How many open decisions the caller may decide.
+             */
+            total: number;
+            /** @description `total` is a lower bound: more were not examined. */
+            totalCapped?: boolean;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -9547,6 +9798,16 @@ export interface components {
              */
             expectedVersion: number;
         };
+        /** @description The open decision a run waits on. */
+        RunDecision: {
+            /**
+             * Format: int64
+             * @description When it expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
+            id: string;
+        };
         /** @description One run, as the routes return it. */
         RunDocument: {
             /**
@@ -9559,6 +9820,7 @@ export interface components {
              * @description The starting commit.
              */
             createdCommitSeq: number;
+            decision?: components["schemas"]["RunDecision"] | null;
             /** @description The flow it runs. */
             flow: components["schemas"]["RunFlow"];
             /**
@@ -9795,6 +10057,161 @@ export interface operations {
             };
             /** @description The request was refused: a declared limit was exceeded. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description `pending` (required): only open decisions are listed. */
+                state?: string;
+                /** @description Only decisions of runs of this flow (its definition id). */
+                flow?: string;
+                /** @description The previous page's `nextCursor`. */
+                cursor?: string;
+                /** @description Page size, 0 to 200 (default 50); 0 returns only the count. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the open decisions the caller may decide. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionsPage"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    decide: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The decision id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecideRequest"];
+            };
+        };
+        responses: {
+            /** @description Decided, or replayed an identical earlier call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Decided"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied, or the decider law is not satisfied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such open decision waits on the caller. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Someone resolved it first, or the key was used for another answer. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecideRefusal"];
+                };
+            };
+            /** @description The decision expired. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The choice or note was refused. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
