@@ -49,6 +49,8 @@ SHAPE = {
     "odoo": {"id": "id", "ref": "x_norn_ref", "party": "res.partner", "item": "product.product", "holding": "stock.quant", "order": "sale.order.line", "prefix": "SYN-ODOO"},
 }
 START = date(2026, 1, 5)
+# Holding cost per gram (USD), the same values the live sandboxes are seeded with.
+STOCK_COST_PER_GRAM = {"GOLD": 45, "SILVER": 0.8}
 
 
 def generate(orders: int, seed: int):
@@ -105,7 +107,7 @@ def snapshot(system: str, customers, rows):
             continue
         record(shape["item"], f"item-{code.lower()}", f"demo/item/{code.lower()}", code=code, label=label, sku=f"SKU-{code}", price=float(price))
         for region in REGIONS:
-            record(shape["holding"], f"holding-{region}-{code.lower()}", f"demo/holding/owner/{region}/{code.lower()}", resource_code=code, quantity=100000, unit=unit, location=region, item_ref=f"demo/item/{code.lower()}", owner_ref="demo/party/owner", custodian_ref="demo/party/custodian")
+            record(shape["holding"], f"holding-{region}-{code.lower()}", f"demo/holding/owner/{region}/{code.lower()}", resource_code=code, quantity=100000, unit=unit, location=region, item_ref=f"demo/item/{code.lower()}", owner_ref="demo/party/owner", custodian_ref="demo/party/custodian", stock_cost=round(100000 * STOCK_COST_PER_GRAM[code]), cost_currency="USD", valuation_method="moving_average")
     for row in mine:
         number = row["order_ref"].split("/")[2]
         record(shape["order"], f"order-{number}", row["order_ref"], quantity=int(row["quantity"]), unit=row["unit"], due_at=f"{row['ship_date']}T12:00:00Z", provider_ref="demo/party/owner", receiver_ref=row["customer_ref"], holding_ref=f"demo/holding/owner/{row['region']}/{row['item_code'].lower()}")
