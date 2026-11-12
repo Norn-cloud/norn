@@ -1409,6 +1409,11 @@ fn integer_action_inputs_require_an_integral_proof_for_every_constructed_leaf() 
             Some("integer"),
         ),
         (
+            r#"{source: "ui", count: 1.5}"#,
+            Some(("count", &count)),
+            Some("integer"),
+        ),
+        (
             "{source: 'ui', count: 1 + 1}",
             Some(("count", &count)),
             Some("integer"),
