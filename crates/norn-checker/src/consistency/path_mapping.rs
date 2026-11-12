@@ -499,10 +499,20 @@ mod tests {
         );
         // Ample for reading the input, with a few units left for the search:
         // the refusal comes from the certificate path, not input metering.
-        let input = serde_json::to_vec(&(&source, &target, &mapping))
-            .unwrap()
-            .len();
+        let input = input_len(&source, &target, &mapping);
         work_refusal(&admit(input.saturating_add(16)).unwrap_err());
+    }
+
+    /// The bytes admission meters for this input before any search: the same
+    /// verbatim encoding `admit_with_work` charges to the work allowance.
+    fn input_len(
+        source: &[ArtifactEnvelope],
+        target: &[ArtifactEnvelope],
+        mapping: &PathMapping,
+    ) -> usize {
+        norn_canonical::serialize_json_verbatim(&(source, target, mapping))
+            .unwrap()
+            .len()
     }
 
     /// Exactly one refusal, from the exhausted admission work allowance.
@@ -567,9 +577,7 @@ mod tests {
                 &AdmissionWork::new(steps),
             )
         };
-        let input = serde_json::to_vec(&(&source, &target, &mapping))
-            .unwrap()
-            .len();
+        let input = input_len(&source, &target, &mapping);
         // The setup alone costs over four million iterations.
         work_refusal(&admit(input.saturating_add(1_000_000)).unwrap_err());
         // With the work to do it, the same mapping is certified.
