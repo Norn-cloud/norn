@@ -390,7 +390,7 @@ fn sync(
     loop {
         match step {
             Step::Done(summary) => return (summary, sent),
-            // SYNC-YIELD-1: rows map a few at a time between the host's turns.
+            // SYNC-YIELD-1: rows map a page at a time between the host's turns.
             Step::Continue => step = sources.step(host, id, None, now_ms),
             Step::Request(request) => {
                 let feed = profile
@@ -594,6 +594,46 @@ fn a_refused_read_fails_the_run_and_says_why() {
     assert!(!sources.running("odoo.sandbox"));
 }
 
+/// UPLOAD-MEASURE-1 and UPLOAD-KEY-1 through admission: a type with
+/// additive measures and a unique key installs (as `:define` does) and its
+/// rows land.
+#[test]
+fn an_uploaded_type_with_measures_and_a_key_is_admitted() {
+    use norn_api::uploads::{
+        ColumnChoice, ColumnKind, LoadRequest, generate, install, load_rows, parse_csv, sha256_hex,
+    };
+    let host = host();
+    let csv = "SKU,Units,Price\nA-1,3,1.50\nA-2,4,2.25\n";
+    let uri = "s3://uploads/demo/stock.csv";
+    let table = parse_csv(csv).expect("parsed");
+    let sha = sha256_hex(csv.as_bytes());
+    let measure = |id: &str, kind| ColumnChoice {
+        id: id.into(),
+        kind,
+        include: true,
+        measure: true,
+    };
+    let request = LoadRequest {
+        type_name: "Stock".into(),
+        columns: vec![
+            measure("units", ColumnKind::Integer),
+            measure("price", ColumnKind::Decimal),
+        ],
+        key: vec!["sku".into()],
+        sha256: None,
+    };
+    let generated =
+        generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").expect("generated");
+    let version = install(&host, &generated, 2).expect("installed");
+    assert!(version > 1);
+    let loaded = load_rows(&host, &generated, &table, uri, &sha, EXTRACTED_AT_MS).expect("loaded");
+    assert_eq!(
+        (loaded.rows_landed, loaded.rows_quarantined),
+        (2, 0),
+        "{loaded:#?}"
+    );
+}
+
 /// UPLOAD-NULL-1 end to end: an empty cell lands as null on a nullable
 /// property (its source field `required: false`), every row once, with
 /// lineage to the object and row.
@@ -608,6 +648,7 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
     let request = LoadRequest {
         type_name: "Sales".into(),
         columns: vec![],
+        key: vec![],
         sha256: None,
     };
     let generated =
@@ -644,5 +685,95 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
             .expect("ingested")
             .iter()
             .all(|o| !matches!(o.outcome, MappingOutcome::Quarantined(_)))
+    );
+}
+
+/// SYNC-INSTANCE-1 and SYNC-URL-1: configuration the cell refuses before
+/// any sync, a connection claiming the cell's own instance or a plain-HTTP
+/// public base URL.
+#[test]
+fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
+    let one = |instance: &str, base: &str| {
+        format!(
+            r#"[{{"id": "x", "system": "erpnext", "label": "X", "connector": "c", "mapping": "m", "instance": "{instance}", "baseUrl": "{base}"}}]"#
+        )
+    };
+    let refused = |config: String| Sources::new(&config, BTreeMap::new()).expect_err("refused");
+    assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
+    assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
+    assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
+}
+
+/// The scanned-document extractor as a pull source: its recorded page
+/// (`POST /extractions`) pulls through `docs.scans.connector` into Scanned
+/// Document rows carrying exactly the fields `docs.scans.source` declares,
+/// lines and evidence nested, and a later sync asks for rows after the
+/// recorded (version, id).
+#[test]
+fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
+    let connector = artifact("registry/packs/documents-pull/artifacts/docs.scans.connector.json");
+    let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+    let profile = PullProfile::from_connector(&payload)
+        .expect("valid profile")
+        .expect("a pull profile");
+    assert_eq!(profile.source, "synthetic-scans");
+    let schema = artifact("registry/packs/documents/artifacts/docs.scans.source.json");
+    let schema = serde_json::to_value(schema.payload.to_json_value()).expect("schema");
+    assert_eq!(schema["source"]["system"], "synthetic-scans");
+    let declared: BTreeSet<&str> = schema["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .filter(|f| f["dataset"] == "Scanned Document")
+        .map(|f| f["name"].as_str().expect("name"))
+        .collect();
+    let feed = &profile.feeds[0];
+    assert_eq!(
+        feed.fields
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        declared
+    );
+
+    let page = std::fs::read(root().join("fixtures/connectors/scans/extractions.page.json"))
+        .expect("recorded page");
+    let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+    let first = pull.next_request().expect("a first request");
+    assert_eq!(
+        (first.method, first.path.as_str()),
+        ("POST", "/extractions")
+    );
+    let body: Value = serde_json::from_str(first.body.as_deref().expect("a body")).expect("JSON");
+    assert_eq!(body, json!({"after": ["", ""], "limit": 100}));
+    let rows = pull
+        .accept(200, &page)
+        .expect("a page in the declared shape");
+    assert_eq!(rows.len(), 10);
+    let nested = |row: &norn_api::pull::Row, field: &str| {
+        row.payload
+            .get(field)
+            .and_then(RuntimeValue::as_array)
+            .map_or_else(
+                || panic!("{} has no {field} array", row.source_id),
+                Vec::len,
+            )
+    };
+    for row in &rows {
+        assert_eq!(row.dataset, "Scanned Document");
+        assert!(row.source_id.starts_with("SCAN-"), "{}", row.source_id);
+    }
+    // Lines and evidence stay nested arrays (a report may print no lines).
+    assert!(rows.iter().map(|r| nested(r, "lines")).sum::<usize>() > 0);
+    assert!(rows.iter().all(|r| nested(r, "evidence") > 0));
+    // A short page ends the feed; the next sync resumes after its last row.
+    assert!(pull.next_request().is_none());
+    let mut resumed = Pull::new(profile, pull.watermarks().clone(), Limits::default());
+    let next = resumed.next_request().expect("a resumed request");
+    let body: Value = serde_json::from_str(next.body.as_deref().expect("a body")).expect("JSON");
+    let last = rows.last().expect("rows");
+    assert_eq!(
+        body,
+        json!({"after": [last.version, last.source_id], "limit": 100})
     );
 }

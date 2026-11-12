@@ -513,7 +513,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let concrete = match commit
             .writes
             .iter()
-            .find(|w| model.canonical(&w.key) == canonical)
+            .find(|w| w.key.key == canonical.key && model.canonical(&w.key) == canonical)
         {
             Some(write) => matches!(write.mutation, FactMutation::Put { .. })
                 .then(|| write.key.object_type.clone()),
@@ -587,11 +587,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             }
             if let Some(target) = &claim.target {
                 let key = FactKey::new(target.object_type.as_str(), &target.key);
-                if !commit
-                    .writes
-                    .iter()
-                    .any(|w| model.canonical(&w.key) == model.canonical(&key))
-                {
+                if !commit.writes.iter().any(|w| {
+                    w.key.key == key.key && model.canonical(&w.key) == model.canonical(&key)
+                }) {
                     let target = expectation(key)?;
                     if !commit.reads.contains(&target) {
                         commit.reads.push(target);

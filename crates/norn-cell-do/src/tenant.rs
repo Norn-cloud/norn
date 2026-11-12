@@ -43,6 +43,7 @@ use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
 use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy};
 use crate::principal::{PrincipalResolver, RequestScope};
+use crate::questions::DerivedQuestions;
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
 
@@ -201,6 +202,9 @@ pub struct Tenant<E: SqlEngine> {
     state: State<E>,
     /// The receipt-disclosure authority of a cell with no questions.
     handles: Option<ReceiptHandles>,
+    /// Ad-hoc questions over the metrics the cell's active definitions
+    /// derive, keyed by the stage's lineage key; none without one.
+    derived: Option<DerivedQuestions>,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -219,6 +223,9 @@ impl<E: SqlEngine> Tenant<E> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
         let state = reopen(engine, &scope, table, &caller)?;
+        let derived = handle_key
+            .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
+            .map(|questions| questions.with_label("tenant"));
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -228,6 +235,7 @@ impl<E: SqlEngine> Tenant<E> {
             open,
             state,
             handles: handles(handle_key)?,
+            derived,
         })
     }
 
@@ -253,7 +261,21 @@ impl<E: SqlEngine> Tenant<E> {
             open: Box::new(|| Err("a seeded cell is never provisioned again".to_owned())),
             state: State::Serving(Box::new(serving)),
             handles: None,
+            derived: None,
         })
+    }
+
+    /// The same cell, its receipt coordinates keyed with `handle_key` (D53)
+    /// when it publishes no questions of its own: the disclosure authority a
+    /// decision and an action call answer with. Without it such a cell
+    /// decides nothing and serves no action.
+    ///
+    /// # Errors
+    /// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to serve
+    /// weakly keyed handles.
+    pub fn with_receipt_handles(mut self, handle_key: Option<&[u8]>) -> Result<Self, SeedError> {
+        self.handles = handles(handle_key)?;
+        Ok(self)
     }
 
     /// The slot the cell's policy reads the request's verified principal
@@ -312,10 +334,22 @@ impl<E: SqlEngine> Tenant<E> {
                 request,
             ),
             State::Serving(serving) => {
+                // A cell that publishes no questions answers ad-hoc questions
+                // over its derived metrics; a revision whose metrics do not
+                // derive serves receipt handles only.
+                let derived = match (&serving.questions, &self.derived) {
+                    (None, Some(derived)) => derived.questions(&serving.host).ok(),
+                    _ => None,
+                };
                 let questions = serving
                     .questions
                     .as_ref()
                     .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+                    .or_else(|| {
+                        derived
+                            .as_ref()
+                            .map(|runtime| -> &dyn AdHocQuestions<E> { runtime })
+                    })
                     .or_else(|| {
                         self.handles
                             .as_ref()

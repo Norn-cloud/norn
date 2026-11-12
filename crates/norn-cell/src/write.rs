@@ -215,6 +215,9 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
     pending_snapshot_digests: crate::read::PendingDigests,
+    /// The effective-values catalog, built once per commit: its effective
+    /// model is derived on first use, so a catalog per write re-derived it.
+    catalog: std::cell::OnceCell<TypeCatalog<'a>>,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -232,6 +235,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             commit_seq,
             batch_output_facts: None,
             pending_snapshot_digests: BTreeMap::new(),
+            catalog: std::cell::OnceCell::new(),
         }
     }
 
@@ -919,9 +923,11 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         object_type: &str,
         values: &BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, CellError> {
-        let catalog = TypeCatalog::new(self.model.object_types())
-            .with_interfaces(self.model.interfaces())
-            .with_property_types(self.model.property_types());
+        let catalog = self.catalog.get_or_init(|| {
+            TypeCatalog::new(self.model.object_types())
+                .with_interfaces(self.model.interfaces())
+                .with_property_types(self.model.property_types())
+        });
         catalog
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {

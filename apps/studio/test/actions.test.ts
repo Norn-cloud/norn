@@ -146,6 +146,11 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])
 })
 
+test("an approval-gated call answers 202 pending with the decision it opened, and commits nothing", async () => {
+  const gated = cell(() => Response.json({ outcome: "pending", decision: { id: "dec_1", expiresAtMs: 1800000000000 } }, { status: 202 }))
+  expect(await callAction("ops.refund", "{}", "k", gated.fetcher)).toEqual({ kind: "pending", decision: { id: "dec_1", expiresAtMs: 1800000000000 } })
+})
+
 // The documents the cell's route serves (crates/norn-cell-do/tests/actions.rs asserts it serves exactly these).
 const served = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/action-call.json"), "utf8")) as Record<"committed" | "conflict" | "invalidKey", unknown>
 

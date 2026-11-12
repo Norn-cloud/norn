@@ -159,6 +159,7 @@
               "stock_cost": "/x_stock_cost",
               "unit": "/product_uom_id/name",
               "valuation_method": "/x_valuation_method",
+              "write_date": "/write_date",
               "x_norn_ref": "/x_norn_ref"
             },
             "idPath": "/id",

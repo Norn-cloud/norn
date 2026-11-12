@@ -13,9 +13,14 @@
 //!   `PUT` the browser sends the bytes to.
 //! - `/v1/uploads/{id}:complete`: the cell reads the object, records its URI
 //!   and SHA-256 and profiles it.
+//! - `/v1/uploads/{id}:define`: [`LoadRequest`]; installs the generated
+//!   definitions only, for a loader that writes the rows itself.
 //! - `/v1/uploads/{id}:load`: [`LoadRequest`]; installs and loads.
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
+//! - `/v1/observations:load`: one page of a recorded export
+//!   ([`crate::recorded`], at most [`norn_api::host::PAGE_ROWS`] rows) through
+//!   the admitted mappings → each row's outcome.
 //!
 //! CONNECT-AUTH-1: every route is decided by the cell's policy as
 //! `Operation::SyncSource` before anything else; a denied caller, or a scope
@@ -105,6 +110,8 @@ enum Waiting {
         request: LoadRequest,
         actor: String,
         started_ms: u64,
+        /// `false` for `:define`: install the definitions, write no rows.
+        rows: bool,
     },
 }
 
@@ -196,8 +203,10 @@ enum Route<'a> {
     Sync(&'a str),
     Begin,
     Complete(&'a str),
+    Define(&'a str),
     Load(&'a str),
     Read,
+    Observations,
 }
 
 fn route_of(path: &str) -> Option<Route<'_>> {
@@ -206,6 +215,9 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
     if path == "/v1/uploads:read" {
         return Some(Route::Read);
+    }
+    if path == "/v1/observations:load" {
+        return Some(Route::Observations);
     }
     if let Some(rest) = path.strip_prefix("/v1/sources/") {
         let id = rest.strip_suffix(":sync")?;
@@ -218,6 +230,7 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
     match verb {
         "complete" => Some(Route::Complete(id)),
+        "define" => Some(Route::Define(id)),
         "load" => Some(Route::Load(id)),
         _ => None,
     }
@@ -385,7 +398,10 @@ impl Connect {
         let actor = principals.resolve(request.authorization, request.now);
         let target = match &route {
             Route::Sync(id) => (*id).to_owned(),
-            Route::Begin | Route::Complete(_) | Route::Load(_) | Route::Read => "upload".to_owned(),
+            Route::Begin | Route::Complete(_) | Route::Define(_) | Route::Load(_) | Route::Read => {
+                "upload".to_owned()
+            }
+            Route::Observations => "observations".to_owned(),
         };
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
         let allowed = host.filter(|host| {
@@ -421,19 +437,26 @@ impl Connect {
             Route::Complete(id) => self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
                 Waiting::Complete { upload }
             }),
-            Route::Load(id) => match serde_json::from_str::<LoadRequest>(request.body) {
-                Ok(load) => {
-                    let actor = actor.clone();
-                    self.fetch_object((id, &host.scope().key()), now_ms, |upload| Waiting::Load {
-                        upload,
-                        request: load,
-                        actor,
-                        started_ms: now_ms,
-                    })
+            Route::Define(id) | Route::Load(id) => {
+                match serde_json::from_str::<LoadRequest>(request.body) {
+                    Ok(load) => {
+                        let actor = actor.clone();
+                        let rows = matches!(route, Route::Load(_));
+                        self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
+                            Waiting::Load {
+                                upload,
+                                request: load,
+                                actor,
+                                started_ms: now_ms,
+                                rows,
+                            }
+                        })
+                    }
+                    Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
                 }
-                Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
-            },
+            }
             Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
+            Route::Observations => Routed::reply(load_observations(host, request.body)),
         })
     }
 
@@ -618,9 +641,10 @@ impl Connect {
                 request,
                 actor,
                 started_ms,
+                rows,
             } => self.load(
                 host,
-                &upload,
+                (&upload, rows),
                 &request,
                 &actor,
                 body,
@@ -674,7 +698,7 @@ impl Connect {
     fn load<E: SqlEngine>(
         &mut self,
         host: &DevHost<E>,
-        id: &str,
+        (id, rows): (&str, bool),
         request: &LoadRequest,
         actor: &str,
         body: &[u8],
@@ -719,6 +743,15 @@ impl Connect {
             Ok(version) => version,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
+        if !rows {
+            return json_response(
+                200,
+                &json!({
+                    "objectType": generated.object_type, "definitionsVersion": version,
+                    "sourceSchema": generated.source_schema, "mapping": generated.mapping,
+                }),
+            );
+        }
         let loaded = match uploads::load_rows(host, &generated, &table, &upload.uri, sha256, now_ms)
         {
             Ok(loaded) => loaded,
@@ -755,6 +788,65 @@ impl Connect {
     }
 }
 
+/// `POST /v1/observations:load`: one page of a recorded export, captured and
+/// mapped through the cell's admitted mappings exactly as a source sync's
+/// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
+/// refuses stays in the inbox as quarantined evidence, with its reasons.
+fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
+    let answer = |refusal: &Refusal| Response {
+        status: refusal.status,
+        body: serde_json::to_string(refusal).unwrap_or_default(),
+    };
+    let recorded = match serde_json::from_str::<Value>(body)
+        .map_err(|error| error.to_string())
+        .and_then(|document| crate::recorded::Recorded::parse(&document))
+    {
+        Ok(recorded) => recorded,
+        Err(error) => return answer(&Refusal::invalid(error)),
+    };
+    if recorded.rows.is_empty() || recorded.rows.len() > norn_api::host::PAGE_ROWS {
+        return answer(&Refusal::invalid(format!(
+            "a load carries 1 to {} rows; send a longer export in slices",
+            norn_api::host::PAGE_ROWS
+        )));
+    }
+    let rows = match recorded.observations() {
+        Ok(rows) => rows,
+        Err(error) => return answer(&Refusal::invalid(error)),
+    };
+    let ingested = match host.ingest(&rows) {
+        Ok(ingested) => ingested,
+        Err(refusal) => return answer(&refusal),
+    };
+    let (mut landed, mut already, mut quarantined) = (0_usize, 0_usize, 0_usize);
+    let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
+    for row in &ingested {
+        match &row.outcome {
+            norn_cell::MappingOutcome::Landed => landed = landed.saturating_add(1),
+            norn_cell::MappingOutcome::AlreadyLanded => already = already.saturating_add(1),
+            norn_cell::MappingOutcome::Quarantined(codes) => {
+                quarantined = quarantined.saturating_add(1);
+                for code in codes {
+                    let n = reasons.entry(code.clone()).or_insert(0);
+                    *n = n.saturating_add(1);
+                }
+            }
+        }
+    }
+    json_response(
+        200,
+        &json!({
+            "source": recorded.source,
+            "mapping": recorded.mapping,
+            "rows": ingested.len(),
+            "landed": landed,
+            "alreadyLanded": already,
+            "quarantined": quarantined,
+            "quarantineReasons": reasons,
+        }),
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "route parsing scenarios")]
 mod tests {
@@ -769,12 +861,20 @@ mod tests {
         assert!(matches!(route_of("/v1/uploads:begin"), Some(Route::Begin)));
         assert!(matches!(route_of("/v1/uploads:read"), Some(Route::Read)));
         assert!(matches!(
+            route_of("/v1/observations:load"),
+            Some(Route::Observations)
+        ));
+        assert!(matches!(
             route_of("/v1/uploads/abc:complete"),
             Some(Route::Complete("abc"))
         ));
         assert!(matches!(
             route_of("/v1/uploads/abc:load"),
             Some(Route::Load("abc"))
+        ));
+        assert!(matches!(
+            route_of("/v1/uploads/abc:define"),
+            Some(Route::Define("abc"))
         ));
         for other in [
             "/v1/sources/a/b:sync",

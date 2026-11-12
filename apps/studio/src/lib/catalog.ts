@@ -122,7 +122,14 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", "norn-connect": "Norn" }
+
+/**
+ * Whether the cell itself writes this source: its schema names the instance `cell` (the sync
+ * reports behind each connection's status). Such a source is Norn's own record, not a connected
+ * system; uploads and outside systems name their own instance.
+ */
+export const cellOwned = (system: SourceSystem): boolean => system.schema?.instance === "cell"
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {

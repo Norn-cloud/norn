@@ -26,6 +26,10 @@ pub fn project(
     plan: &QuestionPlan,
     row: &RuntimeObject,
 ) -> Result<Option<Contribution>, &'static str> {
+    // A snapshot sum reads each subject's versions, never one row in isolation.
+    if plan.as_of() {
+        return Err(UNSUPPORTED_ENGINE);
+    }
     if !matches_filters(plan, row, &plan.question().filters)? {
         return Ok(None);
     }
@@ -138,6 +142,133 @@ pub fn period_start(seconds: i64, grain: TimeGrain) -> Result<String, &'static s
         TimeGrain::Year => (day_of(seconds)?.year, 1, 1),
     };
     Ok(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// Most output buckets one snapshot question may produce.
+const MAX_AS_OF_BUCKETS: usize = 1024;
+
+/// An exact UTC instant as `(seconds, nanoseconds)`.
+type Instant = (i64, u32);
+
+/// A snapshot bucket: its period label (none without a time grouping) and its
+/// exclusive end.
+type Period = (Option<String>, Instant);
+
+/// METRIC-SNAPSHOT-ASOF-1: one subject's contributions, given its stored
+/// versions as `(version, values)` in any order. A time grouping (on the
+/// measure's own time property) cuts the window into its civil periods,
+/// clipped to the window; without one, a single bucket ends at the window's
+/// end. In each bucket the subject takes its last version whose time is
+/// before the bucket's end, ties to the later version, carried forward; a
+/// subject with no such version is absent. Filters and every other grouping
+/// read that version, so the bucket key is the period label and those values,
+/// in the question's order, as [`project`] keys them. A null measured value
+/// is skipped and counted. Each contribution carries its version.
+///
+/// # Errors
+/// Refuses a plan that is not one snapshot sum, values outside the profile,
+/// or more than 1024 periods.
+pub fn as_of(
+    plan: &QuestionPlan,
+    versions: &[(u64, RuntimeObject)],
+) -> Result<Vec<(u64, Contribution)>, &'static str> {
+    let [sum] = plan.sums() else {
+        return Err(UNSUPPORTED_ENGINE);
+    };
+    if !sum.as_of {
+        return Err(UNSUPPORTED_ENGINE);
+    }
+    let parse = norn_expr::temporal::timestamp_ordering_key;
+    let window = &plan.question().time_window;
+    let start = parse(window.start.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
+    let end = parse(window.end.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
+    let mut series = versions
+        .iter()
+        .map(|(version, row)| {
+            Ok((
+                instant(plan, row, sum.time_property.as_str())?,
+                *version,
+                row,
+            ))
+        })
+        .collect::<Result<Vec<_>, &'static str>>()?;
+    series.sort_by_key(|(at, version, _)| (*at, *version));
+    let dimensions = &plan.question().dimensions;
+    let timed: Vec<_> = dimensions.iter().filter(|d| d.grain.is_some()).collect();
+    let buckets = match timed.as_slice() {
+        [] => vec![(None, end)],
+        [dimension] if dimension.path.property == sum.time_property => {
+            periods(start, end, dimension.grain.ok_or(UNSUPPORTED_ENGINE)?)?
+        }
+        _ => return Err(UNSUPPORTED_ENGINE),
+    };
+    let mut contributions = Vec::new();
+    for (label, bucket_end) in buckets {
+        let Some((_, version, row)) = series.iter().rev().find(|(at, ..)| *at < bucket_end) else {
+            continue;
+        };
+        if !matches_filters(plan, row, &plan.question().filters)?
+            || !matches_filters(plan, row, &sum.filters)?
+        {
+            continue;
+        }
+        let members = dimensions
+            .iter()
+            .map(|dimension| match (&label, dimension.grain) {
+                (Some(label), Some(_)) => Ok(RuntimeValue::from(label.clone())),
+                _ => Ok(value(plan, row, dimension.path.property.as_str())?.clone()),
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        let bucket = match <[RuntimeValue; 1]>::try_from(members) {
+            Ok([one]) => one,
+            Err(members) if members.is_empty() => RuntimeValue::Null,
+            Err(members) => RuntimeValue::Array(members),
+        };
+        let measured = value(plan, row, sum.property.id.as_str())?;
+        let (amount, null) = if measured.is_null() {
+            (None, true)
+        } else {
+            let number = measured.as_decimal().ok_or(UNSUPPORTED_ENGINE)?;
+            (Some(coefficient(number).ok_or(UNSUPPORTED_ENGINE)?), false)
+        };
+        contributions.push((
+            *version,
+            Contribution {
+                bucket,
+                amounts: vec![amount],
+                nulls: vec![null],
+            },
+        ));
+    }
+    Ok(contributions)
+}
+
+/// The civil `grain` periods meeting `[start, end)`: each period's label (as
+/// [`period_start`] gives it) and its exclusive end, clipped to `end`.
+fn periods(start: Instant, end: Instant, grain: TimeGrain) -> Result<Vec<Period>, &'static str> {
+    // Every period boundary is a UTC midnight: walk midnights until the label changes.
+    let mut day = start
+        .0
+        .div_euclid(86_400)
+        .checked_mul(86_400)
+        .ok_or(UNSUPPORTED_ENGINE)?;
+    let mut label = period_start(start.0, grain)?;
+    let mut periods = Vec::new();
+    for _ in 0..400_000 {
+        day = day.checked_add(86_400).ok_or(UNSUPPORTED_ENGINE)?;
+        if (day, 0) >= end {
+            periods.push((Some(label), end));
+            return Ok(periods);
+        }
+        let next = period_start(day, grain)?;
+        if next != label {
+            periods.push((Some(std::mem::replace(&mut label, next)), (day, 0)));
+            if periods.len() >= MAX_AS_OF_BUCKETS {
+                return Err(UNSUPPORTED_ENGINE);
+            }
+        }
+    }
+    Err(UNSUPPORTED_ENGINE)
 }
 
 fn value<'a>(

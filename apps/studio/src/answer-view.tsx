@@ -202,8 +202,8 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel>
-      <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
-        <TableCard><Table>
+      <Panel icon={Rows3} label="Every week" action={rows.length === 0 ? undefined : "Select a week to see its records"}>
+        {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
@@ -219,7 +219,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
               </TableRow>
             ))}
           </TableBody>
-        </Table></TableCard>
+        </Table></TableCard>}
       </Panel>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>
