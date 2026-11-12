@@ -342,6 +342,7 @@ const UNDOCUMENTED: &[server::Route] = &[
     server::Route::UploadRead,
     server::Route::UploadComplete,
     server::Route::UploadLoad,
+    server::Route::UploadDefine,
 ];
 
 /// The route's path template with every `{parameter}` filled by `x`.
