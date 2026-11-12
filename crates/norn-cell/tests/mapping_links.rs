@@ -108,6 +108,8 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
         .with_governing_laws(&artifacts)
         .expect("laws");
     let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
+    // Bound before the first commit, so every exported record carries it.
+    store.bind("scope", "org_demo/dev").expect("scope");
     store
         .install_definitions(
             model,
