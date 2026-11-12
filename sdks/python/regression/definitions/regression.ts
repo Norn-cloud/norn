@@ -40,7 +40,7 @@ const CheckFields = Schema.Struct({
   subject: Schema.String,
   status: Status,
   statistic: Schema.String,
-  p_value: Schema.NullOr(Schema.String), // null for a check without a p-value
+  p_value: Schema.NullOr(Norn.decimal(18)), // exact to 18 places; null for a check without a p-value
   threshold: Schema.String,
   threshold_source: Schema.String,
   remediation: Schema.String,

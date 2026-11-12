@@ -141,6 +141,14 @@ class RegressionChecks:
         return self.spec["summary"]
 
 
+def p_decimal(text: str | None) -> str | None:
+    """A p-value as the exact decimal text the cell stores (18 places, no exponent), or None."""
+    if text is None:
+        return None
+    fixed = f"{float(text):.18f}".rstrip("0")
+    return fixed + "0" if fixed.endswith(".") else fixed
+
+
 def revision(rows: pd.DataFrame) -> str:
     """The dataset revision the checks ran on: a hash of every row's id and version."""
     pairs = sorted(zip(rows["id"].astype(str), rows["version"].astype(int))) if len(rows) else []
@@ -173,7 +181,7 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
     result.receipts.append(cell.call(action, spec, spec_id)["receipt"]["receiptHash"])
     for index, check in enumerate(checks):
         values = {"check": f"{spec_id}-{index:02d}", "spec": spec_id, "assumption": check.assumption, "test": check.test,
-                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": check.p_value,
+                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": p_decimal(check.p_value),
                   "threshold": check.threshold, "threshold_source": check.threshold_source, "remediation": check.remediation}
         result.receipts.append(cell.call("stats.assumptioncheck.record", values, values["check"])["receipt"]["receiptHash"])
     return result

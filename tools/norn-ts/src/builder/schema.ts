@@ -56,8 +56,8 @@ export interface ObjectSchema extends Labels {
 
 /**
  * A nullable closed schema. RuleIR admits every shape; ActionIR inputs and
- * outputs admit only the plain nullable scalar (`["string" | "integer" | "number" | "boolean", "null"]`
- * with no sibling keywords), which the compiler enforces.
+ * outputs admit only a nullable scalar (`["string" | "integer" | "number" | "boolean", "null"]`,
+ * with a string `enum` or a decimal `nornType` beside it), which the compiler enforces.
  */
 export type NullableSchema =
   | (Omit<StringSchema, "type"> & { readonly type: readonly ["string", "null"] })
