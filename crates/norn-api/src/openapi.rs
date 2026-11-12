@@ -6,12 +6,18 @@ use utoipa::{Modify, OpenApi};
 /// The security scheme's name in `components.securitySchemes`.
 pub const HOST_TOKEN_SCHEME: &str = "hostToken";
 
-/// Declares the host-token bearer scheme and requires it on every operation.
+/// Operations a caller may reach without a host token, by `operationId`.
+/// None exist. A route that is deliberately public is named here; it then
+/// carries no requirement, and the test below requires exactly that.
+const PUBLIC_OPERATIONS: &[&str] = &[];
+
+/// Declares the host-token bearer scheme and requires it on every operation
+/// not named in [`PUBLIC_OPERATIONS`].
 ///
 /// Every route in this document resolves its principal from the
-/// `Authorization: Bearer` header and denies without one, so no operation is
-/// exempt. A public route added later must opt out here, by name, and the
-/// test below then names it too.
+/// `Authorization: Bearer` header and denies without one. The requirement is
+/// stamped here, not read from the dispatch: whether a route is really
+/// public is decided by the server, and this list has to follow it.
 pub(crate) struct HostTokenSecurity;
 
 impl Modify for HostTokenSecurity {
@@ -19,10 +25,16 @@ impl Modify for HostTokenSecurity {
         let scheme = HttpBuilder::new()
             .scheme(HttpAuthScheme::Bearer)
             .description(Some(
-            "The host token for this cell, sent as `Authorization: Bearer <token>`. A published \
-             host issues a short-lived signed token for one organization and environment; the \
-             local development host prints a session token when it starts. A request without a \
-             valid token is refused with 403 `authz.denied`.",
+                "The cell host's own credential, sent to the cell host directly as \
+                 `Authorization: Bearer <token>`. A published host accepts only a token signed \
+                 (EdDSA) by the identity service it is configured to trust, issued for at most \
+                 five minutes and bound to the cell's organization; the token is not bound to an \
+                 environment. The local development host accepts the session token it writes to \
+                 the owner-only file `.norn/dev.token`. A caller that reaches the cell through a \
+                 fronting application (for example Studio's proxy) authenticates to that application by its own means and does not present this \
+                 token. Without a valid token no route serves: a route that reaches \
+                 authorization refuses with 403 `authz.denied`, and an unknown route, a wrong \
+                 method or a malformed query can refuse before that.",
             ))
             .build();
         openapi
@@ -47,7 +59,11 @@ impl Modify for HostTokenSecurity {
                 .flatten()
                 .chain(item.additional_operations.values_mut())
             {
-                operation.security = Some(vec![requirement.clone()]);
+                let public = operation
+                    .operation_id
+                    .as_deref()
+                    .is_some_and(|id| PUBLIC_OPERATIONS.contains(&id));
+                operation.security = (!public).then(|| vec![requirement.clone()]);
             }
         }
     }
@@ -123,9 +139,14 @@ mod action_contract_tests {
     reason = "generated schema correspondence"
 )]
 mod security_contract_tests {
-    /// Operations a caller may reach without a host token. None exist.
-    const PUBLIC_OPERATIONS: &[&str] = &[];
+    const METHODS: &[&str] = &[
+        "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
+    ];
 
+    /// The document agrees with the declared list: every operation carries
+    /// exactly the host-token requirement unless `PUBLIC_OPERATIONS` names
+    /// it, and a named one carries none. This does not prove the server
+    /// enforces it; each route's own refusal tests do that.
     #[test]
     fn every_operation_requires_the_declared_host_token() {
         let document: serde_json::Value =
@@ -137,11 +158,12 @@ mod security_contract_tests {
         let mut seen = 0_usize;
         for (path, item) in document["paths"].as_object().unwrap() {
             for (method, operation) in item.as_object().unwrap() {
-                let Some(id) = operation.get("operationId").and_then(|id| id.as_str()) else {
+                if !METHODS.contains(&method.as_str()) {
                     continue;
-                };
+                }
                 seen += 1;
-                if PUBLIC_OPERATIONS.contains(&id) {
+                let id = operation["operationId"].as_str().unwrap_or_default();
+                if super::PUBLIC_OPERATIONS.contains(&id) {
                     assert!(operation.get("security").is_none(), "{method} {path}");
                 } else {
                     assert_eq!(operation["security"], required, "{method} {path}");
