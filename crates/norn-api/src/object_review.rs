@@ -30,7 +30,9 @@ use utoipa::openapi::schema::{
 
 use crate::authz::ReadCapability::{Population, Sources, Values};
 use crate::host::DevHost;
-use crate::object_routes::{ObjectAccess, collection, locked, not_found, permitted};
+use crate::object_routes::{
+    MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, not_found, permitted,
+};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -377,6 +379,109 @@ pub fn get_object_history<E: SqlEngine>(
             versions,
             truncated: oldest > 1,
         })
+    })
+}
+
+/// One quarantined object the caller may review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornQuarantinedObject {
+    /// The object id.
+    pub id: String,
+    /// Open findings that hold it out of authoritative reads.
+    pub open_findings: u64,
+}
+
+/// A type's quarantined objects, as the caller may see them.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornQuarantinedPage {
+    /// The concept read.
+    pub object_type: String,
+    /// Quarantined rows whose values the caller may read, in id order. A row
+    /// whose values are withheld is never named: quarantine is value-level.
+    pub items: Vec<NornQuarantinedObject>,
+    /// True when the scan bound was reached: the list covers only the rows read.
+    pub approximate: bool,
+    /// The row scan bound.
+    pub scan_limit: u64,
+}
+
+/// HOST-READ-6: the ids of a type's quarantined objects the caller may review,
+/// so a grid's quarantine count can lead to them.
+///
+/// # Errors
+/// A denied gate (the opaque 403), an undeclared type (404), a commit while
+/// the rows were read (409 `object.snapshot_moved`), or a host failure.
+#[utoipa::path(get, path = "/v1/objects/{type}:quarantined", operation_id = "get_quarantined_objects", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded.")), responses((status = 200, description = "The type's quarantined objects whose values the caller may read, with their open finding counts.", body = NornQuarantinedPage), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the type is not declared.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the rows were read.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
+pub fn get_quarantined_objects<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<NornQuarantinedPage, Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let mut start = None;
+    let mut after: Option<String> = None;
+    let mut scanned = 0usize;
+    let mut candidates: Vec<(ObjectRecord, u64)> = Vec::new();
+    let exhausted = loop {
+        let (batch, done) = locked(host, access, &mut start, |reader| {
+            if !reader.model().has_type(object_type) {
+                return Err(not_found());
+            }
+            let rows = reader
+                .list_after(MAIN_WORLD, object_type, after.as_deref(), SCAN_BATCH)
+                .map_err(Refusal::host)?;
+            let done = rows.len() < SCAN_BATCH;
+            let mut held = Vec::new();
+            for row in rows {
+                if reader
+                    .observation_is_quarantined(MAIN_WORLD, &row)
+                    .map_err(Refusal::host)?
+                {
+                    let open = reader
+                        .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
+                        .map_err(Refusal::host)?
+                        .iter()
+                        .filter(|finding| finding.status == norn_ir::DataQualityFindingStatus::Open)
+                        .count();
+                    held.push((row, u64::try_from(open).unwrap_or(u64::MAX)));
+                } else {
+                    held.push((row, 0));
+                }
+            }
+            Ok((held, done))
+        })?;
+        scanned = scanned.saturating_add(batch.len());
+        after = batch.last().map(|(row, _)| row.id.clone());
+        candidates.extend(batch.into_iter().filter(|(_, open)| *open > 0));
+        if done {
+            break true;
+        }
+        if scanned >= MAX_QUERY_SCAN {
+            break false;
+        }
+    };
+    // Authorization runs outside the cell lock, row by row.
+    let items = candidates
+        .into_iter()
+        .filter(|(row, _)| {
+            [Population, Values]
+                .into_iter()
+                .all(|capability| permitted(host, access, &actor, row, capability))
+        })
+        .map(|(row, open_findings)| NornQuarantinedObject {
+            id: row.id,
+            open_findings,
+        })
+        .collect();
+    Ok(NornQuarantinedPage {
+        object_type: object_type.to_owned(),
+        items,
+        approximate: !exhausted,
+        scan_limit: u64::try_from(MAX_QUERY_SCAN).unwrap_or(u64::MAX),
     })
 }
 

@@ -676,6 +676,22 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
         .is_err(),
         "a caller without read authority learns nothing"
     );
+    let quarantined = crate::object_review::get_quarantined_objects(
+        &host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        &Access,
+    )
+    .expect("the steward lists what is held back");
+    assert_eq!(
+        quarantined
+            .items
+            .iter()
+            .map(|item| (item.id.as_str(), item.open_findings))
+            .collect::<Vec<_>>(),
+        [("SCAN-INV-0042", 1)]
+    );
     let before = host
         .cell()
         .expect("cell")

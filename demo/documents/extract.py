@@ -13,6 +13,7 @@ cell or decides anything about the values.
     extract.py run --store DIR                             # one shot: new objects under the bucket prefix
     extract.py serve --store DIR [--port 8080]             # POST /extractions for the cell's pull connector
     extract.py upload DIR [--prefix synthetic/scans/<seed>]  # put generated scans through the cell's upload route
+    extract.py audit --store DIR TRUTH.json MANIFEST.json  # which extracted values differ from what is printed, and why
 
 `run` reads S3-compatible settings from the environment: NORN_SCANS_ENDPOINT
 (https://<account>.r2.cloudflarestorage.com), NORN_SCANS_BUCKET,
@@ -405,6 +406,39 @@ def command_upload(args) -> None:
     print(json.dumps({"uploaded": len(done)}))
 
 
+def command_audit(args) -> None:
+    """Compare every stored row with the generator's ground truth (synthetic
+    documents only) and label each difference by its origin: an error the
+    generator seeded into the legacy import on purpose, or a real misread by the
+    named extractor version. Prints JSON; writes nothing."""
+    truth = {doc["id"]: doc for doc in json.loads(Path(args.truth).read_text())}
+    seeded = {(e["document"], e["field"]) for e in json.loads(Path(args.manifest).read_text())["seededErrors"]}
+    store = Store(Path(args.store))
+    marked = re.sub(r'"(total|amount|bbox_[xywh])": (-?[0-9.]+)', r'"\1": "\2"', store.path.read_text())
+    differences, exact = [], 0
+    for line in marked.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        printed = truth.get(row["id"])
+        if printed is None:
+            continue
+        read = [("total", row["total"], printed["total"])]
+        read += [(f"lines.{i}.amount", (row["lines"][i - 1]["amount"] if i <= len(row["lines"]) else None), line["amount"])
+                 for i, line in enumerate(printed["lines"], 1)]
+        if len(row["lines"]) > len(printed["lines"]):
+            read += [(f"lines.{i}.amount", row["lines"][i - 1]["amount"], None) for i in range(len(printed["lines"]) + 1, len(row["lines"]) + 1)]
+        wrong = [(field, got, want) for field, got, want in read
+                 if got is None or want is None or Decimal(str(got)) != Decimal(str(want))]
+        if not wrong:
+            exact += 1
+        for field, got, want in wrong:
+            differences.append({"document": row["id"], "field": field, "printed": None if want is None else str(want),
+                                "read": None if got is None else str(got), "extractor": f"{row['extractor']} {row['extractor_version']}",
+                                "origin": "seeded" if (row["id"], field) in seeded else "misread"})
+    print(json.dumps({"rows": exact + len({d["document"] for d in differences}), "exact": exact, "differences": differences}, indent=1))
+
+
 def command_serve(args) -> None:
     store = Store(Path(args.store))
 
@@ -451,11 +485,15 @@ def main() -> None:
     upload = sub.add_parser("upload")
     upload.add_argument("directory")
     upload.add_argument("--prefix", default="synthetic/scans/20261115")
+    audit = sub.add_parser("audit")
+    audit.add_argument("--store", required=True)
+    audit.add_argument("truth")
+    audit.add_argument("manifest")
     serve = sub.add_parser("serve")
     serve.add_argument("--store", required=True)
     serve.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    {"files": command_files, "seed": command_seed, "run": command_run, "serve": command_serve, "upload": command_upload}[args.command](args)
+    {"files": command_files, "seed": command_seed, "run": command_run, "serve": command_serve, "upload": command_upload, "audit": command_audit}[args.command](args)
 
 
 if __name__ == "__main__":
