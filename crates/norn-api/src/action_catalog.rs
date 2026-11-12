@@ -127,7 +127,9 @@ pub struct NornActionSummary {
     pub effect: NornActionEffect,
     /// The input field that names the target object.
     pub object_id_field: String,
-    /// The admitted input schema, in the action's closed input dialect.
+    /// The input a caller supplies: the admitted input schema, in the action's
+    /// closed input dialect, without the fields the server derives from the
+    /// verified actor (ACTION-ACTOR-1), which a caller never supplies.
     #[schema(schema_with = input_schema_schema)]
     pub input_schema: serde_json::Value,
     /// The effects a caller must handle.
@@ -152,9 +154,29 @@ fn input_schema_schema() -> Object {
         .schema_type(SchemaType::Type(Type::Object))
         .additional_properties(Some(AdditionalProperties::FreeForm(true)))
         .description(Some(
-            "The admitted input schema, in the action's closed input dialect.",
+            "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
         ))
         .build()
+}
+
+/// The admitted input schema without the fields derived from the verified
+/// actor: the kernel refuses a caller value for them, so a form never offers one.
+fn caller_input_schema(action: &ActionRoot) -> Result<serde_json::Value, Refusal> {
+    let mut schema = serde_json::to_value(&action.input_schema).map_err(Refusal::host)?;
+    let derived = norn_kernel::actor_derived_fields(action);
+    if let Some(properties) = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        properties.retain(|field, _| !derived.contains(field));
+    }
+    if let Some(required) = schema
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.retain(|field| field.as_str().is_none_or(|field| !derived.contains(field)));
+    }
+    Ok(schema)
 }
 
 fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
@@ -200,7 +222,7 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
         object_kind: object_kind.clone(),
         effect,
         object_id_field: object_id_field.clone(),
-        input_schema: serde_json::to_value(&action.input_schema).map_err(Refusal::host)?,
+        input_schema: caller_input_schema(action)?,
         ui_effects: NornActionUiEffects {
             irreversible: effects.contains(&ActionUiEffect::Irreversible),
             destructive: effects.contains(&ActionUiEffect::Destructive),

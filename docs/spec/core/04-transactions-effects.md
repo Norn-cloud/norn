@@ -6,7 +6,7 @@ Purpose [Astra]: every governed writer lowers into one closed checked calculus w
 
 Reuse `DecisionOutput`, `FactChange`, kernel `CellCommit`, `FactExpectation`, `FactWrite`, `Command`, `Timer`, `IdempotencyKey`, `Generation`, `LogicalTime` and `World`. Extend these families rather than inventing application posting opcodes.
 
-**ACTION-ACTOR-1:** Action derivations read only the host-authenticated call principal as typed `actor.subjectId`, preparations and receipts bind that same principal, and caller-supplied `actor`/`approved` fields at any depth or a principal outside the NFC expression profile refuse with `action.invalid_input` before writes, never rewriting an identity; admission rejects those reserved input-schema property names, including nested objects and array items, with `action.validation.invalid_schema`.
+**ACTION-ACTOR-1:** Action derivations read only the host-authenticated call principal as typed `actor.subjectId`, preparations and receipts bind that same principal, and caller-supplied `actor`/`approved` fields at any depth or a principal outside the NFC expression profile refuse with `action.invalid_input` before writes, never rewriting an identity; admission rejects those reserved input-schema property names, including nested objects and array items, with `action.validation.invalid_schema`. A field an action derives from the actor without the caller (a derivation with `inputRequired: false` that reads `actor`) is never caller input: a supplied value refuses with `action.invalid_input` rather than being overwritten, and a published caller input schema (`GET /v1/actions`) omits it.
 
 | Target semantic envelope | Required fields |
 |---|---|
@@ -144,6 +144,50 @@ epoch (`Authorizer::model_changed`), so the DO cell's read rules cover a flow's
 Run type before any request sees it. Named scenarios
 (`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**, **RUN-START-REFUSE**,
 **RUN-READ-GATED**.
+
+### DECISIONS-1 — deciding what a run waits on
+
+A flow lowers "ask a person" to a perform of `norn.decision@1`; the cell parks the
+command (PARKED-1) and the run waits in `awaiting_perform_<step>`. The parked
+command is the open decision: its request (question, risk, options, agent pick,
+decider roles and law, expiry) is the step's input, its id is opaque
+(`dec_`, bound to the command's generation), it was asked at its dispatching
+commit's logical time, and it expires at most seven days later. `GET
+/v1/decisions?state=pending` lists the open, unexpired decisions the caller may
+decide, soonest deadline first, ties to the oldest request; `limit=0` returns only
+the count. Whether a caller may decide is the host operation `Decide` over the
+request's declared roles and law (in the DO cell, a verified role named by the
+request); a decision that names a law the host cannot evaluate refuses
+`decision.law_not_satisfied`. `POST /v1/decisions/{id}:decide` with `{choice,
+note?, idempotencyKey}` refuses, in order: `decision.not_found` (also for a caller
+who may not decide it, so existence is not disclosed), `decision.resolved` (with
+who and when, and the choice only for a reader of the run), `decision.expired`,
+`decision.law_not_satisfied`, `decision.unknown_choice` (`/choice`),
+`decision.note_too_long` (`/note`), `request.invalid`, and
+`decision.idempotency_conflict`. An accepted answer is checked against the flow's
+result turn before anything is recorded; the cell then records `{choice, note?}` as
+the parked command's result and commits the run's result turn (FLOW-DRIVER-1) with
+the decision's resolution in one commit (DECISION-LEDGER-1). The same key and body
+replays the original commit. A decider adds a condition and grants nothing: the
+result turn runs as the cell, and the run's later steps act under the run
+starter's authority, never the decider's. The receipt is disclosed under D53 by the
+cell's question runtime; a cell without one decides nothing. A run document names
+the open decision it waits on (`decision: {id, expiresAtMs}`) when the caller may
+decide it. Named scenarios (`crates/norn-cell-do/tests/decisions.rs`):
+**DECIDE-ONCE**, **DECIDE-REFUSE**, **DECIDE-EXPIRED**.
+
+### DECISION-LEDGER-1 — resolved decisions
+
+The commit that consumes a parked decision's result carries one
+`norn.decision.resolved` ledger event (decision id, command and generation, run,
+step, resolution `decided | expired | withdrawn`, and for a decision the choice,
+note, deciding principal, idempotency key and request digest). The store records
+it in `_norn_decision` in that commit's transaction. A resolution refuses
+(`decision.resolution_invalid`) unless its commit consumes exactly that command's
+result, and a second resolution of the same decision refuses `decision.resolved`;
+nothing commits either way. The ledger derives only from committed batches, so
+export replay rebuilds it; it is a read index for replays and "who was first", not
+authority, and the typed commit reader skips the event as bookkeeping.
 
 ### PARKED-1 — parked perform commands
 

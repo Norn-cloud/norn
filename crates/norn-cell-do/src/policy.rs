@@ -14,8 +14,9 @@
 //! retire) are [`Operation::WriteDefinitions`], granted only to the table's
 //! declared writer roles. Starting a flow run is [`Operation::StartRun`],
 //! granted only to the declared starter roles of [`RUN_STARTERS`] that also
-//! hold the Values grant (a starter can read the run it starts). Creating a
-//! cell is [`Operation::ProvisionCell`],
+//! hold the Values grant (a starter can read the run it starts). Deciding a
+//! decision is [`Operation::Decide`], granted to a caller holding one of the
+//! decision's declared roles. Creating a cell is [`Operation::ProvisionCell`],
 //! granted only to the table's declared provisioner roles: a scope with no
 //! cell has no definitions, so this one authority is the host's
 //! ([`Provisioners`] decides it before a cell exists, [`ReadPolicy`] after).
@@ -406,6 +407,17 @@ impl Authorizer for ReadPolicy {
                     .current()
                     .filter(|caller| caller.subject_id == actor)
                     .is_some_and(|caller| RUN_STARTERS.starts(self.table, &caller.roles))
+            }),
+            // A decider holds one of the decision's declared roles, verified
+            // for this request, and some grant of the table.
+            Operation::Decide { ref roles, .. } => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| {
+                        !self.table.capabilities(&caller.roles).is_empty()
+                            && caller.roles.iter().any(|held| roles.contains(held))
+                    })
             }),
         };
         if granted {

@@ -20,6 +20,15 @@ pub enum Operation {
     /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
     /// the cell's own policy.
     ProvisionCell,
+    /// Decide a decision a flow run waits on, whose request declares these
+    /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
+    /// run; it grants the run nothing.
+    Decide {
+        /// The roles the request declares; the caller must hold one.
+        roles: Vec<String>,
+        /// The law the request names, if any.
+        law: Option<String>,
+    },
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -197,6 +206,10 @@ mod tests {
                 Operation::WriteDefinitions,
                 Operation::StartRun("demo.flow".into()),
                 Operation::ProvisionCell,
+                Operation::Decide {
+                    roles: vec!["viewer".into()],
+                    law: None,
+                },
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

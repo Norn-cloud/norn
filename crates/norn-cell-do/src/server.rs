@@ -3,8 +3,9 @@
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), the one governed action route,
 //! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
-//! `GET /v1/runs/{id}`); and `POST /v1/mcp`, whose tools call these same
-//! routes ([`crate::mcp`]).
+//! `GET /v1/runs/{id}`), the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
+//! these same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -162,6 +163,10 @@ routes! {
     Run => ("GET", "/v1/runs/{id}"),
     /// `GET /v1/questions:catalog`.
     QuestionsCatalog => ("GET", "/v1/questions:catalog"),
+    /// `GET /v1/decisions` (DECISIONS-1).
+    Decisions => ("GET", "/v1/decisions"),
+    /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
+    Decide => ("POST", "/v1/decisions/{id}:decide"),
 }
 
 impl Route {
@@ -179,7 +184,15 @@ impl Route {
             "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
             "/v1/runs" => return Some(Self::RunStart),
             "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
+            "/v1/decisions" => return Some(Self::Decisions),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/decisions/")
+            .and_then(|rest| rest.strip_suffix(":decide"))
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Decide);
         }
         if path
             .strip_prefix("/v1/runs/")
@@ -271,7 +284,7 @@ pub fn handle_all<E: SqlEngine>(
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    if let Some(response) = crate::runs::dispatch(host, actor.as_deref(), request) {
+    if let Some(response) = crate::runs::dispatch(host, questions, actor.as_deref(), request) {
         return response;
     }
     respond(route(
