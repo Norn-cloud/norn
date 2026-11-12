@@ -12,6 +12,7 @@ import { list, type Issue } from "@/lib/editor"
 import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
+import { DashboardAssistant } from "./dashboards/assistant.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
 const questionTitle = (tile: Tile) => tile.title || "Untitled question"
@@ -82,6 +83,7 @@ export function DashboardsPage() {
     onSettled: refresh,
   })
   const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
+  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity, enabled: cellAvailable })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -91,6 +93,7 @@ export function DashboardsPage() {
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}
       {cellAvailable && dashboards.isPending && <p className="text-muted-foreground">Reading dashboards…</p>}
       {dashboards.isError && <EmptyState icon={LayoutDashboard}>{failure(dashboards.error)}</EmptyState>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
@@ -349,6 +352,12 @@ export function DashboardBoardPage() {
       {removed && <Button asChild variant="ghost" size="sm"><Link to="/dashboards">Back to dashboards</Link></Button>}
       {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
       {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} />}
+      {board && catalog.data && (
+        <details className="group rounded-xl border bg-card p-3">
+          <summary className="cursor-pointer text-sm font-medium">Change it with the assistant</summary>
+          <div className="mt-3"><DashboardAssistant catalog={catalog.data} dashboardId={board.id} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} /></div>
+        </details>
+      )}
     </section>
   )
 }

@@ -24,7 +24,8 @@ import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings, type EvidenceRef } from "./evidence/review.ts"
+import { readFindings, type Evidence, type EvidenceRef } from "./evidence/review.ts"
+import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -51,6 +52,7 @@ export function ObjectPage() {
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
   const evidence = review.data?.document.evidence ?? []
+  const corrections = useEvidenceActions(name, id)
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
@@ -102,12 +104,12 @@ export function ObjectPage() {
             ))}
             <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
             <Facts concept={concept} reads={data} />
-            {live && <Findings objectType={name} id={id} />}
+            {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
             <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} /></TabsContent>
-          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} evidence={evidence} /></TabsContent>
+          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} /></TabsContent>
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
               {concept.rules.length === 0
@@ -129,6 +131,7 @@ export function ObjectPage() {
           </TabsContent>
         </Tabs>
       )}
+      {corrections.sheet(() => { void reads.refetch(); void review.refetch() })}
     </section>
   )
 }
@@ -184,7 +187,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
   )
 }
 
-function Lineage({ lineage, evidence = [] }: { readonly lineage: SourceLineage | undefined; readonly evidence?: readonly EvidenceRef[] }) {
+function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: SourceLineage | undefined; readonly evidence?: readonly EvidenceRef[]; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const { inspect } = useInspector()
   useEffect(() => () => inspect(), [lineage, inspect])
   return (
@@ -210,7 +213,7 @@ function Lineage({ lineage, evidence = [] }: { readonly lineage: SourceLineage |
           return (
             <div key={`evidence-${fact}`} className="space-y-2 pt-2">
               <div className="text-sm font-medium">{fact.replaceAll("_", " ")}, as read from the scan</div>
-              <EvidenceList refs={evidence} filter={(item) => fields.includes(item.subjectProperty) || fields.some((field) => item.subjectProperty.startsWith(`${field}.`))} />
+              <EvidenceList refs={evidence} {...actionFor ? { actionFor } : {}} filter={(item) => fields.includes(item.subjectProperty) || fields.some((field) => item.subjectProperty.startsWith(`${field}.`))} />
             </div>
           )
         })}

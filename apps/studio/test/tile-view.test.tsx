@@ -38,7 +38,7 @@ test("a pie that is not a whole says why and lists the parts instead; a table li
   const whole = renderToStaticMarkup(<DrawnAnswer view={{ kind: "chart", chart: "pie" }} rows={[bucket("gold", "3", ["3 g"]), bucket("silver", "1", ["1 g"])]} name="Recovered" />)
   expect(whole).toContain('data-view="pie"')
   // The legend names each part with the server's exact value and its share of the whole.
-  for (const text of [">gold<", ">3<", ">75.0%<", ">silver<", ">25.0%<"]) expect(whole).toContain(text)
+  for (const text of [">gold<", ">3<", ">75.0%<", ">silver<", ">25.0%<", 'scope="row"', "each part&#x27;s exact value and its share"]) expect(whole).toContain(text)
   const table = renderToStaticMarkup(<DrawnAnswer view={{ kind: "table" }} rows={[bucket("gold", "3", ["3 g"], 5)]} name="Recovered" />)
   for (const text of ["gold", ">3<", ">5<"]) expect(table).toContain(text)
 })

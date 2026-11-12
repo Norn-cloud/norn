@@ -3,7 +3,7 @@
 The frozen document is never edited. This writes a copy that differs only in
 names the generator turns into Python identifiers; every wire shape is kept:
 - operation tags `crate::<module>` become short module names;
-- an object or map schema nested inline in a `oneOf`/`anyOf` variant's property is
+- an object schema (with properties, a map, or free-form) nested inline in a `oneOf`/`anyOf` variant's property is
   moved to a named component and referenced, because the generator otherwise
   names it twice and drops it.
 """
@@ -15,6 +15,10 @@ TAGS = {
     "crate::object_routes": "objects",
     "crate::object_links": "objects",
     "crate::question_routes": "questions",
+    "crate::object_profile": "objects",
+    "crate::object_review": "objects",
+    "crate::mcp": "mcp",
+    "crate::run_routes": "runs",
 }
 src, dst = sys.argv[1], sys.argv[2]
 doc = json.load(open(src))
@@ -31,9 +35,8 @@ def hoist(owner, schema):
     for key in ("oneOf", "anyOf"):
         for index, variant in enumerate(schema.get(key, [])):
             for prop, sub in (variant.get("properties") or {}).items():
-                if isinstance(sub, dict) and sub.get("type") == "object" and (
-                    "properties" in sub or isinstance(sub.get("additionalProperties"), dict)
-                ):
+                # Any inline object, including a free-form one (additionalProperties: true).
+                if isinstance(sub, dict) and sub.get("type") == "object":
                     name = f"{owner}{prop[0].upper()}{prop[1:]}"
                     if name in schemas or name in hoisted:
                         sys.exit(f"hoisted name {name} already exists")
