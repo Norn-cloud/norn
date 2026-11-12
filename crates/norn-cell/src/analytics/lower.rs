@@ -189,6 +189,11 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
     if plan.as_of() {
         return Err(refused());
     }
+    // METRIC-GRAIN-LINK-1 reads each row's time through its to-one link; that
+    // join is not in this profile yet, so it refuses rather than misread a time.
+    if plan.time_link().is_some() {
+        return Err(refused());
+    }
     let question = plan.question();
     let first = plan.sums().first().ok_or_else(refused)?;
     let time = first.time_property.as_str();
