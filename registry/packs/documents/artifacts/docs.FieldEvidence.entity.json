@@ -1,0 +1,137 @@
+{
+  "artifactId": "docs.FieldEvidence.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Extracted field evidence",
+  "namespace": "docs",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "norn.SourceEvidence"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "of",
+          "target": "docs.ScannedDocument"
+        }
+      ],
+      "name": "docs.FieldEvidence",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "subject_property",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "page",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "bbox_x",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_y",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_w",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_h",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "text",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "confidence_bp",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.FieldEvidence.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

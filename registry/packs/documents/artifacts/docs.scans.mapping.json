@@ -1,0 +1,296 @@
+{
+  "artifactId": "docs.scans.mapping",
+  "dependencies": [
+    {
+      "artifactId": "docs.scans.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.SourceDocument.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.SourceDocumentLine.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "norn.SourceEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.ScannedDocument.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.DocumentLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.FieldEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Extracted documents, lines and field evidence",
+  "namespace": "docs",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "docs.SourceDocument.interface",
+      "docs.SourceDocumentLine.interface",
+      "norn.SourceEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "document",
+        "ignoredFields": [
+          {
+            "field": "ledger_ref",
+            "reason": "The linked ledger entry is checked by LAW B (#343), a later unit; until then the reference stays in the source document only."
+          },
+          {
+            "field": "evidence",
+            "reason": "Mapped row by row by the evidence map."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.name"
+          },
+          {
+            "property": "doc_number",
+            "value": "input.doc_number"
+          },
+          {
+            "property": "kind",
+            "value": "input.kind"
+          },
+          {
+            "property": "vendor",
+            "value": "input.vendor"
+          },
+          {
+            "property": "issued_on",
+            "value": "date(input.issued_on)"
+          },
+          {
+            "property": "currency",
+            "value": "input.currency"
+          },
+          {
+            "property": "total",
+            "value": "input.total"
+          },
+          {
+            "property": "lines_total",
+            "value": "input.line_count == 0 ? null : sum(map(input.lines, #.amount))"
+          },
+          {
+            "property": "line_count",
+            "value": "input.line_count"
+          },
+          {
+            "property": "document_uri",
+            "value": "input.document_uri"
+          },
+          {
+            "property": "document_digest",
+            "value": "input.document_digest"
+          },
+          {
+            "property": "media_type",
+            "value": "input.media_type"
+          },
+          {
+            "property": "extractor",
+            "value": "input.extractor"
+          },
+          {
+            "property": "extractor_version",
+            "value": "input.extractor_version"
+          },
+          {
+            "property": "correction_reason",
+            "value": "null"
+          },
+          {
+            "property": "corrected_by",
+            "value": "null"
+          },
+          {
+            "property": "correction_evidence",
+            "value": "null"
+          }
+        ],
+        "source": {
+          "dataset": "Scanned Document"
+        },
+        "sourceRecord": "'synthetic-scans/demo/' + input.name",
+        "subject": "input.name",
+        "target": {
+          "entity": "docs.ScannedDocument.entity",
+          "interface": "docs.SourceDocument.interface"
+        }
+      },
+      {
+        "id": "line",
+        "links": [
+          {
+            "key": "input.parent",
+            "link": "document",
+            "targetMap": "document"
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.name"
+          },
+          {
+            "property": "line_no",
+            "value": "input.line_no"
+          },
+          {
+            "property": "description",
+            "value": "input.description"
+          },
+          {
+            "property": "currency",
+            "value": "'USD'"
+          },
+          {
+            "property": "amount",
+            "value": "input.amount"
+          }
+        ],
+        "source": {
+          "dataset": "Document Line",
+          "nestedIn": {
+            "dataset": "Scanned Document",
+            "field": "lines"
+          }
+        },
+        "sourceRecord": "'synthetic-scans/demo/' + input.name",
+        "subject": "input.name",
+        "target": {
+          "entity": "docs.DocumentLine.entity",
+          "interface": "docs.SourceDocumentLine.interface"
+        }
+      },
+      {
+        "id": "evidence",
+        "links": [
+          {
+            "key": "input.parent",
+            "link": "of",
+            "targetMap": "document"
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.name"
+          },
+          {
+            "property": "subject_property",
+            "value": "input.field"
+          },
+          {
+            "property": "document_uri",
+            "value": "input.document_uri"
+          },
+          {
+            "property": "document_digest",
+            "value": "input.document_digest"
+          },
+          {
+            "property": "media_type",
+            "value": "input.media_type"
+          },
+          {
+            "property": "page",
+            "value": "input.page"
+          },
+          {
+            "property": "bbox_x",
+            "value": "input.bbox_x"
+          },
+          {
+            "property": "bbox_y",
+            "value": "input.bbox_y"
+          },
+          {
+            "property": "bbox_w",
+            "value": "input.bbox_w"
+          },
+          {
+            "property": "bbox_h",
+            "value": "input.bbox_h"
+          },
+          {
+            "property": "text",
+            "value": "input.text"
+          },
+          {
+            "property": "extractor",
+            "value": "input.extractor"
+          },
+          {
+            "property": "extractor_version",
+            "value": "input.extractor_version"
+          },
+          {
+            "property": "confidence_bp",
+            "value": "input.confidence_bp"
+          }
+        ],
+        "source": {
+          "dataset": "Field Evidence",
+          "nestedIn": {
+            "dataset": "Scanned Document",
+            "field": "evidence"
+          }
+        },
+        "sourceRecord": "'synthetic-scans/demo/' + input.name",
+        "subject": "input.name",
+        "target": {
+          "entity": "docs.FieldEvidence.entity",
+          "interface": "norn.SourceEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "docs.scans.source",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.scans.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

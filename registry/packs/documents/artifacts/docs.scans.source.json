@@ -1,0 +1,538 @@
+{
+  "artifactId": "docs.scans.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic scanned documents, as extracted",
+  "namespace": "docs",
+  "payload": {
+    "adapter": {
+      "name": "norn-extractor",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "Scanned Document",
+        "field": "kind",
+        "id": "kind",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "receipt"
+          },
+          {
+            "value": "invoice"
+          },
+          {
+            "value": "expense_report"
+          }
+        ]
+      },
+      {
+        "dataset": "Scanned Document",
+        "field": "currency",
+        "id": "currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "Scanned Document",
+        "fields": [
+          "name"
+        ],
+        "id": "document_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Document Line",
+        "fields": [
+          "name"
+        ],
+        "id": "line_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Field Evidence",
+        "fields": [
+          "name"
+        ],
+        "id": "evidence_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "collection": "lines",
+        "dataset": "Document Line",
+        "fields": [
+          "parent"
+        ],
+        "id": "lines",
+        "kind": "parent_child",
+        "origin": "declared",
+        "target": {
+          "dataset": "Scanned Document",
+          "fields": [
+            "name"
+          ]
+        }
+      },
+      {
+        "collection": "evidence",
+        "dataset": "Field Evidence",
+        "fields": [
+          "parent"
+        ],
+        "id": "evidence",
+        "kind": "parent_child",
+        "origin": "declared",
+        "target": {
+          "dataset": "Scanned Document",
+          "fields": [
+            "name"
+          ]
+        }
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Scanned Document",
+        "kind": "document",
+        "nativeName": "Extracted document"
+      },
+      {
+        "id": "Document Line",
+        "kind": "child_document",
+        "nativeName": "Extracted printed line"
+      },
+      {
+        "id": "Field Evidence",
+        "kind": "child_document",
+        "nativeName": "Where one value was read"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Scanned Document",
+        "name": "name",
+        "nativeType": "Text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "doc_number",
+        "nativeType": "Text",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "kind",
+        "nativeType": "Text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "vendor",
+        "nativeType": "Text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "issued_on",
+        "nativeType": "Date",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "date"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "currency",
+        "nativeType": "Text",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "total",
+        "nativeType": "Decimal",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "line_count",
+        "nativeType": "Integer",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "ledger_ref",
+        "nativeType": "Text",
+        "ordinal": 8,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "document_uri",
+        "nativeType": "Text",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "document_digest",
+        "nativeType": "Text",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "media_type",
+        "nativeType": "Text",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "extractor",
+        "nativeType": "Text",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "extractor_version",
+        "nativeType": "Text",
+        "ordinal": 13,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "lines",
+        "nativeType": "Array",
+        "ordinal": 14,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "Scanned Document",
+        "name": "evidence",
+        "nativeType": "Array",
+        "ordinal": 15,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "json"
+        }
+      },
+      {
+        "dataset": "Document Line",
+        "name": "name",
+        "nativeType": "Text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Document Line",
+        "name": "parent",
+        "nativeType": "Reference",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "reference"
+        }
+      },
+      {
+        "dataset": "Document Line",
+        "name": "line_no",
+        "nativeType": "Integer",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "Document Line",
+        "name": "description",
+        "nativeType": "Text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Document Line",
+        "name": "amount",
+        "nativeType": "Decimal",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "name",
+        "nativeType": "Text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "parent",
+        "nativeType": "Reference",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "reference"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "field",
+        "nativeType": "Text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "document_uri",
+        "nativeType": "Text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "document_digest",
+        "nativeType": "Text",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "media_type",
+        "nativeType": "Text",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "page",
+        "nativeType": "Integer",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "bbox_x",
+        "nativeType": "Decimal",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "bbox_y",
+        "nativeType": "Decimal",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "bbox_w",
+        "nativeType": "Decimal",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "bbox_h",
+        "nativeType": "Decimal",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "text",
+        "nativeType": "Text",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "extractor",
+        "nativeType": "Text",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "extractor_version",
+        "nativeType": "Text",
+        "ordinal": 13,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Field Evidence",
+        "name": "confidence_bp",
+        "nativeType": "Integer",
+        "ordinal": 14,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-12T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "uri": "evidence://documents/scans-contract-v1"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-scans",
+      "version": "scans-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.scans.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

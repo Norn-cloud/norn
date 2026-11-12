@@ -1,0 +1,109 @@
+{
+  "artifactId": "norn.SourceEvidence.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Source document evidence",
+  "namespace": "norn",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "Where one extracted value was read: the document (its URI and the SHA-256 of its exact bytes), the page and box, the text span the extractor read, and which extractor at which version read it, with its own confidence.",
+      "name": "norn.SourceEvidence",
+      "properties": [
+        {
+          "id": "subject_property",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "page",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "bbox_x",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_y",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_w",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_h",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "text",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "confidence_bp",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/norn.SourceEvidence.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
