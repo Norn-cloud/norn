@@ -101,7 +101,9 @@ export interface paths {
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
          *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Only an admin or owner may load.
+         *     traces to `(uri, sha256, row)`. Decided like any upload load
+         *     (`SyncSource("upload")`); the load is reported as a run of the type's
+         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
          * @description # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
          *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
@@ -1878,6 +1880,8 @@ export interface components {
              * @description File size in bytes.
              */
             bytes: number;
+            /** @description The `upload` connection the load is reported under (SYNC-REPORT-1). */
+            connectionId: string;
             /** @description The load identity; answers over the dataset name it. */
             load: string;
             /**
