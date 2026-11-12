@@ -1,12 +1,12 @@
 {
-  "sha256": "44e45392854857785e879bedc2a479095d760246e0207d39ac4f528fac76723b",
+  "sha256": "6608ff3b94872e11c1b15ca38c951dc1e467b606042bbff9901b917751518c2e",
   "origin": "derived",
   "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/odoo/sandbox.ts"
+    "registry/packs/erpnext-sandbox/sandbox.ts"
   ],
   "rights_evidence": [
     {

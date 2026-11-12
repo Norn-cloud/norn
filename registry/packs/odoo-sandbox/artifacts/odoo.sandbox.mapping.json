@@ -1,8 +1,8 @@
 {
-  "artifactId": "erpnext.sandbox.mapping",
+  "artifactId": "odoo.sandbox.mapping",
   "dependencies": [
     {
-      "artifactId": "erpnext.sandbox.source",
+      "artifactId": "odoo.sandbox.source",
       "kind": "source_schema",
       "required": true,
       "version": "0.1.0"
@@ -71,8 +71,8 @@
   "irVersion": "0.1",
   "kind": "mapping",
   "lifecycle": "active",
-  "name": "ERPNext sandbox observations to the REA canon",
-  "namespace": "erpnext",
+  "name": "Odoo sandbox observations to the REA canon",
+  "namespace": "odoo",
   "payload": {
     "extensions": {
       "norn.mapping.generic/1.0.0": {
@@ -103,7 +103,7 @@
         "properties": [
           {
             "property": "id",
-            "value": "input.custom_norn_ref"
+            "value": "input.x_norn_ref"
           },
           {
             "property": "code",
@@ -115,10 +115,10 @@
           }
         ],
         "source": {
-          "dataset": "Item"
+          "dataset": "product.product"
         },
-        "sourceRecord": "'erpnext/sandbox/Item/' + input.name",
-        "subject": "input.custom_norn_ref",
+        "sourceRecord": "'odoo/sandbox/product.product/' + input.id",
+        "subject": "input.x_norn_ref",
         "target": {
           "entity": "canon.Item.entity",
           "interface": "canon.Catalog.interface"
@@ -182,10 +182,10 @@
           }
         ],
         "source": {
-          "dataset": "Warehouse Lot Balance"
+          "dataset": "stock.quant"
         },
-        "sourceRecord": "'erpnext/sandbox/Warehouse Lot Balance/' + input.name",
-        "subject": "input.custom_norn_ref",
+        "sourceRecord": "'odoo/sandbox/stock.quant/' + input.id",
+        "subject": "input.x_norn_ref",
         "target": {
           "entity": "canon.Holding.entity",
           "interface": "core.Resource.interface"
@@ -210,10 +210,10 @@
           }
         ],
         "source": {
-          "dataset": "Party"
+          "dataset": "res.partner"
         },
-        "sourceRecord": "'erpnext/sandbox/Customer/' + input.name",
-        "subject": "input.custom_norn_ref",
+        "sourceRecord": "'odoo/sandbox/res.partner/' + input.id",
+        "subject": "input.x_norn_ref",
         "target": {
           "entity": "canon.Party.entity",
           "interface": "core.Agent.interface"
@@ -236,7 +236,7 @@
         ],
         "links": [
           {
-            "key": "input.custom_norn_ref",
+            "key": "input.x_norn_ref",
             "link": "agent",
             "targetMap": "party"
           }
@@ -256,10 +256,10 @@
           }
         ],
         "source": {
-          "dataset": "Party"
+          "dataset": "res.partner"
         },
-        "sourceRecord": "'erpnext/sandbox/Customer/' + input.name",
-        "subject": "input.custom_norn_ref + '/role/' + input.role",
+        "sourceRecord": "'odoo/sandbox/res.partner/' + input.id",
+        "subject": "input.x_norn_ref + '/role/' + input.role",
         "target": {
           "entity": "canon.PartyRole.entity",
           "interface": "core.AgentRole.interface"
@@ -307,10 +307,10 @@
           }
         ],
         "source": {
-          "dataset": "Sales Order Item"
+          "dataset": "sale.order.line"
         },
-        "sourceRecord": "'erpnext/sandbox/Sales Order Item/' + input.name",
-        "subject": "input.custom_norn_ref",
+        "sourceRecord": "'odoo/sandbox/sale.order.line/' + input.id",
+        "subject": "input.x_norn_ref",
         "target": {
           "entity": "canon.OrderLine.entity",
           "interface": "core.Commitment.interface"
@@ -318,14 +318,14 @@
       }
     ],
     "source": {
-      "schemaId": "erpnext.sandbox.source",
-      "sha256": "7f1a07c1b79fe5307471c10c09c27a10c60de28e24bb28f44538fabe7afc64d3",
+      "schemaId": "odoo.sandbox.source",
+      "sha256": "85f95b51cca7f403daad504e6a028132dd08d8475cc5c750facc1e3f43bb9e0e",
       "version": "0.1.0"
     }
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/erpnext/artifacts/erpnext.sandbox.mapping.json"
+    "sourcePath": "registry/packs/odoo-sandbox/artifacts/odoo.sandbox.mapping.json"
   },
   "scope": {},
   "version": "0.1.0"

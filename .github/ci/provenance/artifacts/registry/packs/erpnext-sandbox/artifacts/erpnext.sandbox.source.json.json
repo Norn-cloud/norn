@@ -1,12 +1,12 @@
 {
-  "sha256": "6608ff3b94872e11c1b15ca38c951dc1e467b606042bbff9901b917751518c2e",
+  "sha256": "d05188470b44714fe115c4d6f62c34be7adadfbd0d2d6bb8d7771e780ca20f5e",
   "origin": "derived",
   "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/erpnext/sandbox.ts"
+    "registry/packs/erpnext-sandbox/sandbox.ts"
   ],
   "rights_evidence": [
     {

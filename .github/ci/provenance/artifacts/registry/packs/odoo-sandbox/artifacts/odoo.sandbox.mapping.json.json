@@ -1,12 +1,12 @@
 {
-  "sha256": "17d540ffc40c28cbe9cf47dbb835ce9afa5ab9dd94f01d9699f0e1fb89addb53",
+  "sha256": "44e45392854857785e879bedc2a479095d760246e0207d39ac4f528fac76723b",
   "origin": "derived",
   "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/odoo/sandbox.ts"
+    "registry/packs/odoo-sandbox/sandbox.ts"
   ],
   "rights_evidence": [
     {

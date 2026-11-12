@@ -334,7 +334,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/odoo/artifacts/odoo.sandbox.connector.json"
+    "sourcePath": "registry/packs/odoo-sandbox/artifacts/odoo.sandbox.connector.json"
   },
   "scope": {},
   "version": "0.1.0"

@@ -1,11 +1,11 @@
 {
-  "artifactId": "odoo.sandbox.source",
+  "artifactId": "erpnext.sandbox.source",
   "dependencies": [],
   "irVersion": "0.1",
   "kind": "source_schema",
   "lifecycle": "active",
-  "name": "Odoo sandbox: partners, products, quants and sale order lines",
-  "namespace": "odoo",
+  "name": "ERPNext sandbox: parties, items, lot balances and order lines",
+  "namespace": "erpnext",
   "payload": {
     "adapter": {
       "name": "norn-pull",
@@ -13,7 +13,7 @@
     },
     "codeSets": [
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "field": "unit",
         "id": "holding_unit",
         "origin": "declared",
@@ -24,7 +24,7 @@
         ]
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "field": "unit",
         "id": "order_unit",
         "origin": "declared",
@@ -35,7 +35,7 @@
         ]
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "field": "valuation_method",
         "id": "holding_valuation_method",
         "origin": "declared",
@@ -48,36 +48,36 @@
     ],
     "constraints": [
       {
-        "dataset": "product.product",
+        "dataset": "Item",
         "fields": [
-          "id"
+          "name"
         ],
         "id": "source_id_0",
         "kind": "primary_key",
         "origin": "declared"
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "fields": [
-          "id"
+          "name"
         ],
         "id": "source_id_1",
         "kind": "primary_key",
         "origin": "declared"
       },
       {
-        "dataset": "res.partner",
+        "dataset": "Party",
         "fields": [
-          "id"
+          "name"
         ],
         "id": "source_id_2",
         "kind": "primary_key",
         "origin": "declared"
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "fields": [
-          "id"
+          "name"
         ],
         "id": "source_id_3",
         "kind": "primary_key",
@@ -86,31 +86,31 @@
     ],
     "datasets": [
       {
-        "id": "product.product",
+        "id": "Item",
         "kind": "document",
-        "nativeName": "product.product"
+        "nativeName": "Item"
       },
       {
-        "id": "stock.quant",
+        "id": "Warehouse Lot Balance",
         "kind": "document",
-        "nativeName": "stock.quant"
+        "nativeName": "Warehouse Lot Balance (custom DocType)"
       },
       {
-        "id": "res.partner",
+        "id": "Party",
         "kind": "document",
-        "nativeName": "res.partner"
+        "nativeName": "Customer"
       },
       {
-        "id": "sale.order.line",
+        "id": "Sales Order Item",
         "kind": "document",
-        "nativeName": "sale.order.line"
+        "nativeName": "Sales Order Item"
       }
     ],
     "fields": [
       {
-        "dataset": "product.product",
-        "name": "id",
-        "nativeType": "integer",
+        "dataset": "Item",
+        "name": "name",
+        "nativeType": "Data",
         "ordinal": 0,
         "required": true,
         "typeCandidate": {
@@ -119,9 +119,9 @@
         }
       },
       {
-        "dataset": "product.product",
-        "name": "x_norn_ref",
-        "nativeType": "char",
+        "dataset": "Item",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
         "ordinal": 1,
         "required": true,
         "typeCandidate": {
@@ -130,9 +130,9 @@
         }
       },
       {
-        "dataset": "product.product",
+        "dataset": "Item",
         "name": "code",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 2,
         "required": true,
         "typeCandidate": {
@@ -141,9 +141,9 @@
         }
       },
       {
-        "dataset": "product.product",
+        "dataset": "Item",
         "name": "label",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 3,
         "required": true,
         "typeCandidate": {
@@ -152,9 +152,9 @@
         }
       },
       {
-        "dataset": "product.product",
+        "dataset": "Item",
         "name": "sku",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 4,
         "required": true,
         "typeCandidate": {
@@ -163,9 +163,9 @@
         }
       },
       {
-        "dataset": "product.product",
+        "dataset": "Item",
         "name": "price",
-        "nativeType": "float",
+        "nativeType": "Currency",
         "ordinal": 5,
         "required": true,
         "typeCandidate": {
@@ -174,9 +174,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
-        "name": "id",
-        "nativeType": "integer",
+        "dataset": "Warehouse Lot Balance",
+        "name": "name",
+        "nativeType": "Data",
         "ordinal": 0,
         "required": true,
         "typeCandidate": {
@@ -185,9 +185,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
-        "name": "x_norn_ref",
-        "nativeType": "char",
+        "dataset": "Warehouse Lot Balance",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
         "ordinal": 1,
         "required": true,
         "typeCandidate": {
@@ -196,9 +196,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "resource_code",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 2,
         "required": true,
         "typeCandidate": {
@@ -207,9 +207,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "quantity",
-        "nativeType": "float",
+        "nativeType": "Float",
         "ordinal": 3,
         "required": true,
         "typeCandidate": {
@@ -218,9 +218,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "unit",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 4,
         "required": true,
         "typeCandidate": {
@@ -229,9 +229,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "location",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 5,
         "required": true,
         "typeCandidate": {
@@ -240,9 +240,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "item_ref",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 6,
         "required": true,
         "typeCandidate": {
@@ -251,9 +251,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "owner_ref",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 7,
         "required": true,
         "typeCandidate": {
@@ -262,9 +262,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "custodian_ref",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 8,
         "required": true,
         "typeCandidate": {
@@ -273,9 +273,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "stock_cost",
-        "nativeType": "float",
+        "nativeType": "Float",
         "ordinal": 9,
         "required": true,
         "typeCandidate": {
@@ -284,9 +284,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "cost_currency",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 10,
         "required": true,
         "typeCandidate": {
@@ -295,9 +295,9 @@
         }
       },
       {
-        "dataset": "stock.quant",
+        "dataset": "Warehouse Lot Balance",
         "name": "valuation_method",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 11,
         "required": true,
         "typeCandidate": {
@@ -306,9 +306,9 @@
         }
       },
       {
-        "dataset": "res.partner",
-        "name": "id",
-        "nativeType": "integer",
+        "dataset": "Party",
+        "name": "name",
+        "nativeType": "Data",
         "ordinal": 0,
         "required": true,
         "typeCandidate": {
@@ -317,9 +317,9 @@
         }
       },
       {
-        "dataset": "res.partner",
-        "name": "x_norn_ref",
-        "nativeType": "char",
+        "dataset": "Party",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
         "ordinal": 1,
         "required": true,
         "typeCandidate": {
@@ -328,9 +328,9 @@
         }
       },
       {
-        "dataset": "res.partner",
+        "dataset": "Party",
         "name": "label",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 2,
         "required": true,
         "typeCandidate": {
@@ -339,9 +339,9 @@
         }
       },
       {
-        "dataset": "res.partner",
+        "dataset": "Party",
         "name": "role",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 3,
         "required": true,
         "typeCandidate": {
@@ -350,9 +350,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
-        "name": "id",
-        "nativeType": "integer",
+        "dataset": "Sales Order Item",
+        "name": "name",
+        "nativeType": "Data",
         "ordinal": 0,
         "required": true,
         "typeCandidate": {
@@ -361,9 +361,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
-        "name": "x_norn_ref",
-        "nativeType": "char",
+        "dataset": "Sales Order Item",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
         "ordinal": 1,
         "required": true,
         "typeCandidate": {
@@ -372,9 +372,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "quantity",
-        "nativeType": "float",
+        "nativeType": "Float",
         "ordinal": 2,
         "required": true,
         "typeCandidate": {
@@ -383,9 +383,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "unit",
-        "nativeType": "many2one",
+        "nativeType": "Link",
         "ordinal": 3,
         "required": true,
         "typeCandidate": {
@@ -394,9 +394,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "due_at",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 4,
         "required": true,
         "typeCandidate": {
@@ -405,9 +405,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "provider_ref",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 5,
         "required": true,
         "typeCandidate": {
@@ -416,9 +416,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "receiver_ref",
-        "nativeType": "many2one",
+        "nativeType": "Data",
         "ordinal": 6,
         "required": true,
         "typeCandidate": {
@@ -427,9 +427,9 @@
         }
       },
       {
-        "dataset": "sale.order.line",
+        "dataset": "Sales Order Item",
         "name": "holding_ref",
-        "nativeType": "char",
+        "nativeType": "Data",
         "ordinal": 7,
         "required": true,
         "typeCandidate": {
@@ -441,18 +441,18 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-12T00:00:00Z",
     "rawMetadata": {
-      "sha256": "5bd37affe2edd17f4dad3c948f10d898a46bf92088adb5b9b9fb6d8c348978ed",
-      "uri": "demo/sandboxes/odoo/seed.py"
+      "sha256": "2bd0d0747ae36ab2f010479b9bb159c67dce41adc8eef3b4017aa09d651c9eba",
+      "uri": "demo/sandboxes/erpnext/seed.py"
     },
     "source": {
       "instance": "sandbox",
-      "system": "odoo",
-      "version": "odoo-19"
+      "system": "erpnext",
+      "version": "erpnext-16"
     }
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/odoo/artifacts/odoo.sandbox.source.json"
+    "sourcePath": "registry/packs/erpnext-sandbox/artifacts/erpnext.sandbox.source.json"
   },
   "scope": {},
   "version": "0.1.0"

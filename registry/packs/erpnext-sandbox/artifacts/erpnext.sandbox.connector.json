@@ -185,7 +185,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/erpnext/artifacts/erpnext.sandbox.connector.json"
+    "sourcePath": "registry/packs/erpnext-sandbox/artifacts/erpnext.sandbox.connector.json"
   },
   "scope": {},
   "version": "0.1.0"
