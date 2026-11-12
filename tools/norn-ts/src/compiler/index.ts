@@ -4,7 +4,11 @@ import { createHash } from "node:crypto"
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
 import { COMPILER_OPTIONS, ProfileChecker, RESERVED_CLOSURE_NAMES, createHost, type Diagnostic } from "../check.ts"
-import { INTRINSICS_PATH, TOOL_ROOT } from "../profile.ts"
+import { INTRINSICS_PATH, TOOL_ROOT, dependencyDir } from "../profile.ts"
+
+// The pinned declaration trees, wherever the package manager installed them.
+const EFFECT_DIR = resolve(dependencyDir("effect")) + sep
+const TYPESCRIPT_DIR = resolve(dependencyDir("typescript")) + sep
 import type { Json } from "../canonical.ts"
 import type { FlowSourceMapDraft, FlowSourceMapLocation, FlowSourceMapStepKind } from "../flow-source-map.ts"
 import { BudgetExceeded, ExpansionBudget } from "../builder/budget.ts"
@@ -36,7 +40,7 @@ function boundedHost(started: number, limits: CompilerLimits, declarations: Map<
   let bytes = 0, tokens = 0
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => {
     const path = resolve(file)
-    const pinnedDeclarations = path.endsWith(".d.ts") && (path.startsWith(resolve(TOOL_ROOT, "node_modules/effect") + sep) || path.startsWith(resolve(TOOL_ROOT, "node_modules/typescript") + sep) || path === INTRINSICS_PATH)
+    const pinnedDeclarations = path.endsWith(".d.ts") && (path.startsWith(EFFECT_DIR) || path.startsWith(TYPESCRIPT_DIR) || path === INTRINSICS_PATH)
     if (pinnedDeclarations && !shouldCreateNewSourceFile) {
       if (Date.now() - started >= limits.maxMillis) throw new CompileError("NORN-FLOW-UNBOUNDED", "cooperative compiler time bound exceeded", ts.createSourceFile(path, "", ts.ScriptTarget.ES2022))
       const known = declarations.get(path)

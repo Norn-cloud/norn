@@ -7,6 +7,11 @@ import { compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
 import { admit, compilePack } from "./pack.ts"
 
+if (process.argv[2] === "--version" || process.argv[2] === "-V") {
+  const { versionLine } = await import("./build-info.ts")
+  process.stdout.write(`${versionLine()}\n`)
+  process.exit(0)
+}
 if (process.argv[2] === "fmt") {
   const { fmt } = await import("./fmt.ts")
   const { ProjectError } = await import("./project.ts")
