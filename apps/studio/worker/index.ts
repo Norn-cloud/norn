@@ -2,6 +2,8 @@ import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { connectors } from "./connectors.ts"
+import { cellFor } from "./cell.ts"
+import { questions } from "./questions.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -114,6 +116,14 @@ export default {
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
+    }
+    // The question builders' catalog and checker: the cell's, read as the resolved actor.
+    if (pathname.startsWith("/api/questions/")) {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
+      return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
     }
     if (pathname.startsWith("/api/connectors/")) {
       // A gateway URL without its OAuth client is not a gateway this stage can use.

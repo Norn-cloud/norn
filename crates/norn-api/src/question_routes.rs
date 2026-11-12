@@ -742,6 +742,168 @@ pub fn trace_ad_hoc<E: SqlEngine>(
     )
 }
 
+/// One object type an ad-hoc question may range over, with every effective
+/// property and its resolved type (`null` for a registry or unresolved type).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogObjectType {
+    /// The object type's name: a question's `objectSet`.
+    pub name: String,
+    /// Its effective properties, in declaration order.
+    pub properties: Vec<CatalogProperty>,
+}
+
+/// One effective property: its id and its resolved type, as declared.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogProperty {
+    /// The property id: what a group-by or filter path names.
+    pub id: String,
+    /// The resolved type (kind, unit, scale, additivity), or `null`.
+    #[serde(rename = "type")]
+    #[schema(schema_with = property_type_schema)]
+    pub property_type: Option<norn_ir::PropertyType>,
+}
+
+/// `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+/// from, and what this cell's engine admits. Every metric and object type
+/// listed is one the caller may read the population of (D67): a ratio only
+/// when both its operands are, a type only when it is a readable metric's
+/// population. Nothing listed is a promise: `:evaluate` still admits.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionCatalog {
+    /// The object types the listed metrics range over.
+    pub object_types: Vec<CatalogObjectType>,
+    /// The listed metrics, as declared, in name order.
+    #[schema(schema_with = metrics_schema)]
+    pub metrics: Vec<MetricDefinition>,
+    /// Calendar grains a group-by may bucket a time property by; a group-by
+    /// without a grain groups by the property's values.
+    #[schema(value_type = Vec<String>)]
+    pub grains: Vec<norn_ir::metric::TimeGrain>,
+    /// Filter operators the engine admits.
+    #[schema(value_type = Vec<String>)]
+    pub operators: Vec<norn_ir::metric::FilterOperator>,
+    /// Most group-bys one question may have.
+    pub max_group_by: usize,
+    /// Most buckets one answer may have (above it, 413).
+    pub max_buckets: usize,
+}
+
+// `schema_with` replaces the field's schema, doc comment included, so each
+// helper restates its field's description.
+fn property_type_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+        true,
+    )
+}
+
+fn metrics_schema() -> utoipa::openapi::schema::Array {
+    let mut array = utoipa::openapi::schema::Array::new(crate::objects::free_form(
+        "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+        false,
+    ));
+    array.description = Some("The listed metrics, as declared, in name order.".to_owned());
+    array
+}
+
+/// `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+/// an ad-hoc question is built from, for this caller (D67: only what the
+/// caller may read the population of).
+/// # Errors
+/// No actor or a scope that is not this cell's (one opaque 403), or a host
+/// failure reading the model.
+#[utoipa::path(get, path = "/v1/questions:catalog", params(ScopeQuery), responses((status = 200, description = "The question catalog for this caller.", body = QuestionCatalog), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn question_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<QuestionCatalog, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    host.scope()
+        .admit(scope.org_id.as_deref(), scope.environment_id.as_deref())
+        .map_err(|_scope| read_denied())?;
+    let named: &dyn QuestionRuntime<E> = runtime;
+    // Whether `actor` may read `resource`'s population, governed by `over`.
+    let readable = |resource: &str, over: &dyn Fn(&str) -> bool| {
+        mapped(host, named, actor, resource, Population, None).is_ok_and(|access| {
+            over(access.resource.object_type.as_str())
+                && host.read_permitted(&ReadRequest {
+                    capability: Population,
+                    access: &access,
+                })
+        })
+    };
+    let population = |metric: &MetricDefinition| {
+        metric
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .map(|params| params.semantic_model.0.clone())
+    };
+    let definitions = runtime.definitions();
+    let mut simple: BTreeSet<&str> = BTreeSet::new();
+    let mut types: BTreeSet<String> = BTreeSet::new();
+    for metric in definitions {
+        if let Some(over) = population(metric)
+            && readable(&over, &|governed| governed == over)
+            && readable(&metric.name, &|governed| governed == over)
+        {
+            simple.insert(metric.name.as_str());
+            types.insert(over);
+        }
+    }
+    // A ratio is listed only when both its operands are.
+    let operands_listed = |metric: &MetricDefinition| {
+        [
+            &metric.type_params.numerator,
+            &metric.type_params.denominator,
+        ]
+        .into_iter()
+        .all(|operand| operand.as_deref().is_some_and(|name| simple.contains(name)))
+    };
+    let mut metrics: Vec<MetricDefinition> = definitions
+        .iter()
+        .filter(|metric| {
+            simple.contains(metric.name.as_str())
+                || (population(metric).is_none()
+                    && operands_listed(metric)
+                    && readable(&metric.name, &|governed| types.contains(governed)))
+        })
+        .cloned()
+        .collect();
+    metrics.sort_by(|a, b| a.name.cmp(&b.name));
+    let object_types = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        types
+            .into_iter()
+            .filter(|name| reader.model().has_type(name))
+            .map(|name| {
+                let properties = reader
+                    .model()
+                    .effective_property_types(&name)
+                    .map_err(Refusal::host)?
+                    .into_iter()
+                    .map(|(id, property_type)| CatalogProperty { id, property_type })
+                    .collect();
+                Ok(CatalogObjectType { name, properties })
+            })
+            .collect::<Result<Vec<_>, Refusal>>()?
+    };
+    Ok(QuestionCatalog {
+        object_types,
+        metrics,
+        grains: norn_checker::metric::compute::GRAINS.to_vec(),
+        operators: norn_checker::metric::compute::OPERATORS.to_vec(),
+        max_group_by: norn_checker::metric::compute::MAX_GROUP_BY,
+        max_buckets: runtime.max_buckets(),
+    })
+}
+
 /// Hold the definition epoch across evaluation, as a named question does.
 fn collection_epoch<'h, E: SqlEngine>(
     host: &'h DevHost<E>,
