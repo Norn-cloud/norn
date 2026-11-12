@@ -395,9 +395,7 @@ pub(crate) fn installed_flow<E: SqlEngine>(
     })
 }
 
-/// `POST /v1/runs`: start a run of an installed flow. `starter` is the
-/// verified principal the host recorded for this request: the run's action
-/// steps act under exactly it (ACTION-STEP-1).
+/// `POST /v1/runs`: start a run of an installed flow.
 ///
 /// # Errors
 /// Missing or foreign scope or a denied caller (one opaque 403), an invalid
@@ -413,6 +411,8 @@ pub fn start_run<E: SqlEngine>(
     body: &StartRunRequest,
     access: ReadAccess<'_>,
     now: LogicalTime,
+    // The verified principal the host recorded for this request: the run's
+    // action steps act under exactly it (ACTION-STEP-1).
     starter: Option<RunStarter>,
 ) -> Result<(StatusCode, RunDocument), Refusal> {
     let actor = actor
