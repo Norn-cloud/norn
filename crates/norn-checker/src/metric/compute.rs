@@ -217,33 +217,7 @@ pub fn admit(
             lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // METRIC-GRAIN-LINK-1: one sum, grouped in time only along its own linked path.
-    let linked = sums.first().and_then(|sum| {
-        sum.time_link
-            .as_ref()
-            .map(|link| (link.link.clone(), sum.time_property.clone()))
-    });
-    if (linked.is_some() && sums.len() != 1)
-        || question.dimensions.iter().any(|dimension| {
-            !dimension.path.links.is_empty()
-                && linked.as_ref().is_none_or(|(link, property)| {
-                    dimension.path.links.as_slice() != std::slice::from_ref(link)
-                        || &dimension.path.property != property
-                })
-        })
-    {
-        return Err(refuse());
-    }
-    // METRIC-SNAPSHOT-ASOF-1: one snapshot sum; a week grouping buckets its own time.
-    if sums.iter().any(|sum| sum.as_of)
-        && (sums.len() != 1
-            || question.dimensions.iter().any(|dimension| {
-                dimension.grain.is_some()
-                    && sums
-                        .first()
-                        .is_none_or(|sum| dimension.path.property != sum.time_property)
-            }))
-    {
+    if unsupported_time_shape(question, &sums) {
         return Err(refuse());
     }
     let properties = catalog
@@ -261,6 +235,34 @@ pub fn admit(
         sums,
         max_items,
     })
+}
+
+/// A snapshot or a linked time this profile cannot execute: more than one
+/// sum, or a time grouping off the sum's own (linked) time path.
+fn unsupported_time_shape(question: &QuestionIR, sums: &[KeyedSum]) -> bool {
+    // METRIC-GRAIN-LINK-1: one sum, grouped in time only along its own linked path.
+    let linked = sums.first().and_then(|sum| {
+        sum.time_link
+            .as_ref()
+            .map(|link| (link.link.clone(), sum.time_property.clone()))
+    });
+    let linked_off_path = question.dimensions.iter().any(|dimension| {
+        !dimension.path.links.is_empty()
+            && linked.as_ref().is_none_or(|(link, property)| {
+                dimension.path.links.as_slice() != std::slice::from_ref(link)
+                    || &dimension.path.property != property
+            })
+    });
+    // METRIC-SNAPSHOT-ASOF-1: one snapshot sum; a time grouping buckets its own time.
+    let snapshot_off_path = sums.iter().any(|sum| sum.as_of)
+        && question.dimensions.iter().any(|dimension| {
+            dimension.grain.is_some()
+                && sums
+                    .first()
+                    .is_none_or(|sum| dimension.path.property != sum.time_property)
+        });
+    let several = sums.len() != 1 && (linked.is_some() || sums.iter().any(|sum| sum.as_of));
+    several || linked_off_path || snapshot_off_path
 }
 
 fn lower_sum(
