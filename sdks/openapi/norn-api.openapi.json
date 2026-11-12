@@ -985,6 +985,28 @@
             }
           },
           {
+            "name": "knownAsOf",
+            "in": "query",
+            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since. Without them the\ntrace is of the cell's current answer.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "nowMs",
+            "in": "query",
+            "description": "The answer's `nowMs`, with `knownAsOf`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
             "name": "question",
             "in": "path",
             "required": true,
@@ -1454,9 +1476,27 @@
             "type": "string",
             "description": "Canonical bucket key from that answer."
           },
+          "knownAsOf": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The answer's `knownAsOf`, with `nowMs`: trace the answer as it was\ngiven, even after the cell has committed since.",
+            "minimum": 0
+          },
           "lineageRef": {
             "type": "string",
             "description": "The `lineageRef` handle that answer returned."
+          },
+          "nowMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The answer's `nowMs`, with `knownAsOf`.",
+            "minimum": 0
           },
           "question": {
             "type": "object",
@@ -2604,12 +2644,10 @@
             "minimum": 0
           },
           "lower": {
-            "type": "object",
-            "description": "The smallest value in the bin, or the calendar label."
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
           },
           "upper": {
-            "type": "object",
-            "description": "The largest value in the bin, or the calendar label."
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
           }
         }
       },
@@ -17112,9 +17150,16 @@
         "type": "object",
         "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
         "required": [
-          "max_scanned_records"
+          "max_scanned_records",
+          "max_scanned_bytes"
         ],
         "properties": {
+          "max_scanned_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum stored bytes those records may decode to: the scan's memory\nbound.",
+            "minimum": 0
+          },
           "max_scanned_records": {
             "type": "integer",
             "format": "uint32",
@@ -24727,18 +24772,10 @@
             "description": "`numeric`, `temporal`, `boolean`, `text` or `other`."
           },
           "max": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The largest value (numeric and temporal properties)."
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
           },
           "min": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The smallest value (numeric and temporal properties)."
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report."
           },
           "nulls": {
             "type": "integer",
@@ -24774,8 +24811,7 @@
             "minimum": 0
           },
           "value": {
-            "type": "object",
-            "description": "The value at that nearest rank."
+            "description": "A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string."
           }
         }
       },
@@ -24994,7 +25030,7 @@
         ],
         "properties": {
           "bucket": {
-            "description": "Scalar grouping value."
+            "description": "Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group)."
           },
           "members": {
             "type": "object",

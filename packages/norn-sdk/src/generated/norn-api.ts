@@ -336,8 +336,19 @@ export interface components {
         AdHocTraceRequest: {
             /** @description Canonical bucket key from that answer. */
             bucket: string;
+            /**
+             * Format: int64
+             * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+             *     given, even after the cell has committed since.
+             */
+            knownAsOf?: number | null;
             /** @description The `lineageRef` handle that answer returned. */
             lineageRef: string;
+            /**
+             * Format: int64
+             * @description The answer's `nowMs`, with `knownAsOf`.
+             */
+            nowMs?: number | null;
             /** @description The same `QuestionIR` the answer was evaluated from. */
             question: Record<string, never>;
         };
@@ -831,10 +842,10 @@ export interface components {
              * @description Rows in the bin.
              */
             count: number;
-            /** @description The smallest value in the bin, or the calendar label. */
-            lower: Record<string, never>;
-            /** @description The largest value in the bin, or the calendar label. */
-            upper: Record<string, never>;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            lower: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            upper: unknown;
         };
         /** @description A current checker admission receipt. */
         NornCheckReceipt: {
@@ -6475,6 +6486,12 @@ export interface components {
          */
         NornIrQuestionLimits: {
             /**
+             * Format: uint64
+             * @description Maximum stored bytes those records may decode to: the scan's memory
+             *     bound.
+             */
+            max_scanned_bytes: number;
+            /**
              * Format: uint32
              * @description Maximum source records one evaluation of a question may scan.
              */
@@ -9191,10 +9208,10 @@ export interface components {
             histogram: components["schemas"]["NornHistogram"] | null;
             /** @description `numeric`, `temporal`, `boolean`, `text` or `other`. */
             kind: string;
-            /** @description The largest value (numeric and temporal properties). */
-            max: Record<string, never> | null;
-            /** @description The smallest value (numeric and temporal properties). */
-            min: Record<string, never> | null;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report. */
+            max: unknown;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. Null when the property has no value to report. */
+            min: unknown;
             /**
              * Format: int64
              * @description Rows without one.
@@ -9212,8 +9229,8 @@ export interface components {
              * @description The percentile, 0 to 100.
              */
             percent: number;
-            /** @description The value at that nearest rank. */
-            value: Record<string, never>;
+            /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
+            value: unknown;
         };
         /**
          * @description The evaluator that produced an answer.
@@ -9309,7 +9326,7 @@ export interface components {
         };
         /** @description One output bucket, with its exact sums beside its value. */
         NornQueryRow: {
-            /** @description Scalar grouping value. */
+            /** @description Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group). */
             bucket: unknown;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
@@ -10083,6 +10100,14 @@ export interface operations {
                 lineageRef: string;
                 /** @description Canonical bucket key from that result. */
                 bucket: string;
+                /**
+                 * @description The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+                 *     given, even after the cell has committed since. Without them the
+                 *     trace is of the cell's current answer.
+                 */
+                knownAsOf?: number;
+                /** @description The answer's `nowMs`, with `knownAsOf`. */
+                nowMs?: number;
             };
             header?: never;
             path: {

@@ -173,8 +173,8 @@ pub fn handle_all<E: SqlEngine>(
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => trace_query(query)
-            .and_then(|query| get_numeric_trace(host, &query, actor, name, named(runtime)))
-            .and_then(|document| document_json(&document)),
+                .and_then(|query| get_numeric_trace(host, &query, actor, name, named(runtime)))
+                .and_then(|document| document_json(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,
                 "question.not_found",
