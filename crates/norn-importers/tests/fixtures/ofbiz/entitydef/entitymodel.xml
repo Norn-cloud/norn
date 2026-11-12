@@ -19,6 +19,7 @@
         <index name="BOOK_OPENED" unique="false"><index-field name="opened"/></index>
     </entity>
     <entity entity-name="BookType" package-name="org.toy.ledger">
+        <description/>
         <field name="bookTypeId" type="id"/>
         <field name="description" type="description"/>
         <prim-key field="bookTypeId"/>

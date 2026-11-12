@@ -599,12 +599,11 @@ impl<'a> Build<'a> {
         let description = element
             .child_text("description")
             .or_else(|| element.get("title").map(str::to_owned));
-        if element.child_text("description").is_some() {
-            self.ledger.resolve(
-                &SourceElement::dataset_facet(name, Facet::Description),
-                only("dataset description"),
-            );
-        }
+        // An empty `<description/>` is declared too; it adds no text.
+        self.ledger.resolve_declared(
+            &SourceElement::dataset_facet(name, Facet::Description),
+            only("dataset description"),
+        );
         let mut attributes = Map::new();
         for (attribute, value) in &element.attributes {
             let facet = SourceElement::dataset_facet(name, key(format!("attr:{attribute}")));
