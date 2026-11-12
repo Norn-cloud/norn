@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "objectType": { "type": "string" },
+    "objectId": { "type": "string" },
+    "version": { "type": "integer" }
+  },
+  "required": ["objectType", "objectId", "version"],
+  "additionalProperties": false
+}

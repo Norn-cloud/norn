@@ -1185,8 +1185,21 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
+                // The admitted set's model knows only the artifacts; a cell
+                // that serves actions also declares the kernel's own action
+                // types, and installing a flow must not drop them.
+                let serves_actions = cell
+                    .store()
+                    .model()
+                    .object_types()
+                    .any(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE);
+                let model = if serves_actions {
+                    crate::action_admission::prepare_action_model(&admitted.model)?
+                } else {
+                    admitted.model
+                };
                 (
-                    admitted.model,
+                    model,
                     admitted.canonical_set,
                     admitted.receipt_sha256,
                     Some(admitted.receipt),
