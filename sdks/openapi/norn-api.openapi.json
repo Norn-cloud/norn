@@ -148,7 +148,120 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/definitions": {
+      "get": {
+        "tags": [
+          "crate::routes"
+        ],
+        "summary": "Read under one definition epoch; scope and authorization precede store access.",
+        "description": "# Errors\nMissing/mismatched scope, denied actor, absent version or host failure.",
+        "operationId": "get_definitions_catalog",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Required organization.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Required environment.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "A retained revision; absent selects the active one.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The admitted definitions at the active or requested revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDefinitionsCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a version that does not parse.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: a missing or foreign scope, or denied authority, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`defs.version_not_found`): the requested version was never installed, or no version was asked for and nothing is installed yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`defs.receipt_context_unavailable`): this host cannot resolve the retained admission context (the receipt's external base, limit profile or checker version).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}": {
@@ -249,7 +362,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}:retire": {
@@ -369,7 +487,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:admit": {
@@ -470,7 +593,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:install": {
@@ -581,7 +709,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:list": {
@@ -699,7 +832,604 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}": {
+      "get": {
+        "tags": [
+          "crate::object_routes"
+        ],
+        "summary": "HOST-READ-3: one page of a grid query over a concept's objects (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an invalid query\n(400 with every violation), a cursor that does not continue it (400\n`query.cursor_invalid`), a commit since the cursor (409\n`object.snapshot_moved`), a sort or filter over more visible rows than one scan\n(413), or a host failure.",
+        "operationId": "query_objects",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200; 50 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Up to three sort keys, `property:asc` or `property:desc`, comma separated.\nA property sorts only when it has a comparable type; missing and\nwithheld values sort last in both directions.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "name:asc"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "A JSON document `{\"all\":[clause, ...]}` of at most eight clauses, each\n`{\"property\", \"op\", \"value\"}`. Operators by property type: text `eq`,\n`ne`, `in`, `contains`, `prefix`; integer and decimal `eq`, `ne`, `in`,\n`lt`, `lte`, `gt`, `gte`, `between`; date, timestamp and duration the\nsame without `in`; boolean `eq`; enum `eq`, `ne`, `in`; `empty` and\n`present` on any comparable type. `in` takes at most 50 values. A\nwithheld row matches no clause.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "{\"all\":[{\"property\":\"name\",\"op\":\"prefix\",\"value\":\"A\"}]}"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "An opaque cursor from a previous page's `next`, valid only for the same\ntype, query, scope and caller, and only until the cell next commits.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the concept's objects in the applied order, under the caller's visibility: a row it may count but not read is listed as withheld, with nothing value-derived.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectQueryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the limit, sort, filter or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: the type is not declared in this cell.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable from the first page): the cell committed while the page was read, between two scan batches of a first page or since the cursor was issued; a page is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`object.scan_bound_exceeded`): a sort or filter would read more than 10,000 visible rows in one scan; page without sort or filter instead, which streams by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}": {
+      "get": {
+        "tags": [
+          "crate::object_routes"
+        ],
+        "summary": "HOST-READ-3: one object as a grid shows it (D67): withheld under\nPopulation alone; absent, invisible and quarantined objects refuse alike.\nRow authorization runs outside the cell lock; the row and its quarantine\nare read under one snapshot.",
+        "description": "# Errors\nAs [`get_object`], and a commit between the row read and the closing\nsnapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).",
+        "operationId": "get_object",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object as a grid shows it; withheld, with no values or version, when the caller may count but not read it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornQueriedRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/lineage": {
+      "get": {
+        "tags": [
+          "crate::object_links"
+        ],
+        "summary": "HOST-READ-4: where an object's current version came from (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, quarantined, withheld or\nsource-withheld object, or one without a retained source bundle (one 404);\na commit between the row and provenance reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "operationId": "get_object_lineage",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the object's current version came from: its source record, document and mapping.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornInstanceSourceProvenance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the row and provenance reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/links": {
+      "get": {
+        "tags": [
+          "crate::object_links"
+        ],
+        "summary": "HOST-READ-4: one page of the links touching an object (D67).",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent, invisible or quarantined object\n(404); an invalid query (400 with every violation); a cursor that does not\ncontinue it (400 `query.cursor_invalid`); a commit since the cursor (409\n`object.snapshot_moved`); more visible links than one scan reads (413);\nor a host failure.",
+        "operationId": "get_object_links",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "`out`, `in` or `both` (the default).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(out|in|both)$"
+            }
+          },
+          {
+            "name": "link",
+            "in": "query",
+            "description": "One declared link id, to list only those links.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 100; 50 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "An opaque cursor from a previous page's `next`, valid only for the same\nobject, query, scope and caller, and only until the cell next commits.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the links the caller may see at both ends; links to rows it cannot see are neither listed nor counted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectLinkPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid. `request.invalid`: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded. `query.invalid`: the direction, link, limit or cursor does not hold, with every violation as a diagnostic and a pointer into the request; a cursor that does not continue this query for this caller is the diagnostic `query.cursor_invalid`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined or not readable by this principal; these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed while the read ran; a response is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`object.scan_bound_exceeded`): more than 10,000 visible links touch the object, more than one scan reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/answer": {
@@ -808,7 +1538,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/trace": {
@@ -935,7 +1670,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:evaluate": {
@@ -1036,7 +1776,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:trace": {
@@ -1137,7 +1882,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     }
   },
@@ -1250,7 +2000,8 @@
           },
           "question": {
             "type": "object",
-            "description": "The same `QuestionIR` the answer was evaluated from."
+            "description": "The same `QuestionIR` the answer was evaluated from.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1274,7 +2025,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The kind's payload."
+            "description": "The kind's payload.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1356,7 +2108,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The admitted payload, as canonical JSON."
+            "description": "The admitted payload, as canonical JSON.",
+            "additionalProperties": true
           },
           "receipt": {
             "$ref": "#/components/schemas/DefinitionReceipt",
@@ -1506,7 +2259,8 @@
         "properties": {
           "question": {
             "type": "object",
-            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is\nevaluated once and never installed."
+            "description": "The `QuestionIR` to admit against the cell's declared metrics. It is evaluated once and never installed.",
+            "additionalProperties": true
           }
         },
         "additionalProperties": false
@@ -1574,7 +2328,8 @@
           },
           "payload": {
             "type": "object",
-            "description": "The kind's payload."
+            "description": "The kind's payload.",
+            "additionalProperties": true
           },
           "signoff": {
             "oneOf": [
@@ -1838,6 +2593,31 @@
         "type": "string",
         "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
         "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+      },
+      "NornAppliedQuery": {
+        "type": "object",
+        "description": "The sort and filter a page actually applied.",
+        "required": [
+          "sort",
+          "filter"
+        ],
+        "properties": {
+          "filter": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The applied filter, normalized (`{\"all\":[clause, ...]}`); null without one.",
+            "additionalProperties": true
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornSortKey"
+            },
+            "description": "The applied sort keys, before the id tie-break; empty means scan order."
+          }
+        }
       },
       "NornArtifactEnvelope": {
         "oneOf": [
@@ -2640,6 +3420,60 @@
           }
         }
       },
+      "NornCheckerDiagnosticV2": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornCheckerDiagnostic",
+            "description": "All fields of the historical diagnostic model."
+          },
+          {
+            "type": "object",
+            "required": [
+              "format",
+              "phase",
+              "retryable",
+              "fix",
+              "no_fix"
+            ],
+            "properties": {
+              "fix": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Supported author action, when derivable."
+              },
+              "format": {
+                "$ref": "#/components/schemas/NornDiagnosticFormat",
+                "description": "Explicit diagnostic projection version."
+              },
+              "no_fix": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why a supported repair cannot be inferred safely."
+              },
+              "phase": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/NornCheckerTier",
+                    "description": "Existing registry tier identifying the producing phase."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "retryable": {
+                "type": "boolean",
+                "description": "Source-only checker findings are not automatically retryable."
+              }
+            }
+          }
+        ],
+        "description": "Additive projection of the existing diagnostic, never a receipt wire replacement."
+      },
       "NornCheckerDiagnostics": {
         "type": "object",
         "description": "The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`).",
@@ -2708,6 +3542,138 @@
           "T6",
           "T7"
         ]
+      },
+      "NornDefinitionsCatalog": {
+        "type": "object",
+        "description": "An admitted document; source and receipt travel as exact JSON text.",
+        "required": [
+          "admitted",
+          "version",
+          "layoutRevision",
+          "layout",
+          "layoutDiagnostics",
+          "receipt",
+          "receiptSha256",
+          "diagnostics",
+          "registry",
+          "baseArtifactIds",
+          "artifacts"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "Always `true`: this route serves only an admitted revision. The member is kept because readers of this route already rely on its shape.",
+            "enum": [
+              true
+            ]
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One admitted artifact, preserving exact numeric values.",
+              "additionalProperties": true
+            },
+            "description": "Every admitted artifact of the revision, in one unpaged array: references between artifacts resolve only against the whole set, so the set is not split. Its size is the installed set's; this read applies no count bound of its own."
+          },
+          "baseArtifactIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Read-only base artifact identities."
+          },
+          "diagnostics": {
+            "type": "null",
+            "description": "Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member."
+          },
+          "layout": {
+            "$ref": "#/components/schemas/LayoutSidecar"
+          },
+          "layoutDiagnostics": {
+            "type": "null",
+            "description": "Always null: layout diagnostics are not retained with a revision, and this read does not re-run the checker. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member."
+          },
+          "layoutRevision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Editor sidecar revision.",
+            "minimum": 0
+          },
+          "receipt": {
+            "type": "object",
+            "description": "The original checker receipt, without host reinterpretation.",
+            "additionalProperties": true
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "Original receipt digest."
+          },
+          "registry": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Selected registry releases."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Retained definition revision.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornDiagnosticFormat": {
+        "type": "string",
+        "description": "Diagnostic projection version.",
+        "enum": [
+          "norn/diagnostic@2"
+        ]
+      },
+      "NornExplainFormat": {
+        "type": "string",
+        "description": "Explain projection version.",
+        "enum": [
+          "norn/explain@2"
+        ]
+      },
+      "NornExplainResponse": {
+        "type": "object",
+        "description": "The versioned explain ABI response shared with CLI and editor consumers.",
+        "required": [
+          "format",
+          "admitted",
+          "report",
+          "diagnostics"
+        ],
+        "properties": {
+          "admitted": {
+            "type": "boolean",
+            "description": "Whether the definitions and selector admitted an explanation."
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornCheckerDiagnosticV2"
+            },
+            "description": "Existing checker findings with v2 projection metadata."
+          },
+          "format": {
+            "$ref": "#/components/schemas/NornExplainFormat",
+            "description": "Explicit projection version; independent of historical receipt formats."
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrExplainReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       },
       "NornExprTypeEnvRef": {
         "type": "object",
@@ -4700,6 +5666,23 @@
           }
         }
       },
+      "NornIrArtifactKey": {
+        "type": "object",
+        "description": "Exact identity of an artifact: one version of one id.",
+        "required": [
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrArtifactKind": {
         "oneOf": [
           {
@@ -4895,6 +5878,25 @@
         "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
       },
+      "NornIrCalendarPin": {
+        "type": "object",
+        "description": "Exact pinned calendar identity.",
+        "required": [
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Calendar artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact calendar version."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrCalendarPolicy": {
         "type": "string",
         "description": "Calendar semantics, independent of the query window. Future calendar\nsystems require new explicit variants; existing boundaries never change.",
@@ -4903,6 +5905,47 @@
         ],
         "x-enumDescriptions": [
           "Gregorian UTC buckets; ISO weeks start Monday. Dates mean UTC midnight."
+        ]
+      },
+      "NornIrCatalogArtifact": {
+        "type": "object",
+        "description": "One artifact of the projected set.",
+        "required": [
+          "artifactId",
+          "version",
+          "kind",
+          "sha256",
+          "candidate"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "candidate": {
+            "type": "boolean",
+            "description": "Whether the artifact is a candidate (`false`: installed base)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NornIrArtifactKind"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Norn1 semantic envelope hash, as in the checker receipt."
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrCatalogFormat": {
+        "type": "string",
+        "description": "The format tag of a [`DefinitionCatalog`].",
+        "enum": [
+          "norn.catalog/1"
+        ],
+        "x-enumDescriptions": [
+          "`norn.catalog/1`."
         ]
       },
       "NornIrCodeSet": {
@@ -5086,6 +6129,51 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrConceptFacet": {
+        "type": "string",
+        "description": "The named facet an admitted member contributes to its concept.",
+        "enum": [
+          "props",
+          "links",
+          "states",
+          "actions",
+          "laws",
+          "policies",
+          "access",
+          "sources"
+        ],
+        "x-enumDescriptions": [
+          "Stored and derived properties.",
+          "Typed participant/resource links.",
+          "Lifecycle states and transitions.",
+          "Governed actions with declared effects or writes.",
+          "Laws attached to the admitted subject.",
+          "Policies bound through an action's access reference.",
+          "The action's declared access contract.",
+          "Source mappings observing the concept."
+        ]
+      },
+      "NornIrConceptFacetRow": {
+        "type": "object",
+        "description": "GRAPH-META-1: a read-only facet edge; both ends retain exact member identity.",
+        "required": [
+          "concept",
+          "facet",
+          "member"
+        ],
+        "properties": {
+          "concept": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "facet": {
+            "$ref": "#/components/schemas/NornIrConceptFacet"
+          },
+          "member": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrConceptRole": {
         "type": "string",
@@ -7641,6 +8729,181 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrDefinitionCatalog": {
+        "type": "object",
+        "description": "The catalog: every relation over one admitted artifact set. See the\nmodule docs.",
+        "required": [
+          "format",
+          "artifacts",
+          "types",
+          "facets",
+          "properties",
+          "links",
+          "transitions",
+          "states",
+          "writes",
+          "dependsOn",
+          "mappings",
+          "laws"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrCatalogArtifact"
+            }
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrDependsOnRow"
+            }
+          },
+          "facets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrConceptFacetRow"
+            }
+          },
+          "format": {
+            "$ref": "#/components/schemas/NornIrCatalogFormat"
+          },
+          "laws": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawRow"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLinkRow"
+            }
+          },
+          "mappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMappingRow"
+            }
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyRow"
+            }
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            },
+            "description": "States of locally declared lifecycles, including inherited enum properties."
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrTransitionRow"
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrTypeRow"
+            }
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWritesRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDeonticModality": {
+        "type": "string",
+        "description": "The normative grade is separate from the temporal wrapper in `law`.",
+        "enum": [
+          "obligation",
+          "permission",
+          "prohibition"
+        ]
+      },
+      "NornIrDeonticRule": {
+        "type": "object",
+        "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
+        "required": [
+          "law",
+          "modality",
+          "authorityId",
+          "authorityVersion",
+          "source"
+        ],
+        "properties": {
+          "authorityId": {
+            "type": "string"
+          },
+          "authorityVersion": {
+            "type": "string"
+          },
+          "defeatedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit rule identities preferred to this rule; not numeric authority ranking."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawException"
+            }
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrLawIR"
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrDeonticModality"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDependencyVia": {
+        "type": "string",
+        "description": "Why one artifact depends on another.",
+        "enum": [
+          "dependency",
+          "pack_member"
+        ],
+        "x-enumDescriptions": [
+          "A resolved envelope `dependencies` entry.",
+          "A composition pack's `payload.artifacts` member."
+        ]
+      },
+      "NornIrDependsOnRow": {
+        "type": "object",
+        "description": "**DependsOn**: one resolved reference between artifacts.",
+        "required": [
+          "from",
+          "to",
+          "via"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/NornIrArtifactKey"
+          },
+          "to": {
+            "$ref": "#/components/schemas/NornIrArtifactKey"
+          },
+          "via": {
+            "$ref": "#/components/schemas/NornIrDependencyVia"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrDerivedPayload": {
         "type": "object",
         "required": [
@@ -8881,6 +10144,281 @@
           "trusted_rust",
           "capability_rpc"
         ]
+      },
+      "NornIrExplainFormat": {
+        "type": "string",
+        "enum": [
+          "norn/explain@2"
+        ]
+      },
+      "NornIrExplainInterpretation": {
+        "type": "object",
+        "description": "Pinned existing ontology-link data, without promoting correspondence to law proof.",
+        "required": [
+          "declaration",
+          "link",
+          "proof"
+        ],
+        "properties": {
+          "declaration": {
+            "$ref": "#/components/schemas/NornIrArtifactKey"
+          },
+          "link": {
+            "$ref": "#/components/schemas/NornIrOntologyLinkRoot"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/NornIrExplainProof"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrExplainOptions": {
+        "type": "object",
+        "title": "ExplainOptions",
+        "properties": {
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrStructuredRequirement"
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrExplainProof": {
+        "type": "string",
+        "enum": [
+          "unknown"
+        ]
+      },
+      "NornIrExplainReport": {
+        "type": "object",
+        "title": "ExplainReport",
+        "description": "EXPLAIN-CLOSURE-1: the entire conservative closure remains pinned and visible.\nConsumers must establish disclosure authority before supplying this catalog.",
+        "required": [
+          "format",
+          "target",
+          "scope",
+          "closure",
+          "interpretations",
+          "writers",
+          "reads",
+          "directEffects",
+          "laws"
+        ],
+        "properties": {
+          "closure": {
+            "$ref": "#/components/schemas/NornIrDefinitionCatalog",
+            "description": "Whole-set invalidation inventory, not a minimal field-level influence claim."
+          },
+          "directEffects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWritesRow"
+            }
+          },
+          "format": {
+            "$ref": "#/components/schemas/NornIrExplainFormat"
+          },
+          "interpretations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrExplainInterpretation"
+            },
+            "description": "Declared ontology correspondences; their law transport is unproved."
+          },
+          "laws": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrExplainedLaw"
+            }
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSliceDeclaration"
+            }
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrScopeRef"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "writers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawWriter"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrExplainUnknown": {
+        "type": "object",
+        "description": "EXPLAIN-UNKNOWN-1: unknowns retain a concrete writer identity or footprint.",
+        "required": [
+          "footprint",
+          "reason",
+          "fix"
+        ],
+        "properties": {
+          "fix": {
+            "type": "string"
+          },
+          "footprint": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "writer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrLawWriter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrExplainWording": {
+        "type": "object",
+        "description": "The existing reviewed slots, rendered through the selected wording locale map.",
+        "required": [
+          "locale",
+          "direction",
+          "sha256",
+          "source",
+          "slots"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRequirementSlot"
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrExplainedLaw": {
+        "type": "object",
+        "required": [
+          "declaration",
+          "law",
+          "inheritancePaths",
+          "containmentPaths",
+          "proof",
+          "assumptions",
+          "obligations",
+          "whyUnknown"
+        ],
+        "properties": {
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "No solver assumption profile is inferred from source declarations."
+          },
+          "containmentPaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrArtifactKey"
+              }
+            },
+            "description": "Canonical paths from each containing pack to the authored law artifact."
+          },
+          "declaration": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "enforcement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrLawBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The admitted bound invariant enforced by the commit checker."
+          },
+          "inheritancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "description": "Canonical shortest paths from contributing concepts to the authored subject."
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrLawIR"
+          },
+          "obligations": {
+            "type": "array",
+            "items": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            },
+            "description": "Existing source-bound induction statements, without a proof-level promotion."
+          },
+          "proof": {
+            "type": "string",
+            "description": "Source-only explanations never invent checked proof evidence.",
+            "enum": [
+              "unknown"
+            ]
+          },
+          "sourcePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "whyUnknown": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrExplainUnknown"
+            }
+          },
+          "wording": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrExplainWording"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrExtensionNamespace": {
         "type": "string",
@@ -11063,6 +12601,75 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrLawBinding": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A lifecycle transition (a transition row).",
+            "required": [
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transition"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An invariant of the type `owner` (a type row) declares; invariants\nhave no rows of their own.",
+            "required": [
+              "kind",
+              "owner",
+              "invariant"
+            ],
+            "properties": {
+              "invariant": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invariant"
+                ]
+              },
+              "owner": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An action artifact.",
+            "required": [
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "action"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "The definition a law's response names."
+      },
       "NornIrLawException": {
         "type": "object",
         "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
@@ -11093,6 +12700,92 @@
           "source": {
             "$ref": "#/components/schemas/NornIrRuleSourceSpan",
             "description": "Source location of the declaration."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawIR": {
+        "type": "object",
+        "description": "One protected law; its predicates use the subject's `self` environment.",
+        "required": [
+          "lawVersion",
+          "id",
+          "owner",
+          "severity",
+          "rationale",
+          "provenance",
+          "scope",
+          "subject",
+          "modality",
+          "response"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLawException"
+            },
+            "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+            "minItems": 1
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, preserved by all authoring faces."
+          },
+          "lawVersion": {
+            "type": "string",
+            "description": "Wire format version.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrLawModality",
+            "description": "Admitted temporal wrapper."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Principal or registry owner of changes to this law."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/NornIrLawProvenance",
+            "description": "Source and interpretation provenance."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "response": {
+            "$ref": "#/components/schemas/NornIrLawResponse",
+            "description": "Predicate or exact ontology-bound behavior/invariant identity."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrLawScope",
+            "description": "Applicability, independent of the artifact's authorization scope."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Reporting severity, independent of proof status.",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "x-enumDescriptions": [
+              "Violations require attention.",
+              "Advisory law."
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "description": "Exact ontology object type whose record is bound as `self`."
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrLawTiming",
+            "description": "Optional progress bound."
           }
         },
         "additionalProperties": false
@@ -11627,6 +13320,35 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawRow": {
+        "type": "object",
+        "description": "**Law**: one law, its subject, and the definition its response binds,\neach pinned to the artifact that declares it.",
+        "required": [
+          "at",
+          "subject"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "binds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrLawBinding"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bound transition, invariant, or action; absent for a predicate\nresponse."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "The subject object type."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawScope": {
         "type": "object",
         "description": "Applicability of a law. All filters are conjunctive; type lists denote a union.",
@@ -11754,6 +13476,61 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrLawWriter": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A complete admitted behavior artifact (including cascaded/opaque effects).",
+            "required": [
+              "kind",
+              "artifactId"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string",
+                "description": "The artifact identity, without delimiter interpretation."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "artifact"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One transition of an effective, possibly inherited lifecycle.",
+            "required": [
+              "kind",
+              "objectType",
+              "property",
+              "transition"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "transition"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "description": "Effective concrete type."
+              },
+              "property": {
+                "type": "string",
+                "description": "Lifecycle property."
+              },
+              "transition": {
+                "type": "string",
+                "description": "Declared transition id."
+              }
+            }
+          }
+        ],
+        "description": "Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates."
       },
       "NornIrLayoutArtifactLayout": {
         "type": "object",
@@ -12042,6 +13819,36 @@
         },
         "additionalProperties": false
       },
+      "NornIrLifecycleStates": {
+        "type": "object",
+        "description": "The state set of a lifecycle property.",
+        "required": [
+          "states",
+          "initial"
+        ],
+        "properties": {
+          "initial": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The property's enum values, in presentation order."
+          },
+          "terminal": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLimitProfileRef": {
         "type": "object",
         "title": "LimitProfileRef",
@@ -12249,6 +14056,24 @@
         },
         "additionalProperties": false
       },
+      "NornIrLinkRow": {
+        "type": "object",
+        "description": "**Link**: one declared link.",
+        "required": [
+          "at",
+          "target"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "target": {
+            "type": "string",
+            "description": "The linked object type."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLinkedPack": {
         "type": "object",
         "description": "One linked pack, pinned by its artifact id and exact artifact version.",
@@ -12273,6 +14098,47 @@
           "type": "string"
         }
       },
+      "NornIrLocalizedRequirement": {
+        "type": "object",
+        "description": "One complete translation, including every phrase used by the renderer.",
+        "required": [
+          "direction",
+          "scope",
+          "activation",
+          "component",
+          "response",
+          "labels",
+          "terms"
+        ],
+        "properties": {
+          "activation": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "component": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/NornIrTextDirection"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/NornIrRequirementLabels"
+          },
+          "response": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/NornIrRequirementTerms"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLogicalSource": {
         "type": "object",
         "description": "The records an [`ObjectMap`] reads.",
@@ -12290,6 +14156,95 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrMapRule": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The map produces objects of the target type (one row per map).",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A property rule.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "property"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A link rule.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "link"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An observed lifecycle snapshot.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lifecycle"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A declared gap.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "gap"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/NornIrGapReason"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "What an object map does for one target member."
       },
       "NornIrMapTarget": {
         "type": "object",
@@ -12450,6 +14405,33 @@
           "narrow_match",
           "related_match"
         ]
+      },
+      "NornIrMappingRow": {
+        "type": "object",
+        "description": "**Mapping**: one target member an object map observes, or leaves as a gap.",
+        "required": [
+          "map",
+          "dataset",
+          "target",
+          "rule"
+        ],
+        "properties": {
+          "dataset": {
+            "type": "string",
+            "description": "The source dataset the map reads."
+          },
+          "map": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/NornIrMapRule"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "The target object type (for [`MapRule::Object`]), or one of its\nproperties or links, in the artifact that declares it."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrMappingVersion": {
         "type": "string",
@@ -15065,6 +17047,35 @@
         },
         "additionalProperties": false
       },
+      "NornIrPropertyRow": {
+        "type": "object",
+        "description": "**Property**: one declared property.",
+        "required": [
+          "at",
+          "computed"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "computed": {
+            "type": "boolean",
+            "description": "Computed from a ZEN Expression: derived and read-only."
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrLifecycleStates"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The states, when a lifecycle of the declaring type owns the property."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrPropertyType": {
         "oneOf": [
           {
@@ -16028,6 +18039,60 @@
           "0.1"
         ]
       },
+      "NornIrRequirementLabels": {
+        "type": "object",
+        "description": "Complete display vocabulary; missing fields refuse at decode.",
+        "required": [
+          "scope",
+          "condition",
+          "component",
+          "grade",
+          "timing",
+          "response",
+          "source",
+          "preferences",
+          "exception"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "condition": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "exception": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "grade": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "preferences": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "response": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "source": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "timing": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementLawException": {
         "type": "object",
         "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
@@ -16903,6 +18968,26 @@
         },
         "additionalProperties": false
       },
+      "NornIrRequirementSlot": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Law identity plus a stable semantic slot path, independent of locale."
+          },
+          "label": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
       "NornIrRequirementStructuredRequirement": {
         "type": "object",
         "description": "Structured authoring over the existing law and normative source model.",
@@ -16924,12 +19009,124 @@
         },
         "additionalProperties": false
       },
+      "NornIrRequirementTerms": {
+        "type": "object",
+        "description": "Complete display vocabulary; missing fields refuse at decode.",
+        "required": [
+          "company",
+          "application",
+          "cell",
+          "entity",
+          "commitments",
+          "obligation",
+          "permission",
+          "prohibition",
+          "sameCommit",
+          "everyCommittedState",
+          "grounding"
+        ],
+        "properties": {
+          "application": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "cell": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "commitments": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "company": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "entity": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "everyCommittedState": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "grounding": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "obligation": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "pack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a pack-rooted law; other roots never read it.",
+            "pattern": "\\S"
+          },
+          "permission": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "prohibition": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "sameCommit": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "within": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a `within` requirement; other timings never read it.",
+            "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementTextDirection": {
         "type": "string",
         "enum": [
           "ltr",
           "rtl"
         ]
+      },
+      "NornIrRequirementTiming": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Condition and response are evaluated at every applicable committed state.",
+            "enum": [
+              "every_committed_state"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+            "enum": [
+              "same_commit"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "LAW-WITHIN-1: a committed trigger transition opens an activation that a\nlater satisfying commit must discharge before `law.timing`'s deadline.",
+            "required": [
+              "within"
+            ],
+            "properties": {
+              "within": {
+                "$ref": "#/components/schemas/NornIrWithinTiming"
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Closed safety fragment plus one event-activated deadline form. No fairness,\nunbounded progress or wall-clock reads."
       },
       "NornIrRequirementTranslationObservation": {
         "type": "object",
@@ -17026,6 +19223,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRequirementWording": {
+        "type": "object",
+        "description": "LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.\nWording is never executable and does not change the law's semantic identity.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrLocalizedRequirement"
+        },
+        "minProperties": 1
       },
       "NornIrRequirementZenExpression": {
         "type": "string",
@@ -17338,6 +19543,17 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRetriggerPolicy": {
+        "type": "string",
+        "enum": [
+          "keep_first",
+          "restart"
+        ],
+        "x-enumDescriptions": [
+          "A trigger while open is recorded as ignored; the first deadline stands.",
+          "A trigger while open restarts the window from the triggering commit."
+        ]
       },
       "NornIrRoleCondition": {
         "type": "object",
@@ -19277,6 +21493,27 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrStructuredRequirement": {
+        "type": "object",
+        "description": "Structured authoring over the existing law and normative source model.",
+        "required": [
+          "norm",
+          "timing",
+          "wording"
+        ],
+        "properties": {
+          "norm": {
+            "$ref": "#/components/schemas/NornIrDeonticRule"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrRequirementTiming"
+          },
+          "wording": {
+            "$ref": "#/components/schemas/NornIrRequirementWording"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrTemporalScope": {
         "type": "object",
         "description": "Optional time-dimension declaration for a Derived view.",
@@ -19368,6 +21605,13 @@
         },
         "additionalProperties": false
       },
+      "NornIrTextDirection": {
+        "type": "string",
+        "enum": [
+          "ltr",
+          "rtl"
+        ]
+      },
       "NornIrTextFormat": {
         "type": "string",
         "description": "Well-known string formats of a `text` property.",
@@ -19458,6 +21702,38 @@
         "type": "string",
         "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrTransitionRow": {
+        "type": "object",
+        "description": "**Transition**: one declared transition.",
+        "required": [
+          "at",
+          "guards",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "guards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrZenExpression"
+            },
+            "description": "Declared guards, in semantic order."
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrTranslationObservation": {
         "type": "object",
@@ -19560,6 +21836,58 @@
               "Binary content or an attachment reference.",
               "The name or id of a record of another dataset.",
               "Not determined."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrTypeKind": {
+        "type": "string",
+        "description": "What a type row defines.",
+        "enum": [
+          "object_type",
+          "interface"
+        ]
+      },
+      "NornIrTypeRow": {
+        "type": "object",
+        "description": "**Type**: one object type or interface.",
+        "required": [
+          "at",
+          "kind",
+          "role"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          },
+          "extends": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Supertypes: an object type's `extends`, an interface's `extends`."
+          },
+          "implements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Interfaces an object type implements directly."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NornIrTypeKind"
+          },
+          "role": {
+            "type": "string",
+            "description": "GRAPH-ROLE-1: the admitted effective role, independent of lifecycle presence.",
+            "enum": [
+              "thing",
+              "happening"
+            ],
+            "x-enumDescriptions": [
+              "A persistent thing.",
+              "A concept that occurs, runs or terminates in time."
             ]
           }
         },
@@ -22295,6 +24623,60 @@
           "Latest timestamp."
         ]
       },
+      "NornIrWithinTiming": {
+        "type": "object",
+        "description": "Activation policy for `within`; the duration stays in `law.timing`.",
+        "required": [
+          "trigger",
+          "retrigger",
+          "accountable"
+        ],
+        "properties": {
+          "accountable": {
+            "type": "string",
+            "description": "Principal or role answerable for discharge; grants no authority."
+          },
+          "calendar": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrCalendarPin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Business calendar for the deadline. No calendar is admitted yet: refuses."
+          },
+          "cancel": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrZenExpression"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional committed-state predicate that closes an open activation unpaid."
+          },
+          "retrigger": {
+            "type": "string",
+            "description": "What a trigger does while an activation is already open.",
+            "enum": [
+              "keep_first",
+              "restart"
+            ],
+            "x-enumDescriptions": [
+              "A trigger while open is recorded as ignored; the first deadline stands.",
+              "A trigger while open restarts the window from the triggering commit."
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "description": "Lifecycle transition identity on the subject that opens an activation.\nAdmission (norn-checker) checks it is nonblank; resolving it against the\nsubject's lifecycle is catalog admission (TARGET)."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrWriteChange": {
         "type": "string",
         "description": "How an action changes an entity kind in its write set.",
@@ -22303,6 +24685,48 @@
           "modified",
           "deleted"
         ]
+      },
+      "NornIrWriteVia": {
+        "type": "string",
+        "description": "How an authored write reaches its target.",
+        "enum": [
+          "fire_transition",
+          "upsert_object",
+          "mutate_rows",
+          "fact_transition",
+          "fact_set",
+          "fact_object"
+        ],
+        "x-enumDescriptions": [
+          "An action's `fire_transition` effect.",
+          "An action's `upsert_input_object` effect.",
+          "An action's `mutate_parent_with_rows` effect.",
+          "A decide graph's `transition` fact change.",
+          "A decide graph's `set` fact change.",
+          "A decide graph's `create`, `patch`, or `delete` fact change."
+        ]
+      },
+      "NornIrWritesRow": {
+        "type": "object",
+        "description": "**Writes**: an authored write of a definition member.",
+        "required": [
+          "writer",
+          "target",
+          "via"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "A transition, a property, or (for whole-object writes) a type."
+          },
+          "via": {
+            "$ref": "#/components/schemas/NornIrWriteVia"
+          },
+          "writer": {
+            "$ref": "#/components/schemas/NornIrMemberRef"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrZenCondition": {
         "type": "object",
@@ -22626,6 +25050,40 @@
         },
         "additionalProperties": false
       },
+      "NornObjectLinkPage": {
+        "type": "object",
+        "description": "HOST-READ-4: one page of the links touching an object that the caller may\nsee at both ends (D67); links to rows it cannot see are neither listed nor\ncounted.",
+        "required": [
+          "objectType",
+          "id",
+          "items",
+          "next"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The requested object's identity."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornLinkEdge"
+            },
+            "description": "Visible links, in the cell's stable order."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor for the next page, when one exists."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The requested object's type."
+          }
+        }
+      },
       "NornObjectPage": {
         "type": "object",
         "description": "One bounded page of a concept's authoritative objects.",
@@ -22663,6 +25121,59 @@
         },
         "additionalProperties": false
       },
+      "NornObjectQueryPage": {
+        "type": "object",
+        "description": "One page of a grid query over a concept's objects.",
+        "required": [
+          "objectType",
+          "records",
+          "quarantineCount",
+          "query",
+          "next",
+          "total"
+        ],
+        "properties": {
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor for the next page; null at the end."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concept read; records may be of its subtypes."
+          },
+          "quarantineCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Readable candidates held back by source disputes or open findings.",
+            "minimum": 0
+          },
+          "query": {
+            "$ref": "#/components/schemas/NornAppliedQuery",
+            "description": "The sort and filter applied."
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornQueriedRecord"
+            },
+            "description": "The page, in the applied order."
+          },
+          "total": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornQueryTotal",
+                "description": "The matching rows, under the same visibility as the list. Present on a\nfirst page, and on every page of a sorted or filtered query; null on the\ncontinuation pages of an unsorted, unfiltered listing."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "NornObjectRecord": {
         "type": "object",
         "description": "One object as the cell stores it, at its current version.",
@@ -22699,6 +25210,61 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornQueriedRecord": {
+        "type": "object",
+        "description": "One object as a grid query shows it (HOST-READ-3, D67). A row the caller\nmay count but not read is listed with `withheld: true` and nothing\nvalue-derived: no values and no version.",
+        "required": [
+          "objectType",
+          "id",
+          "scope",
+          "version",
+          "values",
+          "withheld",
+          "withheldProperties"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object's identity."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "scope": {
+            "type": "string",
+            "description": "The tenant scope."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Every stored property by property id; decimals are exact JSON number tokens. Null when the row is withheld.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The owner version; null when the row is withheld.",
+            "minimum": 0
+          },
+          "withheld": {
+            "type": "boolean",
+            "description": "The caller holds Population but not Values on this row."
+          },
+          "withheldProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Properties withheld by policy on a readable row. Always present; empty\nuntil field-level policy exists, and never derived from which values a\nrow has."
+          }
+        }
       },
       "NornQueryEngine": {
         "type": "string",
@@ -22949,6 +25515,26 @@
         },
         "additionalProperties": false
       },
+      "NornQueryTotal": {
+        "type": "object",
+        "description": "How many rows match the query.",
+        "required": [
+          "count",
+          "approximate"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "The count is a lower bound: the collection is larger than one scan."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The matching rows counted.",
+            "minimum": 0
+          }
+        }
+      },
       "NornQueryWatermark": {
         "type": "object",
         "description": "A source partition's observed watermark.",
@@ -22990,6 +25576,32 @@
           }
         ],
         "description": "Current or authenticated historical answer, matching the native service envelope."
+      },
+      "NornSortDirection": {
+        "type": "string",
+        "description": "A sort direction.",
+        "enum": [
+          "asc",
+          "desc"
+        ]
+      },
+      "NornSortKey": {
+        "type": "object",
+        "description": "One applied sort key.",
+        "required": [
+          "property",
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/NornSortDirection",
+            "description": "The sort direction."
+          },
+          "property": {
+            "type": "string",
+            "description": "The property sorted on."
+          }
+        }
       },
       "NornWorld": {
         "oneOf": [
@@ -23272,6 +25884,13 @@
           }
         },
         "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "hostToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The cell host's own credential, sent to the cell host directly as `Authorization: Bearer <token>`. A published host accepts only a token signed (EdDSA) by the identity service it is configured to trust, issued for at most five minutes and bound to the cell's organization; the token is not bound to an environment. The local development host accepts the session token it writes to the owner-only file `.norn/dev.token`. A caller that reaches the cell through a fronting application (for example Studio's proxy) authenticates to that application by its own means and does not present this token. Without a valid token no route serves: a route that reaches authorization refuses with 403 `authz.denied`, and an unknown route, a wrong method or a malformed query can refuse before that."
       }
     }
   }

@@ -1,0 +1,7 @@
+{
+  "code": "cli.compile.source_refused",
+  "message": "The project's sources did not compile: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

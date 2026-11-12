@@ -488,7 +488,7 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
 pub struct EvaluateRequest {
     /// The `QuestionIR` to admit against the cell's declared metrics. It is
     /// evaluated once and never installed.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = evaluate_question_schema)]
     pub question: QuestionIR,
 }
 
@@ -497,12 +497,27 @@ pub struct EvaluateRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdHocTraceRequest {
     /// The same `QuestionIR` the answer was evaluated from.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = trace_question_schema)]
     pub question: QuestionIR,
     /// The `lineageRef` handle that answer returned.
     pub lineage_ref: String,
     /// Canonical bucket key from that answer.
     pub bucket: String,
+}
+
+fn evaluate_question_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The `QuestionIR` to admit against the cell's declared metrics. It is evaluated once \
+         and never installed.",
+        false,
+    )
+}
+
+fn trace_question_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The same `QuestionIR` the answer was evaluated from.",
+        false,
+    )
 }
 
 fn bucket_bound_exceeded() -> Refusal {

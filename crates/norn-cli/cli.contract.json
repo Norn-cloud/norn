@@ -106,6 +106,97 @@
       },
       "subcommands": {}
     },
+    "explain": {
+      "args": {
+        "context": {
+          "long": "context",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "defs": {
+          "long": "defs",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "format": {
+          "long": "format",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [
+            "text"
+          ],
+          "values": [
+            "text",
+            "json"
+          ]
+        },
+        "id": {
+          "long": null,
+          "short": null,
+          "aliases": [],
+          "positional": true,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": []
+        },
+        "kind": {
+          "long": null,
+          "short": null,
+          "aliases": [],
+          "positional": true,
+          "takes_value": true,
+          "multiple": false,
+          "required": true,
+          "default": [],
+          "values": [
+            "action",
+            "law",
+            "concept"
+          ]
+        },
+        "locale": {
+          "long": "locale",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "wording": {
+          "long": "wording",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        }
+      },
+      "subcommands": {}
+    },
     "mcp": {
       "args": {},
       "subcommands": {}
