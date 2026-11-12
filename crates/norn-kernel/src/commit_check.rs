@@ -1538,7 +1538,18 @@ impl InvariantAdmissionError {
     }
 }
 
-pub(crate) fn evaluate_commit_invariants(
+/// LAW-LINK-1: the observed-write invariant failures admission recomputes,
+/// for a finding refresh that must match it exactly.
+pub(crate) fn observed_invariant_failures(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+) -> Option<Vec<InvariantFailure>> {
+    evaluate_commit_invariants(catalog, key, values, remaining, true).ok()
+}
+
+fn evaluate_commit_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,

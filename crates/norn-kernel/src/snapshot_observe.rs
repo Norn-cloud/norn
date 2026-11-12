@@ -1205,14 +1205,13 @@ impl ObservationAuthorization {
             if !crate::governing_laws::reads_links(catalog, &key.object_type)? {
                 continue;
             }
-            let failures = crate::commit_check::evaluate_commit_invariants(
+            let failures = crate::commit_check::observed_invariant_failures(
                 catalog,
                 &key,
                 values,
                 &mut remaining,
-                true,
             )
-            .map_err(|_error| refuse("invariant evaluation refused".into()))?;
+            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
             let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &key);
             let findings = findings_for(
                 catalog,
@@ -1232,14 +1231,13 @@ impl ObservationAuthorization {
             if !crate::governing_laws::reads_links(catalog, &authorized.key.object_type)? {
                 continue;
             }
-            let failures = crate::commit_check::evaluate_commit_invariants(
+            let failures = crate::commit_check::observed_invariant_failures(
                 catalog,
                 &authorized.key,
                 &authorized.values,
                 &mut remaining,
-                true,
             )
-            .map_err(|_error| refuse("invariant evaluation refused".into()))?;
+            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
             let mut links =
                 crate::commit_check::CommitLinks::new(commit, model, view, &authorized.key);
             let findings = findings_for(
