@@ -449,7 +449,13 @@ export class SchemaProjection {
   }
 
   /** The closed value schema (Function I/O, action input/output, RuleIR contracts). */
-  closed(schema: SchemaNode, nullable = false): S.ValueSchema {
+  /**
+   * A closed schema. `nullable`: `true` admits any `Schema.NullOr` (RuleIR);
+   * `"scalar"` admits `Schema.NullOr` of a plain scalar only, the one nullable leaf
+   * ActionIR inputs and outputs admit (`["string" | "integer" | "number" | "boolean", "null"]`,
+   * no sibling keywords); `false` admits none.
+   */
+  closed(schema: SchemaNode, nullable: boolean | "scalar" = false): S.ValueSchema {
     this.bounded(schema)
     return this.closedAt(schema, nullable)
   }
@@ -460,7 +466,7 @@ export class SchemaProjection {
     return this.closedAt(schema, true, true)
   }
 
-  private closedAt(schema: SchemaNode, nullable: boolean, temporalWire = false): S.ValueSchema {
+  private closedAt(schema: SchemaNode, nullable: boolean | "scalar", temporalWire = false): S.ValueSchema {
     this.guard(schema.node)
     switch (schema.kind) {
       case "string":
@@ -491,6 +497,9 @@ export class SchemaProjection {
         const members = this.flatten(schema)
         if (nullable && members.length === 2 && members.some((m) => m.kind === "null")) {
           const nonNull = members.find((m) => m.kind !== "null")!
+          if (nullable === "scalar" && !["string", "int", "finite", "boolean"].includes(nonNull.kind)) {
+            throw projection("an action's absent value is a nullable plain scalar: Schema.NullOr of Schema.String, Schema.Int, Schema.Finite or Schema.Boolean (ActionIR admits no nullable literal, decimal, struct or array)", schema.node)
+          }
           return S.nullable(this.closedAt(nonNull, nullable, temporalWire))
         }
         if (members.every((m) => m.kind === "literals")) return S.text([...new Set(members.flatMap((m) => (m.kind === "literals" ? m.values : [])))])
