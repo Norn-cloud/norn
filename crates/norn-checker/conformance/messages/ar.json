@@ -282,6 +282,22 @@
       "message": "حمولة BusinessPackIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
     },
+    "cli.compile.source_refused": {
+      "message": "تعذّر تصريف مصادر المشروع: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.failed": {
+      "message": "تعذّر إكمال norn explain: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.input_refused": {
+      "message": "رفض المدقِّق طلب الشرح: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.usage": {
+      "message": "الاستخدام: norn explain KIND ID [--json] [--wording FILE --locale TAG]؛ KIND أحد `action` أو `law` أو `concept`",
+      "review": "needs_review"
+    },
     "cli.format.io": {
       "message": "تعذّر تنسيق المصادر؛ تحقق من المسارات والأذونات.",
       "review": "needs_review"
@@ -316,6 +332,10 @@
     },
     "cli.project.usage": {
       "message": "الاستخدام: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
+      "review": "needs_review"
+    },
+    "cli.setup.checker_unavailable": {
+      "message": "حزمة WASM الخاصة بالمدقِّق غير متاحة؛ ابنِها واضبط NORN_CHECKER_WASM_PKG.",
       "review": "needs_review"
     },
     "cli.setup.host_unavailable": {
@@ -556,6 +576,10 @@
     },
     "entity.validation.layer_scope_mismatch": {
       "message": "scope.tenantId للأداة {$detail} لا يطابق طبقة {$layer} التي تُفحص فيها",
+      "review": "needs_review"
+    },
+    "explain.selector.unknown_subject": {
+      "message": "لا يوجد {$kind} واحد بالاسم {$id}؛ وُجد {$count}",
       "review": "needs_review"
     },
     "function.invocation.blank_value": {
@@ -894,8 +918,20 @@
       "message": "الشكل الزمني للقانون غير مدعوم: {$detail}",
       "review": "needs_review"
     },
+    "law.wording.duplicate_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: duplicate_locale",
+      "review": "needs_review"
+    },
     "law.wording.incomplete_locale": {
       "message": "لغة متطلَّب معلَنة تنقصها خانة أو تسمية أو مصطلح يحتاجه عرضها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.wording.invalid_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: invalid_locale",
+      "review": "needs_review"
+    },
+    "law.wording.unknown_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: unknown_locale",
       "review": "needs_review"
     },
     "layout.validation.invalid_inline_field": {

@@ -152,6 +152,21 @@ pub fn version() -> String {
     crate::version_json()
 }
 
+/// Read-only `explainArtifactSet` shared with the native CLI.
+/// # Errors
+/// Throws on malformed transport input.
+#[wasm_bindgen(js_name = explainArtifactSet)]
+pub fn explain_artifact_set(
+    artifacts_json: &str,
+    context_json: &str,
+    kind: &str,
+    id: &str,
+    options_json: &str,
+) -> Result<String, JsError> {
+    crate::explain_artifact_set_json(artifacts_json, context_json, kind, id, options_json)
+        .map_err(JsError::from)
+}
+
 /// `restateQuestion(questionJson, metricsJson)`: see
 /// [`crate::restate_question_json`].
 ///
