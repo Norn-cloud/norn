@@ -89,7 +89,8 @@ fn narrowed(
                 continue;
             }
             rules.push(AccessRule {
-                rule_id: format!("{policy_id}.{}", rule.rule_id),
+                // Length-prefixed, so no two (policy, rule) pairs share an id.
+                rule_id: format!("{}:{policy_id}.{}", policy_id.len(), rule.rule_id),
                 actions,
                 ..rule.clone()
             });
@@ -226,10 +227,10 @@ impl ActionPolicy {
         if caller.subject_id != request.actor || !self.callable(&request.action.action_id) {
             return Err(denied());
         }
-        let actor_kind = if caller.actor_kind == "service" {
-            ActorKind::Service
-        } else {
-            ActorKind::User
+        let actor_kind = match caller.actor_kind {
+            "user" => ActorKind::User,
+            "service" => ActorKind::Service,
+            _ => return Err(denied()),
         };
         let grant = CapabilityGrant {
             subject_id: caller.subject_id.clone(),
