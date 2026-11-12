@@ -4,8 +4,9 @@
 #   sdks/python/models/run-demo.sh WORKDIR
 #
 # Needs what ../regression/run-demo.sh needs. Serves the tracking and ml packs,
-# then runs e2e_promotion.py: registration from finished runs only, the
-# promotion law, and the approval gate.
+# then runs e2e_promotion.py: registration from finished runs only and the
+# promotion law. The approval gate needs a hosted cell's roles
+# (crates/norn-cell-do/tests/ml_approval.rs).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sdk="$(cd "$here/.." && pwd)"
@@ -39,4 +40,4 @@ for _ in $(seq 1 240); do
   sleep 0.5
 done
 grep -q '"event":"ready"' "$work/dev.ndjson" || { cat "$work/dev.ndjson" "$work/dev.err"; exit 1; }
-"$work/env/bin/python" "$here/e2e_promotion.py" "$project" "$repo/registry/packs/ml/promote.approval.json"
+"$work/env/bin/python" "$here/e2e_promotion.py" "$project"

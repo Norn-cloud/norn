@@ -23,4 +23,7 @@ pack holds what happens to a trained model:
 - **ml.access**: members register and request promotion; admins and owners
   retire.
 
-`sdks/python/models/run-demo.sh` runs it end to end on a dev host.
+`sdks/python/models/run-demo.sh` runs registration and the law end to end on
+a dev host. The approval gate needs a hosted cell's roles (a dev host declares
+none); `crates/norn-cell-do/tests/ml_approval.rs` admits the definition against
+the hosted grant table.

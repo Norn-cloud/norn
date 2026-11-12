@@ -1,9 +1,8 @@
-"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions,
-the promotion law, and the approval gate on promote.
+"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions
+and the promotion law.
 
     python e2e_promotion.py /path/to/project
 """
-import json
 import sys
 
 from norn_regression import Cell
@@ -67,15 +66,8 @@ assert version("churn@3")["status"] == "production"
 links = http.get("/v1/objects/ml.ModelVersion/churn@3/links", params={"orgId": cell.org_id, "environmentId": cell.environment_id}).json()
 assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["items"]}, links
 
-# The approval gate (APPROVAL-1): with it installed, a promote parks for an admin or owner to decide.
-definition = json.load(open(sys.argv[2]))
-admitted = http.post("/v1/definitions:admit", params={"orgId": cell.org_id, "environmentId": cell.environment_id}, json=definition)
-assert admitted.status_code == 200 and admitted.json()["admitted"], admitted.text
-installed = http.post("/v1/definitions:install", params={"orgId": cell.org_id, "environmentId": cell.environment_id},
-                      json={**definition, "signoff": {"restatementSha256": admitted.json()["restatementSha256"]}})
-assert installed.status_code == 200, installed.text
-ok("ml.modelversion.register", {**base, "version_id": "churn@4", "version": "4", "evaluation_revision": "c42"}, "reg-4")
-status, body = call("ml.modelversion.promote", {"version_id": "churn@4"}, "promote-4")
-assert status == 202 and body.get("outcome") == "pending" and body["decision"]["id"], (status, body)
-assert version("churn@4")["status"] == "candidate", "a parked promotion commits nothing"
-print(f"model promotion: ok (unevaluated promote refused: {refused_code}; promoted, retired-ready, links; gated promote parked as {body['decision']['id']})")
+# The approval gate (APPROVAL-1) installs on a hosted cell, whose grant table
+# declares the admin and owner deciders; a dev host declares no roles and
+# installs no approvals. crates/norn-cell-do/tests/ml_approval.rs checks the
+# definition against the hosted table.
+print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; promoted with run links)")
