@@ -26,6 +26,15 @@ pub enum LawEvaluationError {
     /// A native write violates a directly attached safety law.
     #[error("core.laws.violated: {}", .0.message)]
     Violated(Box<LawFailure>),
+    /// LAW-LINK-1: more subjects link to one written target than a commit
+    /// re-checks; the write is refused, never checked partially.
+    #[error("core.compute.bound_exceeded: LAW-LINK-1: more than {limit} subjects link to {target}")]
+    LinkFanOutExceeded {
+        /// The written target, as `type/key`.
+        target: String,
+        /// The bound ([`crate::commit_check::MAX_LINK_LAW_SUBJECTS`]).
+        limit: usize,
+    },
 }
 impl LawEvaluationError {
     /// Stable Core 05 diagnostic, independent of diagnostic detail.
@@ -37,6 +46,7 @@ impl LawEvaluationError {
             }
             Self::Invalid(_) => "core.laws.unresolved_scope",
             Self::Violated(_) => "core.laws.violated",
+            Self::LinkFanOutExceeded { .. } => "core.compute.bound_exceeded",
         }
     }
 }
