@@ -123,7 +123,7 @@ impl NornCell {
         let slot = tenant.caller();
         let principals = match (issuer, jwks) {
             (Some(issuer), Some(jwks)) => Principals::Tokens(
-                TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot, seconds(now_ms))
+                TokenPrincipals::new(&issuer, &jwks, scope, slot, seconds(now_ms))
                     .map_err(|refusal| JsValue::from_str(&refusal.code))?,
             ),
             #[cfg(feature = "fixtures")]
