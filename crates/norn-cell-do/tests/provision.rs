@@ -1052,18 +1052,35 @@ struct Swept {
 /// commit point (`u32::MAX`) is left, so the rest are skipped once a fault
 /// stops firing.
 fn fault_sweep(first: &[u32], later: &[u32]) -> Swept {
+    fault_sweep_of(
+        &[
+            EngineFaultKind::Crash,
+            EngineFaultKind::Io,
+            EngineFaultKind::Commit,
+        ],
+        first,
+        later,
+    )
+}
+
+/// [`fault_sweep`] for the fault `kinds` only (a shard of an exhaustive run).
+fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Swept {
     let directory = tempfile::tempdir().unwrap();
     let scope = scope("org_a", "prod");
     let owner = user("org_a", "owner");
     let body = submission(&[]);
     let mut plans: Vec<(EngineFaultKind, u32, &[u32])> = Vec::new();
     for kind in [EngineFaultKind::Crash, EngineFaultKind::Io] {
-        plans.push((kind, 0, first));
-        plans.push((kind, 1, later));
+        if kinds.contains(&kind) {
+            plans.push((kind, 0, first));
+            plans.push((kind, 1, later));
+        }
     }
     let commit_point = [u32::MAX];
-    for transaction in 0..2 {
-        plans.push((EngineFaultKind::Commit, transaction, &commit_point));
+    if kinds.contains(&EngineFaultKind::Commit) {
+        for transaction in 0..2 {
+            plans.push((EngineFaultKind::Commit, transaction, &commit_point));
+        }
     }
     let mut swept = Swept {
         vacant: 0,
@@ -1148,9 +1165,25 @@ fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
 #[test]
 #[ignore = "exhaustive host-level sweep; run on demand in release mode"]
 fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
-    let every: Vec<u32> = (0..200_000_u32).chain([u32::MAX]).collect();
+    // A run may be sharded: NORN_SWEEP_KIND (crash, io, commit; default all)
+    // and NORN_SWEEP_FROM / NORN_SWEEP_TO (statement range; default all).
+    let bound = |name: &str, default: u32| {
+        std::env::var(name).map_or(default, |value| value.parse().unwrap())
+    };
+    let (from, to) = (bound("NORN_SWEEP_FROM", 0), bound("NORN_SWEEP_TO", 400_000));
+    let kinds: Vec<EngineFaultKind> = match std::env::var("NORN_SWEEP_KIND").as_deref() {
+        Ok("crash") => vec![EngineFaultKind::Crash],
+        Ok("io") => vec![EngineFaultKind::Io],
+        Ok("commit") => vec![EngineFaultKind::Commit],
+        _ => vec![
+            EngineFaultKind::Crash,
+            EngineFaultKind::Io,
+            EngineFaultKind::Commit,
+        ],
+    };
+    let every: Vec<u32> = (from..to).chain([u32::MAX]).collect();
     let started = std::time::Instant::now();
-    let swept = fault_sweep(&every, &every);
+    let swept = fault_sweep_of(&kinds, &every, &every);
     println!(
         "exhaustive provisioning sweep: {} cases, {} left no cell, {} left the whole cell, {:.1} s",
         swept.cases,
@@ -1158,7 +1191,7 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         swept.whole,
         started.elapsed().as_secs_f64()
     );
-    assert!(swept.vacant >= 16);
+    assert!(swept.vacant >= 16 || from > 0 || kinds == [EngineFaultKind::Commit]);
 }
 
 // ------------------------------------------------------------- seeded cells
