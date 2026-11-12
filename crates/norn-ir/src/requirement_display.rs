@@ -16,7 +16,9 @@ pub struct RequirementView {
     pub locale: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct RequirementSlot {
     /// Law identity plus a stable semantic slot path, independent of locale.
     pub id: String,
@@ -126,7 +128,9 @@ impl RequirementView {
                 object_type,
                 invariant_id,
             } => format!("{object_type}.{invariant_id}"),
-            LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+            LawResponse::Action { .. }
+            | LawResponse::Transition { .. }
+            | LawResponse::TranslationPreserves { .. } => {
                 return Err("law.validation.invalid_document");
             }
         };
@@ -184,22 +188,37 @@ impl RequirementView {
                 preferred,
             ),
         ];
+        // One home for exceptions: the rule's list or the law's, never both.
+        let (home, declared) = match (r.norm.exceptions.is_empty(), law.exceptions.is_empty()) {
+            (false, false) => return Err("law.validation.invalid_document"),
+            (true, false) => ("/norm/law/exceptions", &law.exceptions),
+            (_, true) => ("/norm/exceptions", &r.norm.exceptions),
+        };
         let mut exceptions = std::collections::BTreeSet::new();
-        for e in &r.norm.exceptions {
+        for e in declared {
             if !exceptions.insert(&e.id) {
                 return Err("law.validation.invalid_document");
             }
             slots.push(slot(
                 &law.id,
                 &format!(
-                    "/norm/exceptions/by-id/{}",
+                    "{home}/by-id/{}",
                     e.id.replace('~', "~0").replace('/', "~1")
                 ),
                 &w.labels.exception,
-                isolate(&format!(
-                    "{}; {}#{}",
-                    e.condition.0, e.source.artifact_id, e.source.pointer
-                )),
+                // A nested exception names the exception it lifts; a
+                // top-level one lifts the law and renders as before.
+                isolate(&if e.overrides == law.id {
+                    format!(
+                        "{}; {}#{}",
+                        e.condition.0, e.source.artifact_id, e.source.pointer
+                    )
+                } else {
+                    format!(
+                        "{}; overrides {}; {}#{}",
+                        e.condition.0, e.overrides, e.source.artifact_id, e.source.pointer
+                    )
+                }),
             ));
         }
         Ok(slots)

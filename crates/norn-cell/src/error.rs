@@ -89,6 +89,28 @@ pub enum CellError {
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
+    /// WORLD-ISOLATE-1: a fork never claims, dispatches or records a
+    /// performed command.
+    #[error("core.world.perform_forbidden")]
+    WorldPerformForbidden,
+    /// FORK-SIMULATE-1: only a fork records simulated results.
+    #[error("core.world.simulation_forbidden")]
+    WorldSimulationForbidden,
+    /// FORK-PIN-1: a fork is created only at its parent's verified head.
+    #[error("core.world.fork_stale_base: pinned at commit {expected}, head is commit {head}")]
+    ForkStaleBase {
+        /// The commit count the caller pinned.
+        expected: u64,
+        /// The parent's verified commit count.
+        head: u64,
+    },
+    /// FORK-PIN-1: a fork's world is never `main`, empty or its parent's.
+    #[error("core.world.fork_invalid_world")]
+    ForkInvalidWorld,
+    /// FORK-EVIDENCE-1: a fork never exports what it minted, or its receipt
+    /// log, as evidence.
+    #[error("core.world.fork_evidence_forbidden")]
+    ForkEvidenceForbidden,
 
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
@@ -110,6 +132,12 @@ pub enum CellError {
     /// The object types do not project to DDL.
     #[error("ddl projection: {0}")]
     Projection(#[from] SqliteDdlError),
+    /// The effective view of the object types could not be derived: the
+    /// bounded inheritance classification was exhausted (more than 4,096
+    /// object types, or another budget). The model is refused; no query ever
+    /// sees an empty view.
+    #[error(transparent)]
+    EffectiveViewRefused(#[from] norn_checker::EffectiveViewRefused),
     /// A payload does not (de)serialize.
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
@@ -139,6 +167,16 @@ pub enum CellError {
         /// Version the request was planned against.
         expected: Option<u64>,
         /// Version currently installed in the cell.
+        actual: Option<u64>,
+    },
+    /// A retained definition's current revision changed since the caller read it.
+    #[error("retained definition {id} revision conflict: expected {expected:?}, found {actual:?}")]
+    RetainedDefinitionConflict {
+        /// The retained definition id.
+        id: String,
+        /// Revision the request was planned against.
+        expected: Option<u64>,
+        /// Revision currently installed.
         actual: Option<u64>,
     },
     /// A declassification's exact current fact version no longer matches.

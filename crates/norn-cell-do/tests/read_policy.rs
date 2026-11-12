@@ -247,7 +247,7 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
             Some(403)
         );
     }
-    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/1");
+    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/2");
     assert!(DEMO_GRANTS.capabilities(&["analyst".into()]).is_empty());
     assert_eq!(
         DEMO_GRANTS.capabilities(&["viewer".into()]),
@@ -273,7 +273,7 @@ fn the_grant_table_is_pinned_exactly() {
             ("owner", vec![Population, Values, Sources]),
         ]
     );
-    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/1");
+    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/2");
     let held = |roles: &[&str]| {
         DEMO_GRANTS.capabilities(&roles.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>())
     };
@@ -285,6 +285,15 @@ fn the_grant_table_is_pinned_exactly() {
     assert_eq!(held(&["viewer", "viewer"]), [Population]);
     assert_eq!(held(&["viewer", "member"]), [Population, Values]);
     assert_eq!(held(&["viewer", "analyst"]), [Population]);
+    // Only admins and owners write retained definitions.
+    assert_eq!(DEMO_GRANTS.definition_writers, ["admin", "owner"]);
+    let writes = |roles: &[&str]| {
+        DEMO_GRANTS.writes_definitions(&roles.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>())
+    };
+    assert!(writes(&["admin"]) && writes(&["owner"]) && writes(&["viewer", "owner"]));
+    for roles in [&["viewer"][..], &["member"], &["Admin"], &["analyst"], &[]] {
+        assert!(!writes(roles), "{roles:?}");
+    }
 }
 
 /// The grant is the caller's as a user; a request presenting the same subject

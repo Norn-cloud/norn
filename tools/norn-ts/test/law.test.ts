@@ -1,11 +1,14 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { L, S, X } from "../src/builder/index.ts"
+import { pathToFileURL } from "node:url"
+import { E, L, S, X } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
 import { fromStatement, toStatement, parseSentence, renderSentence, serializeStatement, parseStatement, renderCounterexample } from "../src/law-statement.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
+import { renderDeontic } from "../src/builder/deontic.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 const ROOT = join(TOOL_ROOT, "..", "..", "fixtures/law-ir")
@@ -70,4 +73,218 @@ test("predicate builder reuses the existing typed ZEN expression renderer", () =
 test("counterexamples quote the precise witness without proof claims", () => {
   const rendered = renderCounterexample(goldens[0]!.payload, { state: { status: "shipped", paid: false }, trace: ["submit", "ship"], reason: "An unpaid order reached shipped" })
   expect(rendered).toContain("An unpaid order reached shipped"); expect(rendered).toContain("submit → ship"); expect(rendered).toContain("erpnext.no_unpaid_ship")
+})
+
+test.skipIf(!process.env[CHECKER_PKG_ENV])("explain_uncovered_writer", async () => {
+  const pkg = process.env[CHECKER_PKG_ENV]
+  if (!pkg) throw new Error(`${CHECKER_PKG_ENV} is required for explanation qualification`)
+  const abi: unknown = await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)
+  if (typeof abi !== "object" || abi === null || !("explainArtifactSet" in abi) || typeof abi.explainArtifactSet !== "function") {
+    throw new Error("The checker package must export explainArtifactSet")
+  }
+  const entities: unknown = JSON.parse(readFileSync(join(ROOT, "entities.json"), "utf8"))
+  if (!Array.isArray(entities)) throw new Error("Expected the law fixture's entity array")
+  const response: unknown = JSON.parse(abi.explainArtifactSet(JSON.stringify([...entities, ...goldens]), "{}", "law", "erpnext.no_unpaid_ship", "{}"))
+  expect(response).toMatchObject({
+    format: "norn/explain@2",
+    admitted: true,
+    diagnostics: [],
+    report: {
+      laws: [expect.objectContaining({
+        proof: "unknown",
+        sourcePath: "fixtures/law-ir/laws.source.ts",
+        whyUnknown: expect.arrayContaining([
+          expect.objectContaining({ writer: expect.objectContaining({ kind: "transition", objectType: "erpnext.SalesOrder" }), footprint: expect.any(String), fix: expect.any(String) }),
+          expect.objectContaining({ footprint: "migration", fix: expect.any(String) }),
+        ]),
+      })],
+    },
+  })
+})
+
+test("law exceptions never pass through a statement or render from two homes", () => {
+  const law = goldens[0]!.payload
+  const exception = { id: "exempt", overrides: law.id, condition: "true", rationale: "exempt", source: { artifactId: "a", pointer: "" } }
+  const excepted: L.LawIR = { ...law, exceptions: [exception] }
+  expect(() => toStatement(excepted)).toThrow("cannot carry exceptions")
+  const rule = { modality: "obligation", law: excepted, authorityId: "a", authorityVersion: "1", source: exception.source } as const
+  expect(renderDeontic({ ...rule })).toContain(`EXCEPT "exempt" WHEN "true"`)
+  expect(() => renderDeontic({ ...rule, exceptions: [exception] })).toThrow("law.exception.two_homes")
+})
+
+// A1 (#1176): closures, `sum` and calendar-day helpers render the norn-zen/6
+// forms (`crates/norn-expr/README.md`) and the Rust checker admits them in laws.
+describe("closures, sum and day helpers", () => {
+  const line = S.record({ amount: S.integer, sku: S.text() })
+  const entry = S.record({ status: S.text(["draft", "posted"]), issue_date: S.text(), due_date: S.text(), lines: S.array(line) })
+  const lineType = E.objectType({ name: "books.JournalLine", title: "Journal line", version: "0.1.0", properties: [E.property("amount", E.integer), E.property("sku", E.text())] })
+  const entryType = E.objectType({
+    name: "books.JournalEntry", title: "Journal entry", version: "0.1.0",
+    properties: [E.property("status", E.enumeration("draft", "posted")), E.property("issue_date", E.date), E.property("due_date", E.date)],
+    links: [{ id: "lines", target: lineType.name, cardinality: { to: "many", from: "one" }, inverse: "entry" }],
+  })
+  const self = (...path: string[]) => X.ref("self", ...path)
+  const cases: ReadonlyArray<readonly [string, X.Expr, string]> = [
+    ["balanced", X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0)), "sum(map(self.lines as l, l.amount)) == 0"],
+    ["no_zero_lines", X.all(self("lines"), "l", (l) => X.ne(X.ref("l", "amount"), X.lit(0))), "all(self.lines as l, l.amount != 0)"],
+    ["has_sku", X.some(self("lines"), "l", (l) => X.call("startsWith", X.ref("l", "sku"), X.lit("SKU-"))), "some(self.lines as l, startsWith(l.sku, 'SKU-'))"],
+    ["none_negative", X.none(self("lines"), "l", X.lt(X.ref("l", "amount"), X.lit(0))), "none(self.lines as l, l.amount < 0)"],
+    ["one_big", X.one(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(1000))), "one(self.lines as l, l.amount > 1000)"],
+    ["few_lines", X.le(X.count(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), "count(self.lines as l, l.amount > 0) <= 50"],
+    ["filtered", X.ge(X.call("len", X.filter(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), "len(filter(self.lines as l, l.amount > 0)) >= 1"],
+    // Nested closures bind distinct aliases; the inner list is a literal, as two nested to-many closures exceed the cost bound.
+    ["nested", X.all(self("lines"), "a", (a) => X.some(X.list(X.lit("SKU-"), X.lit("SVC-")), "p", (p) => X.call("startsWith", X.ref("a", "sku"), p))), "all(self.lines as a, some(['SKU-', 'SVC-'] as p, startsWith(a.sku, p)))"],
+    ["terms", X.le(X.daysBetween(self("issue_date"), self("due_date")), X.lit(30)), "days_between(date(self.issue_date), date(self.due_date)) <= 30"],
+    ["due_by", X.ge(X.addDays(self("issue_date"), X.lit(30)), X.call("date", self("due_date"))), "add_days(date(self.issue_date), 30) >= date(self.due_date)"],
+    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0))), "(self.status != 'posted') or (sum(map(self.lines as l, l.amount)) == 0)"],
+  ]
+
+  test("render the norn-zen/6 closure, sum and day forms", () => {
+    for (const [, expression, zen] of cases) expect(L.zenPredicate(expression, entry)).toBe(zen)
+    expect(X.typeOf(X.map(self("lines"), "l", (l) => X.ref("l", "sku")), new Map([["self", { zen: "self", schema: entry }]]))).toEqual(S.array(S.text()))
+    // A parsed date is not wrapped twice.
+    expect(L.zenPredicate(X.le(X.daysBetween(X.call("date", self("issue_date")), X.addDays(self("due_date"), X.lit(-1))), X.lit(0)), entry)).toBe("days_between(date(self.issue_date), add_days(date(self.due_date), -1)) <= 0")
+  })
+
+  test("refuse what norn-zen/6 refuses, before the checker sees it", () => {
+    const refuse = (expression: () => X.Expr, message: RegExp) => expect(() => L.zenPredicate(expression(), entry)).toThrow(message)
+    refuse(() => X.some(self("status"), "l", X.lit(true)), /iterates a list/)
+    refuse(() => X.some(self("lines"), "l", X.ref("l", "amount")), /body must be Boolean/)
+    refuse(() => X.eq(X.call("len", X.map(self("lines"), "l", X.lit(null))), X.lit(0)), /map body must not be null/)
+    refuse(() => X.some(self("lines"), "self", X.lit(true)), /plain identifier/)
+    refuse(() => X.some(self("lines"), "not-an-ident", X.lit(true)), /plain identifier/)
+    refuse(() => X.some(self("lines"), "l", (l) => X.some(self("lines"), "l", X.eq(X.ref("l", "sku"), X.ref("l", "sku")))), /shadows a binding/)
+    refuse(() => X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "sku"))), X.lit(0)), /sum expects a list of numbers/)
+    refuse(() => X.le(X.call("days_between", self("issue_date"), self("due_date")), X.lit(1)), /parsed dates/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit("x")), X.call("date", self("due_date"))), /whole number of days/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1.5)), X.call("date", self("due_date"))), /whole number of days, not number/)
+    refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1)), X.call("timestamp", self("due_date"))), /qualified for numbers only/)
+  })
+
+  test("the Rust checker admits every rendered law", () => {
+    if (!checker) return
+    const entities = [lineType, entryType].map((def) => { const r = E.lowerEntity(def, options); if (!r.ok) throw new Error(JSON.stringify(r.diagnostics)); return r.artifact })
+    const laws = cases.map(([name, expression]) => L.lowerLaw(L.law({
+      id: `books.JournalEntry.${name}.law`, title: name, version: "0.1.0",
+      law: { lawVersion: "0.1", id: `books.JournalEntry.${name}`, owner: "books", severity: "error", rationale: name, provenance: { source: "authoring_sdk" }, scope: { root: { kind: "app", id: "books" }, objectTypes: ["books.JournalEntry"] }, subject: "books.JournalEntry", modality: { kind: "always" }, response: { kind: "predicate", expression: L.zenPredicate(expression, entry) } },
+      dependencies: [{ artifactId: "books.JournalEntry.entity", kind: "entity", version: "0.1.0", required: true }],
+    }), options).artifact)
+    const checked = checker.checkArtifactSet([...entities, ...laws])
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
+  }, 30_000)
+})
+
+// A2 (#1176): TypeScript lambdas in laws and guards lower statically to the A1 forms.
+test("typed lambdas in laws and guards compile to norn-zen/6 and are admitted", () => {
+  const compiled = compileDefinitions(join(TOOL_ROOT, "corpus/accept/law-closures.ts"), { scope: options.scope, sourcePath: "corpus/accept/law-closures.ts" })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  const byId = new Map(compiled.artifacts.map((a) => [(a as { artifactId: string }).artifactId, a as { payload: Record<string, any> }]))
+  const law = byId.get("books.JournalEntry.balanced.law")!.payload
+  expect(law.condition).toBe("self.status == 'posted'")
+  expect(law.response.expression).toBe("(((sum(map(self.lines as l, l.amount)) == 0) and all(self.lines as l, l.amount != 0)) and (not some(self.lines as l, startsWith(l.sku, 'VOID-') and some(['A', 'B'] as p, endsWith(l.sku, p))))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
+  const guard = byId.get("books.JournalEntry.entity")!.payload.objectType.lifecycles[0].transitions[0].guards[0]
+  expect(guard).toBe("(count(self.lines as l, l.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
+  // Each lambda maps back to its source line.
+  expect(compiled.sourceMap.some((s) => s.artifactId === "books.JournalEntry.balanced.law" && s.pointer === "/payload/response/expression" && s.at.line === 48)).toBe(true)
+  if (checker) {
+    const checked = checker.checkArtifactSet(compiled.artifacts)
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
+  }
+}, 30_000)
+
+// A3 (#1176): law(name, { on, ... }) infers everything but the meaning.
+describe("law v2", () => {
+  const source = "corpus/accept/law-v2.ts"
+  const compiled = compileDefinitions(join(TOOL_ROOT, source), { scope: options.scope, sourcePath: source })
+  const laws = () => {
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+    return new Map(compiled.artifacts.filter((a) => (a as { kind: string }).kind === "law").map((a) => [(a as { artifactId: string }).artifactId, a as unknown as { payload: L.LawIR; dependencies: unknown; name: string; version: string }]))
+  }
+
+  test("ids, scope, owner, provenance, version and dependency are inferred", () => {
+    const law = laws().get("books.Invoice.lines_add_up.law")!
+    expect(law.payload).toEqual({
+      lawVersion: "0.1", id: "books.Invoice.lines_add_up", owner: "books", severity: "error",
+      rationale: "An issued invoice totals its lines.",
+      provenance: { source: "authoring_sdk", sourcePath: source },
+      scope: { root: { kind: "entity", id: "books.Invoice" }, objectTypes: ["books.Invoice"] },
+      subject: "books.Invoice",
+      condition: "self.status != 'draft'",
+      modality: { kind: "always" },
+      response: { kind: "predicate", expression: "(sum(map(self.lines as l, l.amount)) == self.total) and all(self.lines as l, l.amount > 0)" },
+    })
+    expect(law.dependencies).toEqual([{ artifactId: "books.Invoice.entity", kind: "entity", version: "0.1.0", required: true }])
+    expect(law.name).toBe("An issued invoice totals its lines.")
+    expect(law.version).toBe("0.1.0")
+  })
+
+  test("interface laws, raw temporal ordering, timing, severity and a kept id", () => {
+    const all = laws()
+    expect([...all.keys()].sort()).toEqual(["books.Invoice.due_after_issue.law", "books.Invoice.issued_promptly.law", "books.Invoice.lines_add_up.law", "books.Invoice.paid_in_time.law", "books.Payable.not_overpaid.law", "books.payment_terms.law"])
+    const payable = all.get("books.Payable.not_overpaid.law")!.payload
+    expect(payable.subject).toBe("books.Payable")
+    expect(payable.scope).toEqual({ root: { kind: "entity", id: "books.Payable" }, objectTypes: ["books.Payable"] })
+    expect(payable.response).toEqual({ kind: "predicate", expression: "self.paid <= self.total" })
+    const due = all.get("books.Invoice.due_after_issue.law")!.payload
+    expect(due.modality).toEqual({ kind: "never" })
+    expect(due.severity).toBe("warning")
+    expect(due.response).toEqual({ kind: "predicate", expression: "date(self.due_date) < date(self.issue_date)" })
+    const paid = all.get("books.Invoice.paid_in_time.law")!.payload
+    expect(paid.modality).toEqual({ kind: "eventually" })
+    expect(paid.timing).toEqual({ kind: "before_deadline", property: "pay_by" })
+    const terms = all.get("books.payment_terms.law")!.payload
+    expect(terms.id).toBe("books.payment_terms")
+    expect(terms.timing).toBeUndefined()
+    expect(all.get("books.Invoice.issued_promptly.law")!.payload.timing).toEqual({ kind: "within", millis: "259200000" })
+    expect(all.get("books.Payable.not_overpaid.law")!.dependencies).toEqual([{ artifactId: "books.Payable.interface", kind: "entity", version: "0.1.0", required: true }])
+    expect(terms.response).toEqual({ kind: "predicate", expression: "days_between(date(self.issue_date), date(self.due_date)) <= 90" })
+    if (!compiled.ok) return
+    expect(compiled.sourceMap.find((s) => s.artifactId === "books.Invoice.lines_add_up.law" && s.pointer === "/payload/response/expression")?.at.line).toBe(50)
+  })
+
+  test("the Rust checker admits the v2 laws with their subjects", () => {
+    if (!checker || !compiled.ok) return
+    const checked = checker.checkArtifactSet(compiled.artifacts)
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
+  }, 30_000)
+
+  const compileLaw = (spec: string, typeName = "books.Account") => {
+    const dir = mkdtempSync(join(tmpdir(), "norn-law-v2-"))
+    try {
+      const file = join(dir, "law.ts")
+      writeFileSync(file, `import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Account = Norn.type({ name: "${typeName}", title: "Account", version: "0.1.0", properties: Schema.Struct({ account_id: Schema.String, balance: Schema.Int, opened: Norn.date(), closes_at: Norn.timestamp("utc") }), identity: [{ name: "primary", properties: ["account_id"] }] })
+export const law = Norn.law("solvent", { on: Account, ${spec}, because: "x" })
+`)
+      return compileDefinitions(file, { scope: options.scope, sourcePath: "law.ts" })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  test("refusals name the construct at the author's line", () => {
+    const refuse = (spec: string, typeName?: string): { codes: string[]; messages: string[]; line: number } => {
+      const result = compileLaw(spec, typeName)
+      if (result.ok) throw new Error(`accepted: ${spec}`)
+      return { codes: result.diagnostics.map((d) => d.code), messages: result.diagnostics.map((d) => d.message), line: result.diagnostics[0]!.start.line }
+    }
+    expect(refuse("must: (self) => self.balance >= 0, never: (self) => self.balance < 0")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
+    expect(refuse("must: (self) => self.missing >= 0")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
+    expect(refuse("must: (self) => self.balance >= 0, within: { before: (self) => self.opened }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-SLICE"]), line: 4 })
+    expect(refuse("must: (self) => self.balance >= 0, within: { before: (self) => Norn.addDays(self.opened, 3) }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-EXPRESSION"]), line: 4 })
+    expect(refuse("must: (self) => self.balance >= 0, within: { days: 0 }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-LITERAL"]), line: 4 })
+    expect(refuse("must: (self) => self.account_id > \"a\"")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-EXPRESSION"]), line: 4 })
+    // A date ordered against a timestamp is refused, not parsed to one kind (#1253 review).
+    expect(refuse("must: (self) => self.opened < self.closes_at")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-TYPE"]), line: 4 })
+    // Past 2^53 a Number round trip would round this down; the exact value is past u64 milliseconds.
+    expect(refuse("must: (self) => self.balance >= 0, within: { days: 9007199254740993 }")).toMatchObject({ codes: expect.arrayContaining(["NORN-FLOW-LITERAL"]), line: 4 })
+    // A subject without a namespace has no owner to infer.
+    expect(refuse("must: (self) => self.balance >= 0", "Account").messages).toEqual(expect.arrayContaining([expect.stringContaining("law subject \"Account\" is not a qualified type name")]))
+  })
+
+  test("within keeps the literal's exact value up to u64 milliseconds", () => {
+    const result = compileLaw("must: (self) => self.balance >= 0, within: { days: 213503982334 }")
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    const law = result.artifacts.find((a) => (a as { kind: string }).kind === "law") as unknown as { payload: L.LawIR }
+    expect(law.payload.timing).toEqual({ kind: "within", millis: "18446744073657600000" })
+  })
 })

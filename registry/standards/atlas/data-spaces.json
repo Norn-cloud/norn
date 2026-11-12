@@ -1,0 +1,160 @@
+{
+  "atlasVersion": 1,
+  "domain": "data-spaces",
+  "entries": [
+    {
+      "id": "catenax-semantic-models",
+      "name": "Catena-X / Tractus-X semantic aspect models",
+      "publisher": "Eclipse Tractus-X / Catena-X",
+      "kind": "ontology",
+      "domains": [
+        "data-spaces"
+      ],
+      "version": "ff04cc7c4915eb29ed2b5656d9e7d45b31079c04",
+      "versionDate": "2026-09-25",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v24.05 published 2024-06-05T12:15:29Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/eclipse-tractusx/sldt-semantic-models/ff04cc7c4915eb29ed2b5656d9e7d45b31079c04/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/eclipse-tractusx/sldt-semantic-models/tar.gz/ff04cc7c4915eb29ed2b5656d9e7d45b31079c04",
+      "evidenceUrls": [
+        "https://codeload.github.com/eclipse-tractusx/sldt-semantic-models/tar.gz/ff04cc7c4915eb29ed2b5656d9e7d45b31079c04",
+        "https://raw.githubusercontent.com/eclipse-tractusx/sldt-semantic-models/ff04cc7c4915eb29ed2b5656d9e7d45b31079c04/LICENSE",
+        "https://github.com/eclipse-tractusx/sldt-semantic-models/commit/ff04cc7c4915eb29ed2b5656d9e7d45b31079c04",
+        "https://github.com/eclipse-tractusx/sldt-semantic-models/releases/tag/v24.05"
+      ],
+      "norn": {
+        "overlap": "Automotive supply-chain extensions, not retail Core.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Dataset",
+          "DataContract"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industrial data-space participation, later."
+      },
+      "notes": "Source models CC-BY-4.0; tooling/external SAMM dependencies may have other licences. Repository v24.05 differs from per-model semantic versions. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gaia-x-ontology-source",
+      "name": "Gaia-X service-characteristics ontology source",
+      "publisher": "Gaia-X Association / technical committee",
+      "kind": "ontology",
+      "domains": [
+        "data-spaces"
+      ],
+      "version": "702940d9b20b24d89057394dfd333c06d5c9a73a",
+      "versionDate": "2024-11-22",
+      "versionBasis": "GitLab main branch commit committed_date 2024-11-22T15:33:44Z. This is the verified source snapshot, not the release date/version of newer v250 documentation.",
+      "licence": {
+        "spdx": "EPL-2.0",
+        "text": "EPL-2.0",
+        "status": "verified",
+        "basis": "Pinned source repository LICENSE is Eclipse Public License 2.0; retain notices and source availability obligations as applicable to distributed derivatives. Do not apply this source licence to Gaia-X architecture/compliance prose or partner data.",
+        "termsUrl": "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/raw/702940d9b20b24d89057394dfd333c06d5c9a73a/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OWL"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/raw/702940d9b20b24d89057394dfd333c06d5c9a73a/linkml/gaia-x.yaml",
+      "evidenceUrls": [
+        "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/raw/702940d9b20b24d89057394dfd333c06d5c9a73a/linkml/gaia-x.yaml",
+        "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/raw/702940d9b20b24d89057394dfd333c06d5c9a73a/linkml/service-offering.owl.ttl",
+        "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/raw/702940d9b20b24d89057394dfd333c06d5c9a73a/LICENSE",
+        "https://gitlab.com/gaia-x/technical-committee/service-characteristics/-/commit/702940d9b20b24d89057394dfd333c06d5c9a73a",
+        "https://docs.gaia-x.eu/ontology/v250/",
+        "https://gaia-x.eu/faq/"
+      ],
+      "norn": {
+        "overlap": "External data-space service/participant descriptions only; no Core semantic or policy authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Dataset",
+          "DataContract"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industrial data-space participation, later."
+      },
+      "notes": "Source declares development namespace; no stable release claim. Newer v250 documentation is reachable, but attempted /gaia-x/2.5.0 and /gaia-x/250 negotiation URLs returned 404; their ontology byte identity/date remains unverified. Source use of LinkML does not reintroduce LinkML into Norn. FAQ describes separate CC-BY-ND specification prose; no PDF admitted. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "ids-information-model-archived",
+      "name": "International Data Spaces Information Model (archived)",
+      "publisher": "International Data Spaces Association",
+      "kind": "ontology",
+      "domains": [
+        "data-spaces"
+      ],
+      "version": "a9b79eab4fe148dd6237fa456253070f0e6cb686",
+      "versionDate": "2023-12-13",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v4.2.0 published 2022-09-16T10:00:25Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/International-Data-Spaces-Association/InformationModel/a9b79eab4fe148dd6237fa456253070f0e6cb686/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/International-Data-Spaces-Association/InformationModel/tar.gz/a9b79eab4fe148dd6237fa456253070f0e6cb686",
+      "evidenceUrls": [
+        "https://codeload.github.com/International-Data-Spaces-Association/InformationModel/tar.gz/a9b79eab4fe148dd6237fa456253070f0e6cb686",
+        "https://raw.githubusercontent.com/International-Data-Spaces-Association/InformationModel/a9b79eab4fe148dd6237fa456253070f0e6cb686/LICENSE",
+        "https://github.com/International-Data-Spaces-Association/InformationModel/commit/a9b79eab4fe148dd6237fa456253070f0e6cb686",
+        "https://github.com/International-Data-Spaces-Association/InformationModel/releases/tag/v4.2.0"
+      ],
+      "norn": {
+        "overlap": "Historical data-space vocabulary; no Core authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Dataset",
+          "DataContract"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "ignore",
+        "reason": "Industrial data-space participation, later."
+      },
+      "notes": "Preserve historical upstream identity and terms; no substitution for a maintained data-space standard. Repository API confirms archived=true. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

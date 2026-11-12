@@ -139,10 +139,25 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-ir"],
         &["zen-expression", "chrono", "chrono-tz"],
     ),
+    // Bounded inheritance classification: Ascent (vendored, clock-free profile)
+    // at runtime; norn-datalog and quote only at build time.
     r0(
         "norn-checker",
-        &["norn-ir", "norn-expr", "norn-canonical", "norn-graph"],
-        &["serde_json", "sha2", "regex-lite", "serde_path_to_error"],
+        &[
+            "norn-ir",
+            "norn-expr",
+            "norn-canonical",
+            "norn-graph",
+            "norn-datalog",
+        ],
+        &[
+            "serde_json",
+            "sha2",
+            "regex-lite",
+            "serde_path_to_error",
+            "ascent",
+            "quote",
+        ],
     ),
     r0(
         "norn-decisions",
@@ -216,6 +231,16 @@ pub const CRATES: &[CrateRule] = &[
         Ring::One,
         &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
     ),
+    // Format-family readers (XSD first; norn-platform#2739, #3507): decisions +
+    // expr evaluate the type tables; the checker runs the conformance harness
+    // in tests only. Standards and systems are packs, never Rust.
+    CrateRule {
+        name: "norn-formats",
+        ring: Ring::One,
+        allowed_norn: &["norn-ir", "norn-decisions", "norn-expr"],
+        dev_only_norn: &["norn-checker"],
+        third_party: &[],
+    },
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
         name: "norn-testkit",

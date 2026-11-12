@@ -40,3 +40,21 @@ height, class, frontier), never part of fact identity or recursive feedback.
 
 No Ascent generation, WellDB changes, findings execution, database, service,
 authorization policy or kernel commit-path integration is part of this slice.
+
+## Addendum: bounded definition inheritance (first Ascent consumer)
+
+`norn-checker` gains `ascent` as a normal dependency (workspace `=0.8.1`,
+defaults off, the vendored `no-clock` profile; see
+`third_party/ascent/PATCHES.md`) and `norn-datalog` as a build dependency only:
+the build script validates the fixed shared AST and projects it at build time.
+`quote` is the only additional third-party build edge. There is no direct
+`proc-macro2` edge. No normal Datalog consumer or executor is added to
+`norn-datalog`, the kernel, or the storage layer.
+
+Evaluation is a metered per-root, one-edge frontier over the complete selected
+registered catalog, not all-pairs closure or an interpretation of incomplete
+IR facts. Budget refusal stops validation before ancestry/table construction.
+Cycle evidence is structural, with the fixed AST rule identity, not certified
+proof. No new role, law, separation-of-duties or dimensional semantics are
+admitted.
+

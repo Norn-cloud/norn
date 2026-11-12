@@ -24,6 +24,21 @@ ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
     || cargo install --locked cargo-nextest --version 0.9.150
 }
+# Fails unless each named test of binary $2 ran and passed in nextest's JUnit report $1:
+# absent (renamed, deleted, ignored, cfg'd out), skipped, failed or an unreadable report fails.
+require_passed() {
+  python3 - "$@" << 'PY'
+import sys
+import xml.etree.ElementTree as ET
+report, binary, *names = sys.argv[1:]
+cases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")
+         if suite.get("name") == binary for case in suite.iter("testcase")}
+bad = [name for name in names if name not in cases or any(
+    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]
+if not names or bad:
+    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or 'none named'}")
+PY
+}
 list_shards() {
   local index
   for ((index = 1; index <= ${#heavy[@]}; index++)); do printf 'heavy-%s\n' "$index"; done
@@ -84,10 +99,22 @@ run_phase() {
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/ci/test_implementation_receipts.py
+      python3 scripts/ci/test_contract_diff.py
+      python3 scripts/ci/contract_diff.py --ci
       python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
+      python3 scripts/standards_atlas.py --check
+      python3 scripts/test_standards_atlas.py
+      python3 scripts/metrics/test_metrics.py
       cargo xtask ci policy
       cargo xtask ci provenance
+      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
+      # plan selects, and its two named tests must have run and passed.
+      ensure_nextest
+      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/nextest/ci/junit.xml"
+      rm -f "$parity_report"
+      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
       ;;
     test)
       select_shard "${2:-all}"
@@ -158,6 +185,7 @@ PY
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
+      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
     clippy) cargo clippy --locked --workspace --all-targets -- -D warnings ;;
     doc) RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps ;;
@@ -179,10 +207,12 @@ PY
       ;;
     integration)
       cargo build --locked -p norn-cli
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
       cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
+      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
@@ -224,6 +254,12 @@ PY
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
+        # The checker-admission case needs the WASM package built above, so it runs here,
+        # not in the cheap phase, and is required: a missing package fails it, never skips.
+        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\n' "$decision"; exit 1; }
+        printf '%s\n' "$decision"
+        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.
+        grep -qxE '\(pass\) the checker admits what a drawn decision lowers to \[[0-9.]+m?s\]' <<< "$decision" || { printf 'browser: the checker-admission case did not run and pass\n' >&2; exit 1; }
         bun run build
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
@@ -252,6 +288,28 @@ PY
       ;;
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
+}
+# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
+# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
+# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
+# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
+# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
+# verification evidence and tools (target/verification-*), symlinks and any other
+# content stay.
+prune_target() {
+  local root target entry name
+  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
+  if [[ $target != "$root/target" ]]; then
+    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
+    return 0
+  fi
+  for entry in "$target"/*; do
+    name=${entry##*/}
+    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
+    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
+      rm -rf -- "$entry"
+    fi
+  done
 }
 bundle_plan() {
   python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
@@ -374,7 +432,7 @@ gate_source = (root / "crates/norn-skeleton-guard/src/ci/mod.rs").read_text()
 gate_block = gate_source.split("const GATE_FILES:", 1)[1].split("];", 1)[0]
 gates = set(re.findall(r'"([^"]+)"', gate_block))
 for path in changed:
-    if (path in gates or path.startswith((".github/workflows/", "crates/norn-skeleton-guard/"))
+    if (path in gates or path.startswith((".github/workflows/", ".cargo/", "crates/norn-skeleton-guard/"))
             or Path(path).name in {"Cargo.lock", "Cargo.toml", "rust-toolchain", "rust-toolchain.toml", "lean-toolchain"}):
         full(f"gate, dependency or toolchain changed: {path}")
 try:
@@ -433,8 +491,16 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    pruned=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
+      # Bundle tasks never share build outputs (the planner packs them freely), so
+      # a task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+        prune_target
+        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
+      fi
+      pruned=1
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS

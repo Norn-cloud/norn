@@ -3,7 +3,7 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
-use norn_expr::env::FieldSource;
+use norn_expr::env::{FieldSource, RecordKind};
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
@@ -130,7 +130,68 @@ fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
             "entity root must name the subject",
         ));
     }
+    check_exception_tree(law, artifact, &mut out);
     out
+}
+
+/// Exception-tree admission: shape, bounds and a response that an exception
+/// can lift. Sibling overlap admits: an exception only lifts its parent.
+fn check_exception_tree(law: &LawIR, artifact: &ArtifactEnvelope, out: &mut Vec<Diagnostic>) {
+    use crate::law_exceptions::{ExceptionTreeRefusal, check_tree, codes as exception_codes};
+    if law.exceptions.is_empty() {
+        return;
+    }
+    if matches!(law.response, LawResponse::Invariant { .. }) {
+        out.push(finding(
+            exception_codes::UNSUPPORTED_RESPONSE,
+            artifact,
+            "/payload/exceptions",
+            "an invariant identity is an unconditional always law; an exception would change its meaning",
+        ));
+    }
+    // The translation goal's premise is the law's condition alone; an
+    // exception would make that goal stronger than the law.
+    if matches!(law.response, LawResponse::TranslationPreserves { .. }) {
+        out.push(finding(
+            exception_codes::UNSUPPORTED_RESPONSE,
+            artifact,
+            "/payload/exceptions",
+            "a translation_preserves goal does not model exceptions yet",
+        ));
+    }
+    if let Err(refusal) = check_tree(&law.id, &law.exceptions) {
+        let (pointer, message) = match refusal {
+            ExceptionTreeRefusal::Limit => (
+                "/payload/exceptions".to_owned(),
+                format!(
+                    "a law declares at most {} exceptions",
+                    crate::law_exceptions::MAX_LAW_EXCEPTIONS
+                ),
+            ),
+            ExceptionTreeRefusal::InvalidDeclaration(index) => (
+                format!("/payload/exceptions/{index}"),
+                format!(
+                    "exception {index} needs a nonblank id that is unique and differs from law {}, a nonblank rationale and a valid source",
+                    law.id
+                ),
+            ),
+            ExceptionTreeRefusal::DanglingOverride(index) => (
+                format!("/payload/exceptions/{index}/overrides"),
+                format!(
+                    "exception {index} overrides a target that is neither law {} nor an exception of its tree",
+                    law.id
+                ),
+            ),
+            ExceptionTreeRefusal::Cycle(index) => (
+                format!("/payload/exceptions/{index}/overrides"),
+                format!(
+                    "exception {index} is on an overrides cycle that never reaches law {}",
+                    law.id
+                ),
+            ),
+        };
+        out.push(finding(refusal.code(), artifact, &pointer, message));
+    }
 }
 
 /// Whole-set structural checks, against the same effective entities as invariants/guards.
@@ -202,7 +263,19 @@ pub fn check_law_set(
         for (parent, inherited) in laws.get(&law.id).into_iter().flatten() {
             if inherited != &law || crate::scope_conflict(&artifact.scope, &parent.scope).is_some()
             {
-                out.push(finding(codes::WEAKENS_INHERITED, artifact, "/payload/id", "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"));
+                // A law is closed: exceptions live only in its owner's
+                // artifact, so a redeclaration that changes them is refused.
+                let message = if inherited.exceptions == law.exceptions {
+                    "an existing law identity cannot be replaced; retain it and add a new conjunctive law identity"
+                } else {
+                    "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
+                };
+                out.push(finding(
+                    codes::WEAKENS_INHERITED,
+                    artifact,
+                    "/payload/id",
+                    message,
+                ));
             }
         }
         if closure_refused {
@@ -960,6 +1033,15 @@ impl LawContext<'_> {
                 out,
             );
         }
+        for (index, exception) in law.exceptions.iter().enumerate() {
+            predicate(
+                exception.condition.as_str(),
+                &env,
+                artifact,
+                &format!("/payload/exceptions/{index}/condition"),
+                out,
+            );
+        }
         if let LawModality::Until { predicate: stop } = &law.modality {
             predicate(
                 stop.as_str(),
@@ -1033,6 +1115,12 @@ impl LawContext<'_> {
                 "/payload/response",
                 "interfaces do not declare lifecycle transition contracts",
             )),
+            LawResponse::TranslationPreserves { .. } => out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation source must be a concrete object type",
+            )),
         }
     }
 
@@ -1049,6 +1137,15 @@ impl LawContext<'_> {
         if let Some(env) = &bound_env {
             if let Some(condition) = &law.condition {
                 predicate(condition.as_str(), env, artifact, "/payload/condition", out);
+            }
+            for (index, exception) in law.exceptions.iter().enumerate() {
+                predicate(
+                    exception.condition.as_str(),
+                    env,
+                    artifact,
+                    &format!("/payload/exceptions/{index}/condition"),
+                    out,
+                );
             }
             if let LawModality::Until { predicate: stop } = &law.modality {
                 predicate(
@@ -1172,6 +1269,65 @@ impl LawContext<'_> {
                     ));
                 }
             }
+            LawResponse::TranslationPreserves {
+                target_type,
+                assignments,
+                observation,
+            } => self.check_translation(law, artifact, target_type, assignments, observation, out),
+        }
+    }
+
+    /// TRANSLATION-PRESERVES-1: admit a total, executable map to a resolved target.
+    /// Typing inside the goal fragment is decided by lowering, which stays Unknown.
+    fn check_translation(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        target_type: &str,
+        assignments: &std::collections::BTreeMap<String, norn_ir::ZenExpression>,
+        observation: &norn_ir::verification::translation::TranslationObservation,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if !matches!(law.modality, LawModality::Always {}) || law.timing.is_some() {
+            out.push(finding(
+                codes::UNSUPPORTED_TEMPORAL,
+                artifact,
+                "/payload/modality",
+                "translation preservation is an untimed always law",
+            ));
+        }
+        let stored: Option<std::collections::BTreeSet<_>> = self
+            .env
+            .and_then(|env| env.record(target_type))
+            .filter(|record| record.kind == RecordKind::Object)
+            .map(|record| {
+                record
+                    .fields
+                    .iter()
+                    .filter(|(_, field)| matches!(field.source, FieldSource::Property { .. }))
+                    .map(|(id, _)| id)
+                    .collect()
+            });
+        if stored.is_none_or(|stored| !stored.iter().copied().eq(assignments.keys())) {
+            out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation target must be a concrete object type, assigned exactly its properties",
+            ));
+        }
+        for source in assignments
+            .values()
+            .chain([&observation.source, &observation.target])
+        {
+            if let Err(error) = Expression::compile(source.as_str()) {
+                out.push(finding(
+                    codes::PREDICATE_TYPE,
+                    artifact,
+                    "/payload/response",
+                    error.to_string(),
+                ));
+            }
         }
     }
 }
@@ -1205,58 +1361,7 @@ fn predicate(
     }
 }
 
-/// Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LawWriter {
-    /// A complete admitted behavior artifact (including cascaded/opaque effects).
-    Artifact {
-        /// The artifact identity, without delimiter interpretation.
-        artifact_id: String,
-    },
-    /// One transition of an effective, possibly inherited lifecycle.
-    Transition {
-        /// Effective concrete type.
-        object_type: String,
-        /// Lifecycle property.
-        property: String,
-        /// Declared transition id.
-        transition: String,
-    },
-}
-impl LawWriter {
-    /// Tagged wire identity, with independently encoded components.
-    #[must_use]
-    pub fn to_json(&self) -> serde_json::Value {
-        match self {
-            Self::Artifact { artifact_id } => {
-                serde_json::json!({"kind":"artifact","artifactId":artifact_id})
-            }
-            Self::Transition {
-                object_type,
-                property,
-                transition,
-            } => {
-                serde_json::json!({"kind":"transition","objectType":object_type,"property":property,"transition":transition})
-            }
-        }
-    }
-    /// Conservative UTF-8/JSON-escaping allocation bound, before copying any id.
-    #[must_use]
-    pub fn encoded_byte_bound(&self) -> usize {
-        let lengths = match self {
-            Self::Artifact { artifact_id } => artifact_id.len(),
-            Self::Transition {
-                object_type,
-                property,
-                transition,
-            } => object_type
-                .len()
-                .saturating_add(property.len())
-                .saturating_add(transition.len()),
-        };
-        lengths.saturating_mul(6).saturating_add(128)
-    }
-}
+pub use norn_ir::explain::LawWriter;
 
 /// Conservative invalidation inventory. Every artifact is retained: hidden/opaque writers
 /// cannot disappear merely because their write set is not syntactically visible.

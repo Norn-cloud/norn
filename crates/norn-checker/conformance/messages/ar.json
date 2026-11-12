@@ -1,0 +1,2366 @@
+{
+  "format": "norn.messages/1",
+  "locale": "ar",
+  "messages": {
+    "action.validation.command_environment_underivable": {
+      "message": "تعبيرات الأوامر الصادرة تتطلب مخطط مُدخل كائني ذا بيئة تعبيرات قابلة للاشتقاق",
+      "review": "needs_review"
+    },
+    "action.validation.input_enum_not_subset": {
+      "message": "مُدخل ActionIR {$field} يقبل {$values}، وهي قيم لا تعلنها الخاصية المستهدفة",
+      "review": "needs_review"
+    },
+    "action.validation.input_enum_unbound": {
+      "message": "مُدخل ActionIR {$field} يعلن تعدادًا لكنه لا يكتب أي خاصية تعداد",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_duplicate_id": {
+      "message": "معرّف مجموعة مُدخلات ActionIR {$id} مستخدم مرتين",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_field_regrouped": {
+      "message": "حقل مُدخل ActionIR {$pointer} موجود في أكثر من مجموعة",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_invalid_shape": {
+      "message": "x-norn.groups في مُدخلات ActionIR ليست قائمة من \\{id, title, fields\\}: {$detail}",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_title_invalid": {
+      "message": "عنوان مجموعة مُدخلات ActionIR ليس نص عرض من 1 إلى {$max} حرفًا",
+      "review": "needs_review"
+    },
+    "action.validation.input_group_unknown_field": {
+      "message": "حقل مجموعة مُدخلات ActionIR {$pointer} ليس خاصية مُدخل",
+      "review": "needs_review"
+    },
+    "action.validation.input_label_invalid": {
+      "message": "{$label} لمُدخل ActionIR ليس نص عرض من 1 إلى {$max} حرفًا بلا محارف تحكم",
+      "review": "needs_review"
+    },
+    "action.validation.invalid_effect_program": {
+      "message": "payload.effectProgram غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "action.validation.invalid_payload": {
+      "message": "حمولة ActionIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "action.validation.invalid_schema": {
+      "message": "{$schema} في ActionIR ليس مخططًا مغلقًا: {$detail}",
+      "review": "needs_review"
+    },
+    "agent.validation.budget_unbounded": {
+      "message": "{$budget} يجب أن يكون حدًّا موجبًا دقيقًا لا يتجاوز {$cap}",
+      "review": "needs_review"
+    },
+    "agent.validation.invalid_decision_policy": {
+      "message": "سياسة القرار لا تستطيع أن تقرر: {$detail}",
+      "review": "needs_review"
+    },
+    "agent.validation.invalid_payload": {
+      "message": "حمولة الوكيل غير صالحة: {$detail}",
+      "review": "needs_review"
+    },
+    "agent.validation.unbound_tool": {
+      "message": "الأداة {$tool} ليست ربطًا مقيَّدًا بهذه المؤسسة، أو مذكورة أكثر من مرة",
+      "review": "needs_review"
+    },
+    "agent.validation.unknown_law": {
+      "message": "القانون {$law} غير مقبول",
+      "review": "needs_review"
+    },
+    "agent.validation.unknown_model": {
+      "message": "النموذج {$model} ليس ضمن قائمة النماذج المسموح بها",
+      "review": "needs_review"
+    },
+    "artifact_set.action.create_link": {
+      "message": "تأثير الرابط «إنشاء فقط» للإجراء أو شريحة الهدف المصرَّح بها غير صالح",
+      "review": "needs_review"
+    },
+    "artifact_set.action.duplicate_action_id": {
+      "message": "actionId {$actionId} مستخدم بالفعل في إجراء آخر ضمن مجموعة الأدوات أو القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.action.effect_kind_mismatch": {
+      "message": "التأثير يكتب {$objectKind}، لكن أداة الكيان {$artifactId} بالإصدار {$version} تعرّف {$definition}",
+      "review": "needs_review"
+    },
+    "artifact_set.action.invalid_aggregate": {
+      "message": "مُدخل تجميعي للإجراء يسمّي نوعًا أو خاصية غير معروفة، أو خاصية لا يستطيع الطيّ قراءتها",
+      "review": "needs_review"
+    },
+    "artifact_set.action.invalid_slice": {
+      "message": "شريحة الإجراء تقرأ خاصية مفتاح أو رابطًا غير معروف",
+      "review": "needs_review"
+    },
+    "artifact_set.action.invalid_write_mode": {
+      "message": "وضع الكتابة للإجراء غير صالح لدورة حياته الفعلية",
+      "review": "needs_review"
+    },
+    "artifact_set.action.naming_series_target_mismatch": {
+      "message": "مُدخل الإجراء لا يطابق عقد الإنشاء أو التحديث لسلسلة ترقيم مفتاح الهدف",
+      "review": "needs_review"
+    },
+    "artifact_set.action.quantity_effect": {
+      "message": "تأثير الكمية للإجراء أو ربط مُدخلاته غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.action.target_not_writable": {
+      "message": "{$target} من {$objectKind} غير قابل للكتابة بإجراء عام: {$reason}",
+      "review": "needs_review"
+    },
+    "artifact_set.action.undeclared_effect_write": {
+      "message": "برنامج التأثير قد يكتب {$objectKind} ({$change})، لكن مجموعة الكتابة لا تعلنه",
+      "review": "needs_review"
+    },
+    "artifact_set.action.unknown_slice_kind": {
+      "message": "شريحة الإجراء تسمّي نوع كائن ليس في مجموعة الأدوات ولا في القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.action.unknown_write_kind": {
+      "message": "مجموعة الكتابة تسمّي {$entityKind}، وهو ليس نوع كائن في مجموعة الأدوات ولا في القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.action.unresolved_effect_entity": {
+      "message": "التأثير يثبّت أداة الكيان {$artifactId} بالإصدار {$version}، وهي ليست أداة كيان في مجموعة الأدوات ولا في القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.action.write_without_effect": {
+      "message": "مجموعة الكتابة تعلن {$entityKind} ({$change})، لكن برنامج التأثير لا يكتبه أبدًا",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.fact_literal_outside_schema": {
+      "message": "القيمة الحرفية {$member} {$value} غير مقبولة في تعداد {$member} لمخطط عنصر الحقائق {$admitted}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.invalid_source_command": {
+      "message": "أمر مصدر معلَن لا يربط تعيينًا مرصودًا محددًا وقدرة موصل محروسة: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.invalid_stored_property_write": {
+      "message": "القرار يكتب {$property} من {$objectType}، ما يخالف عقد الخاصية المخزَّنة الفعلي: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.sub_decision_bound": {
+      "message": "القرار الفرعي {$key} يتداخل بعمق {$depth} مستويات، أو يضم الإغلاق {$count} مخططات؛ ملف Norn يقبل {$max} على الأكثر",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.sub_decision_target": {
+      "message": "القرار الفرعي {$key} يُحَلّ إلى {$artifactId} بالإصدار {$version}، وهو ليس مخطط قرار RuleIR v2",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.unknown_binding": {
+      "message": "{$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.unknown_fact_object_type": {
+      "message": "القرار يكتب {$objectType}، وهو ليس نوع كائن في مجموعة الأدوات ولا في القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.unresolved_stored_property_contract": {
+      "message": "القرار يكتب {$objectType}، الذي يتعذّر حلّ عقود خصائصه المخزَّنة الفعلية: {$reason}",
+      "review": "needs_review"
+    },
+    "artifact_set.entity.duplicate_object_type": {
+      "message": "نوع الكائن {$name} معرَّف بالفعل في أداة الكيان {$artifactId}",
+      "review": "needs_review"
+    },
+    "artifact_set.expression.environment_underivable": {
+      "message": "يتعذّر اشتقاق بيئة أنواع تعبيرات ZEN لمجموعة الأدوات: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.duplicate_flow": {
+      "message": "معرّف التدفق {$flowId} يظهر أكثر من مرة في خريطة مصدر التدفق",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.duplicate_step": {
+      "message": "معرّف الخطوة {$stepId} فارغ أو يظهر أكثر من مرة في التدفق",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.invalid_edge": {
+      "message": "الحافة {$from} -> {$to} يجب أن تشير إلى خطوات في التدفق نفسه",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.invalid_location": {
+      "message": "موقع المصدر يتطلب ملفًا ورقمَي سطر وعمود يبدآن من واحد",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.invalid_mapping": {
+      "message": "خريطة مصدر التدفق تحتوي تعيينًا غير صالح أو مكررًا: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.missing_artifact": {
+      "message": "أداة التدفق {$artifactId} بالإصدار {$version} ليست ضمن المجموعة المقبولة",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.missing_decision_row": {
+      "message": "معرّف صف القرار {$rowId} غير معلَن في أداة RuleIR مُعيَّنة",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.missing_state": {
+      "message": "معرّف الحالة {$stateId} غير معلَن في أداة كيان مُعيَّنة",
+      "review": "needs_review"
+    },
+    "artifact_set.flow_source_map.stale_artifact": {
+      "message": "بصمة أداة التدفق {$artifactId} لا تطابق إصدارها المقبول",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.delete_lifecycle_object": {
+      "message": "القرار قد يحذف {$objectType} الذي له دورة حياة معلَنة؛ الحذف ثم الإنشاء يعيد ضبط حالته دون انتقال",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.direct_write": {
+      "message": "{$writer} يكتب {$property} من {$objectType}، والتي تملكها دورة حياته؛ الحالة لا تتغير إلا بانتقال معلَن",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.not_a_lifecycle": {
+      "message": "{$property} من {$objectType} ليست لها دورة حياة معلَنة للانتقال",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.unconstrained_state": {
+      "message": "القرار ينشئ {$objectType} بخاصية دورة الحياة {$property}، التي يجب أن تكون تعدادًا نصيًا من الحالات الابتدائية",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.undeclared_transition_literal": {
+      "message": "التعبير يُطلق الانتقال {$transition}، لكن {$reason}",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.unknown_transition": {
+      "message": "{$transition} ليس انتقالًا معلَنًا في دورة حياة {$property} لـ {$objectType}",
+      "review": "needs_review"
+    },
+    "artifact_set.lifecycle.unresolved_lifecycles": {
+      "message": "{$writer} يكتب {$objectType}، الذي يتعذّر حلّ دورات حياته ({$reason})؛ كتابات حالته تُرفض احتياطًا",
+      "review": "needs_review"
+    },
+    "artifact_set.marking.duplicate": {
+      "message": "معرّف الوسم {$id} معلَن بالفعل في القاعدة أو المجموعة المرشحة، أو مرجع الوسم مكرر",
+      "review": "needs_review"
+    },
+    "artifact_set.marking.unknown": {
+      "message": "مرجع الوسم {$id} ليس له إعلان في القاعدة ولا في المجموعة المرشحة",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.conflicting_version": {
+      "message": "الأداة {$artifactId} موجودة في المجموعة بالإصدارين {$first} و{$second}؛ المجموعة المحلولة تضم إصدارًا واحدًا لكل أداة",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.dependency_cycle": {
+      "message": "الأدوات {$artifactIds} تعتمد بعضها على بعض في دورة؛ لا يوجد ترتيب تثبيت للمجموعة",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.duplicate_artifact": {
+      "message": "الأداة {$artifactId} بالإصدار {$version} تظهر أكثر من مرة في المجموعة",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.kind_incompatible": {
+      "message": "أداة من النوع {$fromKind} لا يجوز أن تشير إلى أداة من النوع {$toKind} ({$artifactId})",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.kind_mismatch": {
+      "message": "يُشار إلى {$artifactId} كأداة من النوع {$declaredKind} لكنها من النوع {$kind}",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.missing_dependency": {
+      "message": "{$kind} المطلوب {$artifactId} بالإصدار {$version} ليس في مجموعة الأدوات ولا مثبَّتًا",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.shadows_base": {
+      "message": "{$artifactId} أداة أساسية مثبَّتة، وهي للقراءة فقط",
+      "review": "needs_review"
+    },
+    "artifact_set.resolution.version_mismatch": {
+      "message": "{$artifactId} مثبَّت عند الإصدار {$version}، لكنه يُحَلّ فقط عند {$available}",
+      "review": "needs_review"
+    },
+    "artifact_set.scope.incompatible_reference": {
+      "message": "{$artifactId} محصور في {$dimension} {$value}، الذي لا يراه نطاق الأداة المُشيرة",
+      "review": "needs_review"
+    },
+    "business_pack.validation.invalid_payload": {
+      "message": "حمولة BusinessPackIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.compile.source_refused": {
+      "message": "تعذّر تصريف مصادر المشروع: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.failed": {
+      "message": "تعذّر إكمال norn explain: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.input_refused": {
+      "message": "رفض المدقِّق طلب الشرح: {$detail}",
+      "review": "needs_review"
+    },
+    "cli.explain.usage": {
+      "message": "الاستخدام: norn explain KIND ID [--json] [--wording FILE --locale TAG]؛ KIND أحد `action` أو `law` أو `concept`",
+      "review": "needs_review"
+    },
+    "cli.format.io": {
+      "message": "تعذّر تنسيق المصادر؛ تحقق من المسارات والأذونات.",
+      "review": "needs_review"
+    },
+    "cli.format.usage": {
+      "message": "خيار مُنسِّق غير معروف؛ استخدم norn fmt [path...] [--check] [--json].",
+      "review": "needs_review"
+    },
+    "cli.project.exists": {
+      "message": "الهدف ليس مجلدًا فارغًا؛ اختر مجلدًا جديدًا.",
+      "review": "needs_review"
+    },
+    "cli.project.install": {
+      "message": "فشل تثبيت التبعيات؛ أعد تشغيل bun install في مجلد المشروع.",
+      "review": "needs_review"
+    },
+    "cli.project.invalid_manifest": {
+      "message": "ملف norn.json غير صالح؛ استخدم norn-project/1 مع sources وscope وdev وcell صريحة، واحذف المفاتيح غير المعروفة.",
+      "review": "needs_review"
+    },
+    "cli.project.invalid_name": {
+      "message": "نطاق أسماء غير صالح؛ استخدم حرفًا صغيرًا يليه أحرف صغيرة أو أرقام أو شرطات سفلية.",
+      "review": "needs_review"
+    },
+    "cli.project.io": {
+      "message": "تعذّرت كتابة المشروع؛ تحقق من أذونات المجلد.",
+      "review": "needs_review"
+    },
+    "cli.project.not_found": {
+      "message": "لم يُعثر على norn.json؛ شغّل norn init <dir> أولًا.",
+      "review": "needs_review"
+    },
+    "cli.project.usage": {
+      "message": "الاستخدام: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
+      "review": "needs_review"
+    },
+    "cli.setup.checker_unavailable": {
+      "message": "حزمة WASM الخاصة بالمدقِّق غير متاحة؛ ابنِها واضبط NORN_CHECKER_WASM_PKG.",
+      "review": "needs_review"
+    },
+    "cli.setup.host_unavailable": {
+      "message": "لا يوجد مضيف Norn محلي؛ ابنِه بالأمر `cargo build -p norn-cell-do --bin norn-dev-host` واضبط NORN_DEV_HOST_BIN على target/debug/norn-dev-host.",
+      "review": "needs_review"
+    },
+    "cli.setup.unpublished": {
+      "message": "التوزيعة المنشورة غير متاحة؛ شغّل init من المستودع.",
+      "review": "needs_review"
+    },
+    "connector.effect.invalid": {
+      "message": "تأثير ربط الأداة يجب أن يكون \\{kind: query\\} أو \\{kind: command\\} مع providerKey وreconcile فقط",
+      "review": "needs_review"
+    },
+    "connector.effect.key_fixed": {
+      "message": "providerKey للأمر يجب ألا يثبّته الربط؛ الخلية تملؤه لكل عملية",
+      "review": "needs_review"
+    },
+    "connector.effect.key_not_input": {
+      "message": "providerKey للأمر يجب أن يسمّي أحد مُدخلات الأداة النصية",
+      "review": "needs_review"
+    },
+    "connector.effect.no_dedup_contract": {
+      "message": "ربط الأمر يحتاج providerKey أو reconcile، كي لا تُعاد محاولة نتيجة مجهولة دون تحقق",
+      "review": "needs_review"
+    },
+    "connector.effect.query_contract": {
+      "message": "ربط الاستعلام آمن لإعادة المحاولة ولا يعلن providerKey ولا reconcile؛ الأمر وحده يفعل ذلك",
+      "review": "needs_review"
+    },
+    "connector.effect.reconcile_not_query": {
+      "message": "reconcile للأمر يجب أن يسمّي ربط استعلام موجودًا",
+      "review": "needs_review"
+    },
+    "connector.validation.invalid_payload": {
+      "message": "حمولة ConnectorIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "connector.validation.unknown_resource": {
+      "message": "resourceId '{$resourceId}' لا يطابق أي مورد معلَن للموصل",
+      "review": "needs_review"
+    },
+    "consistency.chase.refused": {
+      "message": "تجاوزت عملية المطاردة (chase) ميزانية {$resource} البالغة {$limit}؛ الاتساق غير معروف",
+      "review": "needs_review"
+    },
+    "consistency.diagnosis.conflict": {
+      "message": "هذه الإعلانات لا يمكن أن تتحقق معًا؛ عدّل المُدخلات المصرَّح بها فقط وأعد تقديمها للقبول",
+      "review": "needs_review"
+    },
+    "consistency.diagnosis.no_editable_repair": {
+      "message": "لا يوجد تصحيح باستخدام المُدخلات القابلة للتعديل صراحةً فقط؛ القوانين المحمية تبقى دون تغيير",
+      "review": "needs_review"
+    },
+    "consistency.diagnosis.unknown": {
+      "message": "التشخيص غير معروف لأن جزءًا خارج النطاق أو حدًّا للموارد يمنع فحصًا كاملًا",
+      "review": "needs_review"
+    },
+    "consistency.instance.violation": {
+      "message": "البيانات تخالف {$rule}: {$detail}",
+      "review": "needs_review"
+    },
+    "consistency.mapping.non_total": {
+      "message": "{$element} لا يصل إلى الهدف أبدًا",
+      "review": "needs_review"
+    },
+    "consistency.normative.conflict": {
+      "message": "دورة أولوية معلَنة، أو قواعد متعارضة دون حلّ، أو تصادم مع طبقة محمية",
+      "review": "needs_review"
+    },
+    "consistency.normative.legacy_resolution": {
+      "message": "الأسبقية القديمة تحلّ قواعد شخّصها تحليل الطبقات المعلَنة فقط",
+      "review": "needs_review"
+    },
+    "consistency.path_equation.invalid": {
+      "message": "معادلة مسار معلَنة مشوّهة أو تخرج عن جزء الأنواع المحددة الدالّي",
+      "review": "needs_review"
+    },
+    "consistency.path_mapping.invalid": {
+      "message": "تعيين مسار معلَن أو مركّب مشوّه أو خاطئ النوع أو غير دالّي",
+      "review": "needs_review"
+    },
+    "consistency.path_mapping.missing_binding": {
+      "message": "الهدف المُعيَّن يعلن معادلات مسار أو يرثها دون ربط حفظ يغطيها",
+      "review": "needs_review"
+    },
+    "consistency.path_mapping.preserved": {
+      "message": "تعيين المسار المطلوب مقبول على أنه حافظ، بدليل مرتبط بمُدخلاته بالضبط؛ والرسالة تذكر فئة الدليل: موثَّق بشهادات (لكل تبعية في الهدف شهادة مطاردة قبِلها الفحص المُبرهَن)، أو محدود بلا مثال مضاد (البحث المحدود لم يجد مثالًا مضادًا)، أو لا تبعيات في الهدف",
+      "review": "needs_review"
+    },
+    "consistency.schema.incompatible": {
+      "message": "لا يمكن تعيين أي صف من {$relation}: {$detail}",
+      "review": "needs_review"
+    },
+    "consistency.schema.unpreserved_constraint": {
+      "message": "المصدر يقبل بيانات تخالف {$rule}: {$witness}",
+      "review": "needs_review"
+    },
+    "consistency.theory.malformed": {
+      "message": "النظرية المُخفَّضة مشوّهة: {$detail}",
+      "review": "needs_review"
+    },
+    "consistency.theory.not_weakly_acyclic": {
+      "message": "قواعد TGD [{$rules}] تنشئ قيمًا وجودية على دورة، فقد لا تنتهي المطاردة",
+      "review": "needs_review"
+    },
+    "consistency.theory.vacuous": {
+      "message": "{$relation} لا يمكن أن يضم أي صف: من {$witness} تفرض القواعد [{$rules}] أن {$left} = {$right}",
+      "review": "needs_review"
+    },
+    "core.composition.duplicate_instance": {
+      "message": "معرّف النسخة يجب أن يكون فريدًا في المخطط المحفوظ ذي النطاق",
+      "review": "needs_review"
+    },
+    "core.composition.instance_cycle": {
+      "message": "استيرادات النسخ واحتواؤها يجب أن تكون بلا دورات",
+      "review": "needs_review"
+    },
+    "core.composition.mapping_gap": {
+      "message": "التفسير يجب أن يغطي عقد المصدر المحفوظ بالضبط بأعضاء هدف فريدة متوافقة",
+      "review": "needs_review"
+    },
+    "core.composition.parameter_ambiguous": {
+      "message": "عدة مرشحين فعليين بأسبقية نطاق متساوية",
+      "review": "needs_review"
+    },
+    "core.composition.parameter_missing": {
+      "message": "لا يوجد مرشح فعلي ولا قيمة افتراضية صريحة",
+      "review": "needs_review"
+    },
+    "core.composition.unresolved_pin": {
+      "message": "مرجع النسخة يجب أن يُحَلّ إلى تثبيت حزمة محدد ذي نطاق",
+      "review": "needs_review"
+    },
+    "core.compute.ambiguous_grain": {
+      "message": "الاستعلام يتطلب درجة هوية صريحة وغير ملتبسة.",
+      "review": "needs_review"
+    },
+    "core.compute.unsupported_engine": {
+      "message": "دلالات الاستعلام غير مدعومة في ملف الحوسبة المختار.",
+      "review": "needs_review"
+    },
+    "core.graph.catalog_write": {
+      "message": "إسقاطات الكتالوج لا يمكنها تفعيل التعريفات",
+      "review": "needs_review"
+    },
+    "core.graph.cycle": {
+      "message": "تبعيات التصنيف يجب أن تكون بلا دورات",
+      "review": "needs_review"
+    },
+    "core.graph.incomplete_classification": {
+      "message": "التصنيف يتطلب قبولًا دلاليًا وتقييمًا مدعومين بالكامل",
+      "review": "needs_review"
+    },
+    "core.graph.role_conflict": {
+      "message": "أدوار المفاهيم الموروثة متعارضة",
+      "review": "needs_review"
+    },
+    "core.graph.role_mismatch": {
+      "message": "دور المفهوم المعلَن يناقض دورًا موروثًا",
+      "review": "needs_review"
+    },
+    "core.identity.collision": {
+      "message": "ID-UNIQUE-1: المفتاح المُطبَّع يتصادم ضمن جذره المعلِن ونطاقه وعالمه",
+      "review": "needs_review"
+    },
+    "core.identity.reuse": {
+      "message": "هذه الهوية حُذفت؛ استعدها صراحةً أو استخدم هوية جديدة",
+      "review": "needs_review"
+    },
+    "core.laws.stale_evidence": {
+      "message": "هوية الدليل تختلف عن الهدف المُولَّد الحالي أو عن تثبيت النتيجة المحفوظ بشكل مستقل",
+      "review": "needs_review"
+    },
+    "core.laws.unresolved_scope": {
+      "message": "عضوية النسخة المحفوظة مفقودة أو ملتبسة أو قديمة أو تتجاوز ميزانيتها",
+      "review": "needs_review"
+    },
+    "core.projection.publication_guard": {
+      "message": "النشر التحليلي مرفوض بموجب سياسة معلَنة: {$detail}",
+      "review": "needs_review"
+    },
+    "core.txn.atomic_boundary": {
+      "message": "TXN-CELL-1: الإغلاق الذري المدعوم الكامل يجب أن ينتمي إلى خلية واحدة؛ الملكية الأجنبية أو غير المعروفة تُرفض دون آثار",
+      "review": "needs_review"
+    },
+    "core.values.inexact": {
+      "message": "العدد خارج ملف الأعداد العشرية الدقيقة بـ 96 بت (المقياس 28 على الأكثر)",
+      "review": "needs_review"
+    },
+    "core.values.literal_unit": {
+      "message": "القيمة العددية الحرفية ترث الوحدة المعلَنة {$unit}",
+      "review": "needs_review"
+    },
+    "core.values.unit_binding_required": {
+      "message": "العدد العشري في الواجهة يتطلب وحدة ومقياسًا صريحين عند التنفيذ",
+      "review": "needs_review"
+    },
+    "core.values.unit_mismatch": {
+      "message": "VAL-UNIT-1 / VAL-DECIMAL-BIND-1: الوحدة تتطلب تثبيتًا مرئيًا ومحددًا لكتالوج النواة ورمز UCUM مقبولًا؛ مجموعات Decimal في الواجهة تتطلب الوحدة والمقياس نفسيهما؛ التحويل يجب أن يكون صريحًا",
+      "review": "needs_review"
+    },
+    "customization.validation.invalid_payload": {
+      "message": "حمولة CustomizationIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "customization.validation.retired_boundary": {
+      "message": "الحد التنفيذي \"{$boundary}\" متقاعد: التنفيذ المخصص المضمَّن غير مقبول؛ انقل الشيفرة إلى دالة في المجمع تُستدعى عبر perform",
+      "review": "needs_review"
+    },
+    "defined_concept.validation.invalid_payload": {
+      "message": "حمولة المفهوم المعرَّف لا تطابق جذرها الصارم",
+      "review": "needs_review"
+    },
+    "derived.validation.incremental_not_supported": {
+      "message": "الصيانة \"incremental\" محجوزة لمرحلة IVM مستقبلية وغير مدعومة بعد؛ استخدم \"recompute_on_read\"",
+      "review": "needs_review"
+    },
+    "derived.validation.invalid_payload": {
+      "message": "حمولة DerivedIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "derived.validation.io_in_view": {
+      "message": "نوع الحساب \"effectful_ts\" غير مسموح داخل عرض مشتق (الإدخال والإخراج يكونان في أداة Effect)",
+      "review": "needs_review"
+    },
+    "entity.deprecation.v1_payload": {
+      "message": "الكيان {$artifactId} يستخدم صيغة حمولة EntityIR v1 المُهملة؛ تُقبل أثناء الترحيل وتُخفَّض إلى EntityIR v2 عند القراءة؛ ألّف الإصدارات الجديدة بـ entityVersion \"2.0\"",
+      "review": "needs_review"
+    },
+    "entity.validation.invalid_mutation_authority": {
+      "message": "payload.mutationAuthority غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "entity.validation.invalid_payload": {
+      "message": "حمولة EntityIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "entity.validation.layer_scope_mismatch": {
+      "message": "scope.tenantId للأداة {$detail} لا يطابق طبقة {$layer} التي تُفحص فيها",
+      "review": "needs_review"
+    },
+    "explain.selector.unknown_subject": {
+      "message": "لا يوجد {$kind} واحد بالاسم {$id}؛ وُجد {$count}",
+      "review": "needs_review"
+    },
+    "function.invocation.blank_value": {
+      "message": "{$member} يجب ألا يكون فارغًا",
+      "review": "needs_review"
+    },
+    "function.invocation.fork_perform": {
+      "message": "العالم {$world} تفرّع؛ وحده العالم الرئيسي ينفّذ، والتفرّع لا يرسل دالة أبدًا",
+      "review": "needs_review"
+    },
+    "function.invocation.freshness_shape": {
+      "message": "حداثة {$freshness} تحتاج {$requirement}",
+      "review": "needs_review"
+    },
+    "function.invocation.input_bound": {
+      "message": "المُدخلات المرحلية تضم {$staged} بايت؛ البيان يقبل {$bound}",
+      "review": "needs_review"
+    },
+    "function.invocation.manifest_mismatch": {
+      "message": "الأمر يسمّي البيان {$manifest}، لكن البيان المقبول هو {$admitted}",
+      "review": "needs_review"
+    },
+    "function.invocation.mutable_input": {
+      "message": "المُدخل {$name} عنوان URL أو مفتاح كائن قابل للتغيّر؛ ضع البايتات مرحليًا ومرّر بصمتها ككتلة",
+      "review": "needs_review"
+    },
+    "function.invocation.non_canonical_text": {
+      "message": "نص أو مفتاح في الاستدعاء ليس بصيغة NFC؛ التجزئة تطبّعه، فيشارك هوية قيمة مختلفة",
+      "review": "needs_review"
+    },
+    "function.invocation.non_scalar_input": {
+      "message": "المُدخل {$name} ليس قيمة مفردة قانونية؛ مرّر البيانات المهيكلة ككتلة",
+      "review": "needs_review"
+    },
+    "function.invocation.secret_input": {
+      "message": "المُدخل {$name} سرّ أو يسمّي سرًّا؛ بيانات الاعتماد قدرات، لا مُدخلات أبدًا",
+      "review": "needs_review"
+    },
+    "function.invocation.unbounded_command": {
+      "message": "الأمر يحتاج {$ceiling}",
+      "review": "needs_review"
+    },
+    "function.manifest.authored_host": {
+      "message": "دوال المضيف مدمجة في المحرك ولا يمكن تثبيتها بتعريفات مؤلَّفة أو حزم؛ استخدم مكوّن WASM مُنمَّطًا أو عاملًا خارجيًا",
+      "review": "needs_review"
+    },
+    "function.manifest.blank_value": {
+      "message": "{$member} يجب ألا يكون فارغًا",
+      "review": "needs_review"
+    },
+    "function.manifest.conflicting_golden_runs": {
+      "message": "التشغيلات المرجعية أنتجت {$count} بصمات مخرجات مختلفة؛ المفتاح معزول",
+      "review": "needs_review"
+    },
+    "function.manifest.dependency_closure_mismatch": {
+      "message": "إغلاق التبعيات {$detail}",
+      "review": "needs_review"
+    },
+    "function.manifest.duplicate_step": {
+      "message": "خطوة خط المعالجة {$id} معلَنة مرتين",
+      "review": "needs_review"
+    },
+    "function.manifest.embedded_secret": {
+      "message": "{$member} قد يحمل بيانات اعتماد؛ بيانات الاعتماد يربطها المشرف ولا تكون جزءًا من البيان أبدًا",
+      "review": "needs_review"
+    },
+    "function.manifest.inadmissible_evidence": {
+      "message": "دليل {$profile} {$member}: {$detail}",
+      "review": "needs_review"
+    },
+    "function.manifest.missing_dependency_closure": {
+      "message": "يلزم إغلاق التبعيات والأصول المتعدّي",
+      "review": "needs_review"
+    },
+    "function.manifest.missing_determinism_evidence": {
+      "message": "ادعاء {$profile} يحتاج حقل الدليل {$member}",
+      "review": "needs_review"
+    },
+    "function.manifest.mutable_identity": {
+      "message": "{$what} {$value} ليس بصمة محتوى (sha256:<64 hex>)؛ الوسم أو URI أو مفتاح الكائن ليس هوية أبدًا",
+      "review": "needs_review"
+    },
+    "function.manifest.non_canonical_text": {
+      "message": "نص أو مفتاح في البيان ليس بصيغة NFC؛ التجزئة تطبّعه، فيشارك هوية قيمة مختلفة",
+      "review": "needs_review"
+    },
+    "function.manifest.profile_mismatch": {
+      "message": "{$profile} {$detail}",
+      "review": "needs_review"
+    },
+    "function.manifest.unbounded_resource": {
+      "message": "الحد {$member} يجب أن يكون عددًا موجبًا",
+      "review": "needs_review"
+    },
+    "function.manifest.uncacheable_profile": {
+      "message": "الملف {$profile} غير مؤهل لإعادة الاستخدام حسب المحتوى؛ أعلن cache \"none\"",
+      "review": "needs_review"
+    },
+    "function.manifest.unsupported_abi": {
+      "message": "abi {$abi} غير مدعوم؛ المتوقع norn.function-abi/1",
+      "review": "needs_review"
+    },
+    "function.receipt.attempt_out_of_range": {
+      "message": "المحاولة {$attempt} خارج 1..={$maxAttempts}",
+      "review": "needs_review"
+    },
+    "function.receipt.blank_value": {
+      "message": "{$member} يجب ألا يكون فارغًا",
+      "review": "needs_review"
+    },
+    "function.receipt.bound_exceeded": {
+      "message": "محاولة مكتملة تُبلغ عن {$member} {$value}، بما يتجاوز حد البيان",
+      "review": "needs_review"
+    },
+    "function.receipt.cache_origin": {
+      "message": "{$detail}",
+      "review": "needs_review"
+    },
+    "function.receipt.dispatch_mismatch": {
+      "message": "{$member} هو {$found}، لكن الإرسال ثبّت {$expected}",
+      "review": "needs_review"
+    },
+    "function.receipt.non_canonical_text": {
+      "message": "نص أو مفتاح في الإيصال ليس بصيغة NFC؛ التجزئة تطبّعه، فيشارك هوية قيمة مختلفة",
+      "review": "needs_review"
+    },
+    "function.receipt.output_manifest_mismatch": {
+      "message": "بيان المخرجات {$digest} لا يطابق المخرجات والملخص ({$computed})",
+      "review": "needs_review"
+    },
+    "function.receipt.summary_bound": {
+      "message": "{$what} يضم {$size} بايت قانوني؛ يعبر الإيصالَ 32768 بايت على الأكثر",
+      "review": "needs_review"
+    },
+    "function.validation.invalid_document": {
+      "message": "المستند ليس {$record} لدالة: {$detail}",
+      "review": "needs_review"
+    },
+    "graph_load.validation.excessive_depth": {
+      "message": "عمق المخطط {$depth} يتجاوز الميزانية {$budget}",
+      "review": "needs_review"
+    },
+    "graph_load.validation.invalid_shape": {
+      "message": "شكل تحميل المخطط غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "graph_load.validation.missing_relation_kind": {
+      "message": "relationKind يجب أن يكون موجودًا",
+      "review": "needs_review"
+    },
+    "graph_load.validation.missing_scope": {
+      "message": "النطاق المطلوب '{$key}' مفقود",
+      "review": "needs_review"
+    },
+    "graph_load.validation.n_plus_one_risk": {
+      "message": "دفعة العلاقة '{$sourceKind}:{$relationKind}' تخاطر بتفرّع غير محدود",
+      "review": "needs_review"
+    },
+    "graph_load.validation.over_budget": {
+      "message": "{$measure} يتجاوز الميزانية {$budget}",
+      "review": "needs_review"
+    },
+    "identifier.validation.too_long": {
+      "message": "{$identifier} طوله {$actualBytes} بايت UTF-8؛ حد القبول {$limitBytes}؛ أعد تسميته قبل تثبيت التعريفات المحدَّثة",
+      "review": "needs_review"
+    },
+    "interface.validation.duplicate_link_id": {
+      "message": "معرّف الرابط المطلوب {$link} مستخدم بالفعل لرابط أو خاصية مطلوبة",
+      "review": "needs_review"
+    },
+    "interface.validation.duplicate_name": {
+      "message": "الواجهة {$name} معرَّفة بالفعل عند الموضع {$index}",
+      "review": "needs_review"
+    },
+    "interface.validation.duplicate_property_id": {
+      "message": "معرّف الخاصية المطلوبة {$property} معلَن مرتين",
+      "review": "needs_review"
+    },
+    "interface.validation.invalid_inheritance": {
+      "message": "عقد الواجهة الأم مكرر أو مفقود أو دوري أو غير متوافق",
+      "review": "needs_review"
+    },
+    "interface.validation.invalid_link_id": {
+      "message": "معرّف الرابط المطلوب {$link} يجب أن يطابق [a-z][a-z0-9_]* دون فاصل الامتداد المحجوز \"__\"",
+      "review": "needs_review"
+    },
+    "interface.validation.invalid_name": {
+      "message": "اسم الواجهة {$name} يجب أن يتكون من مقاطع نطاق أسماء بأحرف صغيرة مفصولة بنقاط واسم بنمط PascalCase، مثل \"party.Party\"",
+      "review": "needs_review"
+    },
+    "interface.validation.invalid_property_id": {
+      "message": "معرّف الخاصية المطلوبة {$property} يجب أن يطابق [a-z][a-z0-9_]* دون فاصل الامتداد المحجوز \"__\"",
+      "review": "needs_review"
+    },
+    "interface.validation.invalid_status_date": {
+      "message": "مُهمَل منذ {$date}، وهو ليس تاريخًا تقويميًا بصيغة \"YYYY-MM-DD\"",
+      "review": "needs_review"
+    },
+    "interface.validation.shadows_base": {
+      "message": "{$name} تعريف أساسي مثبَّت، وهو للقراءة فقط",
+      "review": "needs_review"
+    },
+    "interface.validation.tenant_interface": {
+      "message": "الواجهة {$name} معلَنة من طبقة مستأجر؛ الواجهات تعريفات سجل ينفّذها المستأجر ولا يؤلّفها أبدًا",
+      "review": "needs_review"
+    },
+    "interface.validation.unknown_link_target": {
+      "message": "الرابط المطلوب {$link} يستهدف {$target}، الذي لا يسمّي أي نوع كائن أو واجهة",
+      "review": "needs_review"
+    },
+    "interface.validation.unknown_replacement": {
+      "message": "replacedBy {$name} يجب أن يسمّي تعريفًا آخر من النوع نفسه",
+      "review": "needs_review"
+    },
+    "ir.validation.invalid_artifact": {
+      "message": "مغلّف الأداة مشوّه: {$detail}",
+      "review": "needs_review"
+    },
+    "ir.validation.invalid_dependency": {
+      "message": "التبعية مشوّهة أو تشير إلى نفسها: {$detail}",
+      "review": "needs_review"
+    },
+    "ir.validation.invalid_envelope": {
+      "message": "مغلّف الأداة لا يُفك ترميزه: {$error}",
+      "review": "needs_review"
+    },
+    "ir.validation.kind_mismatch": {
+      "message": "نوع المغلّف '{$kind}' لا يطابق جذر حمولته '{$payloadKind}'",
+      "review": "needs_review"
+    },
+    "ir.validation.required_field": {
+      "message": "{$path} مطلوب",
+      "review": "needs_review"
+    },
+    "ir.validation.retired_kind": {
+      "message": "نوع الأداة '{$kind}' متقاعد: {$reason}",
+      "review": "needs_review"
+    },
+    "ir.validation.unknown_kind": {
+      "message": "نوع الأداة '{$kind}' ليس نوعًا معروفًا",
+      "review": "needs_review"
+    },
+    "ir.validation.unsupported_version": {
+      "message": "إصدار IR '{$irVersion}' غير مدعوم",
+      "review": "needs_review"
+    },
+    "labels.admission.conflicting_label": {
+      "message": "أداتا تسميات مرشحتان تسمّيان الهدف نفسه باللغة نفسها",
+      "review": "needs_review"
+    },
+    "labels.admission.unknown_target": {
+      "message": "تسمية تشير إلى تعريف لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "labels.lint.missing_label": {
+      "message": "{$count} تعريفات ليس لها تسمية بلغة {$locale}: {$targets}",
+      "review": "needs_review"
+    },
+    "labels.validation.bidi_control": {
+      "message": "تسمية أو وصف يحتوي محرف تحكم ثنائي الاتجاه (تضمين أو تجاوز أو عزل)",
+      "review": "needs_review"
+    },
+    "labels.validation.blank_text": {
+      "message": "تسمية أو وصف فارغ، أو مُدخل بلا تسمية",
+      "review": "needs_review"
+    },
+    "labels.validation.duplicate_locale": {
+      "message": "لغة التسمية تظهر مرتين، بغض النظر عن حالة الأحرف",
+      "review": "needs_review"
+    },
+    "labels.validation.duplicate_target": {
+      "message": "أداة التسميات تسمّي هدفًا واحدًا أكثر من مرة",
+      "review": "needs_review"
+    },
+    "labels.validation.invalid_locale": {
+      "message": "لغة التسمية ليست وسم لغة BCP 47",
+      "review": "needs_review"
+    },
+    "labels.validation.invalid_payload": {
+      "message": "حمولة التسميات لا تطابق جذرها الصارم",
+      "review": "needs_review"
+    },
+    "labels.validation.not_nfc": {
+      "message": "تسمية أو وصف ليس بصيغة Unicode NFC",
+      "review": "needs_review"
+    },
+    "labels.validation.unlabelled_locale": {
+      "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
+      "review": "needs_review"
+    },
+    "law.exception.cycle": {
+      "message": "سلسلة تجاوزات استثناء القانون لا تصل إلى قانونها أبدًا",
+      "review": "needs_review"
+    },
+    "law.exception.dangling_override": {
+      "message": "استثناء القانون لا يتجاوز قانونه ولا استثناءً من الشجرة نفسها",
+      "review": "needs_review"
+    },
+    "law.exception.invalid_declaration": {
+      "message": "إعلان استثناء القانون مشوّه: {$detail}",
+      "review": "needs_review"
+    },
+    "law.exception.limit": {
+      "message": "شجرة استثناءات القانون تتجاوز حد إعلاناتها",
+      "review": "needs_review"
+    },
+    "law.exception.two_homes": {
+      "message": "قاعدة تعلن استثناءات على نفسها وعلى قانونها المضمَّن؛ أعلنها في مكان واحد",
+      "review": "needs_review"
+    },
+    "law.exception.unsupported_response": {
+      "message": "استجابة القانون لا يمكن رفعها باستثناء",
+      "review": "needs_review"
+    },
+    "law.model.closure_refused": {
+      "message": "رُفض إغلاق تبعيات القوانين للمجموعة كاملة: {$detail}",
+      "review": "needs_review"
+    },
+    "law.model.predicate_type": {
+      "message": "شرط القانون لا يجتاز فحص الأنواع في بيئة ZEN الفعلية: {$detail}",
+      "review": "needs_review"
+    },
+    "law.model.unknown_binding": {
+      "message": "خانة القانون تتطلب ربط أنطولوجيا مقبولًا وتبعية مرئية محددة: {$detail}",
+      "review": "needs_review"
+    },
+    "law.model.weakens_inherited": {
+      "message": "هويات القوانين الموجودة لا يمكن استبدالها؛ التشديد يضيف هوية مقترنة",
+      "review": "needs_review"
+    },
+    "law.validation.invalid_document": {
+      "message": "مستند القانون غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "law.validation.unsupported_temporal": {
+      "message": "الشكل الزمني للقانون غير مدعوم: {$detail}",
+      "review": "needs_review"
+    },
+    "law.wording.duplicate_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: duplicate_locale",
+      "review": "needs_review"
+    },
+    "law.wording.incomplete_locale": {
+      "message": "لغة متطلَّب معلَنة تنقصها خانة أو تسمية أو مصطلح يحتاجه عرضها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.wording.invalid_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: invalid_locale",
+      "review": "needs_review"
+    },
+    "law.wording.unknown_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: unknown_locale",
+      "review": "needs_review"
+    },
+    "layout.validation.invalid_inline_field": {
+      "message": "حقل التخطيط القديم غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "layout.validation.merge_conflict": {
+      "message": "قيمة التخطيط المحفوظة أو الصريحة عند {$path} أخذت الأسبقية على تخطيط مضمَّن متعارض",
+      "review": "needs_review"
+    },
+    "layout.validation.orphaned_entry": {
+      "message": "التخطيط {$kind} ذو المعرّف {$id} ليس له مُدخل دلالي مطابق وقد أُزيل",
+      "review": "needs_review"
+    },
+    "ledger.account.duplicate": {
+      "message": "معرّف الحساب `{$accountId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.account.duplicate_unit": {
+      "message": "الحساب `{$accountId}` يعلن الوحدة `{$unitId}` أكثر من مرة",
+      "review": "needs_review"
+    },
+    "ledger.account.no_units": {
+      "message": "الحساب `{$accountId}` يجب أن يقبل وحدة واحدة على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.account.unknown_unit": {
+      "message": "الحساب `{$accountId}` يشير إلى وحدة غير معروفة `{$unitId}`",
+      "review": "needs_review"
+    },
+    "ledger.amount.bound_overflow": {
+      "message": "المعامل وقت التشغيل للمُعامِل `{$parameterId}` يفيض عند حدٍّ معلَن",
+      "review": "needs_review"
+    },
+    "ledger.amount.constant_scale_exceeds_result": {
+      "message": "مقياس الثابت {$scale} يتجاوز مقياس الناتج {$resultScale}",
+      "review": "needs_review"
+    },
+    "ledger.amount.duplicate_parameter_term": {
+      "message": "المُعامِل `{$parameterId}` يظهر أكثر من مرة؛ وحّده في معامل واحد",
+      "review": "needs_review"
+    },
+    "ledger.amount.normalization_overflow": {
+      "message": "لا يمكن تطبيع الثابت إلى دقة الوحدة دون فيضان i128",
+      "review": "needs_review"
+    },
+    "ledger.amount.result_scale_exceeds_unit": {
+      "message": "مقياس الناتج {$scale} يتجاوز دقة الوحدة {$precision}",
+      "review": "needs_review"
+    },
+    "ledger.amount.result_scale_out_of_range": {
+      "message": "مقياس الناتج {$scale} يتجاوز الحد الأقصى {$max}",
+      "review": "needs_review"
+    },
+    "ledger.amount.term_scale_exceeds_result": {
+      "message": "مقاييس المُعامِل والمعامل تفيض عن تمثيلها",
+      "review": "needs_review"
+    },
+    "ledger.amount.unknown_parameter": {
+      "message": "مُعامِل غير معروف أو غير صالح `{$parameterId}`",
+      "review": "needs_review"
+    },
+    "ledger.certificate.claim_mismatch": {
+      "message": "ادعاءات الشهادة ليست ضمن نتيجة المدقق الحتمية",
+      "review": "needs_review"
+    },
+    "ledger.certificate.hash_mismatch": {
+      "message": "هوية الشهادة لا تطابق ادعاءاتها",
+      "review": "needs_review"
+    },
+    "ledger.certificate.pack_mismatch": {
+      "message": "الشهادة غير مرتبطة بحزمة الدفتر المقدَّمة بعينها",
+      "review": "needs_review"
+    },
+    "ledger.certificate.version_mismatch": {
+      "message": "إصدار الشهادة أو IR أو المدقق لا يطابق المدقق النشط",
+      "review": "needs_review"
+    },
+    "ledger.commit.evidence_mismatch": {
+      "message": "دليل الالتزام لا يطابق الترحيل المُعدّ: {$detail}",
+      "review": "needs_review"
+    },
+    "ledger.commit.idempotency_mismatch": {
+      "message": "البحث عن عدم التكرار أعاد سجلًا من نطاق أو مفتاح آخر",
+      "review": "needs_review"
+    },
+    "ledger.commit.owner_version_overflow": {
+      "message": "لا يمكن تقديم إصدار المالك المتوقع دون فيضان",
+      "review": "needs_review"
+    },
+    "ledger.commit.partial_evidence": {
+      "message": "دليل الالتزام جزئي: {$detail}",
+      "review": "needs_review"
+    },
+    "ledger.identifier.empty": {
+      "message": "المعرّف يجب ألا يكون فارغًا وألا تحيط به مسافات",
+      "review": "needs_review"
+    },
+    "ledger.layer.duplicate": {
+      "message": "معرّف الطبقة `{$layer}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.leg.account_unit_mismatch": {
+      "message": "الحساب `{$accountId}` لا يقبل الوحدة `{$unitId}`",
+      "review": "needs_review"
+    },
+    "ledger.leg.duplicate": {
+      "message": "معرّف الطرف `{$legId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.leg.empty_layer": {
+      "message": "الطبقة يجب ألا تكون فارغة",
+      "review": "needs_review"
+    },
+    "ledger.leg.unknown_account": {
+      "message": "حساب غير معروف `{$accountId}`",
+      "review": "needs_review"
+    },
+    "ledger.leg.unknown_layer": {
+      "message": "طبقة غير معروفة `{$layer}`",
+      "review": "needs_review"
+    },
+    "ledger.leg.unknown_unit": {
+      "message": "وحدة غير معروفة `{$unitId}`",
+      "review": "needs_review"
+    },
+    "ledger.numeric.invalid_integer": {
+      "message": "`{$value}` ليس عددًا صحيحًا عشريًا بإشارة ضمن i128",
+      "review": "needs_review"
+    },
+    "ledger.numeric.non_canonical_integer": {
+      "message": "`{$value}` ليس الترميز العشري القانوني `{$canonical}`",
+      "review": "needs_review"
+    },
+    "ledger.ontology.empty_artifact_id": {
+      "message": "artifactId الخاص بالأنطولوجيا يجب ألا يكون فارغًا وأن يكون قانونيًا",
+      "review": "needs_review"
+    },
+    "ledger.ontology.empty_artifact_version": {
+      "message": "artifactVersion الخاص بالأنطولوجيا يجب ألا يكون فارغًا وأن يكون قانونيًا",
+      "review": "needs_review"
+    },
+    "ledger.ontology.invalid_artifact_sha256": {
+      "message": "artifactSha256 الخاص بالأنطولوجيا يجب أن يكون 64 حرفًا ست عشريًا صغيرًا بالضبط",
+      "review": "needs_review"
+    },
+    "ledger.ontology.non_exact_artifact_id": {
+      "message": "artifactId الخاص بالأنطولوجيا يجب أن يكون هوية واحدة محددة بلا مسافات أو أحرف بدل",
+      "review": "needs_review"
+    },
+    "ledger.ontology.non_exact_artifact_version": {
+      "message": "artifactVersion الخاص بالأنطولوجيا يجب أن يكون إصدارًا واحدًا محددًا، لا نطاقًا ولا حرف بدل",
+      "review": "needs_review"
+    },
+    "ledger.pack.empty_id": {
+      "message": "packId يجب ألا يكون فارغًا",
+      "review": "needs_review"
+    },
+    "ledger.pack.no_accounts": {
+      "message": "يلزم حساب ترحيل واحد على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.pack.no_layers": {
+      "message": "يلزم طبقة أرصدة معلَنة واحدة على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.pack.no_templates": {
+      "message": "يلزم قالب معاملة واحد على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.pack.no_units": {
+      "message": "تلزم وحدة محفوظة واحدة على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.pack.unsupported_ir_version": {
+      "message": "إصدار IR لحزمة الدفتر `{$irVersion}` غير مدعوم؛ المتوقع `{$expected}`",
+      "review": "needs_review"
+    },
+    "ledger.parameter.duplicate": {
+      "message": "معرّف المُعامِل `{$parameterId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.parameter.invalid_bounds": {
+      "message": "minUnscaled يجب أن يكون أقل من maxUnscaled أو مساويًا له",
+      "review": "needs_review"
+    },
+    "ledger.parameter.scale_out_of_range": {
+      "message": "مقياس المُعامِل {$scale} يتجاوز الحد الأقصى {$max}",
+      "review": "needs_review"
+    },
+    "ledger.posting.certificate_coverage_mismatch": {
+      "message": "مجموعة الشهادات لا تغطي بالضبط أقسام الوحدة والطبقة المقيَّمة",
+      "review": "needs_review"
+    },
+    "ledger.posting.contract_version_mismatch": {
+      "message": "إصدار عقد الترحيل `{$version}` غير مدعوم؛ المتوقع `{$expected}`",
+      "review": "needs_review"
+    },
+    "ledger.posting.identity_empty": {
+      "message": "{$path} يجب ألا يكون فارغًا وألا تحيط به مسافات",
+      "review": "needs_review"
+    },
+    "ledger.posting.reference_mismatch": {
+      "message": "مراجع الترحيل لا تطابق ختم الحزمة المثبَّتة والمدقق",
+      "review": "needs_review"
+    },
+    "ledger.runtime.duplicate_parameter": {
+      "message": "مُعامِل وقت التشغيل `{$parameterId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.runtime.evaluation_overflow": {
+      "message": "فاض ضرب المعاملات للمُعامِل `{$parameterId}`",
+      "review": "needs_review"
+    },
+    "ledger.runtime.missing_parameter": {
+      "message": "مُعامِل وقت التشغيل `{$parameterId}` مفقود",
+      "review": "needs_review"
+    },
+    "ledger.runtime.parameter_out_of_bounds": {
+      "message": "قيمة مُعامِل وقت التشغيل `{$parameterId}` وهي {$value} خارج الحدود المختومة [{$min}, {$max}]",
+      "review": "needs_review"
+    },
+    "ledger.runtime.parameter_scale_mismatch": {
+      "message": "مقياس مُعامِل وقت التشغيل `{$parameterId}` هو {$scale}؛ المتوقع {$expected}",
+      "review": "needs_review"
+    },
+    "ledger.runtime.unbalanced": {
+      "message": "متبقٍّ وقت التشغيل {$residual} للوحدة `{$unitId}` في الطبقة `{$layer}`",
+      "review": "needs_review"
+    },
+    "ledger.runtime.unknown_parameter": {
+      "message": "مُعامِل وقت تشغيل غير معروف `{$parameterId}`",
+      "review": "needs_review"
+    },
+    "ledger.runtime.unknown_template": {
+      "message": "قالب مُجمَّع غير معروف `{$templateId}`",
+      "review": "needs_review"
+    },
+    "ledger.template.duplicate": {
+      "message": "معرّف القالب `{$templateId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.template.residual_overflow": {
+      "message": "فاض المتبقي الثابت عن i128 أثناء جمع الأطراف",
+      "review": "needs_review"
+    },
+    "ledger.template.too_few_legs": {
+      "message": "قالب المعاملة المحفوظة يتطلب طرفين على الأقل",
+      "review": "needs_review"
+    },
+    "ledger.template.unbalanced_coefficient": {
+      "message": "للقالب `{$templateId}` متبقٍّ في المعاملات {$coefficient} للمُعامِل `{$parameterId}` والوحدة `{$unitId}` والطبقة `{$layer}`",
+      "review": "needs_review"
+    },
+    "ledger.template.unbalanced_constant": {
+      "message": "للقالب `{$templateId}` متبقٍّ ثابت {$residual} للوحدة `{$unitId}` في الطبقة `{$layer}`",
+      "review": "needs_review"
+    },
+    "ledger.unit.duplicate": {
+      "message": "معرّف الوحدة `{$unitId}` مكرر",
+      "review": "needs_review"
+    },
+    "ledger.unit.duplicate_unit_term": {
+      "message": "مصطلح وحدة الأنطولوجيا `{$term}` مرتبط بأكثر من وحدة محلية في الحزمة",
+      "review": "needs_review"
+    },
+    "ledger.unit.empty_quantity_kind_term": {
+      "message": "quantityKindTermId يجب ألا يكون فارغًا وأن يكون قانونيًا",
+      "review": "needs_review"
+    },
+    "ledger.unit.empty_unit_term": {
+      "message": "unitTermId يجب ألا يكون فارغًا وأن يكون قانونيًا",
+      "review": "needs_review"
+    },
+    "ledger.unit.inconsistent_dimension_binding": {
+      "message": "مصطلح الوحدة لا يمكن أن يكون أيضًا مصطلح نوع الكمية أو البُعد الخاص به",
+      "review": "needs_review"
+    },
+    "ledger.unit.invalid_quantity_kind_term": {
+      "message": "quantityKindTermId يجب أن يكون هوية مصطلح واحدة محددة بلا مسافات أو أحرف بدل",
+      "review": "needs_review"
+    },
+    "ledger.unit.invalid_unit_term": {
+      "message": "unitTermId يجب أن يكون هوية مصطلح واحدة محددة بلا مسافات أو أحرف بدل",
+      "review": "needs_review"
+    },
+    "ledger.unit.scale_out_of_range": {
+      "message": "دقة الوحدة {$precision} تتجاوز الحد الأقصى {$max}",
+      "review": "needs_review"
+    },
+    "ledger.validation.too_many_diagnostics": {
+      "message": "توقّف التحقق من الدفتر عند حد عدد التشخيصات أو حجمها بالبايت",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.dead_end_state": {
+      "message": "الحالة {$state} ليس لها انتقال خارج؛ أعلن انتقالًا أو اذكرها كحالة نهائية",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.default_not_initial": {
+      "message": "القيمة الافتراضية {$state} لـ {$property} ليست حالة ابتدائية",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.drops_guard": {
+      "message": "الانتقال {$id} يُسقط الشرط الموروث {$guard}؛ النوع الفرعي يعيد ذكر كل شرط موروث ولا يملك إلا أن يضيف شروطه",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.duplicate_lifecycle": {
+      "message": "الخاصية {$property} لها دورة حياة بالفعل على هذا النوع",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.duplicate_state": {
+      "message": "الحالة {$state} مذكورة مرتين في {$member}",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.duplicate_transition": {
+      "message": "{$from} -> {$to} معلَن بالفعل في انتقال آخر",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.duplicate_transition_id": {
+      "message": "معرّف الانتقال {$id} معلَن مرتين في دورة الحياة هذه",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.empty_guard": {
+      "message": "أحد شروط الانتقال {$id} فارغ",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.empty_initial": {
+      "message": "دورة الحياة تعلن حالة ابتدائية واحدة على الأقل",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.empty_transition_source": {
+      "message": "الانتقال {$id} ليس له حالة مصدر",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.invalid_guard": {
+      "message": "الشرط {$index} للانتقال {$id} ليس تعبير ZEN: {$error}",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.invalid_guard_diagnostic": {
+      "message": "guardRefusalCode يجب أن يحتفظ بخطأ تشغيل مسجَّل موروث",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.invalid_transition_id": {
+      "message": "معرّف الانتقال {$id} يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.path_property_violated": {
+      "message": "مسار معلَن إلى {$target} يتجنب {$via}؛ الأثر البنيوي [انتقال، حالة]: {$trace}",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.property_computed": {
+      "message": "خاصية دورة الحياة {$property} محسوبة؛ دورة الحياة تحكم خاصية مخزَّنة تكتبها القواعد",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.property_not_enum": {
+      "message": "خاصية دورة الحياة {$property} يجب أن تكون تعدادًا محليًا؛ قيمه هي الحالات",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.property_nullable": {
+      "message": "خاصية دورة الحياة {$property} تقبل القيمة الفارغة؛ كل كائن في حالة ما",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.self_transition": {
+      "message": "الانتقال {$id} يغادر {$state} ويعود إليها؛ الانتقال يغيّر الحالة",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.terminal_has_transition": {
+      "message": "الانتقال {$id} يغادر الحالة النهائية {$state}",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.undeclared_write": {
+      "message": "{$writer} يكتب {$property} من {$from} إلى {$to}، وهو ليس انتقالًا معلَنًا في دورة حياتها",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.unknown_property": {
+      "message": "خاصية دورة الحياة {$property} ليست خاصية للنوع",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.unknown_state": {
+      "message": "{$state} ليست قيمة في تعداد خاصية دورة الحياة",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.unreachable_state": {
+      "message": "الحالة {$state} لا يمكن الوصول إليها من حالة ابتدائية",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.widens_initial": {
+      "message": "الحالة الابتدائية {$state} ليست حالة ابتدائية في دورة الحياة الموروثة",
+      "review": "needs_review"
+    },
+    "lifecycle.validation.widens_transition": {
+      "message": "الانتقال {$id} ليس انتقالًا في دورة الحياة الموروثة؛ النوع الفرعي لا يملك إلا إسقاط الانتقالات",
+      "review": "needs_review"
+    },
+    "mapping.interpretation.invalid_endpoint": {
+      "message": "طرف التفسير {$artifactId} يتطلب حزمة أعمال محفوظة واحدة، وتبعية مطلوبة محددة، وهوية إصدار ومحتوى مطابقة",
+      "review": "needs_review"
+    },
+    "mapping.interpretation.unsupported": {
+      "message": "تفسيرات القوانين تتطلب مطابقة الأعضاء والتزامات الحفظ",
+      "review": "needs_review"
+    },
+    "mapping.model.expression_type": {
+      "message": "{$expression}: {$detail} ({$code})",
+      "review": "needs_review"
+    },
+    "mapping.model.interface_not_implemented": {
+      "message": "{$objectType} لا ينفّذ أداة الواجهة {$interface}",
+      "review": "needs_review"
+    },
+    "mapping.model.invalid_entitlement_condition": {
+      "message": "رابط الشرط {$link} يجب أن يستهدف {$expectedTarget}، والموجود {$actualTarget}",
+      "review": "needs_review"
+    },
+    "mapping.model.invalid_entitlement_grantee": {
+      "message": "نوع الممنوح ونوع الكائن في الاستحقاق يجب أن يطابقا نوع هوية قانونيًا",
+      "review": "needs_review"
+    },
+    "mapping.model.invalid_entitlement_join": {
+      "message": "ربط الاستحقاق {$join} له اسم مستعار أو مفتاح أو مصدر أو نوع حقل غير صالح",
+      "review": "needs_review"
+    },
+    "mapping.model.invalid_nesting": {
+      "message": "مجموعة البيانات {$dataset} ليست جدولًا فرعيًا معلَنًا لـ {$parent} محفوظًا في حقله {$field}",
+      "review": "needs_review"
+    },
+    "mapping.model.invalid_on_delete": {
+      "message": "onDelete {$state} لـ {$property} ليست حالة نهائية في دورة حياة {$objectType}",
+      "review": "needs_review"
+    },
+    "mapping.model.lifecycle_member": {
+      "message": "{$property} من {$objectType}: خاصية دورة الحياة لا تتغير إلا بقاعدة دورة حياة",
+      "review": "needs_review"
+    },
+    "mapping.model.link_target_mismatch": {
+      "message": "الرابط {$link} من {$objectType} يستهدف {$target}، الذي لا يقبل {$produced}",
+      "review": "needs_review"
+    },
+    "mapping.model.read_only_member": {
+      "message": "{$property} من {$objectType} محسوبة وللقراءة فقط",
+      "review": "needs_review"
+    },
+    "mapping.model.source_hash_mismatch": {
+      "message": "مخطط المصدر {$schemaId} بالإصدار {$version} بصمته {$actual}، لا البصمة المربوطة {$sha256}",
+      "review": "needs_review"
+    },
+    "mapping.model.undeclared_dependency": {
+      "message": "مرجع الأداة {$artifactId} ليس تبعية مطلوبة بإصدار محدد",
+      "review": "needs_review"
+    },
+    "mapping.model.unencodable_member": {
+      "message": "الخاصية {$property} من {$objectType} ليس لها ترميز مُدخل إجراء",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_dataset": {
+      "message": "مجموعة البيانات {$dataset} غير معلَنة في مخطط المصدر",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_entitlement_field": {
+      "message": "تعيين الاستحقاق يشير إلى حقل مصدر غير معلَن أو غير مربوط",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_field": {
+      "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_interface": {
+      "message": "{$artifactId} ليست أداة كيان تعرّف واجهة",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_member": {
+      "message": "{$objectType} ليس له {$what} {$member}",
+      "review": "needs_review"
+    },
+    "mapping.model.unknown_object_type": {
+      "message": "{$entity} ليست أداة كيان تعرّف نوع كائن متاحًا",
+      "review": "needs_review"
+    },
+    "mapping.model.unresolved_source": {
+      "message": "مخطط المصدر {$schemaId} بالإصدار {$version} ليس أداة source_schema في المجموعة أو القاعدة",
+      "review": "needs_review"
+    },
+    "mapping.runtime.evaluation_failed": {
+      "message": "التعيين {$map}: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.runtime.invalid_key": {
+      "message": "التعيين {$map}: أنتج {$expression} القيمة {$value}، وليست نصًا غير فارغ",
+      "review": "needs_review"
+    },
+    "mapping.runtime.invalid_record": {
+      "message": "التعيين {$map}: الحقل {$field} {$reason}",
+      "review": "needs_review"
+    },
+    "mapping.runtime.observed_out_of_band": {
+      "message": "لقطة دورة الحياة المرصودة من {$source} لـ {$objectType}/{$key}.{$property} ({$from} -> {$to}) ليس لها مسار معلَن أقصر وحيد؛ mappingVersion={$mappingVersion}، observedAt={$observedAt}، reason={$reason}",
+      "review": "needs_review"
+    },
+    "mapping.validation.duplicate_map": {
+      "message": "معرّف التعيين {$id} معلَن مرتين",
+      "review": "needs_review"
+    },
+    "mapping.validation.duplicate_member": {
+      "message": "التعيين {$id} له قاعدتان للعضو {$member}",
+      "review": "needs_review"
+    },
+    "mapping.validation.empty_scope": {
+      "message": "{$member} يجب ألا يكون فارغًا",
+      "review": "needs_review"
+    },
+    "mapping.validation.incomplete_entitlement_snapshot": {
+      "message": "تعيينات الاستحقاق تتطلب كل مجموعة بيانات مصدر وربط في اللقطة الكاملة",
+      "review": "needs_review"
+    },
+    "mapping.validation.interface_out_of_scope": {
+      "message": "التعيين {$id} يستهدف أداة الواجهة {$interface}، وهي ليست ضمن واجهات التعيين",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_document": {
+      "message": "المستند ليس مستند MappingIR: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_entitlement_map": {
+      "message": "تعيين الاستحقاق {$map} له إعلان غير صالح",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_expression": {
+      "message": "{$expression} لا يُجمَّع: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_id": {
+      "message": "معرّف التعيين {$id} ليس معرّف عضو",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_identity_binding": {
+      "message": "ربط الهوية يحتاج مفتاح مصدر فريدًا، ومرجع party.Person، ودليل مراجعة",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_key": {
+      "message": "معرّف التعيين {$artifactId} يحتوي '@' أو الإصدار {$version} ليس SemVer، فالمفتاح {$key} ملتبس",
+      "review": "needs_review"
+    },
+    "mapping.validation.invalid_required_link": {
+      "message": "العلاقة المطلوبة {$link} ليس لها مفتاح هدف محدد",
+      "review": "needs_review"
+    },
+    "mapping.validation.lifecycle_rule_shape": {
+      "message": "دورة حياة {$property} في التعيين {$id} يجب أن تحدد بالضبط واحدًا من الحالة أو الانتقال",
+      "review": "needs_review"
+    },
+    "mapping.validation.unknown_target_map": {
+      "message": "الرابط {$link} يربط بالتعيين {$map}، الذي لا يعلنه التعيين",
+      "review": "needs_review"
+    },
+    "mapping.vendor.invalid_contract": {
+      "message": "التعيين المقيَّد بمورِّد له عقد مصدر متفرق غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "metric.validation.complexity_limit": {
+      "message": "تبعيات المقاييس ومسارات الروابط محدودة بـ 64 مستوى.",
+      "review": "needs_review"
+    },
+    "metric.validation.currency_source_mismatch": {
+      "message": "عملة المقياس يجب أن تطابق مصدر العملة المعتمد لنوع المبلغ.",
+      "review": "needs_review"
+    },
+    "metric.validation.cycle": {
+      "message": "تبعيات النِّسب يجب أن تكون بلا دورات.",
+      "review": "needs_review"
+    },
+    "metric.validation.duplicate_metric": {
+      "message": "أسماء المقاييس يجب أن تكون فريدة.",
+      "review": "needs_review"
+    },
+    "metric.validation.fan_out": {
+      "message": "الأبعاد متعددة الأطراف تتطلب استراتيجية تجميع متماثلة.",
+      "review": "needs_review"
+    },
+    "metric.validation.grain_mismatch": {
+      "message": "معاملات النسبة يجب أن تتشارك درجة الكائن والزمن.",
+      "review": "needs_review"
+    },
+    "metric.validation.import_gap": {
+      "message": "الاستيراد التبادلي يتطلب دلالات أنطولوجيا أو حساب صريحة.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_additivity": {
+      "message": "الجمعية يجب أن تطابق جبر المقياس.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_conversion": {
+      "message": "التحويل يتطلب عملة هدف وسعرًا عشريًا بلا أبعاد.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_currency": {
+      "message": "العملة يجب أن ترتبط بخاصية عملة أحادية القيمة.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_dimension": {
+      "message": "الأبعاد تتطلب خاصية مفردة ودرجة متوافقة.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_filter": {
+      "message": "القيمة الحرفية للمرشّح والعامل يجب أن يطابقا عقد الخاصية.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_measure": {
+      "message": "التجميع يتطلب خاصية متوافقة.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_name": {
+      "message": "أسماء المقاييس يجب أن تكون معرّفات بأحرف صغيرة، مع نطاق أسماء اختياري.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_owner": {
+      "message": "المقاييس تتطلب مالكًا صريحًا غير فارغ.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_policy": {
+      "message": "سياسة الصلاحيات أو الحداثة في Norn غير صالحة.",
+      "review": "needs_review"
+    },
+    "metric.validation.invalid_time": {
+      "message": "محور الزمن يجب أن يكون تاريخًا أو طابعًا زمنيًا أحادي القيمة.",
+      "review": "needs_review"
+    },
+    "metric.validation.mixed_currency": {
+      "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
+      "review": "needs_review"
+    },
+    "metric.validation.ontology_projection": {
+      "message": "مجموعات البيانات أو العلاقات الدلالية المُولَّدة تختلف عن الأنطولوجيا.",
+      "review": "needs_review"
+    },
+    "metric.validation.partial_path": {
+      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "review": "needs_review"
+    },
+    "metric.validation.ratio_aggregation": {
+      "message": "METRIC-ADDITIVITY-1: اجمع البسط والمقام المعلَنين كلًّا على حدة ثم اقسم مجموعيهما؛ حساب متوسط النِّسب المخزَّنة مرفوض.",
+      "review": "needs_review"
+    },
+    "metric.validation.undeclared_additivity": {
+      "message": "METRIC-ADDITIVITY-1: أعلن الجمعية على نوع الخاصية العددية قبل التجميع؛ الوحدات لا تُثبت الجمعية.",
+      "review": "needs_review"
+    },
+    "metric.validation.unit_mismatch": {
+      "message": "وحدات معاملات النسبة وعملاتها يجب أن تتفق.",
+      "review": "needs_review"
+    },
+    "metric.validation.unknown_metric": {
+      "message": "المقياس المُشار إليه غير موجود.",
+      "review": "needs_review"
+    },
+    "metric.validation.unknown_object": {
+      "message": "نوع كائن المقياس غير متاح.",
+      "review": "needs_review"
+    },
+    "metric.validation.unknown_path": {
+      "message": "كل دور في المسار وكل خاصية طرفية يجب أن تُحَلّ.",
+      "review": "needs_review"
+    },
+    "metric.validation.unsupported_semantics": {
+      "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
+      "review": "needs_review"
+    },
+    "object_type.validation.computed_key_component": {
+      "message": "مكوّن المفتاح {$property} محسوب؛ الهوية تُخزَّن ولا تُشتق",
+      "review": "needs_review"
+    },
+    "object_type.validation.computed_with_default": {
+      "message": "الخاصية المحسوبة {$property} للقراءة فقط ولا يمكن أن تعلن قيمة افتراضية",
+      "review": "needs_review"
+    },
+    "object_type.validation.default_out_of_range": {
+      "message": "القيمة الافتراضية {$value} خارج النطاق {$range}",
+      "review": "needs_review"
+    },
+    "object_type.validation.default_type_mismatch": {
+      "message": "القيمة الافتراضية لخاصية من النوع {$kind} يجب أن تكون {$expected}",
+      "review": "needs_review"
+    },
+    "object_type.validation.default_unchecked": {
+      "message": "تعذّر التحقق من نوع القيمة الافتراضية: {$reason}؛ احذفها",
+      "review": "needs_review"
+    },
+    "object_type.validation.default_violates_constraint": {
+      "message": "القيمة الافتراضية {$value} تخالف {$constraint}",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_interface": {
+      "message": "الواجهة {$interface} مذكورة مرتين",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_invariant_id": {
+      "message": "معرّف الثابت {$invariant} معلَن بالفعل على النوع أو على نوع أعلى؛ الثابت لا يُستبدل أبدًا",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_key_component": {
+      "message": "مكوّن المفتاح {$property} مذكور مرتين",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_key_name": {
+      "message": "المفتاح {$key} معلَن مرتين",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_link_id": {
+      "message": "معرّف الرابط {$link} معلَن مرتين، كرابط أو كخاصية، في تعريف واحد",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_name": {
+      "message": "نوع الكائن {$name} معرَّف بالفعل عند الموضع {$index}",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_normalization": {
+      "message": "المكوّن {$property} مُطبَّع مرتين",
+      "review": "needs_review"
+    },
+    "object_type.validation.duplicate_property_id": {
+      "message": "معرّف الخاصية {$property} معلَن مرتين",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_computed": {
+      "message": "تعبير الحساب فارغ",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_identity_rule": {
+      "message": "قاعدة هوية المفتاح {$key} لا تعلن normalize ولا matchPolicy؛ احذفها",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_invariant_expression": {
+      "message": "تعبير الثابت {$invariant} فارغ",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_invariant_message": {
+      "message": "رسالة الثابت {$invariant} فارغة",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_key": {
+      "message": "المفتاح {$key} لا يعلن أي خاصية",
+      "review": "needs_review"
+    },
+    "object_type.validation.empty_normalization": {
+      "message": "تطبيع {$property} لا يعلن أي خطوة",
+      "review": "needs_review"
+    },
+    "object_type.validation.extension_namespace_mismatch": {
+      "message": "نطاق أسماء الامتداد {$namespace} ليس نطاق أسماء المستأجر {$tenant}",
+      "review": "needs_review"
+    },
+    "object_type.validation.extension_of_local_type": {
+      "message": "هدف الامتداد {$type} معرَّف في الطبقة نفسها؛ أعلن خصائصه على النوع نفسه",
+      "review": "needs_review"
+    },
+    "object_type.validation.extension_shadows_member": {
+      "message": "الامتداد {$member} {$id} يحجب العضو ذا المعرّف نفسه الذي يعلنه {$owner} على {$type}",
+      "review": "needs_review"
+    },
+    "object_type.validation.foreign_inverse": {
+      "message": "الدور العكسي {$id} سيضيف عضوًا إلى {$target} الذي تملكه طبقة أخرى؛ أعلن الرابط في امتداد ليكون دوره العكسي ضمن نطاق أسماء، أو احذف الدور العكسي",
+      "review": "needs_review"
+    },
+    "object_type.validation.inadmissible_key_kind": {
+      "message": "مكوّن المفتاح {$property} من النوع {$kind}، وهو نوع بلا مساواة قانونية",
+      "review": "needs_review"
+    },
+    "object_type.validation.inheritance_budget_exhausted": {
+      "message": "استنفد تصنيف الوراثة ميزانية {$dimension} (الحد {$limit})؛ توقّف التحقق من الكتالوج قبل حلّ سلسلة الأسلاف",
+      "review": "needs_review"
+    },
+    "object_type.validation.inheritance_cycle": {
+      "message": "سلسلة extends للنوع {$type} تعود إليه",
+      "review": "needs_review"
+    },
+    "object_type.validation.interface_link_target_mismatch": {
+      "message": "الرابط {$link} لا يستهدف {$target} الذي تتطلبه الواجهة {$interface}، ولا تضييقًا له",
+      "review": "needs_review"
+    },
+    "object_type.validation.interface_link_widens_cardinality": {
+      "message": "للرابط {$link} تعددية أوسع مما تتطلبه الواجهة {$interface}",
+      "review": "needs_review"
+    },
+    "object_type.validation.interface_property_type_mismatch": {
+      "message": "الخاصية {$property} ليست من النوع الذي تتطلبه الواجهة {$interface}، ولا تضييقًا له",
+      "review": "needs_review"
+    },
+    "object_type.validation.interface_property_widens_nullability": {
+      "message": "الخاصية {$property} تقبل القيمة الفارغة، لكن الواجهة {$interface} تتطلب قيمة",
+      "review": "needs_review"
+    },
+    "object_type.validation.interface_requirement_conflict": {
+      "message": "الواجهات {$interfaces} كلها تتطلب العضو {$id}، لكن لا يوجد عضو واحد يلبّيها معًا: {$reason}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_accounting_leg_declaration": {
+      "message": "إعلان الطرف المحاسبي على {$type} غير صالح: {$reason}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_computed": {
+      "message": "تعبير حساب {$property} ليس تعبير ZEN: {$error}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_extension_namespace": {
+      "message": "نطاق أسماء الامتداد {$namespace} يجب أن يكون مقطعًا واحدًا بأحرف صغيرة وأرقام ([a-z][a-z0-9]*)",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_invariant_expression": {
+      "message": "تعبير الثابت {$invariant} ليس تعبير ZEN: {$error}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_invariant_id": {
+      "message": "معرّف الثابت {$invariant} يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_key_name": {
+      "message": "اسم المفتاح {$key} يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_link_id": {
+      "message": "{$role} {$id} يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_match_policy": {
+      "message": "سياسة المطابقة {$policy} يجب أن تكون مقاطع مفصولة بنقاط من [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_name": {
+      "message": "اسم نوع الكائن {$name} يجب أن يتكون من مقاطع نطاق أسماء بأحرف صغيرة مفصولة بنقاط واسم بنمط PascalCase، مثل \"retail.Sku\"",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_naming_series": {
+      "message": "سلسلة الترقيم غير صالحة: {$detail}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_owned_collection": {
+      "message": "المجموعة المملوكة {$collection} غير صالحة: {$reason}",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_property_id": {
+      "message": "معرّف الخاصية {$property} يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "object_type.validation.invalid_status_date": {
+      "message": "مُهمَل منذ {$date}، وهو ليس تاريخًا تقويميًا بصيغة \"YYYY-MM-DD\"",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_override_changes_acyclic": {
+      "message": "الرابط {$link} يتجاوز الرابط الذي يعلنه {$owner} ويغيّر قيد عدم الدورية؛ يجب أن يحافظ التجاوز على القيمة الموروثة",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_override_redeclares": {
+      "message": "الرابط {$link} يتجاوز الرابط الذي يعلنه {$owner} ويعيد إعلان {$member} الذي يرثه التجاوز؛ احذفه",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_override_target_mismatch": {
+      "message": "الرابط {$link} يتجاوز الرابط الذي يعلنه {$owner} بهدف ليس {$target} ولا تضييقًا له؛ التجاوز يضيّق فقط",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_override_widens_cardinality": {
+      "message": "الرابط {$link} يتجاوز الرابط الذي يعلنه {$owner} بتعددية أوسع؛ التجاوز يضيّق فقط (من متعدد إلى واحد، ومن اختياري إلى إلزامي)",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_property_markings_unsupported": {
+      "message": "خصائص الروابط الموسومة تتطلب تصنيف الحواف، وهو غير مدعوم",
+      "review": "needs_review"
+    },
+    "object_type.validation.link_property_protection_unsupported": {
+      "message": "خصائص الروابط المحمية تتطلب صلاحية روابط مختومة، وهي غير مدعومة",
+      "review": "needs_review"
+    },
+    "object_type.validation.member_id_conflict": {
+      "message": "{$member} {$id} يأخذ معرّف {$other} على {$type}؛ الخصائص والروابط والأدوار العكسية تتشارك نطاق أسماء أعضاء واحدًا",
+      "review": "needs_review"
+    },
+    "object_type.validation.missing_interface_link": {
+      "message": "الواجهة {$interface} تتطلب الرابط {$link}، والنوع لا يعلنه ولا يرثه",
+      "review": "needs_review"
+    },
+    "object_type.validation.missing_interface_property": {
+      "message": "الواجهة {$interface} تتطلب الخاصية {$property}، والنوع لا يعلنها ولا يرثها",
+      "review": "needs_review"
+    },
+    "object_type.validation.normalization_not_applicable": {
+      "message": "التطبيع ينطبق على النص، لكن المكوّن {$property} من النوع {$kind}",
+      "review": "needs_review"
+    },
+    "object_type.validation.normalization_not_in_key": {
+      "message": "التطبيع يسمّي {$property}، وهو ليس مكوّنًا في المفتاح {$key}",
+      "review": "needs_review"
+    },
+    "object_type.validation.nullable_key_component": {
+      "message": "مكوّن المفتاح {$property} يقبل القيمة الفارغة",
+      "review": "needs_review"
+    },
+    "object_type.validation.override_computed": {
+      "message": "الخاصية {$property} تتجاوز الخاصية التي يعلنها {$owner}؛ الخاصية المحسوبة لا تُتجاوز أبدًا، والتجاوز لا يكون محسوبًا أبدًا",
+      "review": "needs_review"
+    },
+    "object_type.validation.override_type_mismatch": {
+      "message": "الخاصية {$property} تتجاوز الخاصية التي يعلنها {$owner} بنوع ليس مطابقًا ولا أضيق؛ التجاوز يضيّق فقط",
+      "review": "needs_review"
+    },
+    "object_type.validation.override_widens_nullability": {
+      "message": "الخاصية {$property} تقبل القيمة الفارغة، لكن الخاصية التي يعلنها {$owner} لا تقبلها؛ التجاوز يضيّق فقط",
+      "review": "needs_review"
+    },
+    "object_type.validation.redundant_key": {
+      "message": "المفتاح {$key} له المكوّنات والتطبيع وسياسة المطابقة نفسها التي للمفتاح {$other}؛ ترتيب المكوّنات لا يغيّر التفرّد",
+      "review": "needs_review"
+    },
+    "object_type.validation.reserved_member_separator": {
+      "message": "معرّف {$member} {$id} يحتوي \"__\"، وهو محجوز لأعضاء الامتدادات (\"<namespace>__<name>\")",
+      "review": "needs_review"
+    },
+    "object_type.validation.shadows_base": {
+      "message": "{$name} تعريف أساسي مثبَّت، وهو للقراءة فقط؛ امدده أو أضف نوعًا فرعيًا بدلًا من ذلك",
+      "review": "needs_review"
+    },
+    "object_type.validation.tenant_type_not_subtype": {
+      "message": "نوع الكائن الخاص بالمستأجر {$type} يجب أن يمدّ نوعًا: المستأجر يضيف أنواعًا فرعية للأنواع المثبَّتة، ولا يضيف أنواعًا أساسية جديدة أبدًا",
+      "review": "needs_review"
+    },
+    "object_type.validation.tenant_type_outside_namespace": {
+      "message": "نوع الكائن الخاص بالمستأجر {$type} يجب أن يُسمّى ضمن نطاق أسماء المستأجر، مثل {$example}",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_extension_target": {
+      "message": "هدف الامتداد {$type} لا يسمّي أي نوع كائن",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_interface": {
+      "message": "implements {$interface}، الذي لا يسمّي أي واجهة",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_key_property": {
+      "message": "مكوّن المفتاح {$property} لا يسمّي أي خاصية لنوع الكائن",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_link_target": {
+      "message": "هدف الرابط {$target} لا يسمّي أي نوع كائن أو واجهة",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_replacement": {
+      "message": "replacedBy {$name} يجب أن يسمّي تعريفًا آخر من النوع نفسه",
+      "review": "needs_review"
+    },
+    "object_type.validation.unknown_supertype": {
+      "message": "extends {$type}، الذي لا يسمّي أي نوع كائن",
+      "review": "needs_review"
+    },
+    "object_type.validation.unnamespaced_member": {
+      "message": "{$member} {$id} المضاف يجب أن يُسمّى \"{$namespace}__<name>\" ضمن نطاق أسماء امتداد طبقته، كي لا يحجب عضوًا أساسيًا",
+      "review": "needs_review"
+    },
+    "object_type.validation.unsatisfiable_constraints": {
+      "message": "القيود المطبَّقة على الخاصية {$property} لا تقبل معًا أي قيمة: {$reason}",
+      "review": "needs_review"
+    },
+    "ontology.lint.deep_hierarchy": {
+      "message": "نوع الكائن {$name} له {$depth} أنواع أعلى ({$chain})، أكثر من {$max}؛ فضّل الواجهات أو التركيب",
+      "review": "needs_review"
+    },
+    "ontology.lint.duplicate_definition": {
+      "message": "{$kind} {$name} له البنية نفسها تمامًا التي لـ {$kind} {$other} (الأداة {$artifactId})؛ أعد استخدامه أو امدده بدل إعادة تعريفه",
+      "review": "needs_review"
+    },
+    "ontology.lint.incomplete_provenance": {
+      "message": "مصدر أداة {$source} هذه ينقصه {$members}",
+      "review": "needs_review"
+    },
+    "ontology.lint.mega_object": {
+      "message": "نوع الكائن {$name} يعلن {$count} خصائص وروابط، أكثر من {$max}؛ قسّمه إلى المفاهيم التي يجمعها",
+      "review": "needs_review"
+    },
+    "ontology.lint.plural_type_name": {
+      "message": "{$kind} {$name} اسمه المحلي بصيغة الجمع؛ سمِّ المفهوم باسم النسخة الواحدة",
+      "review": "needs_review"
+    },
+    "ontology.lint.redundant_member_prefix": {
+      "message": "العضو {$id} من {$name} يكرر اسم النوع كبادئة؛ النوع يميّزه بالفعل",
+      "review": "needs_review"
+    },
+    "ontology.lint.source_mirroring": {
+      "message": "نوع الكائن {$name} يحاكي كيان المصدر {$entity} من {$schemaId}: {$shared} من أعضائه الـ {$members} تطابق حقول {$entity} الـ {$fields} بالاسم؛ نمذج مفهوم الأعمال وعيّن المصدر عليه",
+      "review": "needs_review"
+    },
+    "ontology.lint.unknown_mapping_target": {
+      "message": "التعيين يستهدف {$target}، الذي لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "ontology.lint.unmapped_required_member": {
+      "message": "{$memberKind} المطلوب {$id} من {$target} غير مُعيَّن ولا معلَن كفجوة",
+      "review": "needs_review"
+    },
+    "ontology.lint.unmapped_source_field": {
+      "message": "حقول المصدر من {$entity} في {$schemaId} غير مُعيَّنة ولا مُتجاهَلة صراحةً: {$fields}",
+      "review": "needs_review"
+    },
+    "ontology.lint.untraceable_provenance": {
+      "message": "أداة {$source} هذه لا تسمّي {$member} للمصدر، فلا يمكن تتبّع أصلها",
+      "review": "needs_review"
+    },
+    "ontology.lint.versioned_name": {
+      "message": "{$kind} {$name} يحمل علامة الإصدار أو النسخ {$marker}؛ أصدِر الأداة لا الاسم",
+      "review": "needs_review"
+    },
+    "ontology.lint.weak_relationship": {
+      "message": "الخاصية {$id} من {$name} تشير إلى {$target} بقيمة مفردة، ولا يوجد رابط إلى {$target}؛ نمذج العلاقة كرابط",
+      "review": "needs_review"
+    },
+    "ontology_instance.validation.invalid_payload": {
+      "message": "نسخة الأنطولوجيا لا تطابق مصطلحها عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "ontology_link.validation.invalid_payload": {
+      "message": "رابط الأنطولوجيا غير صالح عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "ontology_pack.validation.invalid_payload": {
+      "message": "حزمة الأنطولوجيا غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "ontology_registry.validation.invalid_payload": {
+      "message": "سجل الأنطولوجيا غير متسق عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "policy.validation.invalid_payload": {
+      "message": "حمولة PolicyIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "property_type.validation.bound_exceeds_scale": {
+      "message": "{$member} {$bound} فيه أرقام كسرية أكثر من المقياس المعلَن {$scale}",
+      "review": "needs_review"
+    },
+    "property_type.validation.bound_not_integer": {
+      "message": "{$member} {$bound} يجب أن يكون عددًا صحيحًا بإشارة ضمن 64 بت بلا كسر",
+      "review": "needs_review"
+    },
+    "property_type.validation.bound_out_of_range": {
+      "message": "{$member} {$bound} خارج نطاق الأعداد العشرية لتعبيرات ZEN: {$error}",
+      "review": "needs_review"
+    },
+    "property_type.validation.constraint_not_applicable": {
+      "message": "القيد {$member} لا ينطبق على خاصية من النوع {$kind}",
+      "review": "needs_review"
+    },
+    "property_type.validation.duplicate_enum_value": {
+      "message": "قيمة التعداد {$value} معلَنة مرتين",
+      "review": "needs_review"
+    },
+    "property_type.validation.duplicate_member": {
+      "message": "عضو السجل {$member} معلَن مرتين",
+      "review": "needs_review"
+    },
+    "property_type.validation.duplicate_name": {
+      "message": "نوع الخاصية {$name} معرَّف بالفعل عند الموضع {$index}",
+      "review": "needs_review"
+    },
+    "property_type.validation.empty_enum": {
+      "message": "التعداد لا يعلن أي قيمة",
+      "review": "needs_review"
+    },
+    "property_type.validation.empty_record": {
+      "message": "السجل يجب أن يعلن أعضاء",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_bound": {
+      "message": "{$member} {$bound} يجب أن يكون قيمة عشرية حرفية دقيقة مثل \"-12.50\"",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_enum_value": {
+      "message": "قيمة التعداد يجب ألا تكون فارغة",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_member": {
+      "message": "عضو السجل يجب أن يطابق [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_name": {
+      "message": "اسم نوع الخاصية {$name} يجب أن يكون مقاطع مفصولة بنقاط من [a-z][a-z0-9_]*",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_pattern": {
+      "message": "النمط {$pattern} لا يُجمَّع: {$error}",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_unit": {
+      "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
+      "review": "needs_review"
+    },
+    "property_type.validation.inverted_range": {
+      "message": "{$lower} أكبر من {$upper}",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_cycle": {
+      "message": "سلسلة ref من {$name} تعود إليه",
+      "review": "needs_review"
+    },
+    "property_type.validation.scale_out_of_range": {
+      "message": "المقياس العشري {$scale} يتجاوز الحد الأقصى {$max}",
+      "review": "needs_review"
+    },
+    "property_type.validation.unknown_ref": {
+      "message": "ref {$name} لا يسمّي أي نوع خاصية في الكتالوج أو السجل",
+      "review": "needs_review"
+    },
+    "question.validation.comparison_cycle": {
+      "message": "مقارنات الأسئلة يجب أن تكون بلا دورات.",
+      "review": "needs_review"
+    },
+    "question.validation.duplicate_question": {
+      "message": "أسماء الأسئلة يجب أن تكون فريدة.",
+      "review": "needs_review"
+    },
+    "question.validation.duplicate_selection": {
+      "message": "اختيارات المقاييس والأبعاد يجب أن تكون فريدة.",
+      "review": "needs_review"
+    },
+    "question.validation.empty_metrics": {
+      "message": "الأسئلة تتطلب مقياسًا واحدًا على الأقل.",
+      "review": "needs_review"
+    },
+    "question.validation.fan_out_rollup": {
+      "message": "دلاء التفرّع المتداخلة لا يمكن تجميعها كقيم مفردة.",
+      "review": "needs_review"
+    },
+    "question.validation.invalid_freshness": {
+      "message": "الحداثة تتطلب عمرًا موجبًا أو لحظة UTC صالحة.",
+      "review": "needs_review"
+    },
+    "question.validation.invalid_name": {
+      "message": "أسماء الأسئلة يجب أن تكون معرّفات بأحرف صغيرة، مع نطاق أسماء اختياري.",
+      "review": "needs_review"
+    },
+    "question.validation.invalid_rollup": {
+      "message": "التجميعات يجب أن تسمّي محاور مختارة وتستخدم اختزالًا مقبولًا.",
+      "review": "needs_review"
+    },
+    "question.validation.invalid_window": {
+      "message": "نافذة الزمن يجب أن تكون فترة UTC مرتبة نصف مفتوحة.",
+      "review": "needs_review"
+    },
+    "question.validation.mixed_axis_rollup": {
+      "message": "الاختزالات المتزامنة الزمنية وغير الزمنية تتطلب عقد اختزال مرتبًا.",
+      "review": "needs_review"
+    },
+    "question.validation.non_additive_rollup": {
+      "message": "المقاييس غير الجمعية لا يمكن إعادة تجميعها.",
+      "review": "needs_review"
+    },
+    "question.validation.semi_additive_time": {
+      "message": "المقاييس شبه الجمعية تتطلب اختزالها الزمني المعلَن.",
+      "review": "needs_review"
+    },
+    "question.validation.snapshot_aggregation": {
+      "message": "تجميع اللقطات يتطلب درجة سلسلة واختزالات مرتبة؛ هذا العقد يرفضه.",
+      "review": "needs_review"
+    },
+    "question.validation.unknown_comparison": {
+      "message": "أسئلة المقارنة يجب أن تكون موجودة وذات اختيارات متوافقة.",
+      "review": "needs_review"
+    },
+    "relation.validation.invalid_payload": {
+      "message": "حمولة RelationIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "relation.validation.v2_relation_is_link": {
+      "message": "ليس لـ RelationIR صيغة v2: أعلن علاقة EntityIR v2 كرابط في payload.objectType.links لكيان المصدر",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_binding": {
+      "message": "مشغّلات قاعدة القرار أو شريحتها غير صالحة: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_decision_contract": {
+      "message": "{$schema} في مخطط القرار يعلن بالضبط {$members}: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_fact_change": {
+      "message": "مخطط عنصر الحقائق في مخطط القرار ليس تغيير الحقيقة القانوني: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_payload": {
+      "message": "حمولة RuleIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_schema": {
+      "message": "{$schema} في RuleIR ليس مخططًا مغلقًا: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.invalid_source_command": {
+      "message": "أمر مصدر معلَن أو عقد تفعيل غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_custom_node_rejected": {
+      "message": "customNode غير مقبول في ملف Norn: العُقد المخصصة المضمَّنة مرفوضة (D33)؛ استخدم دالة من المجمع",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_cycle": {
+      "message": "العُقد {$nodeIds} تشكّل دورة؛ مخطط القرار بلا دورات",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_dangling_edge": {
+      "message": "الحافة {$edgeId} تسمّي العقدة {$nodeId}، وهي غير موجودة في المخطط",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_duplicate_id": {
+      "message": "معرّف {$what} {$id} ليس فريدًا",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_function_node_rejected": {
+      "message": "functionNode غير مقبول في ملف Norn: JavaScript ممنوع في النواة الحتمية",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_hit_policy_rejected": {
+      "message": "سياسة المطابقة {$policy} غير مقبولة في ملف Norn: يقبل JDM السياستين first وcollect؛ سياسات DMN الأخرى تُترجم أو تُرفض عند مدخل DMN (T3-DEC-4)",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_invalid_edge": {
+      "message": "الحافة {$edgeId} {$problem}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_invalid_expression": {
+      "message": "{$source} ليس {$form} في ZEN: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_io_node_count": {
+      "message": "للمخطط {$count} من عُقد {$inputOrOutput}؛ لمخطط القرار عقدة واحدة بالضبط",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_recursive_sub_decision": {
+      "message": "القرار الفرعي {$key} يسمّي هذه القاعدة؛ مخطط القرار لا يستدعي نفسه",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_switch_default": {
+      "message": "المحوّل {$nodeId} {$problem}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_switch_unconnected_branch": {
+      "message": "الفرع {$statementId} من المحوّل {$nodeId} ليس له حافة خارجة، فالحدث الذي يسلكه لا يصل إلى أي عقدة",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unknown_column": {
+      "message": "الصف {$rowId} فيه خلية لـ {$columnId}، وهو ليس عمودًا في الجدول",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unknown_node_type": {
+      "message": "نوع العقدة {$type} ليس نوع عقدة JDM؛ يقبل ملف Norn: inputNode وoutputNode وexpressionNode وdecisionTableNode وswitchNode وdecisionNode",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unreachable_node": {
+      "message": "العقدة {$nodeId} {$problem}؛ كل عقدة في مخطط القرار تقع على مسار من المُدخل إلى المُخرج",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unresolved_import": {
+      "message": "الاستيراد {$import} لا يُحَلّ: ملف Norn ليس فيه مستندات سياسات قابلة للاستيراد؛ أعلن أنواع القيم في EntityIR v2",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unresolved_sub_decision": {
+      "message": "القرار الفرعي {$key} ليس تبعية قاعدة مطلوبة لهذه الأداة؛ المفتاح هو artifactId لقاعدة RuleIR v2 معلَنة في التبعيات",
+      "review": "needs_review"
+    },
+    "rule.validation.ordered_fold_invalid": {
+      "message": "إعلان الطيّ المرتَّب يخالف العقد البنيوي المُنمَّط والمرتَّب والمحدود",
+      "review": "needs_review"
+    },
+    "rule.validation.ordered_fold_unsupported": {
+      "message": "تنفيذ الطيّ المرتَّب غير متاح في ملف الدلالات هذا",
+      "review": "needs_review"
+    },
+    "sealing.extension_point.capability_missing": {
+      "message": "العملية تنقصها القدرات التي تمنحها نقطة امتدادها: {$capabilities}",
+      "review": "needs_review"
+    },
+    "sealing.extension_point.contract_violation": {
+      "message": "حمولة التراكب تخالف عقد نقطة الامتداد: {$reason}",
+      "review": "needs_review"
+    },
+    "sealing.extension_point.kind_mismatch": {
+      "message": "نوع مساهمة نقطة الامتداد لا يطابق العملية",
+      "review": "needs_review"
+    },
+    "sealing.extension_point.unresolved": {
+      "message": "{$operation} يشير إلى نقطة امتداد لا يعرضها ختمه",
+      "review": "needs_review"
+    },
+    "sealing.input.duplicate_extension_point": {
+      "message": "تعريفات نقاط الامتداد يجب أن تضم مُدخلًا واحدًا على الأكثر لكل معرّف",
+      "review": "needs_review"
+    },
+    "sealing.input.duplicate_seal": {
+      "message": "تعليقات الختم يجب أن تضم مُدخلًا واحدًا على الأكثر لكل عقدة",
+      "review": "needs_review"
+    },
+    "sealing.monotonic.unseal_forbidden": {
+      "message": "التراكبات اللاحقة لا يمكنها فك ختم سابق",
+      "review": "needs_review"
+    },
+    "sealing.overlay.base_mutation_denied": {
+      "message": "العقدة الأساسية '{$nodeId}' غير قابلة للتغيير: {$reason}",
+      "review": "needs_review"
+    },
+    "sealing.overlay.sealed_mutation": {
+      "message": "العُقد الأساسية المختومة لا يمكن تغييرها دون نقطة امتداد معروضة",
+      "review": "needs_review"
+    },
+    "sealing.overlay.tenant_namespace_mismatch": {
+      "message": "عقدة التخصيص الإضافية ونطاقها يجب أن ينتميا إلى نطاق أسماء المستأجر المعلَن",
+      "review": "needs_review"
+    },
+    "sealing.overlay.tenant_namespace_required": {
+      "message": "التخصيص الإضافي للمستأجر يتطلب نطاق أسماء مستأجر",
+      "review": "needs_review"
+    },
+    "sealing.runtime.capability_denied": {
+      "message": "الشيفرة المخصصة لا تحصل على مقبض للعُقد المختومة ما لم تمنح نقطة امتداد قدرات",
+      "review": "needs_review"
+    },
+    "sealing.upgrade.monotonic_violation": {
+      "message": "ترقيات القاعدة لا يمكنها إضعاف ختم موجود أو إزالته دون صلاحية ترحيل من النواة",
+      "review": "needs_review"
+    },
+    "setting.validation.invalid_payload": {
+      "message": "حمولة SettingIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "source_schema.validation.blank_value": {
+      "message": "القيمة يجب ألا تكون فارغة",
+      "review": "needs_review"
+    },
+    "source_schema.validation.constraint_shape": {
+      "message": "القيد {$id}: {$detail}",
+      "review": "needs_review"
+    },
+    "source_schema.validation.duplicate_code": {
+      "message": "مجموعة الرموز {$id} فارغة أو تذكر {$value} مرتين",
+      "review": "needs_review"
+    },
+    "source_schema.validation.duplicate_field": {
+      "message": "مجموعة البيانات {$dataset} تعلن الحقل {$field} (أو الترتيب {$ordinal}) مرتين",
+      "review": "needs_review"
+    },
+    "source_schema.validation.duplicate_id": {
+      "message": "{$list} تعلن المعرّف {$id} مرتين",
+      "review": "needs_review"
+    },
+    "source_schema.validation.invalid_document": {
+      "message": "المستند ليس مستند SourceSchemaIR: {$detail}",
+      "review": "needs_review"
+    },
+    "source_schema.validation.invalid_evidence": {
+      "message": "الدليل {$uri} يحتاج uri غير فارغ وبصمة SHA-256 ست عشرية بأحرف صغيرة",
+      "review": "needs_review"
+    },
+    "source_schema.validation.invalid_source_identity": {
+      "message": "مكوّنات هوية المصدر يجب ألا تحتوي محارف تحكم",
+      "review": "needs_review"
+    },
+    "source_schema.validation.invalid_timestamp": {
+      "message": "{$value} ليس طابعًا زمنيًا بصيغة RFC 3339 مع إزاحة صريحة",
+      "review": "needs_review"
+    },
+    "source_schema.validation.profile_counts": {
+      "message": "قياسات الملف الوصفي غير متسقة: {$detail}",
+      "review": "needs_review"
+    },
+    "source_schema.validation.promoted_inference": {
+      "message": "{$entry} أصله {$origin}، الذي لا تقبله قائمته؛ الاستدلال ليس إعلانًا أبدًا",
+      "review": "needs_review"
+    },
+    "source_schema.validation.sample_bound": {
+      "message": "مجموعة العينات تتجاوز حدها: {$detail}",
+      "review": "needs_review"
+    },
+    "source_schema.validation.unknown_dataset": {
+      "message": "مجموعة البيانات {$dataset} غير معلَنة",
+      "review": "needs_review"
+    },
+    "source_schema.validation.unknown_field": {
+      "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
+      "review": "needs_review"
+    },
+    "widget.interaction.control_missing_for_transition": {
+      "message": "عنصر تنقل معلَن أو ربط إجراء ليس له عنصر تحكم يقدّمه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.control_without_legal_transition": {
+      "message": "عنصر تحكم تنقل يقود إلى صفحة لا يعلنها التطبيق: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.dialog_depth_exceeds_verified_bound": {
+      "message": "تداخل مربعات الحوار يتجاوز عدد المربعات المكدسة الذي تحقق منه مخطط حالات تفاعل العارض: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.dialog_no_keyboard_close": {
+      "message": "مربع حوار لا يُغلق إلا بالمؤشر؛ يحتاج زر إغلاق مرئيًا أو مفتاح Escape: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.dialog_no_restore_target": {
+      "message": "مربع حوار ليس له هدف لاستعادة التركيز (عنصر تحكم إجراء بداخله، أو منطقة محيطة مسمّاة، أو صفحة): {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.keyboard_unreachable_control": {
+      "message": "عنصر تحكم تفاعلي لا يمكن الوصول إليه بلوحة المفاتيح: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.nullable_without_clear": {
+      "message": "حقل مربوط بمُدخل يقبل القيمة الفارغة لا يمكن مسحه إلى فارغ (لا توجد وسيلة مسح، أو هو مطلوب دائمًا): {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.unnamed_control": {
+      "message": "عنصر تحكم تفاعلي ليس له اسم قابل للوصول: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.interaction.unreachable_page": {
+      "message": "صفحة في التطبيق ليس لها عنصر تحكم يصل إليها من صفحة الدخول: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.validation.invalid_payload": {
+      "message": "حمولة WidgetIR غير صالحة عند {$path}: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.validation.missing_dependency": {
+      "message": "الأداة الرسومية تشير إلى '{$artifactId}' دون إعلانه كتبعية",
+      "review": "needs_review"
+    },
+    "widget.validation.unsafe_action_binding": {
+      "message": "ربط الإجراء يجب أن يستهدف إجراء Norn أو أمر عملية، لا تعديلًا خامًا",
+      "review": "needs_review"
+    }
+  }
+}

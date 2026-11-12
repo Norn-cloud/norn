@@ -102,6 +102,12 @@ pub struct Refusal {
     /// ungranted resource.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<RefusalDiagnostic>,
+    /// On `definition.signoff_mismatch` only: the host's restatement of the
+    /// caller's own admitted payload, flattened into the refusal as
+    /// `restatement` and `restatementSha256`. Absent otherwise.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    pub restatement: Option<Box<RefusalRestatement>>,
 }
 
 /// One checker finding in a refusal.
@@ -114,9 +120,64 @@ pub struct RefusalDiagnostic {
     pub severity: String,
     /// Human-readable message; the code is the contract.
     pub message: String,
+    /// The law that refused, when a declared law did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub law: Option<String>,
     /// Where in the submitted document, when the check can say.
     #[schema(required = true, nullable = true)]
     pub span: Option<RefusalSpan>,
+}
+
+impl RefusalDiagnostic {
+    /// Checker findings, each pointer prefixed by `under` (the checked
+    /// document's place in the submission).
+    #[must_use]
+    pub fn from_checker(findings: &[norn_checker::Diagnostic], under: &str) -> Vec<Self> {
+        findings
+            .iter()
+            .map(|finding| Self {
+                code: finding.code.as_str().to_owned(),
+                severity: match finding.severity {
+                    norn_ir::DiagnosticSeverity::Error => "error",
+                    norn_ir::DiagnosticSeverity::Warning => "warning",
+                    norn_ir::DiagnosticSeverity::Info => "info",
+                }
+                .to_owned(),
+                message: finding.message.clone(),
+                law: None,
+                span: finding.span.as_ref().map(|span| RefusalSpan {
+                    pointer: format!("{under}{}", span.pointer),
+                }),
+            })
+            .collect()
+    }
+
+    /// One error-severity finding at `pointer`.
+    #[must_use]
+    pub fn error(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            severity: "error".to_owned(),
+            message: message.into(),
+            law: None,
+            span: Some(RefusalSpan {
+                pointer: pointer.into(),
+            }),
+        }
+    }
+}
+
+/// The words a signer can sign: what the host reads the submission as.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalRestatement {
+    /// The plain-words restatement the host recomputed. Present, with its
+    /// digest, only on `definition.signoff_mismatch`.
+    #[schema(required = false)]
+    pub restatement: String,
+    /// Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes.
+    #[schema(required = false)]
+    pub restatement_sha256: String,
 }
 
 /// A location in the submitted document.
@@ -146,6 +207,7 @@ impl Refusal {
             Self::UNPROVEN_DETAIL.clone_into(&mut self.explanation);
             self.reason = None;
             self.diagnostics.clear();
+            self.restatement = None;
         }
         self
     }
@@ -168,6 +230,7 @@ impl Refusal {
             message: message.into(),
             explanation: explanation.into(),
             diagnostics: Vec::new(),
+            restatement: None,
         }
     }
 
@@ -175,22 +238,7 @@ impl Refusal {
     /// `under` (the submitted document's place in the request body).
     #[must_use]
     pub fn with_diagnostics(mut self, findings: &[norn_checker::Diagnostic], under: &str) -> Self {
-        self.diagnostics = findings
-            .iter()
-            .map(|finding| RefusalDiagnostic {
-                code: finding.code.as_str().to_owned(),
-                severity: match finding.severity {
-                    norn_ir::DiagnosticSeverity::Error => "error",
-                    norn_ir::DiagnosticSeverity::Warning => "warning",
-                    norn_ir::DiagnosticSeverity::Info => "info",
-                }
-                .to_owned(),
-                message: finding.message.clone(),
-                span: finding.span.as_ref().map(|span| RefusalSpan {
-                    pointer: format!("{under}{}", span.pointer),
-                }),
-            })
-            .collect();
+        self.diagnostics = RefusalDiagnostic::from_checker(findings, under);
         self
     }
 

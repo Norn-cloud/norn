@@ -118,6 +118,43 @@ VAL-RATE's initial graph binding admits one direct expression node between input
 - **VAL-RATE-PRICE:** Given fixed USD, a 15 USD/g rate and 20 g, typed admission/evaluation produces USD 300 at the destination Money scale; a nonzero remainder under Refuse refuses.
 - **VAL-RATE-MISMATCH:** Given USD/g, combining mg, an EUR destination, Rate × Rate or an erased numeric operand refuses; quantity-versus-literal comparison records `core.values.literal_unit` naming g.
 
+### CELL-ID-1 — durable logical cell boundary
+
+A fresh store obtains one opaque 128-bit CellId from an injectable source and
+persists its 32 lowercase hexadecimal digits as `binding:cell_id`, alongside
+`binding:cell_identity_format = norn.cell.identity/v1`, in the creation
+transaction. Scope and physical host do not contribute to it. Reopen validates
+its canonical representation and its retained journal binding. An explicitly
+bound open refuses a different identity. An existing unqualified file remains
+local-only: binding/adoption and portable export are unsupported. Existing
+receipts and history retain their original bytes and hash format.
+
+Restore requires the caller's explicit expected cell binding and matches it
+against the verified export before publishing a destination. Internal replay into
+an empty engine retains that same identity. Migration to another CellId is
+unsupported. This cut does not yet qualify individual receipts or local keys for
+portable use. No store or archive written before this cut exists outside tests
+and nothing is deployed, so none needs a migration path or a format bump.
+
+Named scenarios: **CELL-ID-ONCE** generates once and reopens without calling the
+source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identities;
+**CELL-ID-OPEN** refuses a different expected CellId; **CELL-ID-RESTORE** refuses
+a different or missing target binding without publishing a destination;
+**CELL-ID-LEGACY** refuses portable export/adoption of unqualified history.
+Qualification selector `cell_identity_restore`:
+`cell_identity_restore_refuses_other_identities_and_preserves_state` (a
+same-scope sibling's, a different, a missing and a malformed identity refuse
+with no destination and an unchanged source; the accepted restore reproduces the
+complete source state) and
+`cell_identity_restore_then_reopen_under_another_identity_writes_nothing`
+(reopening a restored file under another identity, or restoring onto it again,
+refuses and leaves its complete state unchanged).
+
+The format marker is mandatory for portable identity. An old generic binding
+named `cell_id`, even when it contains 32 hexadecimal digits, stays unqualified.
+**CELL-ID-UNVERSIONED** checks that neither open nor binding the marker can adopt
+that history; local replay remains valid and portable export refuses.
+
 ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared normalization order. The shared SQLite transaction checks complete normalized tuples for every admitted declaring root/key across stored scope/world domains before publishing events, effects or a receipt; reopen and definition activation validate all such domains. Original property bytes and opaque IDs are preserved. This profile supports text/enum/integer/boolean tuple components, at most 16 normalization steps per component, and a cumulative scan of 4,096 keys/4,096 rows and 8 MiB of encoded-plus-normalized key and identity data. Unsupported normalized components or incomplete scans refuse. Entity-resolution policies, alias history and identity restoration are separate contracts; this cut does not activate them or prove their safety.
 
 - **ID-NORMALIZED-ATOMIC:** sibling subtypes with raw-distinct but canonically equal keys cannot both commit; a refusal leaves the entire SQLite dump unchanged. Original source spellings remain stored.

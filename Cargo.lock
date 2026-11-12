@@ -294,6 +294,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "ascent"
+version = "0.8.1"
+dependencies = [
+ "ascent_base",
+ "ascent_macro",
+ "boxcar",
+ "cfg-if",
+ "hashbrown 0.14.5",
+ "pastey",
+ "rustc-hash",
+]
+
+[[package]]
+name = "ascent_base"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "792af0babe403e49368d8717763605fe978b3a1eb7d51b52e3d0a5cb97e6eb74"
+dependencies = [
+ "pastey",
+]
+
+[[package]]
+name = "ascent_macro"
+version = "0.8.1"
+dependencies = [
+ "ascent_base",
+ "derive-syn-parse",
+ "duplicate",
+ "itertools 0.15.0",
+ "petgraph 0.8.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "ascii-canvas"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -439,6 +475,12 @@ dependencies = [
  "quote",
  "syn 3.0.3",
 ]
+
+[[package]]
+name = "boxcar"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38c99613cb3cd7429889a08dfcf651721ca971c86afa30798461f8eee994de47"
 
 [[package]]
 name = "bs58"
@@ -962,6 +1004,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-syn-parse"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65d7ce8132b7c0e54497a4d9a55a1c2a0912a0d786cf894472ba818fba45762"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1015,6 +1068,12 @@ dependencies = [
  "num-integer",
  "strum 0.27.2",
 ]
+
+[[package]]
+name = "duplicate"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97af9b5f014e228b33e77d75ee0e6e87960124f0f4b16337b586a6bec91867b1"
 
 [[package]]
 name = "dyn-clone"
@@ -1368,6 +1427,16 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
@@ -2186,6 +2255,7 @@ dependencies = [
  "duckdb",
  "js-sys",
  "norn-builtins",
+ "norn-cell",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
@@ -2210,9 +2280,12 @@ name = "norn-cell-do"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "clap",
  "ed25519-dalek",
  "form_urlencoded",
+ "getrandom 0.3.4",
  "http",
+ "libc",
  "norn-api",
  "norn-cell",
  "norn-checker",
@@ -2230,12 +2303,15 @@ dependencies = [
 name = "norn-checker"
 version = "0.2.0"
 dependencies = [
+ "ascent",
  "jsonschema",
  "norn-canonical",
+ "norn-datalog",
  "norn-expr",
  "norn-graph",
  "norn-ir",
  "proptest",
+ "quote",
  "regex-lite",
  "serde",
  "serde_json",
@@ -2323,6 +2399,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-formats"
+version = "0.1.0"
+dependencies = [
+ "norn-checker",
+ "norn-decisions",
+ "norn-expr",
+ "norn-ir",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "norn-graph"
 version = "0.1.0"
 dependencies = [
@@ -2377,6 +2467,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2579,6 +2670,12 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "percent-encoding"
@@ -2823,6 +2920,15 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quote"
@@ -3083,6 +3189,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustc-literal-escaper"

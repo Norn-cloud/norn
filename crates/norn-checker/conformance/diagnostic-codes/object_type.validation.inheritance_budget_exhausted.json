@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.inheritance_budget_exhausted",
+  "message": "inheritance classification exhausted its {dimension} budget (limit {limit}); catalog validation stopped before ancestry resolution",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

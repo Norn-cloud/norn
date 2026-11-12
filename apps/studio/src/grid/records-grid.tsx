@@ -20,6 +20,7 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
+import { offeredFor } from "../lib/screen/call.ts"
 import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 
@@ -372,9 +373,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
-                : actions.length === 0
+                : offeredFor(actions, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{actions.map((action) => (
+                  : <div className="flex flex-wrap gap-2">{offeredFor(actions, record).map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>

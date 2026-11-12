@@ -1,0 +1,65 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "7:18",
+      "end": "7:66",
+      "construct": "(l: { readonly amount: number }) => l.amount > 0"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "8:1",
+      "end": "10:2",
+      "construct": "function big(n: number): boolean { return n > 100 }"
+    },
+    {
+      "code": "NORN-FLOW-CAPTURE",
+      "start": "12:79",
+      "end": "12:87",
+      "construct": "positive"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "13:83",
+      "end": "13:106",
+      "construct": "{ return l.amount > 0 }"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "14:76",
+      "end": "14:91",
+      "construct": "(l, i) => i > 0"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "15:79",
+      "end": "15:83",
+      "construct": "self"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
+      "start": "16:99",
+      "end": "16:100",
+      "construct": "l"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "17:56",
+      "end": "17:73",
+      "construct": "self.lines.reduce"
+    },
+    {
+      "code": "NORN-FLOW-UNSUPPORTED-CALL",
+      "start": "18:79",
+      "end": "18:82",
+      "construct": "big"
+    },
+    {
+      "code": "NORN-FLOW-AMBIENT",
+      "start": "19:91",
+      "end": "19:99",
+      "construct": "Date.now"
+    }
+  ]
+}

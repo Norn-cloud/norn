@@ -275,6 +275,22 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "labels"
+        },
+        "payload": {
+          "$ref": "#/$defs/LabelsPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -1442,6 +1458,11 @@
           "description": "Pure classification over existing base identities.",
           "type": "string",
           "const": "defined_concept"
+        },
+        {
+          "description": "Localized labels for definitions; never part of a definition's\nidentity ([`labels`]).",
+          "type": "string",
+          "const": "labels"
         }
       ]
     },
@@ -5834,6 +5855,275 @@
         "properties"
       ]
     },
+    "LabelEntry": {
+      "description": "Labels for one target.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Longer human-readable description per BCP 47 tag.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocaleText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "Short human-readable name per BCP 47 tag; at least one, none blank.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "review": {
+          "description": "Review state per BCP 47 tag; a tag that is not listed is reviewed.\nEvery listed tag must have a label.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/LabelReview"
+          }
+        },
+        "target": {
+          "description": "The labelled definition.",
+          "$ref": "#/$defs/LabelTarget"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "label"
+      ]
+    },
+    "LabelReview": {
+      "description": "Review state of one locale's label and description.",
+      "oneOf": [
+        {
+          "description": "Proposed (for example machine-translated) and not yet reviewed by a\nperson. Rendered, but listed for review.",
+          "type": "string",
+          "const": "needs_review"
+        },
+        {
+          "description": "Reviewed by a person. The default when a locale has no review entry.",
+          "type": "string",
+          "const": "reviewed"
+        }
+      ]
+    },
+    "LabelTarget": {
+      "description": "The canonical definition a label describes, by its language-neutral id.",
+      "oneOf": [
+        {
+          "description": "An object type or interface, by qualified name (`sales.Invoice`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "objectType"
+            },
+            "objectType": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType"
+          ]
+        },
+        {
+          "description": "A property of an object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "objectType": {
+              "type": "string"
+            },
+            "property": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property"
+          ]
+        },
+        {
+          "description": "One declared value of an `enum` property (inline or through `ref`).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "enumValue"
+            },
+            "objectType": {
+              "type": "string"
+            },
+            "property": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType",
+            "property",
+            "value"
+          ]
+        },
+        {
+          "description": "An action, by `actionId`.",
+          "type": "object",
+          "properties": {
+            "actionId": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "action"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "actionId"
+          ]
+        },
+        {
+          "description": "A rule, by `ruleId`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rule"
+            },
+            "ruleId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "ruleId"
+          ]
+        },
+        {
+          "description": "A law, by `id`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "lawId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "lawId"
+          ]
+        },
+        {
+          "description": "A page of a widget UX contract.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "page"
+            },
+            "pageId": {
+              "type": "string"
+            },
+            "widgetId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "widgetId",
+            "pageId"
+          ]
+        }
+      ]
+    },
+    "LabelsPayload": {
+      "description": "Localized presentation labels for definitions ([`labels`]).",
+      "type": "object",
+      "properties": {
+        "entries": {
+          "description": "One entry per target, each target at most once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LabelEntry"
+          }
+        },
+        "extensions": {
+          "description": "Reserved versioned extension slots, as on other artifact roots.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "labelsVersion": {
+          "description": "The form selector; always `0.1`.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "requiredLocales": {
+          "description": "The locales this layer serves (a tenant's or a locale pack's): every\ndefinition the artifact set and the installed base declare should\nhave a label in each. Missing ones are listed by a warning\n(`labels.lint.missing_label`), never refused. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "labelsVersion",
+        "entries"
+      ]
+    },
+    "LawException": {
+      "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Boolean ZEN predicate over the law subject's `self` environment.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, unique within the tree and distinct from the law id.",
+          "type": "string"
+        },
+        "overrides": {
+          "description": "The law's own id, or the id of another exception in the same tree.",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source location of the declaration.",
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "overrides",
+        "condition",
+        "rationale",
+        "source"
+      ]
+    },
     "LawInterpretationIr": {
       "description": "Typed interpretation contract. Admission refuses until conformance exists.",
       "type": "object",
@@ -5944,6 +6234,14 @@
         "condition": {
           "description": "Optional pointwise activation predicate (not an edge trigger).",
           "$ref": "#/$defs/ZenExpression"
+        },
+        "exceptions": {
+          "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawException"
+          },
+          "minItems": 1
         },
         "id": {
           "description": "Stable identity, preserved by all authoring faces.",
@@ -6122,6 +6420,38 @@
             "objectType",
             "property",
             "transitionId"
+          ]
+        },
+        {
+          "description": "TRANSLATION-PRESERVES-1: the subject is the source contract, the law's\ncondition is admission, and `self` in each assignment is the source record.",
+          "type": "object",
+          "properties": {
+            "assignments": {
+              "description": "Total executable map from target property id to ZEN over the source.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "translation_preserves"
+            },
+            "observation": {
+              "description": "The named observation this law protects.",
+              "$ref": "#/$defs/TranslationObservation"
+            },
+            "targetType": {
+              "description": "Exact target object type, the target contract.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "targetType",
+            "assignments",
+            "observation"
           ]
         }
       ]
@@ -8297,6 +8627,11 @@
           "description": "Scoped temporal law.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "Localized labels; a downstream pack may label upstream definitions.",
+          "type": "string",
+          "const": "labels"
         }
       ]
     },
@@ -9558,6 +9893,26 @@
         "half_away_from_zero"
       ]
     },
+    "RuleByteRange": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ]
+    },
     "RuleConditionV1": {
       "description": "RuleIR v1 closed-operator condition, mirroring the conditions the\n`norn-engine` closed evaluator runs (`RuleCondition`).",
       "oneOf": [
@@ -10041,6 +10396,33 @@
         "doctype",
         "slice",
         "modifiedProperty"
+      ]
+    },
+    "RuleSourceSpan": {
+      "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "pointer"
       ]
     },
     "RuleTrigger": {
@@ -11284,6 +11666,30 @@
       "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TranslationObservation": {
+      "description": "One named observation, read on each side of a translation and compared exactly.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable observation identity.",
+          "type": "string"
+        },
+        "source": {
+          "description": "ZEN over the source record.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "target": {
+          "description": "ZEN over the translated target record.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "target"
+      ]
     },
     "TurnBudget": {
       "description": "Budget for one synchronous cell turn (§1 row 2): one aggregate budget that\nevery triggered decision, validation, and helper debits.",

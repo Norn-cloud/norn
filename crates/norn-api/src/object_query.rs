@@ -227,6 +227,7 @@ impl Findings {
             span: Some(RefusalSpan {
                 pointer: pointer.into(),
             }),
+            law: None,
         });
     }
 }
@@ -261,6 +262,7 @@ pub(crate) fn cursor_invalid() -> Refusal {
         span: Some(RefusalSpan {
             pointer: "/after".to_owned(),
         }),
+        law: None,
     }])
 }
 

@@ -11,12 +11,20 @@
 //!
 //! - The host-agnostic `CellHost` laws (`norn_testkit::cell_host`, T4-CELL-1)
 //!   hold for [`SqliteCell`] over an in-memory store.
+//! - Under injected crashes and I/O errors ([`FaultEngine`], law 6), commits
+//!   and performs stay atomic and the reopened file refines the model; a
+//!   mutant engine that commits a faulted transaction is caught.
+//! - The same laws hold natively on the Durable Object transaction glue
+//!   (`DoEngine` over the `transactionSync` emulator, DO SQL subset), with
+//!   and without faults; mutant glue and storage are caught.
 //! - Deterministic fixtures: commit and enqueue are atomic (a refused commit
 //!   writes nothing); a timer is delivered when due, consumed once, and a
 //!   stale incarnation is refused; a performed result is recorded once and
 //!   survives a reopen without re-executing.
 //! - Reopening the file recovers the ledger hash chain identically, and the
 //!   same scenario run twice produces byte-identical stores.
+//! - Forks (Core 08, FORK-PIN-1, WORLD-ISOLATE-1): WORLD-FORK, and the
+//!   FORK-NONINTERFERE property against main run alone.
 
 mod common;
 
@@ -25,8 +33,9 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use norn_cell::engine::{
-    DefaultEngine, MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine, SqlEngine,
-    SqlValue, validate_bindings, validate_value,
+    DefaultEngine, DoEngine, DoStorage, DoStorageEmulator, EngineFault, EngineFaultKind,
+    FaultEngine, FaultSwitch, MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine,
+    SqlEngine, SqlValue, Thrown, Transact, validate_bindings, validate_value,
 };
 use norn_cell::{CellError, CellStore, JournalMode, Model, PerformClaim, SqliteCell, StoreOptions};
 use norn_kernel::cell_host::JsonObject;
@@ -39,9 +48,12 @@ use norn_kernel::{
 };
 use norn_testkit::Settings;
 use norn_testkit::cell_host::{
-    CELL_HOST_LABELS, LawCommand, LawEvent, LawInput, LedgerEntry, SimulatedCell, check_cell_host,
-    check_link_override, law_responder, override_object_types,
+    CELL_FAULT_LABELS, CELL_HOST_LABELS, CELL_NETWORK_LABELS, CellOp, Delivery, Dispatching,
+    FaultKind, FaultPlan, LawCommand, LawEvent, LawInput, LedgerEntry, Route, SimulatedCell,
+    check_cell_host, check_link_override, law_command, law_key, law_responder, law_values,
+    override_object_types, run_cell_host, run_cell_host_sequence,
 };
+use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -115,18 +127,130 @@ fn law_cell_responder(command: &Command<LawCommand>) -> WireInput {
     WireInput::from(&law_responder(command))
 }
 
+/// A directory for a simulator file store: RAM-backed (`/dev/shm`) when it
+/// exists and is writable, else the normal temporary directory. Simulator
+/// stores are opened without fsync ([`NativeEngine::open_unsynced`]): their
+/// crashes are injected (a transaction that never commits, a dropped
+/// connection, a reopen from the same file), and disk durability under power
+/// loss is out of scope here; it belongs to the nightly differential on real
+/// runtimes (D79 D step 5).
+fn simulator_dir() -> tempfile::TempDir {
+    let shm = Path::new("/dev/shm");
+    shm.is_dir()
+        .then(|| tempfile::tempdir_in(shm).ok())
+        .flatten()
+        .unwrap_or_else(|| tempfile::tempdir().expect("tempdir"))
+}
+
+/// An engine the law driver opens. `faults` is the driver's fault schedule,
+/// shared across reopens; only fault-injecting engines read it.
 trait LawEngine: SqlEngine + Debug + Sized + 'static {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError>;
-    fn open_memory() -> Result<Self, CellError>;
+    /// Whether the engine injects the faults armed on `faults`.
+    const FAULTS: bool = false;
+    /// Whether the engine's storage commits itself and can fail that commit
+    /// on an armed commit fault (semantics 6).
+    const COMMIT_FAULTS: bool = false;
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError>;
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError>;
 }
 
 impl LawEngine for NativeEngine {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError> {
-        NativeEngine::open(path, options)
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        _faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        NativeEngine::open_unsynced(path, options)
     }
 
-    fn open_memory() -> Result<Self, CellError> {
+    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
         NativeEngine::open_in_memory()
+    }
+}
+
+impl<S: LawEngine> LawEngine for FaultEngine<S> {
+    const FAULTS: bool = true;
+    const COMMIT_FAULTS: bool = S::COMMIT_FAULTS;
+
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(|inner| Self::new(inner, faults.clone()))
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(|inner| Self::new(inner, faults.clone()))
+    }
+}
+
+/// A mutant engine for the crash law's self-test: once the armed fault has
+/// fired, it commits the transaction anyway, so the writes before the fault
+/// (or, at the commit point, all of them) survive the crash.
+#[derive(Debug)]
+struct CommitsAfterFault<S> {
+    inner: S,
+    faults: FaultSwitch,
+}
+
+impl<S: LawEngine> LawEngine for CommitsAfterFault<S> {
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(|inner| Self {
+            inner,
+            faults: faults.clone(),
+        })
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(|inner| Self {
+            inner,
+            faults: faults.clone(),
+        })
+    }
+}
+
+impl<S: SqlEngine> SqlEngine for CommitsAfterFault<S> {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.inner.read_cache_revision()
+    }
+
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.inner
+            .transaction(|| {
+                let result = f();
+                if result.is_err() && self.faults.fired() {
+                    // The bug: commit what the faulted transaction wrote.
+                    Ok(result)
+                } else {
+                    result.map(Ok)
+                }
+            })
+            .and_then(|result| result)
     }
 }
 
@@ -150,11 +274,15 @@ impl RestrictedEngine {
 }
 
 impl LawEngine for RestrictedEngine {
-    fn open_file(path: &Path, options: StoreOptions) -> Result<Self, CellError> {
-        NativeEngine::open(path, options).map(Self::new)
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        _faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        NativeEngine::open_unsynced(path, options).map(Self::new)
     }
 
-    fn open_memory() -> Result<Self, CellError> {
+    fn open_memory(_faults: &FaultSwitch) -> Result<Self, CellError> {
         NativeEngine::open_in_memory().map(Self::new)
     }
 }
@@ -170,25 +298,7 @@ impl SqlEngine for RestrictedEngine {
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         validate_do_sql(sql, params)?;
-        let rows = self.native.query(sql, params)?;
-        for row in &rows {
-            let bytes = row.iter().try_fold(0_usize, |total, value| {
-                validate_value(value)?;
-                let size = match value {
-                    SqlValue::Null => 0,
-                    SqlValue::Integer(_) | SqlValue::Real(_) => 8,
-                    SqlValue::Text(text) => text.len(),
-                    SqlValue::Blob(blob) => blob.len(),
-                };
-                total
-                    .checked_add(size)
-                    .ok_or(CellError::OutOfRange("SQL result row bytes"))
-            })?;
-            if bytes > MAX_RESULT_ROW_BYTES {
-                return Err(CellError::OutOfRange("SQL result row bytes"));
-            }
-        }
-        Ok(rows)
+        validate_do_rows(self.native.query(sql, params)?)
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
@@ -210,6 +320,272 @@ impl SqlEngine for RestrictedEngine {
         let result = self.native.transaction(f);
         drop(reset);
         result
+    }
+}
+
+/// Result rows a DO SQLite host can return: exact integers, bounded row bytes.
+fn validate_do_rows(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Vec<SqlValue>>, CellError> {
+    for row in &rows {
+        let bytes = row.iter().try_fold(0_usize, |total, value| {
+            validate_value(value)?;
+            let size = match value {
+                SqlValue::Null => 0,
+                SqlValue::Integer(_) | SqlValue::Real(_) => 8,
+                SqlValue::Text(text) => text.len(),
+                SqlValue::Blob(blob) => blob.len(),
+            };
+            total
+                .checked_add(size)
+                .ok_or(CellError::OutOfRange("SQL result row bytes"))
+        })?;
+        if bytes > MAX_RESULT_ROW_BYTES {
+            return Err(CellError::OutOfRange("SQL result row bytes"));
+        }
+    }
+    Ok(rows)
+}
+
+/// The DO SQL subset over an engine with its own transaction glue: SQL is
+/// validated as by [`RestrictedEngine`], transactions are the engine's own.
+#[derive(Debug)]
+struct DoSubset<S>(S);
+
+impl<S: LawEngine> LawEngine for DoSubset<S> {
+    const COMMIT_FAULTS: bool = S::COMMIT_FAULTS;
+
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        S::open_file(path, options, faults).map(Self)
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        S::open_memory(faults).map(Self)
+    }
+}
+
+impl<S: SqlEngine> SqlEngine for DoSubset<S> {
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.0.platform_table_globs()
+    }
+
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.0.read_isolation()
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.0.read_cache_revision()
+    }
+
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        validate_do_sql(sql, params)?;
+        self.0.execute(sql, params)
+    }
+
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        validate_do_sql(sql, params)?;
+        validate_do_rows(self.0.query(sql, params)?)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        validate_do_sql(sql, &[])?;
+        self.0.execute_batch(sql)
+    }
+
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.0.transaction(f)
+    }
+}
+
+/// A Durable Object storage the law driver opens over a native connection.
+/// Its commits fail on the driver's armed commit faults.
+trait OpenDo: DoStorage + Debug + Sized + 'static {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self;
+}
+
+impl OpenDo for DoStorageEmulator {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self::new(native).with_faults(faults.clone())
+    }
+}
+
+impl<S: OpenDo> LawEngine for DoEngine<S> {
+    const COMMIT_FAULTS: bool = true;
+
+    fn open_file(
+        path: &Path,
+        options: StoreOptions,
+        faults: &FaultSwitch,
+    ) -> Result<Self, CellError> {
+        NativeEngine::open_unsynced(path, options).map(|native| Self::new(S::over(native, faults)))
+    }
+
+    fn open_memory(faults: &FaultSwitch) -> Result<Self, CellError> {
+        NativeEngine::open_in_memory().map(|native| Self::new(S::over(native, faults)))
+    }
+}
+
+/// The Durable Object engine natively: the Workers transaction glue over the
+/// `transactionSync` emulator, restricted to the DO SQL subset.
+type DoLawEngine<S = DoStorageEmulator> = DoSubset<DoEngine<S>>;
+
+/// Mutant glue input: it never recognises its own rollback marker, so every
+/// rolled-back refusal is reported as an engine error.
+#[derive(Debug)]
+struct MisreadsRollback(DoStorageEmulator);
+
+/// Mutant storage: it ignores the rollback marker, commits what the callback
+/// wrote, and only then rethrows.
+#[derive(Debug)]
+struct CommitsOnRollback(DoStorageEmulator);
+
+impl OpenDo for MisreadsRollback {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
+    }
+}
+
+impl OpenDo for CommitsOnRollback {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
+    }
+}
+
+/// Mutant storage: when its own commit fails it reports success anyway, so
+/// the caller believes a rolled-back write committed (semantics 6).
+#[derive(Debug)]
+struct HidesFailedCommit(DoStorageEmulator);
+
+impl OpenDo for HidesFailedCommit {
+    fn over(native: NativeEngine, faults: &FaultSwitch) -> Self {
+        Self(DoStorageEmulator::over(native, faults))
+    }
+}
+
+impl Transact for HidesFailedCommit {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        match self.0.transaction_sync(callback) {
+            // The bug: the storage's own failure is reported as a commit.
+            Err(Thrown::Storage(_)) => Ok(()),
+            other => other,
+        }
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, thrown: &Thrown) -> bool {
+        self.0.is_rollback_marker(thrown)
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl DoStorage for HidesFailedCommit {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
+    }
+}
+
+impl Transact for MisreadsRollback {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        self.0.transaction_sync(callback)
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, _thrown: &Thrown) -> bool {
+        // The bug.
+        false
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl Transact for CommitsOnRollback {
+    type Thrown = Thrown;
+
+    fn transaction_sync<F: FnMut() -> Result<(), Thrown>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), Thrown> {
+        let mut swallowed = None;
+        // The bug: a throw does not stop the commit.
+        let mut commit_anyway = || {
+            callback().or_else(|thrown| {
+                swallowed = Some(thrown);
+                Ok(())
+            })
+        };
+        let result = self.0.transaction_sync(&mut commit_anyway);
+        swallowed.map_or(result, Err)
+    }
+
+    fn rollback_marker(&self) -> Thrown {
+        self.0.rollback_marker()
+    }
+
+    fn is_rollback_marker(&self, thrown: &Thrown) -> bool {
+        self.0.is_rollback_marker(thrown)
+    }
+
+    fn callback_reused(&self) -> Thrown {
+        self.0.callback_reused()
+    }
+
+    fn engine_error(&self, thrown: &Thrown) -> CellError {
+        self.0.engine_error(thrown)
+    }
+}
+
+impl DoStorage for MisreadsRollback {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
+    }
+}
+
+impl DoStorage for CommitsOnRollback {
+    fn exec(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.exec(sql, params)
+    }
+
+    fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.exec_batch(sql)
     }
 }
 
@@ -338,24 +714,39 @@ fn law_cell<S: LawEngine>(engine: S) -> Result<LawCell<S>, CellError> {
 }
 
 /// The SQL driver over the law vocabulary. With `REOPEN`, the store is a file
-/// closed and reopened after every operation that writes, verifying the ledger.
-struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine> {
+/// closed and reopened after every operation that writes, verifying the ledger
+/// (which is also how it recovers from an injected crash). With `NETWORK`,
+/// the law machine dispatches commands and delivers their results through
+/// an unreliable network (law 7).
+struct LawSqlite<const REOPEN: bool, S: LawEngine = DefaultEngine, const NETWORK: bool = false> {
     cell: LawCell<S>,
     file: Option<(tempfile::TempDir, PathBuf)>,
+    /// The fault schedule every engine of this driver shares.
+    faults: FaultSwitch,
+    /// Whether the fault armed for the current operation fired.
+    fired: bool,
 }
 
-impl<const REOPEN: bool, S: LawEngine> LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> LawSqlite<REOPEN, S, NETWORK> {
     fn after_write(&mut self) {
+        // The operation is over: its fault must not reach the reopen.
+        if self.faults.disarm() {
+            self.fired = true;
+        }
         if let Some((_, path)) = &self.file {
             let now = self.cell.now();
-            self.cell = law_cell(S::open_file(path, StoreOptions::default()).expect("reopens"))
-                .expect("rebuilds store");
+            self.cell = law_cell(
+                S::open_file(path, StoreOptions::default(), &self.faults).expect("reopens"),
+            )
+            .expect("rebuilds store");
             self.cell.advance_to(now);
         }
     }
 }
 
-impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> CellHost
+    for LawSqlite<REOPEN, S, NETWORK>
+{
     type Event = LawEvent;
     type Command = LawCommand;
     type Input = LawInput;
@@ -436,13 +827,14 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
     }
 
     fn perform(&mut self) -> Result<Option<Performed<LawInput>>, CellError> {
-        let performed = self.cell.perform()?.map(|performed| Performed {
+        let performed = self.cell.perform();
+        // Reopen even after a failure: a crashed engine refuses every call.
+        self.after_write();
+        Ok(performed?.map(|performed| Performed {
             command: performed.command,
             generation: performed.generation,
             input: performed.input.into(),
-        });
-        self.after_write();
-        Ok(performed)
+        }))
     }
 
     fn observe(&mut self) -> Result<Option<Observed<LawInput>>, CellError> {
@@ -462,25 +854,85 @@ impl<const REOPEN: bool, S: LawEngine> CellHost for LawSqlite<REOPEN, S> {
     }
 }
 
-impl<const REOPEN: bool, S: LawEngine> SimulatedCell for LawSqlite<REOPEN, S> {
+impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
+    for LawSqlite<REOPEN, S, NETWORK>
+{
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const NETWORK: bool = NETWORK;
+    /// Only a file store survives a crash: it reopens from the file. Only a
+    /// storage that commits itself can fail its commit.
+    const FAULT_KINDS: &'static [FaultKind] = match (S::FAULTS, REOPEN, S::COMMIT_FAULTS) {
+        (false, _, _) => &[],
+        (true, false, false) => &[FaultKind::IoError],
+        (true, true, false) => &[FaultKind::IoError, FaultKind::Crash],
+        (true, false, true) => &[FaultKind::IoError, FaultKind::CommitFails],
+        (true, true, true) => &[FaultKind::IoError, FaultKind::Crash, FaultKind::CommitFails],
+    };
 
     fn sim_new() -> Self {
+        let faults = FaultSwitch::default();
         if REOPEN {
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = simulator_dir();
             let path = dir.path().join("cell.sqlite");
-            let cell = law_cell(S::open_file(&path, StoreOptions::default()).expect("opens"))
-                .expect("opens store");
+            let cell =
+                law_cell(S::open_file(&path, StoreOptions::default(), &faults).expect("opens"))
+                    .expect("opens store");
             Self {
                 cell,
                 file: Some((dir, path)),
+                faults,
+                fired: false,
             }
         } else {
             Self {
-                cell: law_cell(S::open_memory().expect("opens engine")).expect("opens store"),
+                cell: law_cell(S::open_memory(&faults).expect("opens engine"))
+                    .expect("opens store"),
                 file: None,
+                faults,
+                fired: false,
             }
         }
+    }
+
+    fn sim_arm_fault(&mut self, plan: FaultPlan) {
+        self.fired = false;
+        self.faults.arm(EngineFault {
+            kind: match plan.kind {
+                FaultKind::Crash => EngineFaultKind::Crash,
+                FaultKind::IoError => EngineFaultKind::Io,
+                FaultKind::CommitFails => EngineFaultKind::Commit,
+            },
+            transaction: u32::from(plan.transaction),
+            at_statement: u32::from(plan.at_statement),
+        });
+    }
+
+    fn sim_disarm_fault(&mut self) -> bool {
+        let fired = self.faults.disarm();
+        std::mem::take(&mut self.fired) || fired
+    }
+
+    fn sim_dispatch(&mut self) -> Result<Option<Command<LawCommand>>, String> {
+        let claimed = self.cell.claim_perform();
+        self.after_write();
+        match claimed.map_err(|error| error.to_string())? {
+            Some(PerformClaim::Fresh(command)) => Ok(Some(command)),
+            Some(PerformClaim::Recorded { .. } | PerformClaim::OutcomeUnknown(_)) | None => {
+                Ok(None)
+            }
+        }
+    }
+
+    fn sim_deliver(
+        &mut self,
+        command: &Command<LawCommand>,
+        input: &LawInput,
+    ) -> Result<bool, String> {
+        let recorded = self.cell.complete_perform(command, WireInput::from(input));
+        self.after_write();
+        recorded
+            .map(|recorded| recorded.is_some())
+            .map_err(|error| error.to_string())
     }
 
     fn sim_advance_to(&mut self, now: LogicalTime) {
@@ -557,6 +1009,376 @@ fn cell_host_laws_hold_across_reopen_for_the_restricted_engine() {
     coverage.assert_covered(CELL_HOST_LABELS);
 }
 
+/// Cases for the reopening fault tests: every write reopens the file, so the
+/// fixed seed runs 16 cases; `PROPTEST_CASES` raises it for a soak.
+const FAULT_REOPEN_CASES: u32 = 16;
+
+/// Law 6 (D79 D step 1): commits and performs stay atomic when a write
+/// transaction crashes or hits an I/O error at any statement, and the file
+/// reopens to the model's state (swarm mode, faults armed).
+#[test]
+fn cell_host_laws_hold_under_injected_crashes() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+}
+
+#[test]
+fn cell_host_laws_hold_under_injected_crashes_for_the_restricted_engine() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<RestrictedEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.io_error"]);
+}
+
+/// Law 6 without reopening: after an I/O error rolls a transaction back, the
+/// same connection and store keep serving the model's state.
+#[test]
+fn cell_host_laws_hold_under_injected_io_errors_without_reopen() {
+    let coverage =
+        check_cell_host::<LawSqlite<false, FaultEngine<NativeEngine>>>(&Settings::new(file!()));
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&["cell:fault.io_error"]);
+}
+
+/// The law a write surviving its rollback breaks under the suite's fixed seed: a
+/// faulted perform claim that should have rolled back is delivered or executed
+/// anyway. Mutant tests name the law they must break, so a harness panic or an
+/// unrelated law (fault wiring, say) never passes for the mutant being caught.
+const SURVIVING_ROLLBACK_LAW: &str =
+    "law violated: a perform whose claim or result is lost delivered or executed";
+
+/// Crash rollback can fail: an engine that commits a faulted transaction lets
+/// a partial (or whole) write survive the crash, and the law machine finds a
+/// counterexample that arms a fault; under the suite's seed the surviving
+/// write breaks the perform law (`SURVIVING_ROLLBACK_LAW`). It only needs to be caught, not
+/// minimised, so it takes the one shrink step proptest-state-machine needs.
+#[test]
+fn cell_host_mutant_committing_after_a_fault_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<CommitsAfterFault<NativeEngine>>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("an engine that commits a faulted transaction must fail the crash law");
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Faulted(_))),
+        "{failure}"
+    );
+    assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
+}
+
+/// The host laws on the Durable Object transaction glue, run natively
+/// (`DoEngine` over the `transactionSync` emulator, DO SQL subset).
+#[test]
+fn cell_host_laws_hold_for_the_do_transaction_glue() {
+    let coverage =
+        check_cell_host::<LawSqlite<false, DoLawEngine>>(&Settings::new(file!()).cases(64));
+    coverage.assert_covered(CELL_HOST_LABELS);
+}
+
+/// Law 6 on the Durable Object transaction glue: a crash or I/O error at any
+/// statement or commit point inside `transactionSync`, or a failure of the
+/// storage's own commit (semantics 6), rolls everything back.
+#[test]
+fn cell_host_laws_hold_under_injected_crashes_for_the_do_transaction_glue() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine>>>(
+        &Settings::new(file!()).cases(FAULT_REOPEN_CASES),
+    );
+    coverage.assert_covered(CELL_FAULT_LABELS);
+    coverage.assert_covered(&[
+        "cell:fault.crash",
+        "cell:fault.io_error",
+        "cell:fault.commit_failed",
+    ]);
+}
+
+/// Semantics 6 can fail: a storage that reports a failed commit as success
+/// makes a rolled-back write look committed, and law 6 catches it on a
+/// commit fault.
+#[test]
+fn cell_host_mutant_do_storage_hiding_a_failed_commit_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<HidesFailedCommit>>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("a storage that hides a failed commit must fail the laws");
+    assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
+    assert!(
+        failure.transitions.iter().any(|op| matches!(
+            op,
+            CellOp::Faulted(faulted) if faulted.plan.kind == FaultKind::CommitFails
+        )),
+        "{failure}"
+    );
+}
+
+/// Glue that does not recognise its rollback marker turns every typed
+/// refusal into an engine error, and the commit law catches it.
+#[test]
+fn cell_host_mutant_do_glue_misreading_rollback_is_caught() {
+    let failure = run_cell_host::<LawSqlite<false, DoLawEngine<MisreadsRollback>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("glue that misreads its rollback marker must fail the laws");
+    assert!(
+        failure.reason.contains("commit outcome differs"),
+        "{failure}"
+    );
+}
+
+/// A storage that commits despite the rollback marker lets a faulted (or
+/// refused) transaction's writes survive, and the laws catch it.
+#[test]
+fn cell_host_mutant_do_storage_committing_on_rollback_is_caught() {
+    let failure = run_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine<CommitsOnRollback>>>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("a storage that commits on rollback must fail the laws");
+    // Its own law, not a harness panic or another law, on a run that rolled back
+    // a faulted transaction.
+    assert!(
+        failure.reason.starts_with(SURVIVING_ROLLBACK_LAW),
+        "{failure}"
+    );
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Faulted(_))),
+        "{failure}"
+    );
+}
+
+/// Cases for the responder-fault tests (law 7): file stores, crashes
+/// included; `PROPTEST_CASES` raises it for a soak.
+const RESPONDER_CASES: u32 = 12;
+
+/// Law 7 on the SQLite driver: results duplicated, lost, delayed and
+/// reordered by the outside world, observations redelivered, with crashes,
+/// I/O errors and reopens in between.
+#[test]
+fn cell_host_laws_hold_under_responder_faults() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<NativeEngine>, true>>(
+        &Settings::new(file!()).cases(RESPONDER_CASES),
+    );
+    coverage.assert_covered(CELL_NETWORK_LABELS);
+    coverage.assert_covered(&["cell:fault.crash"]);
+}
+
+/// Law 7 on the Durable Object transaction glue, with its failed commits.
+#[test]
+fn cell_host_laws_hold_under_responder_faults_for_the_do_transaction_glue() {
+    let coverage = check_cell_host::<LawSqlite<true, FaultEngine<DoLawEngine>, true>>(
+        &Settings::new(file!()).cases(RESPONDER_CASES),
+    );
+    coverage.assert_covered(CELL_NETWORK_LABELS);
+    coverage.assert_covered(&["cell:fault.crash", "cell:fault.commit_failed"]);
+}
+
+/// A mutant behind the network: it executes a command again when a result
+/// is redelivered or duplicated.
+const DOUBLE_EXECUTION: u8 = 0;
+/// A mutant behind the network: it records a stale-generation result as the
+/// current generation's.
+const STALE_RESULT: u8 = 1;
+
+/// A deliberately broken host behind the law machine's network (law 7),
+/// over an in-memory store so it fails fast.
+struct ResponderMutant<const BUG: u8> {
+    inner: LawSqlite<false, NativeEngine, true>,
+    /// Executions the bug added.
+    again: u64,
+}
+
+impl<const BUG: u8> CellHost for ResponderMutant<BUG> {
+    type Event = LawEvent;
+    type Command = LawCommand;
+    type Input = LawInput;
+    type Error = CellError;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
+        self.inner.load(key)
+    }
+
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
+        self.inner.load_link(key)
+    }
+
+    fn commit(
+        &mut self,
+        commit: CellCommit<LawEvent, LawCommand, LawInput>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.inner.commit(commit)
+    }
+
+    fn commit_owned_rows(
+        &mut self,
+        commit: CellCommit<LawEvent, LawCommand, LawInput>,
+        proof: OwnedRowsCommitProof,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.inner.commit_owned_rows(commit, proof)
+    }
+
+    fn perform(&mut self) -> Result<Option<Performed<LawInput>>, CellError> {
+        self.inner.perform()
+    }
+
+    fn observe(&mut self) -> Result<Option<Observed<LawInput>>, CellError> {
+        self.inner.observe()
+    }
+
+    fn clock(&mut self) -> Result<Option<DueTimer<LawInput>>, CellError> {
+        self.inner.clock()
+    }
+
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
+        self.inner.publish(receipt)
+    }
+}
+
+impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
+    const COMMITS_PERFORM_CLAIMS: bool = true;
+    const NETWORK: bool = true;
+
+    fn sim_new() -> Self {
+        Self {
+            inner: LawSqlite::sim_new(),
+            again: 0,
+        }
+    }
+
+    fn sim_dispatch(&mut self) -> Result<Option<Command<LawCommand>>, String> {
+        self.inner.sim_dispatch()
+    }
+
+    fn sim_deliver(
+        &mut self,
+        command: &Command<LawCommand>,
+        input: &LawInput,
+    ) -> Result<bool, String> {
+        if self.inner.sim_deliver(command, input)? {
+            return Ok(true);
+        }
+        if BUG == DOUBLE_EXECUTION {
+            // The bug: a redelivered or duplicated result executes the
+            // command again.
+            self.again = self.again.saturating_add(1);
+            return Ok(false);
+        }
+        // The bug: a stale-generation result is recorded as the current
+        // generation's.
+        match self.inner.sim_outbox().into_iter().next() {
+            Some(head) if head.id == command.id && head.generation != command.generation => {
+                self.inner.sim_deliver(&head, input)
+            }
+            Some(_) | None => Ok(false),
+        }
+    }
+
+    fn sim_advance_to(&mut self, now: LogicalTime) {
+        self.inner.sim_advance_to(now);
+    }
+
+    fn sim_inject(&mut self, observed: Observed<LawInput>) {
+        self.inner.sim_inject(observed);
+    }
+
+    fn sim_executions(&self) -> u64 {
+        self.inner.sim_executions().saturating_add(self.again)
+    }
+
+    fn sim_outbox(&self) -> Vec<Command<LawCommand>> {
+        self.inner.sim_outbox()
+    }
+
+    fn sim_timers(&self) -> Vec<DueTimer<LawInput>> {
+        self.inner.sim_timers()
+    }
+
+    fn sim_ledger(&self) -> Vec<LedgerEntry<LawEvent>> {
+        self.inner.sim_ledger()
+    }
+}
+
+/// Law 7 can fail: a host that executes a command again on a duplicated or
+/// redelivered result is caught.
+#[test]
+fn cell_host_mutant_executing_a_redelivered_result_again_is_caught() {
+    let failure = run_cell_host::<ResponderMutant<DOUBLE_EXECUTION>>(
+        &Settings::new(file!())
+            .without_persistence()
+            .max_shrink_iters(1),
+    )
+    .expect_err("a host that executes a command twice must fail the laws");
+    // Law 5 (refinement): the second execution leaves host state the model never reaches.
+    assert!(
+        failure
+            .reason
+            .contains("host state does not refine the cell model"),
+        "{failure}"
+    );
+    assert!(
+        failure
+            .transitions
+            .iter()
+            .any(|op| matches!(op, CellOp::Deliver(_) | CellOp::Exchange(_))),
+        "{failure}"
+    );
+}
+
+/// Law 7 can fail: a host that records a stale-generation result is caught
+/// on the fixed interleaving that makes one: enqueue `c0`, dispatch it,
+/// re-issue it at generation 1 and dispatch again, then deliver the
+/// generation-0 result. The healthy driver passes the same sequence.
+#[test]
+fn cell_host_mutant_recording_a_stale_result_is_caught() {
+    let enqueue = |generation, payload| CellCommit {
+        effects: vec![Effect::Perform(law_command(0, generation, payload))],
+        ..CellCommit::empty()
+    };
+    let stale = law_command(0, 0, 7);
+    let transitions = vec![
+        CellOp::Commit(enqueue(0, 7)),
+        CellOp::Dispatch(Box::new(Dispatching {
+            prepare: None,
+            reissue: Some(enqueue(1, 8)),
+        })),
+        CellOp::Deliver(Box::new(Delivery {
+            input: law_responder(&stale),
+            command: stale,
+            route: Route::InOrder,
+        })),
+    ];
+    // The healthy driver refuses the stale result on the same sequence.
+    let healthy =
+        run_cell_host_sequence::<LawSqlite<false, NativeEngine, true>>(transitions.clone());
+    assert_eq!(healthy, Ok(()));
+    let violation = run_cell_host_sequence::<ResponderMutant<STALE_RESULT>>(transitions)
+        .expect_err("a host that records a stale result must fail the laws");
+    assert!(
+        violation.contains("law violated: a result is recorded only"),
+        "{violation}"
+    );
+}
+
 #[test]
 fn restricted_sql_rejects_forbidden_tokens_and_reserved_identifiers() {
     for sql in [
@@ -587,7 +1409,7 @@ fn restricted_sql_rejects_forbidden_tokens_and_reserved_identifiers() {
 
 #[test]
 fn restricted_engine_enforces_sql_limits_and_nested_transaction_rules() {
-    let engine = RestrictedEngine::open_memory().expect("opens");
+    let engine = RestrictedEngine::open_memory(&FaultSwitch::default()).expect("opens");
     assert!(validate_do_sql(&" ".repeat(MAX_STATEMENT_BYTES.saturating_add(1)), &[]).is_err());
     let params = vec![SqlValue::Null; MAX_PARAMETERS.saturating_add(1)];
     assert!(validate_do_sql("SELECT 1", &params).is_err());
@@ -1263,6 +2085,13 @@ fn a_late_completion_never_writes_a_replacement_generation() {
 
 /// The commit/timer/perform scenario, start to finish.
 fn scenario(path: &Path) {
+    let identity =
+        norn_cell::cell_identity::CellId::try_from("00112233445566778899aabbccddeeff".to_owned())
+            .expect("same logical cell in each deterministic replay");
+    drop(
+        CellStore::open_bound(path, order_model(), StoreOptions::default(), &identity)
+            .expect("seed replay identity"),
+    );
     let mut cell = open(path);
     cell.commit(place()).expect("commits");
     let performed = cell.perform().expect("performs").expect("a command");
@@ -1928,7 +2757,7 @@ fn link_overrides_bind_through_a_supertype_name() {
 
 #[test]
 fn link_overrides_bind_through_a_supertype_name_on_restricted_engine() {
-    let engine = RestrictedEngine::open_memory().expect("opens engine");
+    let engine = RestrictedEngine::open_memory(&FaultSwitch::default()).expect("opens engine");
     let store = CellStore::from_engine(engine, common::model_of(&override_object_types()))
         .expect("opens store");
     let mut cell: SqliteCell<OrderEvent, Charge, OrderInput, RestrictedEngine> =
@@ -2568,4 +3397,538 @@ fn predicate_reads_agree_across_hosts_and_refuse_interfaces_on_both() {
     memory
         .commit(pinned_concrete(&from_memory))
         .expect("memory commits an unchanged read");
+}
+
+// ------------------------------------------------------------------ forks
+
+/// WORLD-FORK (#624): a fork of a cell with a pending payment refuses to
+/// perform it before any claim, evaluates a simulated fixture result instead,
+/// and main is unchanged and still performs for real.
+#[test]
+fn world_fork_refuses_perform_and_evaluates_a_simulated_result() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let mut main = open(&path);
+    main.commit(place()).expect("commits");
+    let before = main.store().image().expect("image");
+    let base = main.store().verified_head().expect("head");
+
+    let escaped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counter = std::sync::Arc::clone(&escaped);
+    let store = main.store().fork("what-if", &base).expect("forks");
+    let mut fork: OrderCell = SqliteCell::new(store, "org_demo/dev", move |command| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        charge_responder(command)
+    })
+    .expect("serves the fork");
+    let pin = fork.store().fork_pin().expect("pinned").clone();
+    assert_eq!(
+        (pin.world.as_str(), pin.parent.as_str(), &pin.base),
+        ("what-if", "main", &base)
+    );
+
+    let forked = fork.store().image().expect("image");
+    assert!(matches!(
+        fork.perform(),
+        Err(CellError::WorldPerformForbidden)
+    ));
+    assert_eq!(fork.store().image().expect("image"), forked, "no claim");
+    let pending = fork.pending_commands().expect("outbox");
+    assert_eq!(pending.len(), 1, "the payment stays pending, undispatched");
+
+    let simulated = fork
+        .simulate_perform(|command| OrderInput::Charged {
+            order: command.payload.order.clone(),
+            ok: false,
+        })
+        .expect("simulates")
+        .expect("the head has no result");
+    assert_eq!(fork.perform().expect("redelivers"), Some(simulated.clone()));
+    fork.commit(
+        CellCommit {
+            events: vec![OrderEvent::Charged {
+                order: "O-1".to_owned(),
+                ok: false,
+            }],
+            ..CellCommit::empty()
+        }
+        .consuming(Consumed::Result {
+            command: simulated.command,
+            generation: simulated.generation,
+        }),
+    )
+    .expect("the fork evaluates the fixture result");
+    assert_eq!(fork.perform().expect("consumed"), None);
+    assert_eq!(escaped.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    assert_eq!(
+        main.store().image().expect("image"),
+        before,
+        "main unchanged"
+    );
+    assert!(matches!(
+        main.simulate_perform(charge_responder),
+        Err(CellError::WorldSimulationForbidden)
+    ));
+    assert_eq!(main.executions().expect("runs"), 0);
+    drop(main);
+    let mut main = open(&path);
+    assert_eq!(main.store().image().expect("image"), before);
+    assert!(main.perform().expect("performs").is_some());
+    assert_eq!(main.executions().expect("runs"), 1);
+}
+
+/// How many fork slots a trace uses.
+const FORK_SLOTS: u8 = 3;
+
+/// One generated write: put `value` on law object `key`, recording `value` as
+/// an event and, with `enqueue`, a command.
+#[derive(Debug, Clone, Copy)]
+struct ForkPut {
+    key: u8,
+    value: u8,
+    enqueue: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ForkOp {
+    Main(ForkPut),
+    MainPerform,
+    MainClaim,
+    MainComplete,
+    MainSimulate,
+    Create { slot: u8, from: Option<u8> },
+    CreateStale { from: Option<u8> },
+    CreateInvalid { from: Option<u8>, own: bool },
+    Commit(u8, ForkPut),
+    Perform(u8),
+    Deliver(u8, u8),
+    Evidence(u8),
+    Simulate(u8, u8),
+    Discard(u8),
+}
+
+fn fork_put() -> impl Strategy<Value = ForkPut> {
+    (
+        0..norn_testkit::cell_host::LAW_UNIVERSE,
+        any::<u8>(),
+        any::<bool>(),
+    )
+        .prop_map(|(key, value, enqueue)| ForkPut {
+            key,
+            value,
+            enqueue,
+        })
+}
+
+fn fork_op() -> impl Strategy<Value = ForkOp> {
+    let slot = 0..FORK_SLOTS;
+    let from = proptest::option::of(0..FORK_SLOTS);
+    prop_oneof![
+        4 => fork_put().prop_map(ForkOp::Main),
+        2 => Just(ForkOp::MainPerform),
+        1 => Just(ForkOp::MainClaim),
+        1 => Just(ForkOp::MainComplete),
+        1 => Just(ForkOp::MainSimulate),
+        3 => (slot.clone(), from.clone()).prop_map(|(slot, from)| ForkOp::Create { slot, from }),
+        1 => from.clone().prop_map(|from| ForkOp::CreateStale { from }),
+        1 => (from, any::<bool>()).prop_map(|(from, own)| ForkOp::CreateInvalid { from, own }),
+        4 => (slot.clone(), fork_put()).prop_map(|(slot, put)| ForkOp::Commit(slot, put)),
+        2 => slot.clone().prop_map(ForkOp::Perform),
+        1 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Deliver(slot, value)),
+        2 => slot.clone().prop_map(ForkOp::Evidence),
+        2 => (slot.clone(), any::<u8>()).prop_map(|(slot, value)| ForkOp::Simulate(slot, value)),
+        1 => slot.prop_map(ForkOp::Discard),
+    ]
+}
+
+type LawNative = LawCell<NativeEngine>;
+
+/// Commit `write`; the outcome, formatted for comparison.
+fn put(cell: &mut LawNative, write: ForkPut) -> String {
+    let key = law_key(write.key);
+    let expected = cell.load(&key).expect("loads").version;
+    let generation = cell.store().verified_head().expect("head").commits;
+    let effects = if write.enqueue {
+        vec![Effect::Perform(law_command(
+            write.key,
+            generation,
+            write.value,
+        ))]
+    } else {
+        Vec::new()
+    };
+    let outcome = cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key,
+            expected,
+            mutation: FactMutation::Put {
+                values: law_values(write.value),
+            },
+        }],
+        events: vec![write.value],
+        effects,
+        ..CellCommit::empty()
+    });
+    format!("{outcome:?}")
+}
+
+fn consume(cell: &mut LawNative, performed: &Performed<WireInput>) {
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: performed.command.clone(),
+        generation: performed.generation,
+    }))
+    .expect("consumes the delivered result");
+}
+
+/// Perform main's head command, and consume what it delivers.
+fn perform_main(cell: &mut LawNative) -> String {
+    // A claim whose outcome is unknown refuses here, identically in both
+    // mains. Any other refusal on main is a bug, never an equal outcome.
+    let performed = match cell.perform() {
+        Ok(performed) => performed,
+        Err(error @ CellError::PerformOutcomeUnknown { .. }) => return format!("{error}"),
+        Err(error) => panic!("main's perform refused: {error:?}"),
+    };
+    if let Some(performed) = &performed {
+        consume(cell, performed);
+    }
+    format!("{performed:?}")
+}
+
+/// Claim main's head command without completing it (Fable S9: a fork taken
+/// between claim and result inherits an outcome-unknown claim).
+fn claim_main(cell: &mut LawNative) -> String {
+    match cell.claim_perform() {
+        Ok(Some(norn_cell::PerformClaim::Fresh(command))) => format!("claimed {}", command.id.0),
+        Ok(other) => format!("{other:?}"),
+        Err(error) => panic!("main's claim refused: {error:?}"),
+    }
+}
+
+/// Complete main's claimed head command with the responder's answer, then
+/// consume it.
+fn complete_main(cell: &mut LawNative) -> String {
+    let Some(command) = cell.pending_commands().expect("outbox").into_iter().next() else {
+        return "nothing pending".to_owned();
+    };
+    let input = law_cell_responder(&command);
+    match cell.complete_perform(&command, input) {
+        Ok(Some(performed)) => {
+            consume(cell, &performed);
+            format!("completed {}", command.id.0)
+        }
+        Ok(None) => "not the claimed head".to_owned(),
+        Err(error) => panic!("main's completion refused: {error:?}"),
+    }
+}
+
+/// The instance one operation may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Touched {
+    Nothing,
+    Main,
+    Fork(u8),
+}
+
+impl Touched {
+    /// Whether this may change the instance keyed `instance` (`None` is main).
+    fn reaches(self, instance: Option<u8>) -> bool {
+        match (self, instance) {
+            (Self::Main, None) => true,
+            (Self::Fork(slot), Some(other)) => slot == other,
+            (Self::Nothing | Self::Fork(_), None) | (Self::Nothing | Self::Main, Some(_)) => false,
+        }
+    }
+}
+
+struct ForkTrace {
+    main: LawNative,
+    /// Main run alone: the same main operations, no fork operations (t∖F).
+    alone: LawNative,
+    forks: std::collections::BTreeMap<u8, LawNative>,
+    /// Each fork's main horizon, tracked by the trace itself: the main commit
+    /// count when its lineage left main, inherited by forks of forks.
+    horizons: std::collections::BTreeMap<u8, u64>,
+    executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    alone_executed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    escaped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+fn counting_cell(
+    store: CellStore<NativeEngine>,
+    counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+) -> LawNative {
+    let counter = std::sync::Arc::clone(counter);
+    SqliteCell::new(store, "law", move |command| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        law_cell_responder(command)
+    })
+    .expect("serves the cell")
+}
+
+impl ForkTrace {
+    fn new() -> Self {
+        let executed = std::sync::Arc::default();
+        let alone_executed = std::sync::Arc::default();
+        // Main and main-alone are one logical cell (CELL-ID-1), so their
+        // images compare byte for byte.
+        let identity = norn_cell::cell_identity::CellId::try_from(
+            "00112233445566778899aabbccddeeff".to_owned(),
+        )
+        .expect("a cell id");
+        let store = || {
+            CellStore::from_engine_bound(
+                NativeEngine::open_in_memory().expect("opens"),
+                law_model(),
+                &identity,
+            )
+            .expect("opens store")
+        };
+        Self {
+            main: counting_cell(store(), &executed),
+            alone: counting_cell(store(), &alone_executed),
+            forks: std::collections::BTreeMap::new(),
+            horizons: std::collections::BTreeMap::new(),
+            executed,
+            alone_executed,
+            escaped: std::sync::Arc::default(),
+        }
+    }
+
+    fn parent(&self, from: Option<u8>) -> &LawNative {
+        from.and_then(|slot| self.forks.get(&slot))
+            .unwrap_or(&self.main)
+    }
+
+    fn images(&self) -> std::collections::BTreeMap<Option<u8>, norn_cell::StoreImage> {
+        let mut images = std::collections::BTreeMap::from([(
+            None,
+            self.main.store().image().expect("main image"),
+        )]);
+        for (slot, fork) in &self.forks {
+            images.insert(Some(*slot), fork.store().image().expect("fork image"));
+        }
+        images
+    }
+
+    /// Apply `op`; return the instance it may change.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per generated operation, each with its expected refusal"
+    )]
+    fn apply(&mut self, op: ForkOp) -> Touched {
+        match op {
+            ForkOp::Main(write) => {
+                assert_eq!(put(&mut self.main, write), put(&mut self.alone, write));
+                Touched::Main
+            }
+            ForkOp::MainPerform => {
+                assert_eq!(perform_main(&mut self.main), perform_main(&mut self.alone));
+                Touched::Main
+            }
+            ForkOp::MainClaim => {
+                assert_eq!(claim_main(&mut self.main), claim_main(&mut self.alone));
+                Touched::Main
+            }
+            ForkOp::MainComplete => {
+                assert_eq!(
+                    complete_main(&mut self.main),
+                    complete_main(&mut self.alone)
+                );
+                Touched::Main
+            }
+            ForkOp::MainSimulate => {
+                assert!(matches!(
+                    self.main.simulate_perform(|_| WireInput::Result(0)),
+                    Err(CellError::WorldSimulationForbidden)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Create { slot, from } => {
+                if self.forks.contains_key(&slot) {
+                    return Touched::Nothing;
+                }
+                let parent = self.parent(from);
+                let parent_world = parent
+                    .store()
+                    .fork_pin()
+                    .map_or_else(|| "main".to_owned(), |pin| pin.world.clone());
+                let base = parent.store().verified_head().expect("head");
+                let horizon = from
+                    .and_then(|from| self.horizons.get(&from).copied())
+                    .unwrap_or(base.commits);
+                let world = format!("fork-{slot}");
+                let store = parent.store().fork(&world, &base).expect("forks");
+                // L4 at creation: the fork reads exactly what its parent holds.
+                assert_eq!(
+                    store.image().expect("image").without_fork_pin(),
+                    parent.store().image().expect("image").without_fork_pin()
+                );
+                assert_eq!(
+                    store
+                        .fork_pin()
+                        .map(|pin| (&pin.world, &pin.parent, &pin.base)),
+                    Some((&world, &parent_world, &base))
+                );
+                let fork = counting_cell(store, &self.escaped);
+                self.forks.insert(slot, fork);
+                self.horizons.insert(slot, horizon);
+                Touched::Fork(slot)
+            }
+            ForkOp::CreateStale { from } => {
+                let parent = self.parent(from);
+                let mut base = parent.store().verified_head().expect("head");
+                base.commits = base.commits.saturating_add(1);
+                assert!(matches!(
+                    parent.store().fork("stale", &base),
+                    Err(CellError::ForkStaleBase { .. })
+                ));
+                Touched::Nothing
+            }
+            ForkOp::CreateInvalid { from, own } => {
+                let parent = self.parent(from);
+                let world = match (own, parent.store().fork_pin()) {
+                    (true, Some(pin)) => pin.world.clone(),
+                    (false, _) => String::new(),
+                    (true, None) => "main".to_owned(),
+                };
+                let base = parent.store().verified_head().expect("head");
+                assert!(matches!(
+                    parent.store().fork(&world, &base),
+                    Err(CellError::ForkInvalidWorld)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Commit(slot, write) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                // Fork commits are ordinary commits of the fork's own state.
+                put(fork, write);
+                Touched::Fork(slot)
+            }
+            ForkOp::Perform(slot) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                let pending = !fork.pending_commands().expect("outbox").is_empty();
+                let before = fork.store().image().expect("image");
+                match fork.perform() {
+                    Err(CellError::WorldPerformForbidden) => {
+                        assert!(pending, "refused with nothing to perform");
+                        assert_eq!(fork.store().image().expect("image"), before);
+                    }
+                    // Only a simulated result is ever delivered in a fork.
+                    Ok(Some(performed)) => consume(fork, &performed),
+                    Ok(None) => assert!(
+                        !pending,
+                        "a pending command was neither refused nor delivered"
+                    ),
+                    Err(other) => panic!("fork perform failed: {other}"),
+                }
+                Touched::Fork(slot)
+            }
+            ForkOp::Deliver(slot, value) => {
+                // A real external result never lands in a fork, whatever the
+                // inherited rows' world label says.
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                assert!(matches!(
+                    fork.complete_perform(&law_command(0, 0, value), WireInput::Result(value)),
+                    Err(CellError::WorldPerformForbidden)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Evidence(slot) => {
+                // FORK-EVIDENCE-1: records main committed before the lineage
+                // left it export; records any fork in the lineage minted, and
+                // the fork's receipt log, never do, at every nesting depth.
+                let Some(fork) = self.forks.get(&slot) else {
+                    return Touched::Nothing;
+                };
+                let store = fork.store();
+                let horizon = self.horizons.get(&slot).copied();
+                let head = store.export_commit_count().expect("head");
+                assert_eq!(
+                    store.world(),
+                    norn_kernel::World::Fork {
+                        id: norn_kernel::WorldId(format!("fork-{slot}")),
+                    }
+                );
+                for seq in 1..=head {
+                    let exported = store.export_record(seq);
+                    if horizon.is_some_and(|horizon| seq > horizon) {
+                        assert!(matches!(exported, Err(CellError::ForkEvidenceForbidden)));
+                    } else {
+                        assert!(matches!(exported, Ok(Some(_))), "inherited record {seq}");
+                    }
+                }
+                assert!(matches!(
+                    store.transparency_checkpoint(),
+                    Err(CellError::ForkEvidenceForbidden)
+                ));
+                Touched::Nothing
+            }
+            ForkOp::Simulate(slot, value) => {
+                let Some(fork) = self.forks.get_mut(&slot) else {
+                    return Touched::Nothing;
+                };
+                if let Some(performed) = fork
+                    .simulate_perform(|_| WireInput::Result(value))
+                    .expect("a fork simulates")
+                {
+                    consume(fork, &performed);
+                }
+                Touched::Fork(slot)
+            }
+            ForkOp::Discard(slot) => {
+                self.forks.remove(&slot);
+                self.horizons.remove(&slot);
+                Touched::Nothing
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// FORK-NONINTERFERE, WORLD-ISOLATE-1 and FORK-EVIDENCE-1 (Core 08,
+    /// FORK-ISOLATE 1–2, L2, L4, L5, L6), sampled over generated traces
+    /// against the copying reference fork: main equals main run alone after
+    /// every operation (non-interference); no fork reaches the outside world
+    /// or records a real result although its inherited rows say `main` (no
+    /// escape, decided by the pin); a fork exports only inherited records and
+    /// never its receipt log; every operation changes only the instance it
+    /// targets, so a fork is a snapshot of its base plus its own commits; and a
+    /// new fork reads exactly its parent.
+    #[test]
+    fn forks_never_interfere_with_main_or_each_other(
+        ops in proptest::collection::vec(fork_op(), 1..40)
+    ) {
+        let mut trace = ForkTrace::new();
+        let mut images = trace.images();
+        for op in ops {
+            let target = trace.apply(op);
+            let after = trace.images();
+            for (instance, image) in &after {
+                if !target.reaches(*instance) && let Some(before) = images.get(instance) {
+                    prop_assert_eq!(image, before, "{:?} changed {:?}", op, instance);
+                }
+            }
+            prop_assert_eq!(
+                &after[&None],
+                &trace.alone.store().image().expect("image"),
+                "main diverged from main alone after {:?}", op
+            );
+            prop_assert_eq!(
+                trace.executed.load(std::sync::atomic::Ordering::SeqCst),
+                trace.alone_executed.load(std::sync::atomic::Ordering::SeqCst)
+            );
+            prop_assert_eq!(trace.escaped.load(std::sync::atomic::Ordering::SeqCst), 0);
+            images = after;
+        }
+    }
 }

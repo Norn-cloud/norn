@@ -11,6 +11,7 @@
 //! tests). The analytics cell also needs the stage's lineage key
 //! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
 
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
@@ -53,6 +54,8 @@ pub struct NornCell {
     caller: std::sync::Arc<crate::policy::CallerSlot>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// The retained-definition kinds this cell admits.
+    kinds: DefinitionKinds,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -94,6 +97,7 @@ impl NornCell {
         lineage_key: Option<String>,
         now_ms: f64,
     ) -> Result<Self, JsValue> {
+        let lineage_key = lineage_key.map(String::into_bytes);
         let scope = CellScope {
             org_id,
             environment_id,
@@ -109,7 +113,7 @@ impl NornCell {
                 catalog,
             } = analytics::provision(engine, &scope).map_err(rejected)?;
             let questions = DemoQuestions::new(plan, scope.clone())
-                .try_with_handle_key(lineage_key.as_deref().map(str::as_bytes))
+                .try_with_handle_key(lineage_key.as_deref())
                 .map_err(rejected)?
                 .with_metrics(definitions, catalog);
             (store, Some(questions))
@@ -151,6 +155,18 @@ impl NornCell {
             principals,
             caller,
             object_types,
+            // Dashboards are built in; agents wait for lane CANVAS's checker.
+            kinds: DefinitionKinds::default()
+                // Sign-offs verify against the checker's words, as Studio shows
+                // them; D59: a flow is installed by signing the server's words for it.
+                .with_restater(norn_api::definition_routes::checker_restatement)
+                // A binding runs as a role of the cell's declared grant table.
+                .with_roles(
+                    crate::policy::DEMO_GRANTS
+                        .entries
+                        .iter()
+                        .map(|(role, _)| *role),
+                ),
         })
     }
 
@@ -222,7 +238,7 @@ impl NornCell {
                 &request,
             )
         } else {
-            server::handle_with(&self.host, resolver, questions, &request)
+            server::handle_all(&self.host, resolver, questions, &self.kinds, &request)
         };
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),

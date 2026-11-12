@@ -28,6 +28,8 @@ pub enum SealableNodeKind {
     /// Scoped temporal law.
     Law,
     DefinedConcept,
+    /// Localized presentation labels.
+    Labels,
     Field,
     SurfaceSlot,
 }
@@ -49,6 +51,7 @@ impl From<ArtifactKind> for SealableNodeKind {
             ArtifactKind::Mapping => Self::Mapping,
             ArtifactKind::Law => Self::Law,
             ArtifactKind::DefinedConcept => Self::DefinedConcept,
+            ArtifactKind::Labels => Self::Labels,
         }
     }
 }

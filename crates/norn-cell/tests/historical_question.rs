@@ -177,3 +177,73 @@ fn asof_incremental_advance_refuses_a_changed_cutoff_without_publishing() {
         .expect("original cutoff remains resumable");
     assert_eq!(maintained.result(), &before);
 }
+
+/// A retained (dashboard) save commits a new definitions version over the
+/// same kernel set and receipt, so a knowledge cutoff taken before it still
+/// evaluates: historical frames compare kernel identity, not the number.
+#[test]
+fn a_retained_save_keeps_earlier_cutoffs_evaluable() {
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    let (mut store, base, mut context) = fixture();
+    let object = store
+        .model()
+        .object_types()
+        .find(|o| o.name.as_str() == TYPE)
+        .expect("conversion")
+        .clone();
+    let artifact = serde_json::json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let kernel = norn_cell::InstalledDefinitionInput {
+        canonical_set: serde_json::to_string(&vec![artifact]).expect("set"),
+        registry: vec![],
+        receipt_sha256: "synthetic-asof-v1".into(),
+        admission_receipt: None,
+        readmission: None,
+        diff: serde_json::json!({"added":{"count":1,"ids":["demo.Conversion.entity"]}}),
+        installed_at: CLOCK,
+        layout: None,
+    };
+    let model = store.model().clone();
+    store
+        .install_definitions(model, kernel.clone(), Some(0), "synthetic")
+        .expect("kernel install");
+    load(&mut store);
+    let point = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(CLOCK),
+        frontier: store.verified_head().expect("head").commits,
+    };
+    context
+        .watermarks
+        .get_mut("erp")
+        .expect("source")
+        .get_mut("measurements")
+        .expect("partition")
+        .heartbeat_ms = Some(CLOCK.checked_sub(60_000).expect("old heartbeat"));
+    let plan = asof_plan(&store, &base, "2026-10-26T00:00:00.000Z");
+    let before = store
+        .evaluate_question_known_at(&plan, context.clone(), point, |_| Ok(true))
+        .expect("AsOf before the save");
+    let payload = r#"{"tiles":[],"title":"D"}"#.to_owned();
+    let save = RetainedDefinitionChange {
+        definition: RetainedDefinition {
+            kind: "dashboard".to_owned(),
+            id: "studio.dashboard.d".to_owned(),
+            revision: 1,
+            lifecycle: RetainedLifecycle::Active,
+            title: "D".to_owned(),
+            payload_sha256: payload_sha256(&payload),
+            payload,
+            signoff: None,
+        },
+        expected_revision: None,
+    };
+    let version = store.read().active_definitions_version().expect("read");
+    store
+        .install_retained_definition(store.model().clone(), &kernel, version, "synthetic", &save)
+        .expect("retained save");
+    let after = store
+        .evaluate_question_known_at(&plan, context, point, |_| Ok(true))
+        .expect("AsOf after the save");
+    assert_eq!(after.result.rows, before.result.rows);
+}
