@@ -508,6 +508,7 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
 /// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
 /// their own time property; stocks (`Holding`) derive nothing, and the amounts
 /// without a time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
+/// Each flow sum carries its unit partition (`unit`, `currency`).
 #[test]
 fn three_systems_derive_exactly_the_canon_flow_sums() {
     let space = norn_checker::metric::derive::derive_metric_space(
@@ -546,4 +547,18 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
     ]
     .map(|(model, measure, time)| (model.to_owned(), measure.to_owned(), time.to_owned()));
     assert_eq!(derived, BTreeSet::from(expected));
+    // METRIC-UNIT-PARTITION-1: each sum names where its unit is stored.
+    for candidate in space.candidates() {
+        let partition: Vec<_> = candidate
+            .unit_partition
+            .iter()
+            .map(|path| path.property.as_str())
+            .collect();
+        assert_eq!(
+            partition,
+            ["unit", "currency"],
+            "{}",
+            candidate.definition.name
+        );
+    }
 }

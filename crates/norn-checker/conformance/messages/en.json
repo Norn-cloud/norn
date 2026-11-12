@@ -1175,6 +1175,9 @@
     "metric.validation.mixed_currency": {
       "message": "Summing multiple currencies requires an explicit conversion."
     },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units."
+    },
     "metric.validation.ontology_projection": {
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
@@ -1522,6 +1525,9 @@
     },
     "property_type.validation.invalid_unit": {
       "message": "unit code {$unit} must be non-blank without whitespace"
+    },
+    "property_type.validation.invalid_unit_source": {
+      "message": "unit source {$detail}"
     },
     "property_type.validation.inverted_range": {
       "message": "{$lower} is greater than {$upper}"

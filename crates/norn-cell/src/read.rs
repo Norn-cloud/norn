@@ -4248,6 +4248,34 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(out)
     }
 
+    /// One pending (unconsumed) observation by its id, through the inbox's
+    /// unique id index; `None` when it is absent or already consumed.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_observation(
+        &self,
+        observation_id: &str,
+    ) -> Result<Option<PendingObservation>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
+            ),
+            params![observation_id],
+        )?;
+        let Some(values) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let row = SqlRow(values);
+        let observed: String = row.get(2)?;
+        Ok(Some(PendingObservation {
+            position: to_u64(row.get(0)?, "position")?,
+            observation_id: row.get(1)?,
+            observed: serde_json::from_str(&observed)?,
+        }))
+    }
+
     /// The runs of `command_id`, in order.
     ///
     /// # Errors

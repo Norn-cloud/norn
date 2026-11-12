@@ -3164,6 +3164,7 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
         rounding: Some(*rounding),
         currency_source: currency_source.clone(),
         per_unit: per_unit.clone(),
+        unit_source: Vec::new(),
     })
 }
 

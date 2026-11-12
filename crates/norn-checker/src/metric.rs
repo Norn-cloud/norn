@@ -79,6 +79,9 @@ pub mod codes {
     pub const INVALID_CURRENCY: &str = "metric.validation.invalid_currency";
     /// Summing multiple currencies requires an explicit conversion.
     pub const MIXED_CURRENCY: &str = "metric.validation.mixed_currency";
+    /// METRIC-UNIT-PARTITION-1: an aggregate of a quantity whose unit lives in
+    /// sibling properties neither groups by nor fixes each of them.
+    pub const MIXED_UNIT: &str = "metric.validation.mixed_unit";
     /// Conversion requires a target currency and a dimensionless decimal rate.
     pub const INVALID_CONVERSION: &str = "metric.validation.invalid_conversion";
     /// Metric dependencies and link paths are bounded to 64 levels.
@@ -1147,7 +1150,17 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                BoundMeasure::Property { object_type, .. } => {
+                BoundMeasure::Property {
+                    object_type,
+                    aggregate,
+                    property,
+                } => {
+                    self.unit_partition(
+                        question,
+                        source,
+                        (object_type.as_str(), *aggregate, property.as_ref()),
+                        at,
+                    );
                     if question_roots(question, self.catalog).is_none_or(|roots| {
                         roots != BTreeSet::from([object_type.0.clone()])
                             && self.catalog.target_types(object_type.as_str()).as_ref()
@@ -1158,6 +1171,64 @@ impl<'a> Checker<'a> {
                     self.question_paths(question, symmetric, object_type.as_str(), at);
                 }
             }
+        }
+    }
+
+    /// METRIC-UNIT-PARTITION-1: the effective unit source of an aggregated
+    /// measure (none for a count or a measure without one).
+    fn unit_source(
+        &self,
+        (root, aggregate, property): (&str, MeasureAggregate, Option<&norn_ir::PropertyId>),
+    ) -> Vec<norn_ir::PropertyId> {
+        if matches!(
+            aggregate,
+            MeasureAggregate::Count | MeasureAggregate::CountDistinct
+        ) {
+            return Vec::new();
+        }
+        property
+            .and_then(|id| {
+                self.catalog
+                    .object_type_named(root)
+                    .and_then(Result::ok)?
+                    .property(id.as_str())
+            })
+            .and_then(|property| match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { unit_source, .. }) => {
+                    Some(unit_source.clone())
+                }
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// METRIC-UNIT-PARTITION-1: every unit-source property of the measure is
+    /// grouped by, or fixed by an `eq` filter of the question or the metric.
+    fn unit_partition(
+        &mut self,
+        question: &QuestionIR,
+        metric: &BoundMetric,
+        measure: (&str, MeasureAggregate, Option<&norn_ir::PropertyId>),
+        at: &str,
+    ) {
+        let fixed =
+            |id: &norn_ir::PropertyId| {
+                question.dimensions.iter().any(|dimension| {
+                    dimension.path.links.is_empty() && &dimension.path.property == id
+                }) || question
+                    .filters
+                    .iter()
+                    .chain(&metric.default_filters)
+                    .any(|filter| {
+                        matches!(filter.operator, FilterOperator::Eq)
+                            && filter.path.links.is_empty()
+                            && &filter.path.property == id
+                    })
+            };
+        if self.unit_source(measure).iter().any(|id| !fixed(id)) {
+            self.reject(codes::MIXED_UNIT, &format!("{at}/groupBy"));
         }
     }
 
@@ -1194,6 +1265,20 @@ impl<'a> Checker<'a> {
         }
         if rollup.across.is_empty() && !rollup.over_time {
             self.reject(codes::INVALID_ROLLUP, at);
+        }
+        // METRIC-UNIT-PARTITION-1: rolling up across a unit source mixes units.
+        if let BoundMeasure::Property {
+            object_type,
+            aggregate,
+            property,
+        } = &metric.measure
+        {
+            let sources = self.unit_source((object_type.as_str(), *aggregate, property.as_ref()));
+            for (index, axis) in rollup.across.iter().enumerate() {
+                if axis.links.is_empty() && sources.contains(&axis.property) {
+                    self.reject(codes::MIXED_UNIT, &format!("{at}/across/{index}"));
+                }
+            }
         }
         let over_time = rollup.over_time || rollup.across.contains(&metric.time_dimension);
         if over_time

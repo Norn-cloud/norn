@@ -34,6 +34,7 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod decision_ledger;
 pub mod engine;
 pub mod error;
 pub mod export;
@@ -84,6 +85,7 @@ pub fn builtin_registered(function_id: &str, version: u32) -> bool {
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use mapping_process::MappingOutcome;
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,

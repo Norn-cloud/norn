@@ -144,6 +144,21 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store
     }
 
+    /// This cell, its store, clock and outside world unchanged, under another
+    /// ledger event profile: a host that serves actions maps captured source
+    /// rows under the observation profile on the same store, then turns back.
+    #[must_use]
+    pub fn into_profile<E2>(self) -> SqliteCell<E2, C, I, S> {
+        SqliteCell {
+            store: self.store,
+            scope: self.scope,
+            now: self.now,
+            responder: self.responder,
+            published: self.published,
+            events: PhantomData,
+        }
+    }
+
     /// Capture pinned mapping evidence while the cell owns its store.
     ///
     /// # Errors
@@ -1281,9 +1296,12 @@ where
         let reader = self.store.read();
         let mut events: BTreeMap<u64, Vec<E>> = BTreeMap::new();
         for entry in reader.ledger(0)? {
-            // A run start is the store's bookkeeping event (RUN-LEDGER-1); it
-            // stays in the hash-chained ledger but is not an `E` to decode.
-            if crate::flow_run::is_run_start(&entry.event) {
+            // A run start or a decision's resolution is the store's bookkeeping
+            // event (RUN-LEDGER-1, DECISION-LEDGER-1); it stays in the
+            // hash-chained ledger but is not an `E` to decode.
+            if crate::flow_run::is_run_start(&entry.event)
+                || crate::decision_ledger::is_decision_resolved(&entry.event)
+            {
                 continue;
             }
             events
@@ -1573,7 +1591,26 @@ where
         commit: CellCommit<E, C, I>,
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(start))
+        let event = start.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(event))
+    }
+
+    /// Commit a kernel-prepared turn that consumes a parked decision's
+    /// recorded result, and record the decision's resolution in the decision
+    /// ledger in the same transaction (DECISION-LEDGER-1). The commit must
+    /// consume exactly `resolved`'s command and generation, and the decision
+    /// must be open; otherwise the store refuses (`decision.*`) and nothing
+    /// commits.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_decision_resolution(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        resolved: &crate::decision_ledger::DecisionResolved,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let event = resolved.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(event))
     }
 
     pub(crate) fn commit_observed_evidence(
@@ -1618,7 +1655,7 @@ where
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
-        run_start: Option<&crate::flow_run::RunStart>,
+        bookkeeping: Option<norn_ir::RuntimeValue>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1683,9 +1720,10 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
-        if let Some(start) = run_start {
-            // RUN-LEDGER-1: the store records the run in this commit's transaction.
-            batch.events.push(start.event().map_err(CommitError::Host)?);
+        if let Some(event) = bookkeeping {
+            // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
+            // or the decision's resolution in this commit's transaction.
+            batch.events.push(event);
         }
         // Only the non-serializable, kernel-bound proof reaches this path.
         // Persist additive occurrence inputs so export/restore replays the

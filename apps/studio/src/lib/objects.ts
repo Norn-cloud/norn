@@ -2,12 +2,23 @@ import type { Field, Lifecycle } from "./catalog.ts"
 import { member } from "./exact.ts"
 import type { LinkPage, ObjectRecord } from "./transport.ts"
 
-/** A fact's value as the server sent it: decimals keep their exact text, with their declared currency. */
+/**
+ * An exact decimal's text written to its declared scale: the cell stores decimals canonically
+ * (72.00 is kept as 72), so the declared places are put back by padding the fraction with zeros.
+ * Digits are never rounded or dropped; text that is not a plain decimal is left as sent.
+ */
+export function atScale(text: string, scale: number | undefined): string {
+  if (scale === undefined || scale <= 0 || !/^-?\d+(\.\d+)?$/.test(text)) return text
+  const [whole, fraction = ""] = text.split(".")
+  return fraction.length >= scale ? text : `${whole}.${fraction.padEnd(scale, "0")}`
+}
+
+/** A fact's value as the server sent it: decimals keep their exact text at their declared scale, with their declared currency. */
 export function factText(field: Field, record: ObjectRecord, numbers: ReadonlyMap<string, string>, at: string): string {
   const value = record.values[field.id]
   if (value === null || value === undefined) return "—"
   if (field.decimal) {
-    const text = numbers.get(`${at}/values/${member(field.id)}`) ?? (typeof value === "string" ? value : "unavailable")
+    const text = atScale(numbers.get(`${at}/values/${member(field.id)}`) ?? (typeof value === "string" ? value : "unavailable"), field.decimal.scale)
     const currency = field.decimal.currencyFrom ? record.values[field.decimal.currencyFrom] : undefined
     const unit = field.decimal.unit ?? (typeof currency === "string" ? currency : undefined)
     const per = field.decimal.perUnit ? ` per ${field.decimal.perUnit}` : ""

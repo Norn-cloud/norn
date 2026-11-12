@@ -69,6 +69,16 @@ pub fn start(
     )
 }
 
+/// How a perform step ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StepOutcome {
+    /// The Function's output.
+    Output(RuntimeObject),
+    /// A typed failure, `{_tag, ...fields}` (one of the Function's declared
+    /// errors, such as `norn.decision@1`'s `Expired`).
+    Failure(RuntimeObject),
+}
+
 /// One perform step's result, as the flow rule receives it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepResult<'a> {
@@ -78,12 +88,14 @@ pub struct StepResult<'a> {
     pub step: &'a str,
     /// The attempt it answers, as the command carried it.
     pub attempt: RuntimeValue,
-    /// The Function's output.
-    pub output: RuntimeObject,
+    /// How the step ended.
+    pub outcome: StepOutcome,
 }
 
-/// Evaluate the result turn of `rule` for one perform step of a live run.
-/// `run` is the run object's current values.
+/// Evaluate the result turn of `rule` for one perform step of a live run:
+/// `{kind: "result", runId, step, attempt, results: {<step>: output}}` for
+/// an output, `{kind: "failure", runId, step, attempt, failure}` for a typed
+/// failure. `run` is the run object's current values.
 ///
 /// # Errors
 /// [`FlowTurnError`]; nothing is committed either way.
@@ -93,18 +105,23 @@ pub fn result(
     run: RuntimeObject,
     step: StepResult<'_>,
 ) -> Result<DecisionOutput, FlowTurnError> {
+    let (kind, member, value) = match step.outcome {
+        StepOutcome::Output(output) => (
+            "result",
+            "results",
+            RuntimeValue::Object(BTreeMap::from([(
+                step.step.to_owned(),
+                RuntimeValue::Object(output),
+            )])),
+        ),
+        StepOutcome::Failure(failure) => ("failure", "failure", RuntimeValue::Object(failure)),
+    };
     let event = BTreeMap::from([
-        ("kind".to_owned(), text("result")),
+        ("kind".to_owned(), text(kind)),
         ("runId".to_owned(), text(step.run_id)),
         ("step".to_owned(), text(step.step)),
         ("attempt".to_owned(), step.attempt),
-        (
-            "results".to_owned(),
-            RuntimeValue::Object(BTreeMap::from([(
-                step.step.to_owned(),
-                RuntimeValue::Object(step.output),
-            )])),
-        ),
+        (member.to_owned(), value),
     ]);
     // An unset property is absent from the slice, as the closed slice schema
     // expects; the stored object carries it as null.

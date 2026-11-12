@@ -215,6 +215,11 @@ pub enum PropertyType {
         )]
         #[schemars(with = "UnitRef")]
         per_unit: Option<UnitRef>,
+        /// METRIC-UNIT-PARTITION-1: the sibling properties whose values
+        /// together are this quantity's unit, when it has no static `unit`.
+        /// Aggregating questions must group by or fix each of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unit_source: Vec<super::object::PropertyId>,
     },
     /// VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
     DecimalBinding {
@@ -261,6 +266,10 @@ pub enum PropertyType {
         /// applies only when the ref resolves to an integer or decimal.
         #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
         additivity: PropertyAdditivity,
+        /// METRIC-UNIT-PARTITION-1: the unit source at this use site, for a
+        /// ref that resolves to a decimal declaring none of its own.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        unit_source: Vec<super::object::PropertyId>,
     },
 }
 
