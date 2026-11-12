@@ -215,9 +215,10 @@ export const CorrectScannedDocument = Norn.action({
   effect: { kind: "upsert_input_object", type: ScannedDocument, objectIdField: "id", writeMode: { kind: "upsert" } },
 })
 
+/** Who may correct: a data steward, or (on the alpha) any member of the org. */
 export const CorrectionAccess = Norn.access({
   id: "docs.scanned_document.access", title: "Scanned document steward", version: "0.1.0",
   rules: [{ ruleId: "steward", actions: [CorrectScannedDocument], resourceType: ScannedDocument,
-    scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward"] } }],
+    scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }],
   }],
 })

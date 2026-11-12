@@ -18,7 +18,10 @@
           {
             "role": {
               "anyOf": [
-                "DataSteward"
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
               ]
             }
           }
