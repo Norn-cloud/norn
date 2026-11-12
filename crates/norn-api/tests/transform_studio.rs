@@ -8,8 +8,9 @@
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
+    clippy::too_many_lines,
     missing_docs,
-    reason = "Studio fixture correspondence"
+    reason = "Studio fixture correspondence: one synthetic shop is built in one function"
 )]
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
