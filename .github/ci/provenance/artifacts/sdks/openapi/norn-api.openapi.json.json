@@ -1,11 +1,5 @@
 {
-<<<<<<< HEAD
-  "sha256": "34d2570d653628865df4491a9204a511ca8d6ecd30261d6c75355eaa4ba62838",
-||||||| a1daed390a
-  "sha256": "2133ebf5de7126cbb2bd728e14b8ab376d3d3b01b4ed6c3dc7920b8cfc739985",
-=======
-  "sha256": "eba28cfa747bb83b1be05439cb70733316f0224666deb8835d0000bfeff7af60",
->>>>>>> origin/demo/robin
+  "sha256": "e7bc33de69cc80227eab7f08cb4e0a814cd1a4ed92aec201657d14ae0bc12171",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
