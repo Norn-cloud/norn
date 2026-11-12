@@ -59,7 +59,7 @@ fn ontology() -> Vec<Value> {
                     {"id": "credit", "type": {"kind": "decimal", "scale": 2,
                         "additivity": {"kind": "additive"}}}
                 ],
-                "keys": [{"name": "email", "properties": ["email"],
+                "identity": [{"name": "email", "properties": ["email"],
                     "rule": {"normalize": [{"property": "email", "steps": ["trim", "lowercase"]}]}}]
             }),
         ),
