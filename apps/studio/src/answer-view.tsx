@@ -127,13 +127,15 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace }: {
+export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale }: {
   readonly read: QuestionAnswer
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
   /** The server's refusal of the live read, shown over the recording. */
   readonly refusal?: Refusal
+  /** Ask the question again, when a drill-down finds the cell has committed since this answer. */
+  readonly onStale?: () => void
   /** How a bucket's records are read for a question that is not published. */
   readonly fetchTrace?: FetchTrace
 }) {
@@ -209,7 +211,7 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
           </TableBody>
         </Table></TableCard>
       </Panel>
-      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace } : undefined} />
+      <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
     </section>
   )
 }
