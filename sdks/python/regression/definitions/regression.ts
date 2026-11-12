@@ -27,7 +27,7 @@ export const ModelSpec = Norn.type({
   properties: SpecFields,
   identity: [{ name: "primary", properties: ["spec"] }],
   // A spec run for a Studio request links to it: request ↔ spec ↔ checks.
-  links: [{ id: "request", target: "stats.CheckRequest", cardinality: { to: "one", from: "many" } }],
+  links: [{ id: "requested_by", target: "stats.CheckRequest", cardinality: { to: "one", from: "many" } }],
 })
 
 const CheckFields = Schema.Struct({
@@ -73,7 +73,7 @@ export const RecordRequestedModelSpec = Norn.action({
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   slice: [{ name: "request", type: "stats.CheckRequest", key: { property: { from: "input", property: "request" } } }],
-  createLinks: [{ link: "request", targetType: "stats.CheckRequest", targetIdField: "request" }],
+  createLinks: [{ link: "requested_by", targetType: "stats.CheckRequest", targetIdField: "request" }],
   writes: [{ type: ModelSpec, change: "created" }],
   effect: { kind: "upsert_input_object", type: ModelSpec, objectIdField: "spec", writeMode: { kind: "create_only" } },
 })
