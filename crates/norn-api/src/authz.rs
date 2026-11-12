@@ -16,6 +16,10 @@ pub enum Operation {
     /// Start a run of the named installed flow (RUN-ROUTES-1). A run holds no
     /// grants of its own: this decides only who may start one.
     StartRun(String),
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -192,6 +196,7 @@ mod tests {
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
                 Operation::StartRun("demo.flow".into()),
+                Operation::ProvisionCell,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

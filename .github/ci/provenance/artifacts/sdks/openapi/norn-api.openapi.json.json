@@ -15,6 +15,7 @@
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/object_profile.rs",
     "crates/norn-api/src/openapi.rs",
+    "crates/norn-api/src/provision.rs",
     "crates/norn-api/src/question_routes.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
