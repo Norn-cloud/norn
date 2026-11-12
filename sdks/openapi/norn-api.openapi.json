@@ -25634,8 +25634,9 @@
           },
           "offset": {
             "type": "integer",
-            "format": "uint32",
+            "format": "uint64",
             "description": "Rows back or ahead for `lag`/`lead` (default 1).",
+            "maximum": 9007199254740992,
             "minimum": 0
           }
         },

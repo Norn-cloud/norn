@@ -1805,7 +1805,10 @@ impl Builder<'_, '_> {
                     continue;
                 }
             };
-            let offset = column.offset.unwrap_or(1);
+            let offset = column
+                .offset
+                .map_or(Some(1), |offset| u32::try_from(offset.0).ok())
+                .unwrap_or(0);
             if column.offset.is_some() && !matches!(column.function, WindowFn::Lag | WindowFn::Lead)
                 || offset == 0
             {

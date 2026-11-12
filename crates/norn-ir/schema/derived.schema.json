@@ -756,6 +756,13 @@
         }
       ]
     },
+    "WholeNumber": {
+      "description": "A non-negative integral JSON number.\n\nIR JSON numbers are binary64 ([`JsonValue::Number`]), so a count written\nas `3` and one decoded as `3.0` are the same value. This accepts any\nintegral, non-negative number up to 2^53 (the exact-integer range of\nbinary64), matching the validators' `fract() == 0.0` checks; each member's\nlower bound stays a checker rule.",
+      "type": "integer",
+      "format": "uint64",
+      "maximum": 9007199254740992,
+      "minimum": 0
+    },
     "WindowColumn": {
       "description": "One window column.",
       "type": "object",
@@ -774,9 +781,7 @@
         },
         "offset": {
           "description": "Rows back or ahead for `lag`/`lead` (default 1).",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
+          "$ref": "#/$defs/WholeNumber"
         }
       },
       "additionalProperties": false,
