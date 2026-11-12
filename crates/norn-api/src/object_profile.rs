@@ -19,6 +19,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{PropertyType, RuntimeValue};
 use serde::Serialize;
 use utoipa::ToSchema;
+use utoipa::openapi::schema::{Object, Schema, SchemaType};
 
 use crate::{
     host::DevHost,
@@ -73,10 +74,10 @@ pub struct NornPropertyProfile {
     /// Distinct values.
     pub distinct: u64,
     /// The smallest value (numeric and temporal properties).
-    #[schema(value_type = Object, required = true, nullable = true)]
+    #[schema(schema_with = optional_value_schema, required = true)]
     pub min: Option<RuntimeValue>,
     /// The largest value (numeric and temporal properties).
-    #[schema(value_type = Object, required = true, nullable = true)]
+    #[schema(schema_with = optional_value_schema, required = true)]
     pub max: Option<RuntimeValue>,
     /// Quantiles by nearest rank (numeric and temporal properties).
     pub quantiles: Vec<NornQuantile>,
@@ -92,7 +93,7 @@ pub struct NornQuantile {
     /// The percentile, 0 to 100.
     pub percent: u32,
     /// The value at that nearest rank.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = value_schema)]
     pub value: RuntimeValue,
 }
 
@@ -113,13 +114,28 @@ pub struct NornHistogram {
 #[serde(rename_all = "camelCase")]
 pub struct NornBin {
     /// The smallest value in the bin, or the calendar label.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = value_schema)]
     pub lower: RuntimeValue,
     /// The largest value in the bin, or the calendar label.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = value_schema)]
     pub upper: RuntimeValue,
     /// Rows in the bin.
     pub count: u64,
+}
+
+const VALUE: &str = "A property value: an exact decimal as a raw JSON number token (read its \
+     text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string.";
+
+fn value_schema() -> Schema {
+    let mut schema = Object::with_type(SchemaType::AnyValue);
+    schema.description = Some(VALUE.to_owned());
+    Schema::Object(schema)
+}
+
+fn optional_value_schema() -> Schema {
+    let mut schema = Object::with_type(SchemaType::AnyValue);
+    schema.description = Some(format!("{VALUE} Null when the property has no value to report."));
+    Schema::Object(schema)
 }
 
 fn count(n: usize) -> u64 {
