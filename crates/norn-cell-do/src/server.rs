@@ -69,6 +69,150 @@ pub struct Request<'a> {
     pub body: &'a str,
 }
 
+/// Every route this host serves, and nothing else: [`handle_all`] refuses a
+/// path that [`Route::of`] does not name. The generated `OpenAPI` document is
+/// checked against this list (`tests/server.rs`), so a served route is either
+/// documented or named there as undocumented, with the reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Route {
+    /// `GET /v1/access`, dispatched by the published host's entry point.
+    Access,
+    /// `POST /v1/actions/{actionId}`.
+    Action,
+    /// `GET /v1/definitions`.
+    DefinitionsCatalog,
+    /// `POST /v1/definitions:admit`.
+    DefinitionsAdmit,
+    /// `POST /v1/definitions:install`.
+    DefinitionsInstall,
+    /// `GET /v1/definitions:list`.
+    DefinitionsList,
+    /// `GET /v1/definitions/{id}`.
+    Definition,
+    /// `POST /v1/definitions/{id}:retire`.
+    DefinitionRetire,
+    /// `GET /v1/objects/{type}`.
+    Objects,
+    /// `GET /v1/objects/{type}/{id}`.
+    Object,
+    /// `GET /v1/objects/{type}/{id}/links`.
+    ObjectLinks,
+    /// `GET /v1/objects/{type}/{id}/lineage`.
+    ObjectLineage,
+    /// `GET /v1/questions/{question}/answer`.
+    QuestionAnswer,
+    /// `GET /v1/questions/{question}/trace`.
+    QuestionTrace,
+    /// `POST /v1/questions:evaluate`.
+    QuestionsEvaluate,
+    /// `POST /v1/questions:trace`.
+    QuestionsTrace,
+}
+
+impl Route {
+    /// The first route of [`Route::all`].
+    pub const FIRST: Self = Self::Access;
+
+    /// The route after this one. The match is exhaustive, so a new variant
+    /// does not compile until it is placed in the list.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        Some(match self {
+            Self::Access => Self::Action,
+            Self::Action => Self::DefinitionsCatalog,
+            Self::DefinitionsCatalog => Self::DefinitionsAdmit,
+            Self::DefinitionsAdmit => Self::DefinitionsInstall,
+            Self::DefinitionsInstall => Self::DefinitionsList,
+            Self::DefinitionsList => Self::Definition,
+            Self::Definition => Self::DefinitionRetire,
+            Self::DefinitionRetire => Self::Objects,
+            Self::Objects => Self::Object,
+            Self::Object => Self::ObjectLinks,
+            Self::ObjectLinks => Self::ObjectLineage,
+            Self::ObjectLineage => Self::QuestionAnswer,
+            Self::QuestionAnswer => Self::QuestionTrace,
+            Self::QuestionTrace => Self::QuestionsEvaluate,
+            Self::QuestionsEvaluate => Self::QuestionsTrace,
+            Self::QuestionsTrace => return None,
+        })
+    }
+
+    /// Every route, once.
+    pub fn all() -> impl Iterator<Item = Self> {
+        std::iter::successors(Some(Self::FIRST), |route| route.next())
+    }
+
+    /// The method the route accepts and its path template, as the `OpenAPI`
+    /// document writes them.
+    #[must_use]
+    pub const fn signature(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Access => ("GET", "/v1/access"),
+            Self::Action => ("POST", "/v1/actions/{actionId}"),
+            Self::DefinitionsCatalog => ("GET", "/v1/definitions"),
+            Self::DefinitionsAdmit => ("POST", "/v1/definitions:admit"),
+            Self::DefinitionsInstall => ("POST", "/v1/definitions:install"),
+            Self::DefinitionsList => ("GET", "/v1/definitions:list"),
+            Self::Definition => ("GET", "/v1/definitions/{id}"),
+            Self::DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
+            Self::Objects => ("GET", "/v1/objects/{type}"),
+            Self::Object => ("GET", "/v1/objects/{type}/{id}"),
+            Self::ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
+            Self::ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
+            Self::QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
+            Self::QuestionTrace => ("GET", "/v1/questions/{question}/trace"),
+            Self::QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
+            Self::QuestionsTrace => ("POST", "/v1/questions:trace"),
+        }
+    }
+
+    /// The route a request path names, if any.
+    #[must_use]
+    pub fn of(path: &str) -> Option<Self> {
+        match path {
+            "/v1/access" => return Some(Self::Access),
+            "/v1/definitions" => return Some(Self::DefinitionsCatalog),
+            "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
+            "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            _ => {}
+        }
+        if let Some(route) = definitions_route(path) {
+            return Some(match route {
+                DefinitionsRoute::Admit => Self::DefinitionsAdmit,
+                DefinitionsRoute::Install => Self::DefinitionsInstall,
+                DefinitionsRoute::List => Self::DefinitionsList,
+                DefinitionsRoute::Retire(_) => Self::DefinitionRetire,
+                DefinitionsRoute::Get(_) => Self::Definition,
+            });
+        }
+        if let Some((_, leaf)) = question_path(path) {
+            return match leaf {
+                "answer" => Some(Self::QuestionAnswer),
+                "trace" => Some(Self::QuestionTrace),
+                _ => None,
+            };
+        }
+        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+            return Some(match (id, leaf) {
+                (None, _) => Self::Objects,
+                (Some(_), None) => Self::Object,
+                (Some(_), Some("links")) => Self::ObjectLinks,
+                (Some(_), Some(_)) => Self::ObjectLineage,
+            });
+        }
+        path.strip_prefix("/v1/actions/")
+            .filter(|id| !id.is_empty() && !id.contains('/'))
+            .map(|_| Self::Action)
+    }
+}
+
+/// The question name and leaf of `/v1/questions/{question}/{leaf}`.
+fn question_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix("/v1/questions/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(name, _)| !name.is_empty() && !name.contains('/'))
+}
+
 /// Dispatch one request against the opened cell.
 pub fn handle<E: SqlEngine>(
     host: &DevHost<E>,
@@ -116,29 +260,25 @@ pub fn handle_all<E: SqlEngine>(
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
-    let question = path
-        .strip_prefix("/v1/questions/")
-        .and_then(|rest| rest.split_once('/'))
-        .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
+    let question = question_path(path);
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
-    let known = path == "/v1/definitions"
-        || ad_hoc
-        || action.is_some()
-        || object.is_some()
-        || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
-    let result = if let Some(route) = definitions_route(path) {
-        definitions(host, questions, kinds, actor, route, request)
-    } else if !known {
+    // `Route` is the one list of what this host serves; a path it does not
+    // name is not found. `/v1/access` is dispatched by the published host's
+    // entry point, never here.
+    let served = Route::of(path).is_some_and(|route| route != Route::Access);
+    let result = if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
             "route.not_found",
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if let Some(route) = definitions_route(path) {
+        definitions(host, questions, kinds, actor, route, request)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {

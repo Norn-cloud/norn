@@ -326,3 +326,71 @@ fn a_cursor_at_the_cursor_bound_reaches_the_route() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["diagnostics"][0]["code"], "query.cursor_invalid");
 }
+
+/// Served routes the `OpenAPI` document does not describe, each with its reason.
+const UNDOCUMENTED: &[server::Route] = &[
+    // Served only by the published host's entry point, for the access view:
+    // the dev host and `server::handle` refuse it. Its document types live in
+    // this crate, outside the generated contract.
+    server::Route::Access,
+];
+
+/// The generated document describes exactly what the host serves: every
+/// route is documented or named above, and the document names no route the
+/// host does not serve.
+#[test]
+fn every_served_route_is_documented_or_named_as_undocumented() {
+    let document: Value =
+        serde_json::from_str(&norn_api::openapi::openapi_json().unwrap()).unwrap();
+    let documented: std::collections::BTreeSet<(String, String)> = document["paths"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .flat_map(|(path, item)| {
+            item.as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, operation)| operation.get("operationId").is_some())
+                .map(move |(method, _)| (method.to_uppercase(), path.clone()))
+        })
+        .collect();
+    let served: std::collections::BTreeSet<(String, String)> = server::Route::all()
+        .filter(|route| !UNDOCUMENTED.contains(route))
+        .map(|route| {
+            let (method, template) = route.signature();
+            (method.to_owned(), template.to_owned())
+        })
+        .collect();
+    assert_eq!(documented, served);
+
+    // Each template names its own route, so the list and the router agree.
+    for route in server::Route::all() {
+        let (_, template) = route.signature();
+        let mut path = String::new();
+        let mut parameter = false;
+        for character in template.chars() {
+            match character {
+                '{' => {
+                    parameter = true;
+                    path.push('x');
+                }
+                '}' => parameter = false,
+                _ if parameter => {}
+                other => path.push(other),
+            }
+        }
+        assert_eq!(server::Route::of(&path), Some(route), "{template}");
+    }
+
+    // A path the list does not name is not served, and neither is the one
+    // route this dispatch leaves to the published host's entry point.
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    for path in ["/v1/nothing", "/v1/access", "/v1/objects"] {
+        let (status, body) = get(&demo, path, SCOPE, VIEWER);
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (404, Some("route.not_found")),
+            "{path}"
+        );
+    }
+}

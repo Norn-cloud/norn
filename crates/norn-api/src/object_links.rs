@@ -41,15 +41,21 @@ pub const DEFAULT_LINK_LIMIT: usize = 50;
 pub const MAX_LINK_LIMIT: usize = 100;
 
 /// The raw query string fields of `GET /v1/objects/{type}/{id}/links`.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ObjectLinkParams {
     /// `out`, `in` or `both` (the default).
+    #[param(value_type = Option<String>, pattern = "^(out|in|both)$", nullable = false)]
     pub direction: Option<String>,
     /// One declared link id, to list only those links.
+    #[param(nullable = false)]
     pub link: Option<String>,
-    /// `limit`, 1..=100.
+    /// Page size, 1 to 100; 50 when absent.
+    #[param(value_type = Option<u32>, minimum = 1, maximum = 100, nullable = false)]
     pub limit: Option<String>,
-    /// `after`, an opaque cursor from a prior page's `next`.
+    /// An opaque cursor from a previous page's `next`, valid only for the same
+    /// object, query, scope and caller, and only until the cell next commits.
+    #[param(nullable = false)]
     pub after: Option<String>,
 }
 
@@ -337,6 +343,7 @@ fn scan_links<E: SqlEngine>(
 /// continue it (400 `query.cursor_invalid`); a commit since the cursor (409
 /// `object.snapshot_moved`); more visible links than one scan reads (413);
 /// or a host failure.
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/links", params(ScopeQuery, ObjectLinkParams, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses.")), responses((status = 200, description = "One page of the links the caller may see at both ends; links to rows it cannot see are neither listed nor counted.", body = NornObjectLinkPage), (status = 400, description = "The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a value that does not parse. `query.invalid` lists every violation with a pointer; `query.cursor_invalid` is a cursor that does not continue this query for this caller.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused: the object is absent, quarantined or not readable by this principal; these are not told apart.", body = Refusal), (status = 409, description = "The request was refused: the cell committed while the read ran (`object.snapshot_moved`, retryable); a page is never assembled from two snapshots.", body = Refusal), (status = 413, description = "The request was refused: more visible links than one scan reads (`object.scan_bound_exceeded`).", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_object_links<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -452,6 +459,7 @@ fn requested_row<E: SqlEngine>(
 /// source-withheld object, or one without a retained source bundle (one 404);
 /// a commit between the row and provenance reads (409 `object.snapshot_moved`);
 /// or a host failure.
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/lineage", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses.")), responses((status = 200, description = "Where the object's current version came from: its source record, document and mapping.", body = crate::objects::NornInstanceSourceProvenance), (status = 400, description = "The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused: the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart.", body = Refusal), (status = 409, description = "The request was refused: the cell committed between the row and provenance reads (`object.snapshot_moved`, retryable).", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_object_lineage<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,

@@ -4,25 +4,31 @@ use http::StatusCode;
 use norn_cell::{InstalledDefinitionSet, engine::SqlEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
 use norn_ir::{ResourceLimitProfile, RuntimeValue};
 
 /// Explicit scope and optional retained definition version.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
 pub struct DefinitionsQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
-    /// Absent selects the active revision.
+    /// A retained revision; absent selects the active one.
+    #[param(nullable = false)]
     pub version: Option<u64>,
 }
 
 /// An admitted document; source and receipt travel as exact JSON text.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = NornDefinitionsCatalog)]
 pub struct DefsResponse {
     /// Always true.
     pub admitted: bool,
@@ -31,27 +37,37 @@ pub struct DefsResponse {
     /// Editor sidecar revision.
     pub layout_revision: u64,
     /// Editor sidecar.
+    #[schema(schema_with = layout_schema)]
     pub layout: norn_ir::LayoutSidecar,
     /// Not retained; null rather than a new check at read time.
+    #[schema(required = true, nullable = true, value_type = Option<Object>)]
     pub layout_diagnostics: Option<serde_json::Value>,
     /// Original checker receipt, without host reinterpretation.
+    #[schema(value_type = Object)]
     pub receipt: Box<RawValue>,
     /// Original receipt digest.
     pub receipt_sha256: String,
     /// Finding text is not retained; the original receipt carries its digest.
+    #[schema(required = true, nullable = true, value_type = Option<Object>)]
     pub diagnostics: Option<serde_json::Value>,
     /// Selected registry releases.
     pub registry: Vec<String>,
     /// Read-only base artifact identities.
     pub base_artifact_ids: Vec<String>,
     /// Admitted semantic documents, preserving exact numeric values.
+    #[schema(value_type = Vec<Object>)]
     pub artifacts: Vec<Box<RawValue>>,
+}
+
+fn layout_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("LayoutSidecar")
 }
 
 /// Read under one definition epoch; scope and authorization precede store access.
 ///
 /// # Errors
 /// Missing/mismatched scope, denied actor, absent version or host failure.
+#[utoipa::path(get, path = "/v1/definitions", params(DefinitionsQuery), responses((status = 200, description = "The admitted definitions at the active or requested revision.", body = DefsResponse), (status = 400, description = "The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a version that does not parse.", body = Refusal), (status = 403, description = "The request was refused: a missing or foreign scope, or denied authority, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused: the requested version was never installed (`defs.version_not_found`).", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_defs<E: SqlEngine>(
     host: &DevHost<E>,
     query: &DefinitionsQuery,

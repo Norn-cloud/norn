@@ -32,6 +32,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read under one definition epoch; scope and authorization precede store access.
+         * @description # Errors
+         *     Missing/mismatched scope, denied actor, absent version or host failure.
+         */
+        get: operations["get_defs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/definitions/{id}": {
         parameters: {
             query?: never;
@@ -138,6 +159,105 @@ export interface paths {
          *     A denied caller (403), a missing kind, a bad limit or cursor (400).
          */
         get: operations["list_definitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-3: one page of a grid query over a concept's objects (D67).
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), an invalid query
+         *     (400 with every violation), a cursor that does not continue it (400
+         *     `query.cursor_invalid`), a commit since the cursor (409
+         *     `object.snapshot_moved`), a sort or filter over more visible rows than one scan
+         *     (413), or a host failure.
+         */
+        get: operations["get_object_query"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-3: one object as a grid shows it (D67): withheld under
+         *     Population alone; absent, invisible and quarantined objects refuse alike.
+         *     Row authorization runs outside the cell lock; the row and its quarantine
+         *     are read under one snapshot.
+         * @description # Errors
+         *     As [`get_object`], and a commit between the row read and the closing
+         *     snapshot check, withheld or not (409 `object.snapshot_moved`, `retryable`).
+         */
+        get: operations["get_queried_object"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-4: where an object's current version came from (D67).
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, quarantined, withheld or
+         *     source-withheld object, or one without a retained source bundle (one 404);
+         *     a commit between the row and provenance reads (409 `object.snapshot_moved`);
+         *     or a host failure.
+         */
+        get: operations["get_object_lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-4: one page of the links touching an object (D67).
+         * @description # Errors
+         *     A denied gate (the opaque 403); an absent, invisible or quarantined object
+         *     (404); an invalid query (400 with every violation); a cursor that does not
+         *     continue it (400 `query.cursor_invalid`); a commit since the cursor (409
+         *     `object.snapshot_moved`); more visible links than one scan reads (413);
+         *     or a host failure.
+         */
+        get: operations["get_object_links"];
         put?: never;
         post?: never;
         delete?: never;
@@ -559,6 +679,13 @@ export interface components {
          *     namespace ([`Self::domain`]).
          */
         NornActionObjectTypeName: string;
+        /** @description The sort and filter a page actually applied. */
+        NornAppliedQuery: {
+            /** @description The applied filter, normalized; null without one. */
+            filter: Record<string, never> | null;
+            /** @description The applied sort keys, before the id tie-break; empty means scan order. */
+            sort: components["schemas"]["NornSortKey"][];
+        };
         /**
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
@@ -896,6 +1023,36 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /** @description An admitted document; source and receipt travel as exact JSON text. */
+        NornDefinitionsCatalog: {
+            /** @description Always true. */
+            admitted: boolean;
+            /** @description Admitted semantic documents, preserving exact numeric values. */
+            artifacts: Record<string, never>[];
+            /** @description Read-only base artifact identities. */
+            baseArtifactIds: string[];
+            /** @description Finding text is not retained; the original receipt carries its digest. */
+            diagnostics: Record<string, never> | null;
+            layout: components["schemas"]["LayoutSidecar"];
+            /** @description Not retained; null rather than a new check at read time. */
+            layoutDiagnostics: Record<string, never> | null;
+            /**
+             * Format: int64
+             * @description Editor sidecar revision.
+             */
+            layoutRevision: number;
+            /** @description Original checker receipt, without host reinterpretation. */
+            receipt: Record<string, never>;
+            /** @description Original receipt digest. */
+            receiptSha256: string;
+            /** @description Selected registry releases. */
+            registry: string[];
+            /**
+             * Format: int64
+             * @description Retained definition revision.
+             */
+            version: number;
+        };
         /**
          * NornExprTypeEnvRef
          * @description The identity of the ZEN Expression type environment recorded in a checker receipt.
@@ -8540,6 +8697,21 @@ export interface components {
             /** @description Revalidated exact result at its original frontier. */
             result: components["schemas"]["NornQueryResult"];
         };
+        /**
+         * @description HOST-READ-4: one page of the links touching an object that the caller may
+         *     see at both ends (D67); links to rows it cannot see are neither listed nor
+         *     counted.
+         */
+        NornObjectLinkPage: {
+            /** @description The requested object's identity. */
+            id: string;
+            /** @description Visible links, in the cell's stable order. */
+            items: components["schemas"]["NornLinkEdge"][];
+            /** @description The cursor for the next page, when one exists. */
+            next: string | null;
+            /** @description The requested object's type. */
+            objectType: string;
+        };
         /** @description One bounded page of a concept's authoritative objects. */
         NornObjectPage: {
             /** @description The concept read; records may be of its subtypes. */
@@ -8553,6 +8725,23 @@ export interface components {
             records: components["schemas"]["NornObjectRecord"][];
             /** @description The last scanned identity: the next page starts after it. */
             scannedThrough: string | null;
+        };
+        /** @description One page of a grid query over a concept's objects. */
+        NornObjectQueryPage: {
+            /** @description The cursor for the next page; null at the end. */
+            next: string | null;
+            /** @description The concept read; records may be of its subtypes. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Readable candidates held back by source disputes or open findings.
+             */
+            quarantineCount: number;
+            /** @description The sort and filter applied. */
+            query: components["schemas"]["NornAppliedQuery"];
+            /** @description The page, in the applied order. */
+            records: components["schemas"]["NornQueriedRecord"][];
+            total: components["schemas"]["NornQueryTotal"] | null;
         };
         /** @description One object as the cell stores it, at its current version. */
         NornObjectRecord: {
@@ -8571,6 +8760,34 @@ export interface components {
              * @description The owner version (`+1` per write).
              */
             version: number;
+        };
+        /**
+         * @description One object as a grid query shows it (HOST-READ-3, D67). A row the caller
+         *     may count but not read is listed with `withheld: true` and nothing
+         *     value-derived: no values and no version.
+         */
+        NornQueriedRecord: {
+            /** @description The object's identity. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description The tenant scope. */
+            scope: string;
+            /** @description Every stored property by property id; null when the row is withheld. */
+            values: Record<string, never> | null;
+            /**
+             * Format: int64
+             * @description The owner version; null when the row is withheld.
+             */
+            version: number | null;
+            /** @description The caller holds Population but not Values on this row. */
+            withheld: boolean;
+            /**
+             * @description Properties withheld by policy on a readable row. Always present; empty
+             *     until field-level policy exists, and never derived from which values a
+             *     row has.
+             */
+            withheldProperties: string[];
         };
         /**
          * @description The evaluator that produced an answer.
@@ -8683,6 +8900,16 @@ export interface components {
             /** @description The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). An exact decimal as a raw JSON number token; read its text, not a binary float. */
             value: number | null;
         };
+        /** @description How many rows match the query. */
+        NornQueryTotal: {
+            /** @description The count is a lower bound: the collection is larger than one scan. */
+            approximate: boolean;
+            /**
+             * Format: int64
+             * @description The matching rows counted.
+             */
+            count: number;
+        };
         /** @description A source partition's observed watermark. */
         NornQueryWatermark: {
             /** @description Source coverage is known through the consumed cursor. */
@@ -8697,6 +8924,13 @@ export interface components {
         };
         /** @description Current or authenticated historical answer, matching the native service envelope. */
         NornQuestionAnswer: components["schemas"]["NornQueryResult"] | components["schemas"]["NornHistoricalQuestionResult"];
+        /** @description One applied sort key. */
+        NornSortKey: {
+            /** @description `asc` or `desc`. */
+            direction: string;
+            /** @description The property sorted on. */
+            property: string;
+        };
         /** @description An execution world. */
         NornWorld: "main" | {
             /** @description A scenario fork. */
@@ -8897,6 +9131,69 @@ export interface operations {
             };
             /** @description The request was refused: a declared limit was exceeded. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_defs: {
+        parameters: {
+            query: {
+                /** @description Required organization. */
+                orgId: string;
+                /** @description Required environment. */
+                environmentId: string;
+                /** @description A retained revision; absent selects the active one. */
+                version?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The admitted definitions at the active or requested revision. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDefinitionsCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a version that does not parse. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a missing or foreign scope, or denied authority, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the requested version was never installed (`defs.version_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9268,6 +9565,358 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_query: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description Page size, 1 to 200; 50 when absent. */
+                limit?: number;
+                /**
+                 * @description Up to three sort keys, `property:asc` or `property:desc`, comma separated.
+                 *     A property sorts only when it has a comparable type; missing and
+                 *     withheld values sort last in both directions.
+                 * @example name:asc
+                 */
+                sort?: string;
+                /**
+                 * @description A JSON document `{"all":[clause, ...]}` of at most eight clauses, each
+                 *     `{"property", "op", "value"}`. Operators by property type: text `eq`,
+                 *     `ne`, `in`, `contains`, `prefix`; integer and decimal `eq`, `ne`, `in`,
+                 *     `lt`, `lte`, `gt`, `gte`, `between`; date, timestamp and duration the
+                 *     same without `in`; boolean `eq`; enum `eq`, `ne`, `in`; `empty` and
+                 *     `present` on any comparable type. `in` takes at most 50 values. A
+                 *     withheld row matches no clause.
+                 * @example {"all":[{"property":"name","op":"prefix","value":"A"}]}
+                 */
+                filter?: string;
+                /**
+                 * @description An opaque cursor from a previous page's `next`, valid only for the same
+                 *     type, query, scope and caller, and only until the cell next commits.
+                 */
+                after?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the concept's objects in the applied order, under the caller's visibility: a row it may count but not read is listed as withheld, with nothing value-derived. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectQueryPage"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a value that does not parse. `query.invalid` lists every violation with a pointer; `query.cursor_invalid` is a cursor that does not continue this query for this caller. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the type is not declared in this cell. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell committed since the cursor was issued (`object.snapshot_moved`, retryable from the first page). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: a sort or filter over more visible rows than one scan reads (`object.scan_bound_exceeded`); page without sort or filter instead. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_queried_object: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object as a grid shows it; withheld, with no values or version, when the caller may count but not read it. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornQueriedRecord"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the object is absent, quarantined or not readable by this principal; these are not told apart. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell committed while the read ran (`object.snapshot_moved`, retryable); a page is never assembled from two snapshots. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_lineage: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Where the object's current version came from: its source record, document and mapping. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornInstanceSourceProvenance"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the object is absent, quarantined, withheld or source-withheld, or has no retained source bundle (for example, an object created by an action rather than a mapping); these are not told apart. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell committed between the row and provenance reads (`object.snapshot_moved`, retryable). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_links: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description `out`, `in` or `both` (the default). */
+                direction?: string;
+                /** @description One declared link id, to list only those links. */
+                link?: string;
+                /** @description Page size, 1 to 100; 50 when absent. */
+                limit?: number;
+                /**
+                 * @description An opaque cursor from a previous page's `next`, valid only for the same
+                 *     object, query, scope and caller, and only until the cell next commits.
+                 */
+                after?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded and a segment that is not UTF-8 once decoded refuses. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the links the caller may see at both ends; links to rows it cannot see are neither listed nor counted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectLinkPage"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter, a query over the host bound, or a value that does not parse. `query.invalid` lists every violation with a pointer; `query.cursor_invalid` is a cursor that does not continue this query for this caller. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the object is absent, quarantined or not readable by this principal; these are not told apart. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell committed while the read ran (`object.snapshot_moved`, retryable); a page is never assembled from two snapshots. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: more visible links than one scan reads (`object.scan_bound_exceeded`). */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
