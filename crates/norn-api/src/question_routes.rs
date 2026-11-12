@@ -153,7 +153,10 @@ pub struct TraceQuery {
 }
 
 /// The answer's coordinates a trace may name: both, or neither.
-fn answered_at(known_as_of: Option<u64>, now_ms: Option<u64>) -> Result<Option<(u64, u64)>, Refusal> {
+fn answered_at(
+    known_as_of: Option<u64>,
+    now_ms: Option<u64>,
+) -> Result<Option<(u64, u64)>, Refusal> {
     match (known_as_of, now_ms) {
         (Some(frontier), Some(now)) => Ok(Some((frontier, now))),
         (None, None) => Ok(None),
@@ -395,7 +398,9 @@ pub fn get_numeric_trace<E: SqlEngine>(
         .as_deref()
         .ok_or_else(|| Refusal::invalid("bucket is required"))?;
     let answered = answered_at(query.known_as_of, query.now_ms)?;
-    trace_plan(host, runtime, actor, question, &plan, key, lineage, bucket, answered)
+    trace_plan(
+        host, runtime, actor, question, &plan, key, lineage, bucket, answered,
+    )
 }
 
 /// Trace one bucket of an admitted `plan`'s current exact result, named by

@@ -324,7 +324,11 @@ impl<E: SqlEngine> CellStore<E> {
     /// rows are read as of `cutoff`, but it is pinned as the live answer was
     /// (no slice pin, no historical receipt), so it reproduces that answer's
     /// lineage pin exactly when nothing it read has changed since.
-    pub(crate) fn question_snapshot_at_with<T>(
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one snapshot: read, gate, project, pin, in order"
+    )]
+    fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,

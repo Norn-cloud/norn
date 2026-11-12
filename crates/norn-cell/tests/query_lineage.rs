@@ -78,9 +78,7 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
                 source: &mut |_| Ok(true)
             }
         ),
-        Err(CellError::ComputeRefused(
-            "core.projection.answer_moved"
-        ))
+        Err(CellError::ComputeRefused("core.projection.answer_moved"))
     ));
     assert_eq!(head, store.verified_head().expect("unchanged"));
 }
@@ -200,9 +198,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
                 source: &mut |_| panic!("no changed-generation source disclosure")
             }
         ),
-        Err(CellError::ComputeRefused(
-            "core.projection.answer_moved"
-        ))
+        Err(CellError::ComputeRefused("core.projection.answer_moved"))
     ));
     // Named as it was given (its commit count, at its clock), the answer is
     // recomputed from that commit and traced as it was, after the change.

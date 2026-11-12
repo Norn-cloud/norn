@@ -241,8 +241,14 @@ mod tests {
     fn periods_are_half_open() {
         // 2024-04-01T00:00:00Z opens Q2; the second before it is still Q1.
         let q2 = 1_711_929_600;
-        assert_eq!(period_start(q2, TimeGrain::Quarter).expect("q2"), "2024-04-01");
-        assert_eq!(period_start(q2 - 1, TimeGrain::Quarter).expect("q1"), "2024-01-01");
+        assert_eq!(
+            period_start(q2, TimeGrain::Quarter).expect("q2"),
+            "2024-04-01"
+        );
+        assert_eq!(
+            period_start(q2 - 1, TimeGrain::Quarter).expect("q1"),
+            "2024-01-01"
+        );
         // Before the epoch a day still starts at its own midnight.
         assert_eq!(period_start(-1, TimeGrain::Day).expect("eve"), "1969-12-31");
         // 2024-12-30 is a Monday whose ISO week ends in 2025.

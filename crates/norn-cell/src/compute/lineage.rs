@@ -143,10 +143,22 @@ impl<E: SqlEngine> CellStore<E> {
             recorded_at: norn_kernel::LogicalTime::from_millis(context.now_ms),
             frontier,
         };
-        self.trace_matching_at(plan, context, Some(cutoff), matches, bucket, visible, disclosure)
+        self.trace_matching_at(
+            plan,
+            context,
+            Some(cutoff),
+            matches,
+            bucket,
+            visible,
+            disclosure,
+        )
     }
 
-    #[allow(clippy::too_many_arguments, reason = "one trace's fixed coordinates")]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "one trace's fixed coordinates, verified then disclosed in order"
+    )]
     fn trace_matching_at(
         &self,
         plan: &QuestionPlan,
@@ -160,102 +172,109 @@ impl<E: SqlEngine> CellStore<E> {
         let LineageDisclosure { values, source } = disclosure;
         let incomplete = || refused("core.projection.lineage_incomplete");
         let answered = answered_at.is_some();
-        self.question_snapshot_at_with(plan, context, answered_at, answered, &mut visible, |snapshot, _scan| {
-            // A trace returns records and their sources: it decodes them under
-            // the slice bound on what a read returns, not the question's scan
-            // bound (ruling 2026-11-12).
-            let budget = &mut crate::reactive::DecodeBudget::new(
-                &crate::reactive::ReactiveLimits::from_profile(
-                    &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-                ),
-            );
-            let result = snapshot.result;
-            if !result.complete || result.freshness != Freshness::Exact {
-                return Err(refused("core.compute.stale_input"));
-            }
-            // The answer the handle names is not the one the cell gives now:
-            // the data or the reader's view changed since it was answered.
-            if !matches(&result.lineage_ref) {
-                return Err(refused("core.projection.answer_moved"));
-            }
-            let row = result.rows.get(bucket).ok_or_else(incomplete)?;
-            let mut totals = Totals::default();
-            let mut contributions = Vec::with_capacity(row.members.len());
-            let reader = self.read();
-            for (id, member) in &row.members {
-                let (_, value) = snapshot.contributions.get(id).ok_or_else(incomplete)?;
-                totals.adjust(value, false)?;
-                let evidence = reader
-                    .fact_version_evidence_with_budget(
+        self.question_snapshot_at_with(
+            plan,
+            context,
+            answered_at,
+            answered,
+            &mut visible,
+            |snapshot, _scan| {
+                // A trace returns records and their sources: it decodes them under
+                // the slice bound on what a read returns, not the question's scan
+                // bound (ruling 2026-11-12).
+                let budget = &mut crate::reactive::DecodeBudget::new(
+                    &crate::reactive::ReactiveLimits::from_profile(
+                        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+                    ),
+                );
+                let result = snapshot.result;
+                if !result.complete || result.freshness != Freshness::Exact {
+                    return Err(refused("core.compute.stale_input"));
+                }
+                // The answer the handle names is not the one the cell gives now:
+                // the data or the reader's view changed since it was answered.
+                if !matches(&result.lineage_ref) {
+                    return Err(refused("core.projection.answer_moved"));
+                }
+                let row = result.rows.get(bucket).ok_or_else(incomplete)?;
+                let mut totals = Totals::default();
+                let mut contributions = Vec::with_capacity(row.members.len());
+                let reader = self.read();
+                for (id, member) in &row.members {
+                    let (_, value) = snapshot.contributions.get(id).ok_or_else(incomplete)?;
+                    totals.adjust(value, false)?;
+                    let evidence = reader
+                        .fact_version_evidence_with_budget(
+                            &result.context.world,
+                            result.grain.as_str(),
+                            id,
+                            member.version,
+                            budget,
+                        )?
+                        .ok_or_else(incomplete)?;
+                    let snapshot = evidence.snapshot();
+                    let record = ObjectRecord {
+                        object_type: snapshot.object_type.clone(),
+                        id: snapshot.key.clone(),
+                        scope: snapshot.scope.clone(),
+                        version: snapshot.version,
+                        values: snapshot.values.clone().ok_or_else(incomplete)?,
+                    };
+                    let receipt = evidence.receipt();
+                    if record.scope != result.context.scope
+                        || receipt.body.commit_seq > result.revision.commits
+                    {
+                        return Err(incomplete());
+                    }
+                    let allowed = values(&record)?;
+                    let fact = FactRef::new(&record.object_type, id, member.version);
+                    let mut source_allowed = false;
+                    let source = reader.instance_source_provenance(
                         &result.context.world,
-                        result.grain.as_str(),
-                        id,
-                        member.version,
+                        &fact,
                         budget,
-                    )?
-                    .ok_or_else(incomplete)?;
-                let snapshot = evidence.snapshot();
-                let record = ObjectRecord {
-                    object_type: snapshot.object_type.clone(),
-                    id: snapshot.key.clone(),
-                    scope: snapshot.scope.clone(),
-                    version: snapshot.version,
-                    values: snapshot.values.clone().ok_or_else(incomplete)?,
-                };
-                let receipt = evidence.receipt();
-                if record.scope != result.context.scope
-                    || receipt.body.commit_seq > result.revision.commits
-                {
+                        |source_record| {
+                            source_allowed = source(source_record)?;
+                            Ok(source_allowed)
+                        },
+                    )?;
+                    let source = match source {
+                        Some(provenance) => ContributionSource::Resolved {
+                            provenance: Box::new(provenance),
+                        },
+                        None if source_allowed => ContributionSource::Unavailable,
+                        None => ContributionSource::Restricted,
+                    };
+                    contributions.push(NumericContribution {
+                        fact,
+                        fact_digest: allowed.then(|| evidence.snapshot_sha256().to_owned()),
+                        source,
+                        amounts: member.amounts.clone(),
+                        receipt_hash: Some(receipt.hash.clone()),
+                        commit_seq: receipt.body.commit_seq,
+                        recorded_at_ms: receipt.body.logical_time,
+                        restricted: !allowed,
+                        values: allowed.then_some(record.values),
+                    });
+                }
+                let sums = totals
+                    .0
+                    .get(bucket)
+                    .ok_or_else(incomplete)?
+                    .iter()
+                    .map(|n| decimal(*n))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if sums != row.totals {
                     return Err(incomplete());
                 }
-                let allowed = values(&record)?;
-                let fact = FactRef::new(&record.object_type, id, member.version);
-                let mut source_allowed = false;
-                let source = reader.instance_source_provenance(
-                    &result.context.world,
-                    &fact,
-                    budget,
-                    |source_record| {
-                        source_allowed = source(source_record)?;
-                        Ok(source_allowed)
-                    },
-                )?;
-                let source = match source {
-                    Some(provenance) => ContributionSource::Resolved {
-                        provenance: Box::new(provenance),
-                    },
-                    None if source_allowed => ContributionSource::Unavailable,
-                    None => ContributionSource::Restricted,
-                };
-                contributions.push(NumericContribution {
-                    fact,
-                    fact_digest: allowed.then(|| evidence.snapshot_sha256().to_owned()),
-                    source,
-                    amounts: member.amounts.clone(),
-                    receipt_hash: Some(receipt.hash.clone()),
-                    commit_seq: receipt.body.commit_seq,
-                    recorded_at_ms: receipt.body.logical_time,
-                    restricted: !allowed,
-                    values: allowed.then_some(record.values),
-                });
-            }
-            let sums = totals
-                .0
-                .get(bucket)
-                .ok_or_else(incomplete)?
-                .iter()
-                .map(|n| decimal(*n))
-                .collect::<Result<Vec<_>, _>>()?;
-            if sums != row.totals {
-                return Err(incomplete());
-            }
-            withhold_restricted_bucket(&mut contributions);
-            Ok(NumericTrace {
-                result,
-                bucket: bucket.to_owned(),
-                contributions,
-            })
-        })
+                withhold_restricted_bucket(&mut contributions);
+                Ok(NumericTrace {
+                    result,
+                    bucket: bucket.to_owned(),
+                    contributions,
+                })
+            },
+        )
     }
 }
 
