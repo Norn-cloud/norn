@@ -276,14 +276,14 @@ pub fn call_action<E: SqlEngine>(
     };
     let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call)? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
-        Gated::Replayed(outcome) => outcome,
+        Gated::Replayed(outcome) => *outcome,
         Gated::Commit => norn_kernel::commit_action(
             &mut *cell,
             &catalog,
             &kernel_call,
             &KernelAuthorizer(host.authorizer.as_ref()),
         )
-        .map_err(|error| kernel_refusal(host, actor, action_id, error))?,
+        .map_err(|error| kernel_refusal(host, actor, action_id, &error))?,
     };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
@@ -298,7 +298,7 @@ fn kernel_refusal<E: SqlEngine>(
     host: &DevHost<E>,
     actor: &str,
     action_id: &str,
-    error: norn_kernel::ActionRefusal<norn_cell::CellError>,
+    error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
 ) -> Refusal {
     let refusal = error.refusal();
     if matches!(
@@ -323,7 +323,7 @@ enum Gated {
     /// No gate, or a decider approved exactly this call: commit it.
     Commit,
     /// An identical earlier call committed: its replay.
-    Replayed(ActionOutcome),
+    Replayed(Box<ActionOutcome>),
     /// It parked, or waits on the decision it parked as.
     Pending(crate::approvals::PendingAction),
 }
@@ -337,39 +337,39 @@ fn through_gate<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &mut crate::host::ActionCell<E>,
     catalog: &TypeCatalog<'_>,
-    call: &norn_kernel::ActionCall<'_>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
 ) -> Result<Gated, Refusal> {
-    let action_id = call.action.action_id.as_str();
+    let action_id = kernel_call.action.action_id.as_str();
     let Some(gate) = crate::approvals::gate(cell, action_id)? else {
         return Ok(Gated::Commit);
     };
     let dry = norn_kernel::commit_action(
         &mut crate::approvals::WouldCommit(&*cell),
         catalog,
-        call,
+        kernel_call,
         &KernelAuthorizer(host.authorizer.as_ref()),
     );
     match dry {
-        Ok(replayed) => Ok(Gated::Replayed(replayed)),
+        Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
         Err(error) if crate::approvals::would_have_committed(&error) => {
             let requester = host
                 .authorizer
-                .verified_principal(&call.actor)
+                .verified_principal(&kernel_call.actor)
                 .ok_or_else(action_denied)?;
             let parked = crate::approvals::ParkedCall {
                 action: action_id.to_owned(),
-                input: call.input.clone(),
-                idempotency_key: call.idempotency_key.clone(),
+                input: kernel_call.input.clone(),
+                idempotency_key: kernel_call.idempotency_key.clone(),
                 requester,
             };
             Ok(
-                match crate::approvals::hold(cell, &gate, &parked, call.turn.now)? {
+                match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
                     crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
                     crate::approvals::Held::Approved => Gated::Commit,
                 },
             )
         }
-        Err(error) => Err(kernel_refusal(host, &call.actor, action_id, error)),
+        Err(error) => Err(kernel_refusal(host, &kernel_call.actor, action_id, &error)),
     }
 }
 
