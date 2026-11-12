@@ -334,9 +334,9 @@ impl PullProfile {
 }
 
 /// One pull over a profile: plan a request, accept its response, repeat.
-#[derive(Debug)]
-pub struct Pull<'a> {
-    profile: &'a PullProfile,
+#[derive(Debug, Clone)]
+pub struct Pull {
+    profile: PullProfile,
     limits: Limits,
     feed: usize,
     page: u32,
@@ -348,12 +348,12 @@ pub struct Pull<'a> {
     watermarks: BTreeMap<String, Watermark>,
 }
 
-impl<'a> Pull<'a> {
+impl Pull {
     /// Start a pull from stored watermarks (absent datasets start at their
     /// declared initial position).
     #[must_use]
     pub fn new(
-        profile: &'a PullProfile,
+        profile: PullProfile,
         watermarks: BTreeMap<String, Watermark>,
         limits: Limits,
     ) -> Self {
@@ -386,6 +386,12 @@ impl<'a> Pull<'a> {
             self.cursor = Value::Null;
             self.greatest = None;
         }
+    }
+
+    /// The profile this pull runs.
+    #[must_use]
+    pub const fn profile(&self) -> &PullProfile {
+        &self.profile
     }
 
     /// The watermark of every dataset, including those this pull advanced.
@@ -801,7 +807,7 @@ mod tests {
     #[test]
     fn templates_keep_lone_token_types_and_splice_text() {
         let profile = keyset_profile(2);
-        let mut pull = Pull::new(&profile, BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
         let body: Value = serde_json::from_str(request.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["after"], serde_json::json!(["", 0]));
@@ -823,7 +829,7 @@ mod tests {
             }]
         }))
         .expect("profile");
-        let mut pull = Pull::new(&profile, BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
         assert_eq!(
             request.path,
@@ -838,7 +844,7 @@ mod tests {
             "Item".to_owned(),
             Watermark { version: "5".into(), id: Value::from(3) },
         )]);
-        let mut pull = Pull::new(&profile, stored.clone(), Limits::default());
+        let mut pull = Pull::new(profile.clone(), stored.clone(), Limits::default());
         let _request = pull.next_request().expect("request");
         assert!(matches!(pull.accept(401, b"{}"), Err(PullError::Status { status: 401, .. })));
         assert_eq!(pull.watermarks(), &stored);
@@ -847,7 +853,7 @@ mod tests {
     #[test]
     fn projection_keeps_exact_decimals_and_nulls_absent_fields() {
         let profile = keyset_profile(5);
-        let mut pull = Pull::new(&profile, BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
         let _request = pull.next_request().expect("request");
         let rows = pull
             .accept(200, br#"{"data":[{"id":7,"v":"1","code":9000.10}]}"#)
@@ -874,7 +880,7 @@ mod tests {
             }]
         }))
         .expect("profile");
-        let mut pull = Pull::new(&profile, BTreeMap::new(), Limits::default());
+        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
         let first = pull.next_request().expect("first");
         let body: Value = serde_json::from_str(first.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["variables"]["after"], Value::Null);
@@ -915,7 +921,7 @@ mod tests {
             let mut rows: Vec<(String, u64)> = versions.iter().enumerate()
                 .map(|(i, v)| (format!("{v:03}"), u64::try_from(i).expect("id") + 1)).collect();
             let moved = moved.index(rows.len());
-            let mut pull = Pull::new(&profile, BTreeMap::new(), Limits::default());
+            let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
             let mut seen = std::collections::BTreeSet::new();
             let mut page = 0;
             while let Some(request) = pull.next_request() {
@@ -930,7 +936,7 @@ mod tests {
             for (version, id) in &rows {
                 prop_assert!(seen.contains(&(version.clone(), id.to_string())), "missed {id}@{version}");
             }
-            let mut again = Pull::new(&profile, pull.watermarks().clone(), Limits::default());
+            let mut again = Pull::new(profile.clone(), pull.watermarks().clone(), Limits::default());
             let request = again.next_request().expect("request");
             prop_assert!(again.accept(200, &serve(&rows, &request)).expect("page").is_empty());
         }

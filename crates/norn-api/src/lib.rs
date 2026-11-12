@@ -43,6 +43,8 @@ pub mod objects;
 pub mod pull;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
+/// In-cell source sync over the pull engine: claims, steps and run reports.
+pub mod sources;
 /// Authorized read services shared by transports.
 pub mod routes;
 /// Native numeric trace schema projections.

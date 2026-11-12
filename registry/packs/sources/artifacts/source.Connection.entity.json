@@ -1,0 +1,195 @@
+{
+  "artifactId": "source.Connection.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Connected source system",
+  "namespace": "source",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "source.Synced"
+      ],
+      "name": "source.Connection",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "system",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "target",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "auth",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "api_key"
+              },
+              {
+                "value": "client_credentials"
+              },
+              {
+                "value": "presigned_upload"
+              }
+            ]
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "syncing"
+              },
+              {
+                "value": "ok"
+              },
+              {
+                "value": "partial"
+              },
+              {
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "last_sync_started_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "last_sync_ended_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "last_trigger",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "schedule"
+              },
+              {
+                "value": "manual"
+              },
+              {
+                "value": "upload"
+              }
+            ]
+          }
+        },
+        {
+          "id": "watermark",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "rows_read",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "rows_landed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "rows_quarantined",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "quarantine_reasons",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "last_error_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "last_error_message",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "connector_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "source_schema_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "mapping_id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.Connection.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

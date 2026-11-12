@@ -13,6 +13,7 @@
 use norn_api::host::{DevHost, Ingested};
 use norn_api::pull::{Limits, Pull, PullProfile, observation};
 use norn_api::scope::CellScope;
+use norn_api::sources::{ClaimError, HttpRequest, Sources, Step, Trigger};
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::{CellStore, InstalledDefinitionInput, MappingOutcome, Model};
 use norn_checker::{
@@ -46,11 +47,20 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     )
     .expect("artifacts");
     for system in SYSTEMS {
-        for kind in ["source", "mapping"] {
+        for kind in ["source", "mapping", "connector"] {
             set.push(artifact(&format!(
                 "registry/packs/{system}/artifacts/{system}.sandbox.{kind}.json"
             )));
         }
+    }
+    for name in [
+        "source.Synced.interface",
+        "source.Connection.entity",
+        "source.SyncRun.entity",
+        "norn.connect.source",
+        "norn.connect.mapping",
+    ] {
+        set.push(artifact(&format!("registry/packs/sources/artifacts/{name}.json")));
     }
     set
 }
@@ -185,7 +195,7 @@ fn pull(
 ) {
     let profile = profile(system);
     let mut pages = recorded(system);
-    let mut pull = Pull::new(&profile, watermarks, Limits::default());
+    let mut pull = Pull::new(profile.clone(), watermarks, Limits::default());
     let mut rows = Vec::new();
     while let Some(request) = pull.next_request() {
         let (status, body) = pages
@@ -272,19 +282,164 @@ fn a_row_without_a_canonical_reference_is_quarantined_with_its_reason() {
 
 #[test]
 fn sandbox_mappings_pin_their_source_schemas() {
+    let pairs = [
+        ("erpnext", "erpnext.sandbox", "registry/packs/erpnext/sandbox.ts"),
+        ("odoo", "odoo.sandbox", "registry/packs/odoo/sandbox.ts"),
+        ("sources", "norn.connect", "registry/packs/sources/records.ts"),
+    ];
     let mut wrong = Vec::new();
-    for system in SYSTEMS {
-        let source = artifact(&format!(
-            "registry/packs/{system}/artifacts/{system}.sandbox.source.json"
-        ));
-        let mapping = artifact(&format!(
-            "registry/packs/{system}/artifacts/{system}.sandbox.mapping.json"
-        ));
+    for (pack, stem, typed) in pairs {
+        let source = artifact(&format!("registry/packs/{pack}/artifacts/{stem}.source.json"));
+        let mapping = artifact(&format!("registry/packs/{pack}/artifacts/{stem}.mapping.json"));
         let pin = norn_checker::ArtifactRef::of(&source).expect("pin").sha256;
         let payload = serde_json::to_value(mapping.payload.to_json_value()).expect("payload");
         if payload["source"]["sha256"].as_str() != Some(pin.as_str()) {
-            wrong.push(format!("PIN {system}.sandbox.source {pin}"));
+            wrong.push(format!("PIN {stem}.source {pin} {typed}"));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+const CONFIG: &str = r#"[
+  {"id": "erpnext.sandbox", "system": "erpnext", "label": "ERPNext sandbox", "connector": "erpnext.sandbox.connector",
+   "mapping": "erpnext.sandbox.mapping", "instance": "sandbox", "baseUrl": "http://erpnext-sandbox:8000",
+   "headers": {"X-Frappe-Site-Name": "frontend"}},
+  {"id": "odoo.sandbox", "system": "odoo", "label": "Odoo sandbox", "connector": "odoo.sandbox.connector",
+   "mapping": "odoo.sandbox.mapping", "instance": "sandbox", "baseUrl": "http://odoo-sandbox:8069"}
+]"#;
+
+fn sources() -> Sources {
+    Sources::new(
+        CONFIG,
+        BTreeMap::from([
+            ("NORN_SECRET_ERPNEXT_SANDBOX_TOKEN".to_owned(), "key:secret".to_owned()),
+            ("NORN_SECRET_ODOO_SANDBOX_API_KEY".to_owned(), "odoo-key".to_owned()),
+        ]),
+    )
+    .expect("configuration")
+}
+
+/// Run one claimed sync of `id` against the recordings: each feed's first
+/// request gets its recorded page, later ones an empty page.
+fn sync(
+    host: &DevHost<norn_cell::engine::NativeEngine>,
+    sources: &mut Sources,
+    id: &str,
+    system: &str,
+    now_ms: u64,
+) -> (norn_api::sources::RunSummary, Vec<HttpRequest>) {
+    let profile = profile(system);
+    let mut pages = recorded(system);
+    let mut sent = Vec::new();
+    let mut step = sources.step(host, id, None, now_ms);
+    loop {
+        match step {
+            Step::Done(summary) => return (summary, sent),
+            Step::Request(request) => {
+                let feed = profile
+                    .feeds
+                    .iter()
+                    .find(|f| request.url.contains(f.request.path.as_str()))
+                    .expect("a declared feed");
+                let (status, body) = pages
+                    .remove(&feed.dataset)
+                    .unwrap_or_else(|| (200, empty_page(&profile, &feed.dataset)));
+                sent.push(request);
+                step = sources.step(host, id, Some((status, body.to_string().as_bytes())), now_ms);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_manual_sync_lands_rows_and_reports_the_connection_as_objects() {
+    let host = host();
+    let mut sources = sources();
+    sources
+        .claim("erpnext.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_800_000)
+        .expect("claimed");
+    // SYNC-ONE-1: a second claim while it runs is refused.
+    assert_eq!(
+        sources.claim("erpnext.sandbox", Trigger::Manual, "user:other@demo", 1_794_484_800_001),
+        Err(ClaimError::Running)
+    );
+    let (summary, sent) = sync(&host, &mut sources, "erpnext.sandbox", "erpnext", 1_794_484_800_000);
+    assert_eq!(summary.outcome, "ok", "{summary:#?}");
+    assert!(summary.rows_read > 0);
+    assert_eq!(summary.rows_landed, summary.rows_read);
+    // Credentials and the site header ride every request; the URL is the base plus the planned path.
+    for request in &sent {
+        assert!(request.url.starts_with("http://erpnext-sandbox:8000/api/resource/"));
+        assert!(request.headers.contains(&("Authorization".into(), "token key:secret".into())));
+        assert!(request.headers.contains(&("X-Frappe-Site-Name".into(), "frontend".into())));
+    }
+    let connection = host
+        .host_object("source.Connection", "erpnext.sandbox")
+        .expect("read")
+        .expect("the connection object");
+    assert_eq!(connection.get("status").and_then(RuntimeValue::as_str), Some("ok"));
+    let watermark: BTreeMap<String, Value> = serde_json::from_str(
+        connection.get("watermark").and_then(RuntimeValue::as_str).expect("watermark"),
+    )
+    .expect("watermark JSON");
+    assert_eq!(watermark.len(), 4);
+    let run = host
+        .host_object("source.SyncRun", &summary.run)
+        .expect("read")
+        .expect("the run object");
+    assert_eq!(run.get("actor").and_then(RuntimeValue::as_str), Some("user:owner@demo"));
+    assert_eq!(run.get("trigger").and_then(RuntimeValue::as_str), Some("manual"));
+    // The next sync starts from the recorded watermark, read back from the cell.
+    sources
+        .claim("erpnext.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_900_000)
+        .expect("claimed again");
+    let (again, sent) = sync(&host, &mut sources, "erpnext.sandbox", "erpnext", 1_794_484_900_000);
+    assert_eq!(again.outcome, "ok");
+    let party = watermark["Party"]["version"].as_str().expect("version").replace(' ', "%20");
+    assert!(sent[0].url.contains(&party.replace(':', "%3A")), "{}", sent[0].url);
+}
+
+#[test]
+fn the_schedule_claims_each_due_connection_once_as_its_own_principal() {
+    let host = host();
+    let mut sources = sources();
+    let t0 = 1_794_484_800_000;
+    let first = sources.due(t0).expect("a never-synced connection is due");
+    let second = sources.due(t0).expect("the other one is due too");
+    assert_ne!(first, second);
+    assert_eq!(sources.due(t0), None, "both are running");
+    for (id, system) in [(first.as_str(), &first[..first.find('.').expect("dotted")]), (second.as_str(), &second[..second.find('.').expect("dotted")])] {
+        let (summary, _) = sync(&host, &mut sources, id, system, t0);
+        assert_eq!(summary.outcome, "ok", "{summary:#?}");
+        let run = host.host_object("source.SyncRun", &summary.run).expect("read").expect("run");
+        assert_eq!(run.get("actor").and_then(RuntimeValue::as_str), Some(format!("connection:{id}").as_str()));
+        assert_eq!(run.get("trigger").and_then(RuntimeValue::as_str), Some("schedule"));
+    }
+    assert_eq!(sources.due(t0 + 60_000), None, "not due again within 15 minutes");
+    assert!(sources.due(t0 + 15 * 60_000).is_some());
+}
+
+#[test]
+fn a_refused_read_fails_the_run_and_says_why() {
+    let host = host();
+    let mut sources = sources();
+    sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:owner@demo", 1_794_484_800_000)
+        .expect("claimed");
+    let Step::Request(_) = sources.step(&host, "odoo.sandbox", None, 1_794_484_800_000) else {
+        panic!("a first request")
+    };
+    let Step::Done(summary) =
+        sources.step(&host, "odoo.sandbox", Some((401, b"{}")), 1_794_484_800_000)
+    else {
+        panic!("the run ends")
+    };
+    assert_eq!(summary.outcome, "failed");
+    assert_eq!(summary.error.as_ref().map(|e| e.0.as_str()), Some("source.http_status"));
+    let connection = host
+        .host_object("source.Connection", "odoo.sandbox")
+        .expect("read")
+        .expect("connection");
+    assert_eq!(connection.get("status").and_then(RuntimeValue::as_str), Some("failed"));
+    assert!(!sources.running("odoo.sandbox"));
 }

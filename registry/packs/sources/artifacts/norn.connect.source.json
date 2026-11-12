@@ -1,0 +1,440 @@
+{
+  "artifactId": "norn.connect.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "The cell's own source sync reports",
+  "namespace": "norn",
+  "payload": {
+    "adapter": {
+      "name": "norn-pull",
+      "version": "1"
+    },
+    "constraints": [
+      {
+        "dataset": "connection",
+        "fields": [
+          "id"
+        ],
+        "id": "connection_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "sync_run",
+        "fields": [
+          "id"
+        ],
+        "id": "sync_run_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "connection",
+        "kind": "document",
+        "nativeName": "Connection state after a sync run"
+      },
+      {
+        "id": "sync_run",
+        "kind": "document",
+        "nativeName": "Sync run report"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "connection",
+        "name": "id",
+        "nativeType": "text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "system",
+        "nativeType": "text",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "label",
+        "nativeType": "text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "target",
+        "nativeType": "text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "auth",
+        "nativeType": "text",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "status",
+        "nativeType": "text",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "last_sync_started_at",
+        "nativeType": "rfc3339",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "datetime"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "last_sync_ended_at",
+        "nativeType": "rfc3339",
+        "ordinal": 7,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "datetime"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "last_trigger",
+        "nativeType": "text",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "watermark",
+        "nativeType": "json",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "rows_read",
+        "nativeType": "count",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "rows_landed",
+        "nativeType": "count",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "rows_quarantined",
+        "nativeType": "count",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "quarantine_reasons",
+        "nativeType": "text",
+        "ordinal": 13,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "last_error_code",
+        "nativeType": "text",
+        "ordinal": 14,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "last_error_message",
+        "nativeType": "text",
+        "ordinal": 15,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "connector_id",
+        "nativeType": "text",
+        "ordinal": 16,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "source_schema_id",
+        "nativeType": "text",
+        "ordinal": 17,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "connection",
+        "name": "mapping_id",
+        "nativeType": "text",
+        "ordinal": 18,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "id",
+        "nativeType": "text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "connection_id",
+        "nativeType": "text",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "trigger",
+        "nativeType": "text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "actor",
+        "nativeType": "text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "started_at",
+        "nativeType": "rfc3339",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "datetime"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "ended_at",
+        "nativeType": "rfc3339",
+        "ordinal": 5,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "datetime"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "outcome",
+        "nativeType": "text",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "watermark_from",
+        "nativeType": "json",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "watermark_to",
+        "nativeType": "json",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "rows_read",
+        "nativeType": "count",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "rows_landed",
+        "nativeType": "count",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "rows_quarantined",
+        "nativeType": "count",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "quarantine_reasons",
+        "nativeType": "text",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "error_code",
+        "nativeType": "text",
+        "ordinal": 13,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sync_run",
+        "name": "error_message",
+        "nativeType": "text",
+        "ordinal": 14,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-12T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "b13999f2a32856777214f172501f668a9800c70304188a01c6f79f8a0a2f6f3c",
+      "uri": "registry/packs/sources/report.json"
+    },
+    "source": {
+      "instance": "cell",
+      "system": "norn-connect",
+      "version": "norn-connect/1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/norn.connect.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

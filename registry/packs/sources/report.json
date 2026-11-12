@@ -1,0 +1,18 @@
+{
+  "connection": {
+    "id": "erpnext.sandbox", "system": "erpnext", "label": "ERPNext sandbox", "target": "http://erpnext-sandbox:8000",
+    "auth": "api_key", "status": "partial", "last_sync_started_at": "2026-11-12T12:00:00.000Z",
+    "last_sync_ended_at": "2026-11-12T12:00:04.250Z", "last_trigger": "schedule",
+    "watermark": "{\"Item\":{\"version\":\"2026-11-12 11:58:01.000000\",\"id\":\"GOLD\"}}",
+    "rows_read": 511, "rows_landed": 510, "rows_quarantined": 1, "quarantine_reasons": "mapping.runtime.invalid_record=1",
+    "last_error_code": null, "last_error_message": null, "connector_id": "erpnext.sandbox.connector",
+    "source_schema_id": "erpnext.sandbox.source", "mapping_id": "erpnext.sandbox.mapping"
+  },
+  "sync_run": {
+    "id": "erpnext.sandbox/1794484800000", "connection_id": "erpnext.sandbox", "trigger": "schedule",
+    "actor": "connection:erpnext.sandbox", "started_at": "2026-11-12T12:00:00.000Z", "ended_at": "2026-11-12T12:00:04.250Z",
+    "outcome": "partial", "watermark_from": "{}", "watermark_to": "{\"Item\":{\"version\":\"2026-11-12 11:58:01.000000\",\"id\":\"GOLD\"}}",
+    "rows_read": 511, "rows_landed": 510, "rows_quarantined": 1, "quarantine_reasons": "mapping.runtime.invalid_record=1",
+    "error_code": null, "error_message": null
+  }
+}

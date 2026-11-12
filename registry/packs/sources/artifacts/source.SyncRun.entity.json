@@ -1,0 +1,171 @@
+{
+  "artifactId": "source.SyncRun.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Source sync run",
+  "namespace": "source",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "source.Synced"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "connection",
+          "target": "source.Connection"
+        }
+      ],
+      "name": "source.SyncRun",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "connection_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "trigger",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "schedule"
+              },
+              {
+                "value": "manual"
+              },
+              {
+                "value": "upload"
+              }
+            ]
+          }
+        },
+        {
+          "id": "actor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "started_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "ended_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "outcome",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "running"
+              },
+              {
+                "value": "ok"
+              },
+              {
+                "value": "partial"
+              },
+              {
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "watermark_from",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "watermark_to",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "rows_read",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "rows_landed",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "rows_quarantined",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "quarantine_reasons",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "error_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "error_message",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.SyncRun.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

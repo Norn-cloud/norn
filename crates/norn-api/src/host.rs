@@ -180,6 +180,37 @@ impl<E: SqlEngine> DevHost<E> {
         }
     }
 
+    /// One artifact of the active definitions, as its JSON envelope. For the
+    /// trusted host process (a source sync reading its connector); no route
+    /// reaches it.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn installed_artifact(&self, artifact_id: &str) -> Result<Option<serde_json::Value>, Refusal> {
+        let Some(active) = self.active_definitions()? else {
+            return Ok(None);
+        };
+        let set: Vec<serde_json::Value> =
+            serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
+        Ok(set.into_iter().find(|artifact| {
+            artifact.get("artifactId").and_then(serde_json::Value::as_str) == Some(artifact_id)
+        }))
+    }
+
+    /// One object's current values in the main world. For the trusted host
+    /// process (a source sync reading its own connection state); no route
+    /// reaches it, and it grants no read to anyone.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn host_object(&self, object_type: &str, key: &str) -> Result<Option<RuntimeObject>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .object(norn_cell::MAIN_WORLD, object_type, key)
+            .map(|row| row.map(|row| row.values))
+            .map_err(Refusal::host)
+    }
+
     /// The active definitions revision, read under the definition epoch, or
     /// `None` for a cell with nothing installed. Never writes.
     /// # Errors

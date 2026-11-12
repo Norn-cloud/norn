@@ -1,0 +1,229 @@
+{
+  "artifactId": "norn.connect.mapping",
+  "dependencies": [
+    {
+      "artifactId": "norn.connect.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "source.Synced.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "source.Connection.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "source.SyncRun.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Sync reports to connections and runs",
+  "namespace": "norn",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "source.Synced.interface"
+    ],
+    "maps": [
+      {
+        "id": "connection",
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.id"
+          },
+          {
+            "property": "system",
+            "value": "input.system"
+          },
+          {
+            "property": "label",
+            "value": "input.label"
+          },
+          {
+            "property": "target",
+            "value": "input.target"
+          },
+          {
+            "property": "auth",
+            "value": "input.auth"
+          },
+          {
+            "property": "status",
+            "value": "input.status"
+          },
+          {
+            "property": "last_sync_started_at",
+            "value": "timestamp(input.last_sync_started_at)"
+          },
+          {
+            "property": "last_sync_ended_at",
+            "value": "input.last_sync_ended_at == null ? null : timestamp(input.last_sync_ended_at)"
+          },
+          {
+            "property": "last_trigger",
+            "value": "input.last_trigger"
+          },
+          {
+            "property": "watermark",
+            "value": "input.watermark"
+          },
+          {
+            "property": "rows_read",
+            "value": "input.rows_read"
+          },
+          {
+            "property": "rows_landed",
+            "value": "input.rows_landed"
+          },
+          {
+            "property": "rows_quarantined",
+            "value": "input.rows_quarantined"
+          },
+          {
+            "property": "quarantine_reasons",
+            "value": "input.quarantine_reasons"
+          },
+          {
+            "property": "last_error_code",
+            "value": "input.last_error_code"
+          },
+          {
+            "property": "last_error_message",
+            "value": "input.last_error_message"
+          },
+          {
+            "property": "connector_id",
+            "value": "input.connector_id"
+          },
+          {
+            "property": "source_schema_id",
+            "value": "input.source_schema_id"
+          },
+          {
+            "property": "mapping_id",
+            "value": "input.mapping_id"
+          }
+        ],
+        "source": {
+          "dataset": "connection"
+        },
+        "sourceRecord": "'norn-connect/cell/connection/' + input.id",
+        "subject": "input.id",
+        "target": {
+          "entity": "source.Connection.entity",
+          "interface": "source.Synced.interface"
+        }
+      },
+      {
+        "id": "sync_run",
+        "links": [
+          {
+            "key": "input.connection_id",
+            "link": "connection",
+            "targetMap": "connection"
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.id"
+          },
+          {
+            "property": "connection_id",
+            "value": "input.connection_id"
+          },
+          {
+            "property": "trigger",
+            "value": "input.trigger"
+          },
+          {
+            "property": "actor",
+            "value": "input.actor"
+          },
+          {
+            "property": "started_at",
+            "value": "timestamp(input.started_at)"
+          },
+          {
+            "property": "ended_at",
+            "value": "input.ended_at == null ? null : timestamp(input.ended_at)"
+          },
+          {
+            "property": "outcome",
+            "value": "input.outcome"
+          },
+          {
+            "property": "watermark_from",
+            "value": "input.watermark_from"
+          },
+          {
+            "property": "watermark_to",
+            "value": "input.watermark_to"
+          },
+          {
+            "property": "rows_read",
+            "value": "input.rows_read"
+          },
+          {
+            "property": "rows_landed",
+            "value": "input.rows_landed"
+          },
+          {
+            "property": "rows_quarantined",
+            "value": "input.rows_quarantined"
+          },
+          {
+            "property": "quarantine_reasons",
+            "value": "input.quarantine_reasons"
+          },
+          {
+            "property": "error_code",
+            "value": "input.error_code"
+          },
+          {
+            "property": "error_message",
+            "value": "input.error_message"
+          }
+        ],
+        "source": {
+          "dataset": "sync_run"
+        },
+        "sourceRecord": "'norn-connect/cell/sync_run/' + input.id",
+        "subject": "input.id",
+        "target": {
+          "entity": "source.SyncRun.entity",
+          "interface": "source.Synced.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "norn.connect.source",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/norn.connect.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

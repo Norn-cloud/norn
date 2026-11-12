@@ -15,35 +15,35 @@ export const SandboxSource = Norn.sourceSchema({
   id: "erpnext.sandbox.source",
   title: "ERPNext sandbox: parties, items, lot balances and order lines",
   version: "0.1.0",
-  source: {system:  "erpnext", instance:  "sandbox", version:  "erpnext-16"},
+  source: {system: "erpnext", instance: "sandbox", version: "erpnext-16"},
   observedAt: "2026-11-12T00:00:00Z",
-  adapter: {name:  "norn-pull", version:  "1"},
-  rawMetadata: {uri:  "demo/sandboxes/erpnext/seed.py", sha256:  "2bd0d0747ae36ab2f010479b9bb159c67dce41adc8eef3b4017aa09d651c9eba"},
+  adapter: {name: "norn-pull", version: "1"},
+  rawMetadata: {uri: "demo/sandboxes/erpnext/seed.py", sha256: "2bd0d0747ae36ab2f010479b9bb159c67dce41adc8eef3b4017aa09d651c9eba"},
   datasets: [
-    {id:  "Item", nativeName:  "Item", kind:  "document"},
-    {id:  "Warehouse Lot Balance", nativeName:  "Warehouse Lot Balance (custom DocType)", kind:  "document"},
-    {id:  "Party", nativeName:  "Customer", kind:  "document"},
-    {id:  "Sales Order Item", nativeName:  "Sales Order Item", kind:  "document"}
+    {id: "Item", nativeName: "Item", kind: "document"},
+    {id: "Warehouse Lot Balance", nativeName: "Warehouse Lot Balance (custom DocType)", kind: "document"},
+    {id: "Party", nativeName: "Customer", kind: "document"},
+    {id: "Sales Order Item", nativeName: "Sales Order Item", kind: "document"}
   ],
   fields: [
-    {dataset:  "Item", name:  "name", ordinal:  0, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
+    {dataset: "Item", name: "name", ordinal: 0, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Item",
       name: "custom_norn_ref",
       ordinal: 1,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
-    {dataset:  "Item", name:  "code", ordinal:  2, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
-    {dataset:  "Item", name:  "label", ordinal:  3, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
-    {dataset:  "Item", name:  "sku", ordinal:  4, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
+    {dataset: "Item", name: "code", ordinal: 2, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "Item", name: "label", ordinal: 3, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "Item", name: "sku", ordinal: 4, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Item",
       name: "price",
       ordinal: 5,
       nativeType: "Currency",
-      typeCandidate: {type:  "decimal", origin:  "declared"},
+      typeCandidate: {type: "decimal", origin: "declared"},
       required: true
     },
     {
@@ -51,7 +51,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "name",
       ordinal: 0,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -59,7 +59,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "custom_norn_ref",
       ordinal: 1,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -67,7 +67,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "resource_code",
       ordinal: 2,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -75,7 +75,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "quantity",
       ordinal: 3,
       nativeType: "Float",
-      typeCandidate: {type:  "decimal", origin:  "declared"},
+      typeCandidate: {type: "decimal", origin: "declared"},
       required: true
     },
     {
@@ -83,7 +83,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "unit",
       ordinal: 4,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -91,7 +91,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "location",
       ordinal: 5,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -99,7 +99,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "item_ref",
       ordinal: 6,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -107,7 +107,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "owner_ref",
       ordinal: 7,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -115,7 +115,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "custodian_ref",
       ordinal: 8,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -123,7 +123,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "stock_cost",
       ordinal: 9,
       nativeType: "Float",
-      typeCandidate: {type:  "decimal", origin:  "declared"},
+      typeCandidate: {type: "decimal", origin: "declared"},
       required: true
     },
     {
@@ -131,7 +131,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "cost_currency",
       ordinal: 10,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -139,16 +139,16 @@ export const SandboxSource = Norn.sourceSchema({
       name: "valuation_method",
       ordinal: 11,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
-    {dataset:  "Party", name:  "name", ordinal:  0, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
+    {dataset: "Party", name: "name", ordinal: 0, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Party",
       name: "custom_norn_ref",
       ordinal: 1,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -156,16 +156,16 @@ export const SandboxSource = Norn.sourceSchema({
       name: "label",
       ordinal: 2,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
-    {dataset:  "Party", name:  "role", ordinal:  3, nativeType:  "Data", typeCandidate:  {type:  "string", origin:  "declared"}, required:  true},
+    {dataset: "Party", name: "role", ordinal: 3, nativeType: "Data", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {
       dataset: "Sales Order Item",
       name: "name",
       ordinal: 0,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -173,7 +173,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "custom_norn_ref",
       ordinal: 1,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -181,7 +181,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "quantity",
       ordinal: 2,
       nativeType: "Float",
-      typeCandidate: {type:  "decimal", origin:  "declared"},
+      typeCandidate: {type: "decimal", origin: "declared"},
       required: true
     },
     {
@@ -189,7 +189,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "unit",
       ordinal: 3,
       nativeType: "Link",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -197,7 +197,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "due_at",
       ordinal: 4,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -205,7 +205,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "provider_ref",
       ordinal: 5,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -213,7 +213,7 @@ export const SandboxSource = Norn.sourceSchema({
       name: "receiver_ref",
       ordinal: 6,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     },
     {
@@ -221,26 +221,26 @@ export const SandboxSource = Norn.sourceSchema({
       name: "holding_ref",
       ordinal: 7,
       nativeType: "Data",
-      typeCandidate: {type:  "string", origin:  "declared"},
+      typeCandidate: {type: "string", origin: "declared"},
       required: true
     }
   ],
   codeSets: [
-    {id:  "holding_unit", dataset:  "Warehouse Lot Balance", field:  "unit", origin:  "declared", values:  [{value:  "g"}]},
-    {id:  "order_unit", dataset:  "Sales Order Item", field:  "unit", origin:  "declared", values:  [{value:  "g"}]},
+    {id: "holding_unit", dataset: "Warehouse Lot Balance", field: "unit", origin: "declared", values: [{value: "g"}]},
+    {id: "order_unit", dataset: "Sales Order Item", field: "unit", origin: "declared", values: [{value: "g"}]},
     {
       id: "holding_valuation_method",
       dataset: "Warehouse Lot Balance",
       field: "valuation_method",
       origin: "declared",
-      values: [{value:  "moving_average"}]
+      values: [{value: "moving_average"}]
     }
   ],
   constraints: [
-    {id:  "source_id_0", kind:  "primary_key", dataset:  "Item", fields:  ["name"], origin:  "declared"},
-    {id:  "source_id_1", kind:  "primary_key", dataset:  "Warehouse Lot Balance", fields:  ["name"], origin:  "declared"},
-    {id:  "source_id_2", kind:  "primary_key", dataset:  "Party", fields:  ["name"], origin:  "declared"},
-    {id:  "source_id_3", kind:  "primary_key", dataset:  "Sales Order Item", fields:  ["name"], origin:  "declared"}
+    {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},
+    {id: "source_id_1", kind: "primary_key", dataset: "Warehouse Lot Balance", fields: ["name"], origin: "declared"},
+    {id: "source_id_2", kind: "primary_key", dataset: "Party", fields: ["name"], origin: "declared"},
+    {id: "source_id_3", kind: "primary_key", dataset: "Sales Order Item", fields: ["name"], origin: "declared"}
   ]
 })
 
@@ -248,62 +248,62 @@ export const SandboxMapping = Norn.mapping({
   id: "erpnext.sandbox.mapping",
   title: "ERPNext sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId:  "erpnext.sandbox.source", version:  "0.1.0", sha256:  "0000000000000000000000000000000000000000000000000000000000000000"},
-  sourceContract: {kind:  "generic"},
+  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "7f1a07c1b79fe5307471c10c09c27a10c60de28e24bb28f44538fabe7afc64d3"},
+  sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [
     {
       id: "item",
-      source: {dataset:  "Item"},
-      target: {type:  Item, interface:  Catalog},
+      source: {dataset: "Item"},
+      target: {type: Item, interface: Catalog},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/sandbox/Item/' + input.name",
-      properties: [{property:  "id", value:  "input.custom_norn_ref"}, {property:  "code", value:  "input.code"}, {property:  "label", value:  "input.label"}],
+      properties: [{property: "id", value: "input.custom_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [
-        {field:  "sku", reason:  "Alias only; duplicate SKUs do not establish identity."},
-        {field:  "price", reason:  "Sales price is not stock cost, valuation or a ledger effect."}
+        {field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."},
+        {field: "price", reason: "Sales price is not stock cost, valuation or a ledger effect."}
       ]
     },
     {
       id: "holding",
-      source: {dataset:  "Warehouse Lot Balance"},
-      target: {type:  Holding, interface:  Resource},
+      source: {dataset: "Warehouse Lot Balance"},
+      target: {type: Holding, interface: Resource},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/sandbox/Warehouse Lot Balance/' + input.name",
       properties: [
-        {property:  "resource_code", value:  "input.resource_code"},
-        {property:  "quantity", value:  "input.quantity"},
-        {property:  "unit", value:  "input.unit"},
-        {property:  "currency", value:  "null"},
-        {property:  "valuation_method", value:  "input.valuation_method"},
-        {property:  "location", value:  "input.location"},
-        {property:  "quantity_basis", value:  "'on_hand'"},
-        {property:  "stock_cost", value:  "input.stock_cost"},
-        {property:  "cost_currency", value:  "input.cost_currency"}
+        {property: "resource_code", value: "input.resource_code"},
+        {property: "quantity", value: "input.quantity"},
+        {property: "unit", value: "input.unit"},
+        {property: "currency", value: "null"},
+        {property: "valuation_method", value: "input.valuation_method"},
+        {property: "location", value: "input.location"},
+        {property: "quantity_basis", value: "'on_hand'"},
+        {property: "stock_cost", value: "input.stock_cost"},
+        {property: "cost_currency", value: "input.cost_currency"}
       ],
       links: [
-        {link:  "item", targetMap:  "item", key:  "input.item_ref"},
-        {link:  "owner", targetMap:  "party", key:  "input.owner_ref"},
-        {link:  "custodian", targetMap:  "party", key:  "input.custodian_ref"}
+        {link: "item", targetMap: "item", key: "input.item_ref"},
+        {link: "owner", targetMap: "party", key: "input.owner_ref"},
+        {link: "custodian", targetMap: "party", key: "input.custodian_ref"}
       ]
     },
     {
       id: "party",
-      source: {dataset:  "Party"},
-      target: {type:  Party, interface:  Agent},
+      source: {dataset: "Party"},
+      target: {type: Party, interface: Agent},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/sandbox/Customer/' + input.name",
-      properties: [{property:  "display_name", value:  "input.label"}, {property:  "kind", value:  "'organization'"}],
-      ignoredFields: [{field:  "role", reason:  "Mapped separately as an AgentRole; a customer role is not an Agent subtype."}]
+      properties: [{property: "display_name", value: "input.label"}, {property: "kind", value: "'organization'"}],
+      ignoredFields: [{field: "role", reason: "Mapped separately as an AgentRole; a customer role is not an Agent subtype."}]
     },
     {
       id: "party_role",
-      source: {dataset:  "Party"},
-      target: {type:  PartyRole, interface:  AgentRole},
+      source: {dataset: "Party"},
+      target: {type: PartyRole, interface: AgentRole},
       subject: "input.custom_norn_ref + '/role/' + input.role",
       sourceRecord: "'erpnext/sandbox/Customer/' + input.name",
-      properties: [{property:  "role", value:  "input.role"}, {property:  "valid_from", value:  "null"}, {property:  "valid_to", value:  "null"}],
-      links: [{link:  "agent", targetMap:  "party", key:  "input.custom_norn_ref"}],
+      properties: [{property: "role", value: "input.role"}, {property: "valid_from", value: "null"}, {property: "valid_to", value: "null"}],
+      links: [{link: "agent", targetMap: "party", key: "input.custom_norn_ref"}],
       gaps: [
         {
           member: "counterparty",
@@ -311,25 +311,25 @@ export const SandboxMapping = Norn.mapping({
           note: "The role is scoped to the demo organisation, not an inferred bilateral legal relationship."
         }
       ],
-      ignoredFields: [{field:  "label", reason:  "Agent label is mapped by party."}]
+      ignoredFields: [{field: "label", reason: "Agent label is mapped by party."}]
     },
     {
       id: "order",
-      source: {dataset:  "Sales Order Item"},
-      target: {type:  OrderLine, interface:  Commitment},
+      source: {dataset: "Sales Order Item"},
+      target: {type: OrderLine, interface: Commitment},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/sandbox/Sales Order Item/' + input.name",
       properties: [
-        {property:  "quantity", value:  "input.quantity"},
-        {property:  "unit", value:  "input.unit"},
-        {property:  "currency", value:  "null"},
-        {property:  "status", value:  "'promised'"},
-        {property:  "due_at", value:  "timestamp(input.due_at)"}
+        {property: "quantity", value: "input.quantity"},
+        {property: "unit", value: "input.unit"},
+        {property: "currency", value: "null"},
+        {property: "status", value: "'promised'"},
+        {property: "due_at", value: "timestamp(input.due_at)"}
       ],
       links: [
-        {link:  "provider", targetMap:  "party", key:  "input.provider_ref"},
-        {link:  "receiver", targetMap:  "party", key:  "input.receiver_ref"},
-        {link:  "resource", targetMap:  "holding", key:  "input.holding_ref"}
+        {link: "provider", targetMap: "party", key: "input.provider_ref"},
+        {link: "receiver", targetMap: "party", key: "input.receiver_ref"},
+        {link: "resource", targetMap: "holding", key: "input.holding_ref"}
       ]
     }
   ]
@@ -346,7 +346,7 @@ export const SandboxConnector = Norn.connector({
     name: "Authorization",
     secretRef: "erpnext_sandbox_token",
     prefix: "token ",
-    format: {kind:  "pair", separator:  ":"}
+    format: {kind: "pair", separator: ":"}
   },
   resources: [
     {
@@ -378,11 +378,11 @@ export const SandboxConnector = Norn.connector({
           }
         },
         itemsPath: "/data",
-        paging: {kind:  "keyset", size:  100},
+        paging: {kind: "keyset", size: 100},
         idPath: "/name",
         versionPath: "/modified",
-        fields: {name:  "/name", custom_norn_ref:  "/custom_norn_ref", label:  "/customer_name", role:  "/custom_norn_role"},
-        initial: {version:  "1970-01-01 00:00:00.000000", id:  ""}
+        fields: {name: "/name", custom_norn_ref: "/custom_norn_ref", label: "/customer_name", role: "/custom_norn_role"},
+        initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       },
       {
         dataset: "Item",
@@ -399,7 +399,7 @@ export const SandboxConnector = Norn.connector({
           }
         },
         itemsPath: "/data",
-        paging: {kind:  "keyset", size:  100},
+        paging: {kind: "keyset", size: 100},
         idPath: "/name",
         versionPath: "/modified",
         fields: {
@@ -410,7 +410,7 @@ export const SandboxConnector = Norn.connector({
           sku: "/custom_sku",
           price: "/standard_rate"
         },
-        initial: {version:  "1970-01-01 00:00:00.000000", id:  ""}
+        initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       },
       {
         dataset: "Warehouse Lot Balance",
@@ -427,7 +427,7 @@ export const SandboxConnector = Norn.connector({
           }
         },
         itemsPath: "/data",
-        paging: {kind:  "keyset", size:  100},
+        paging: {kind: "keyset", size: 100},
         idPath: "/name",
         versionPath: "/modified",
         fields: {
@@ -444,7 +444,7 @@ export const SandboxConnector = Norn.connector({
           cost_currency: "/cost_currency",
           valuation_method: "/valuation_method"
         },
-        initial: {version:  "1970-01-01 00:00:00.000000", id:  ""}
+        initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       },
       {
         dataset: "Sales Order Item",
@@ -462,7 +462,7 @@ export const SandboxConnector = Norn.connector({
           }
         },
         itemsPath: "/data",
-        paging: {kind:  "keyset", size:  100},
+        paging: {kind: "keyset", size: 100},
         idPath: "/name",
         versionPath: "/modified",
         fields: {
@@ -475,7 +475,7 @@ export const SandboxConnector = Norn.connector({
           receiver_ref: "/custom_receiver_ref",
           holding_ref: "/custom_holding_ref"
         },
-        initial: {version:  "1970-01-01 00:00:00.000000", id:  ""}
+        initial: {version: "1970-01-01 00:00:00.000000", id: ""}
       }
     ]
   }
