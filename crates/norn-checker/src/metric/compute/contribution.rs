@@ -35,15 +35,25 @@ pub fn project(
     if at < start || at >= end {
         return Ok(None);
     }
-    let bucket = match plan.question().dimensions.first() {
-        None => RuntimeValue::Null,
-        Some(dimension) => match dimension.grain {
-            None => value(plan, row, dimension.path.property.as_str())?.clone(),
+    // No group-by buckets everything together; one buckets by its value; more
+    // than one by the tuple of their values, in the question's order. A null
+    // member is its own group, never dropped and never equal to "".
+    let members = plan
+        .question()
+        .dimensions
+        .iter()
+        .map(|dimension| match dimension.grain {
+            None => Ok(value(plan, row, dimension.path.property.as_str())?.clone()),
             Some(grain) => {
                 let seconds = instant(plan, row, dimension.path.property.as_str())?.0;
-                RuntimeValue::from(period_start(seconds, grain)?)
+                Ok(RuntimeValue::from(period_start(seconds, grain)?))
             }
-        },
+        })
+        .collect::<Result<Vec<_>, &'static str>>()?;
+    let bucket = match <[RuntimeValue; 1]>::try_from(members) {
+        Ok([one]) => one,
+        Err(members) if members.is_empty() => RuntimeValue::Null,
+        Err(members) => RuntimeValue::Array(members),
     };
     let amounts = plan
         .sums()
