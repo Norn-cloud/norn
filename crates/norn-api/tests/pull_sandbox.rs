@@ -750,14 +750,20 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
         .accept(200, &page)
         .expect("a page in the declared shape");
     assert_eq!(rows.len(), 10);
+    let nested = |row: &norn_api::pull::Row, field: &str| {
+        row.payload
+            .get(field)
+            .and_then(RuntimeValue::as_array)
+            .map(Vec::len)
+            .unwrap_or_else(|| panic!("{} has no {field} array", row.source_id))
+    };
     for row in &rows {
         assert_eq!(row.dataset, "Scanned Document");
         assert!(row.source_id.starts_with("SCAN-"), "{}", row.source_id);
-        let lines = row.payload.get("lines").and_then(RuntimeValue::as_array);
-        assert!(lines.is_some_and(|l| !l.is_empty()), "{}", row.source_id);
-        let evidence = row.payload.get("evidence").and_then(RuntimeValue::as_array);
-        assert!(evidence.is_some_and(|e| !e.is_empty()), "{}", row.source_id);
     }
+    // Lines and evidence stay nested arrays (a report may print no lines).
+    assert!(rows.iter().map(|r| nested(r, "lines")).sum::<usize>() > 0);
+    assert!(rows.iter().all(|r| nested(r, "evidence") > 0));
     // A short page ends the feed; the next sync resumes after its last row.
     assert!(pull.next_request().is_none());
     let mut resumed = Pull::new(profile, pull.watermarks().clone(), Limits::default());
