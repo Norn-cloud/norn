@@ -478,43 +478,11 @@ impl Pull {
                 reason: format!("a page held more than {} items", self.limits.max_items),
             });
         }
-        let mut rows = Vec::with_capacity(items.len());
-        let mut last = None;
-        for item in items {
-            let id = item
-                .pointer(&feed.id_path)
-                .ok_or_else(|| shape(format!("an item has no id at {}", feed.id_path)))?;
-            let source_id = scalar_text(id).ok_or_else(|| {
-                shape(format!(
-                    "the id at {} is not text or a number",
-                    feed.id_path
-                ))
-            })?;
-            let version = item
-                .pointer(&feed.version_path)
-                .and_then(RuntimeValue::as_str)
-                .ok_or_else(|| {
-                    shape(format!(
-                        "an item has no version text at {}",
-                        feed.version_path
-                    ))
-                })?
-                .to_owned();
-            let payload = feed
-                .fields
-                .iter()
-                .map(|(field, pointer)| (field.clone(), project(item, pointer)))
-                .collect();
-            if self.greatest.as_ref().is_none_or(|g| version > *g) {
-                self.greatest = Some(version.clone());
-            }
-            last = Some((version.clone(), json_of(id)));
-            rows.push(Row {
-                dataset: feed.dataset.clone(),
-                source_id,
-                version,
-                payload: RuntimeValue::Object(payload),
-            });
+        let (rows, last) = project_page(feed, items)?;
+        if let Some(greatest) = rows.iter().map(|row| &row.version).max()
+            && self.greatest.as_ref().is_none_or(|g| greatest > g)
+        {
+            self.greatest = Some(greatest.clone());
         }
         self.page = self.page.saturating_add(1);
         let done = match &feed.paging {
@@ -625,6 +593,44 @@ pub fn observation(
     })
 }
 
+/// A page's items as rows, and the last item's keyset position.
+fn project_page(
+    feed: &Feed,
+    items: &[RuntimeValue],
+) -> Result<(Vec<Row>, Option<(String, Value)>), PullError> {
+    let shape = |reason: String| PullError::Shape {
+        dataset: feed.dataset.clone(),
+        reason,
+    };
+    let mut rows = Vec::with_capacity(items.len());
+    let mut last = None;
+    for item in items {
+        let id = item
+            .pointer(&feed.id_path)
+            .ok_or_else(|| shape(format!("an item has no id at {}", feed.id_path)))?;
+        let source_id = scalar_text(id)
+            .ok_or_else(|| shape(format!("the id at {} is not text or a number", feed.id_path)))?;
+        let version = item
+            .pointer(&feed.version_path)
+            .and_then(RuntimeValue::as_str)
+            .ok_or_else(|| shape(format!("an item has no version text at {}", feed.version_path)))?
+            .to_owned();
+        let payload = feed
+            .fields
+            .iter()
+            .map(|(field, pointer)| (field.clone(), project(item, pointer)))
+            .collect();
+        last = Some((version.clone(), json_of(id)));
+        rows.push(Row {
+            dataset: feed.dataset.clone(),
+            source_id,
+            version,
+            payload: RuntimeValue::Object(payload),
+        });
+    }
+    Ok((rows, last))
+}
+
 /// One field of an item: the value at its pointer (`null` when absent), or,
 /// for a `text:` pointer, that scalar's text (a source's numeric id becomes
 /// the text identity a source schema declares).
@@ -715,18 +721,15 @@ impl Tokens<'_> {
         let mut rest = template;
         while let Some((before, after)) = rest.split_once("{{") {
             out.push_str(before);
-            match after
+            if let Some((text, tail)) = after
                 .split_once("}}")
                 .and_then(|(name, tail)| Some((self.text(name)?, tail)))
             {
-                Some((text, tail)) => {
-                    out.push_str(&text);
-                    rest = tail;
-                }
-                None => {
-                    out.push_str("{{");
-                    rest = after;
-                }
+                out.push_str(&text);
+                rest = tail;
+            } else {
+                out.push_str("{{");
+                rest = after;
             }
         }
         out.push_str(rest);
@@ -887,8 +890,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].source_id, "7");
         assert_eq!(
-            rows[0].payload.get("code").map(RuntimeValue::canonical),
-            Some("9000.10".into())
+            rows[0].payload.get("code"),
+            Some(&RuntimeValue::from_json_text("9000.10").expect("decimal"))
         );
         assert_eq!(rows[0].payload.get("missing"), Some(&RuntimeValue::Null));
         assert_eq!(

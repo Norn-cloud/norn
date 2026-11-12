@@ -621,11 +621,11 @@ fn report<E: SqlEngine>(
     let connection = norn_ir::runtime_object! {
         "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
         "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
-        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => ended.clone(),
+        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => ended,
         "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-        "last_error_code" => error_code.clone(), "last_error_message" => error_message.clone(),
+        "last_error_code" => error_code, "last_error_message" => error_message,
         "connector_id" => config.connector.as_str(), "source_schema_id" => format!("{}.source", config.mapping.trim_end_matches(".mapping")),
         "mapping_id" => config.mapping.as_str(),
     };
@@ -637,11 +637,11 @@ fn report<E: SqlEngine>(
             run.id.clone(),
             norn_ir::runtime_object! {
                 "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
-                "actor" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended.clone(),
+                "actor" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended,
                 "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
                 "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
                 "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-                "error_code" => error_code.clone(), "error_message" => error_message.clone(),
+                "error_code" => error_code, "error_message" => error_message,
             },
         ));
     }
