@@ -2300,7 +2300,7 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
     }
 }
 
-fn decode_snapshot(
+pub(crate) fn decode_snapshot(
     world: &str,
     object_type: &str,
     key: &str,

@@ -182,6 +182,12 @@ routes! {
     Decisions => ("GET", "/v1/decisions"),
     /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
     Decide => ("POST", "/v1/decisions/{id}:decide"),
+    /// `GET /v1/objects/{type}:export`, served by [`analytics`] on a host
+    /// with an analytics engine (D102).
+    ObjectExport => ("GET", "/v1/objects/{type}:export"),
+    /// `POST /v1/datasets:load`, served by [`analytics`] on a host with an
+    /// analytics engine and an object store (D102).
+    DatasetLoad => ("POST", "/v1/datasets:load"),
 }
 
 impl Route {
@@ -219,6 +225,7 @@ impl Route {
             "/v1/runs" => return Some(Self::RunStart),
             "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
             "/v1/decisions" => return Some(Self::Decisions),
+            "/v1/datasets:load" => return Some(Self::DatasetLoad),
             _ => {}
         }
         if path
@@ -254,6 +261,7 @@ impl Route {
             return Some(match (id, leaf) {
                 (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
                 (None, _) if kind.ends_with(":quarantined") => Self::ObjectsQuarantined,
+                (None, _) if kind.ends_with(":export") => Self::ObjectExport,
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
@@ -442,6 +450,10 @@ fn route<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if let Some(route) =
+        route_of.filter(|route| matches!(route, Route::ObjectExport | Route::DatasetLoad))
+    {
+        Err(without_engine(route, method))
     } else if route_of == Some(Route::Provision) {
         provisioned(host, actor, request)
     } else if let Some(route) = definitions_route(path) {
@@ -1124,6 +1136,152 @@ fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> 
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
+}
+
+/// An analytics route on a host without an engine: [`analytics`] serves it
+/// where there is one.
+fn without_engine(route: Route, method: &str) -> Refusal {
+    if method == route.signature().0 {
+        Refusal::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "analytics.unconfigured",
+            "this host has no analytics engine",
+            "loads and exports run on the tenant analytics engine",
+        )
+    } else {
+        Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "an export takes GET; a load takes POST",
+        )
+    }
+}
+
+/// D102: the routes of a host whose analytics run on the tenant's engine
+/// (`GET /v1/objects/{type}:export`, `POST /v1/datasets:load`), or `None`
+/// for any other request. `uploads` is the cell's completed uploads, when the
+/// host has an object store.
+pub fn analytics<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+    request: &Request<'_>,
+) -> Option<Response> {
+    let leaf = |suffix: &str| {
+        request
+            .path
+            .strip_prefix("/v1/objects/")
+            .and_then(|rest| rest.strip_suffix(suffix))
+            .filter(|kind| !kind.is_empty() && !kind.contains('/'))
+    };
+    let (export, profile) = (leaf(":export"), leaf(":profile"));
+    if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
+        return None;
+    }
+    let _request = RequestScope::new(principals);
+    let actor = principals.resolve(request.authorization, request.now);
+    let actor = actor.as_deref();
+    let result = match (request.method, export, profile, uploads) {
+        ("GET", None, Some(kind), _) => engine_profile(host, actor, transport, kind, request.query),
+        ("GET", Some(kind), None, _) => engine_export(host, actor, transport, kind, request.query),
+        ("POST", None, None, Some(uploads)) => {
+            engine_load(host, actor, transport, uploads, request)
+        }
+        ("POST", None, None, None) => Err(Refusal::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "dataset.uploads_unconfigured",
+            "this host has no object store for uploads",
+            "configure the host's upload bucket to load datasets",
+        )),
+        _ => Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a profile or an export takes GET; a load takes POST",
+        )),
+    };
+    Some(respond(result))
+}
+
+fn decoded(kind: &str) -> Result<String, Refusal> {
+    percent_encoding::percent_decode_str(kind)
+        .decode_utf8()
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))
+}
+
+fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    Ok(ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    })
+}
+
+fn engine_profile<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let scope = scope_of(query)?;
+    let profile = norn_api::analytics_routes::profile_objects(
+        host,
+        &scope,
+        actor,
+        &decoded(kind)?,
+        &CellObjectAccess,
+        transport,
+    )?;
+    document_json(&profile)
+}
+
+fn engine_export<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "columns", "format"])?;
+    let query = norn_api::analytics_routes::ExportQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        columns: fields.remove("columns").unwrap_or_default(),
+        format: fields.remove("format"),
+    };
+    norn_api::analytics_routes::export_objects(
+        host,
+        &query,
+        actor,
+        &decoded(kind)?,
+        &CellObjectAccess,
+        transport,
+    )?;
+    Ok(String::new())
+}
+
+fn engine_load<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    uploads: &dyn norn_api::analytics_routes::Uploads,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    let scope = scope_of(request.query)?;
+    let loaded = norn_api::analytics_routes::load_dataset(
+        host,
+        &scope,
+        actor,
+        request.body,
+        uploads,
+        transport,
+        request.now.saturating_mul(1000),
+    )?;
+    document_json(&loaded)
 }
 
 pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
