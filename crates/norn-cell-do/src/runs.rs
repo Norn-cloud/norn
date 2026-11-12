@@ -1,5 +1,5 @@
-//! RUN-ROUTES-1 on the DO host: start (`POST /v1/runs`), list
-//! (`GET /v1/runs`) and read (`GET /v1/runs/{id}`) runs through
+//! RUN-ROUTES-1 on the DO host: start (`POST /v1/runs`) and read
+//! (`GET /v1/runs/{id}`) runs through
 //! `norn_api::run_routes`, scoped by the query string. Starting is the host
 //! operation `StartRun`, decided by the cell's policy; every run read is the
 //! caller's ordinary Values read of the run's object type, mapped by
@@ -11,7 +11,7 @@ use http::StatusCode;
 use norn_api::authz::ReadCapability;
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
-use norn_api::run_routes::{RunsQuery, StartRunRequest, get_run, list_runs, start_run};
+use norn_api::run_routes::{StartRunRequest, get_run, start_run};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 
@@ -37,7 +37,7 @@ pub(crate) fn dispatch<E: SqlEngine>(
     })
 }
 
-/// A run route: `/v1/runs` (start or list) or `/v1/runs/{id}`.
+/// A run route: `/v1/runs` (start) or `/v1/runs/{id}` (read).
 #[derive(Debug, Clone, Copy)]
 enum RunsRoute<'p> {
     Collection,
@@ -92,35 +92,6 @@ fn runs<E: SqlEngine>(
             let (status, run) = start_run(host, &scope, actor, &body, &reads(subject), now)?;
             Ok((status, document_json(&run)?))
         }
-        (RunsRoute::Collection, "GET") => {
-            let mut fields = parse(
-                request.query,
-                &["orgId", "environmentId", "flow", "state", "cursor", "limit"],
-            )?;
-            let Some(subject) = actor else {
-                return Err(norn_api::authz::read_denied());
-            };
-            let limit = fields
-                .remove("limit")
-                .map(|limit| {
-                    limit
-                        .parse::<u32>()
-                        .map_err(|error| Refusal::invalid(format!("limit: {error}")))
-                })
-                .transpose()?;
-            let query = RunsQuery {
-                org_id: fields.remove("orgId"),
-                environment_id: fields.remove("environmentId"),
-                flow: fields.remove("flow"),
-                state: fields.remove("state"),
-                cursor: fields.remove("cursor"),
-                limit,
-            };
-            Ok((
-                StatusCode::OK,
-                document_json(&list_runs(host, &query, &reads(subject))?)?,
-            ))
-        }
         (RunsRoute::One(id), "GET") => {
             let mut fields = parse(request.query, &["orgId", "environmentId"])?;
             let scope = scope_of(&mut fields);
@@ -135,9 +106,7 @@ fn runs<E: SqlEngine>(
                 document_json(&get_run(host, &scope, &id, &reads(subject))?)?,
             ))
         }
-        (RunsRoute::Collection, _) => Err(not_allowed(
-            "runs are started with POST and listed with GET",
-        )),
+        (RunsRoute::Collection, _) => Err(not_allowed("a run is started with POST")),
         (RunsRoute::One(_), _) => Err(not_allowed("a run is read with GET")),
     }
 }

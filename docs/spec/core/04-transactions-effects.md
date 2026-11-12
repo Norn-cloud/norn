@@ -132,10 +132,8 @@ ledger row in one commit (RUN-LEDGER-1). An exact retry returns the existing run
 with 200; the same id under another flow refuses `run.exists`; an unknown or
 retired flow refuses `run.flow_not_found`; a refused turn returns
 `run.start_refused`, `run.flow_inadmissible` or the kernel's code, without its
-detail. `GET /v1/runs/{id}` and `GET /v1/runs?flow=&state=&cursor=&limit=` read
-runs in run-id order. Every run passes the ordinary `values` read gate on its
-object type; an unreadable run is `run.not_found`, exactly like an absent one,
-and listing omits it while the cursor advances past it. A run document carries
+detail. `GET /v1/runs/{id}` reads a run. A run passes the ordinary `values` read gate
+on its object type; an unreadable run is `run.not_found`, exactly like an absent one. A run document carries
 `terminal` (its state is a terminal state of its lifecycle) and its step
 timeline, folded from the run object's committed versions: a lifecycle state
 that waits on a step opens it, the next state closes it, and `completed` or
