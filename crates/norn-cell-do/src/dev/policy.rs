@@ -196,17 +196,18 @@ mod tests {
             })
             .unwrap();
         let regions = ["north", "south", "east", "west"];
-        let mut logical_time = 2_000;
-        for start in (0..extra).step_by(1_000) {
-            logical_time += 1;
-            let writes = (start..extra.min(start + 1_000))
-                .map(|i| {
+        let days = ["01", "02", "03", "04", "05", "06", "07"];
+        let generated: Vec<usize> = (0..extra).collect();
+        for (logical_time, chunk) in (2_001..).zip(generated.chunks(1_000)) {
+            let writes = chunk
+                .iter()
+                .map(|&i| {
                     sale(
                         &format!("m{i}"),
                         &format!("{}.{:02}", i % 997, i % 100),
                         "1.000",
                         regions[i % 4],
-                        &format!("2026-11-{:02}T{:02}:00:00Z", 1 + i % 7, i % 24),
+                        &format!("2026-11-{}T{:02}:00:00Z", days[i % 7], i % 24),
                     )
                 })
                 .collect();
