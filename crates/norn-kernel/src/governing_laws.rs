@@ -154,7 +154,12 @@ pub fn law_link_reads(
         | LawResponse::Transition { .. }
         | LawResponse::TranslationPreserves { .. } => None,
     };
-    for text in law.condition.iter().map(|c| c.as_str()).chain(response) {
+    for text in law
+        .condition
+        .iter()
+        .map(norn_ir::ZenExpression::as_str)
+        .chain(response)
+    {
         let paths = norn_expr::expression_read_paths(text, "self")
             .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?;
         for path in paths {
