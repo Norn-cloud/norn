@@ -1,0 +1,2362 @@
+[
+  {
+    "code": "action.validation.command_environment_underivable",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "action.validation.input_enum_not_subset",
+    "fix": "Limit the input's enum to values its target property declares, or declare the missing values on the property."
+  },
+  {
+    "code": "action.validation.input_enum_unbound",
+    "fix": "Remove the enum from the input, or write the input to an enum property."
+  },
+  {
+    "code": "action.validation.input_group_duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "action.validation.input_group_field_regrouped",
+    "fix": "List each input field in at most one group."
+  },
+  {
+    "code": "action.validation.input_group_invalid_shape",
+    "fix": "Declare x-norn.groups as a list of {id, title, fields}."
+  },
+  {
+    "code": "action.validation.input_group_title_invalid",
+    "fix": "Give the group a title of at least one character and at most the reported length."
+  },
+  {
+    "code": "action.validation.input_group_unknown_field",
+    "fix": "List only declared input properties in the group's fields."
+  },
+  {
+    "code": "action.validation.input_label_invalid",
+    "fix": "Give the label at least one character, at most the reported length, and no control characters."
+  },
+  {
+    "code": "action.validation.invalid_effect_program",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "action.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "action.validation.invalid_schema",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "agent.validation.budget_unbounded",
+    "fix": "Declare the named budget as a positive exact amount no greater than the reported cap."
+  },
+  {
+    "code": "agent.validation.invalid_decision_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "agent.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "agent.validation.unbound_tool",
+    "fix": "List each tool once, using a binding bound for this organization."
+  },
+  {
+    "code": "agent.validation.unknown_law",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "agent.validation.unknown_model",
+    "fix": "Choose a model from the configured model allowlist."
+  },
+  {
+    "code": "artifact_set.action.create_link",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.duplicate_action_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.action.effect_kind_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.invalid_aggregate",
+    "fix": "Name a declared type and a property the aggregate fold can read."
+  },
+  {
+    "code": "artifact_set.action.invalid_slice",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.invalid_write_mode",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.naming_series_target_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.quantity_effect",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.target_not_writable",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.undeclared_effect_write",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.action.unknown_slice_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.unknown_write_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.unresolved_effect_entity",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.write_without_effect",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.decision.fact_literal_outside_schema",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.decision.invalid_source_command",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.decision.invalid_stored_property_write",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.decision.sub_decision_bound",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.decision.sub_decision_target",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.decision.unknown_binding",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.decision.unknown_fact_object_type",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.decision.unresolved_stored_property_contract",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.entity.duplicate_object_type",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.expression.environment_underivable",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.flow_source_map.duplicate_flow",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.flow_source_map.duplicate_step",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_edge",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_location",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_mapping",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_artifact",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_decision_row",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_state",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.stale_artifact",
+    "fix": "Compile the flow again so its source map is built from the artifact version being admitted. Never edit the recorded hash to match."
+  },
+  {
+    "code": "artifact_set.lifecycle.delete_lifecycle_object",
+    "no_fix": "This profile forbids deleting lifecycle-managed objects; no admitted deletion alternative is defined."
+  },
+  {
+    "code": "artifact_set.lifecycle.direct_write",
+    "fix": "Change lifecycle state through a declared transition instead of a direct property assignment, and omit lifecycle-owned properties from the action input schema."
+  },
+  {
+    "code": "artifact_set.lifecycle.not_a_lifecycle",
+    "fix": "Reference a property with an admitted lifecycle declaration."
+  },
+  {
+    "code": "artifact_set.lifecycle.unconstrained_state",
+    "fix": "Constrain creation to the lifecycle property's declared initial-state enum."
+  },
+  {
+    "code": "artifact_set.lifecycle.undeclared_transition_literal",
+    "fix": "Use the exact declared transition identity and its admitted source state."
+  },
+  {
+    "code": "artifact_set.lifecycle.unknown_transition",
+    "fix": "Reference an existing declared lifecycle property, state or transition with its exact identity."
+  },
+  {
+    "code": "artifact_set.lifecycle.unresolved_lifecycles",
+    "fix": "Resolve the reported blocking lifecycle diagnostic before checking the writer; supply missing declarations or dependencies only when that diagnostic requires them."
+  },
+  {
+    "code": "artifact_set.marking.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.marking.unknown",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.resolution.conflicting_version",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.resolution.dependency_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.resolution.duplicate_artifact",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.resolution.kind_incompatible",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.resolution.kind_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.resolution.missing_dependency",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "artifact_set.resolution.shadows_base",
+    "fix": "Give the artifact its own identity. An installed base artifact is read-only and cannot be replaced."
+  },
+  {
+    "code": "artifact_set.resolution.version_mismatch",
+    "fix": "Pin the version that resolves, or add the pinned version of the artifact to the definition set."
+  },
+  {
+    "code": "artifact_set.scope.incompatible_reference",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "business_pack.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "cli.compile.source_refused",
+    "fix": "Correct the source at the reported file and line; the detail carries the authoring compiler's own finding."
+  },
+  {
+    "code": "cli.explain.failed",
+    "no_fix": "This is a fault in norn explain, not in the project. Report it with the detail; the project's sources are not what needs to change."
+  },
+  {
+    "code": "cli.explain.input_refused",
+    "fix": "Correct the input the detail names. The wording file must hold structured requirements with exactly their declared members, and the definitions, context and wording together must stay under 8 MiB."
+  },
+  {
+    "code": "cli.explain.usage",
+    "fix": "Give a kind (action, law or concept) and the identifier of one declaration. --wording and --locale go together, and the wording file is a JSON array of structured requirements."
+  },
+  {
+    "code": "cli.format.io",
+    "fix": "Check that the named source paths exist and are readable and writable, then format again."
+  },
+  {
+    "code": "cli.format.usage",
+    "fix": "Run norn fmt [path...] with only --check or --json as options."
+  },
+  {
+    "code": "cli.project.exists",
+    "fix": "Choose a new or empty target directory for norn init."
+  },
+  {
+    "code": "cli.project.install",
+    "fix": "Run bun install in the project directory, or rerun norn init with --no-install and install later."
+  },
+  {
+    "code": "cli.project.invalid_manifest",
+    "fix": "Use norn-project/1 in norn.json with explicit sources, scope, dev and cell, and remove unknown keys."
+  },
+  {
+    "code": "cli.project.invalid_name",
+    "fix": "Use a namespace that starts with a lowercase letter followed by lowercase letters, digits or underscores."
+  },
+  {
+    "code": "cli.project.io",
+    "fix": "Check write permissions for the target directory and run norn init again."
+  },
+  {
+    "code": "cli.project.not_found",
+    "fix": "Run norn init <dir> first, or run the command from a directory containing norn.json."
+  },
+  {
+    "code": "cli.project.usage",
+    "fix": "Run norn init <dir> with only the documented options."
+  },
+  {
+    "code": "cli.setup.checker_unavailable",
+    "fix": "Build the checker package with crates/norn-checker-wasm/scripts/build-pkg.sh and set NORN_CHECKER_WASM_PKG to its directory."
+  },
+  {
+    "code": "cli.setup.host_unavailable",
+    "fix": "Build the native host with cargo build -p norn-cell-do --bin norn-dev-host and set NORN_DEV_HOST_BIN to target/debug/norn-dev-host."
+  },
+  {
+    "code": "cli.setup.unpublished",
+    "fix": "Run norn init from a repository checkout until a published distribution is available."
+  },
+  {
+    "code": "connector.effect.invalid",
+    "fix": "Declare the binding effect as {kind: query} or {kind: command} with only providerKey and reconcile."
+  },
+  {
+    "code": "connector.effect.key_fixed",
+    "fix": "Remove the fixed providerKey value from the binding; the cell supplies it per operation."
+  },
+  {
+    "code": "connector.effect.key_not_input",
+    "fix": "Set providerKey to one of the tool's own string inputs."
+  },
+  {
+    "code": "connector.effect.no_dedup_contract",
+    "fix": "Declare providerKey or reconcile on the command binding."
+  },
+  {
+    "code": "connector.effect.query_contract",
+    "fix": "Remove providerKey and reconcile from the query binding, or declare it as a command."
+  },
+  {
+    "code": "connector.effect.reconcile_not_query",
+    "fix": "Set reconcile to the identity of an existing query binding."
+  },
+  {
+    "code": "connector.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "connector.validation.unknown_resource",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "consistency.chase.refused",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.diagnosis.conflict",
+    "no_fix": "The conflicting declarations are reported; choosing which authorized input to change is an authoring decision, and the edit must be resubmitted for admission."
+  },
+  {
+    "code": "consistency.diagnosis.no_editable_repair",
+    "no_fix": "No correction exists within the editable inputs; protected laws are never repair candidates, so the editable set or the authored intent needs review."
+  },
+  {
+    "code": "consistency.diagnosis.unknown",
+    "no_fix": "The diagnosis is incomplete at the disclosed fragment or resource limit; no repair is inferred from an unknown result."
+  },
+  {
+    "code": "consistency.instance.violation",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.mapping.non_total",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.normative.conflict",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.normative.legacy_resolution",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.path_equation.invalid",
+    "fix": "Declare each path over functional forward links with concrete targets, ending at the same concrete type, with a unique id."
+  },
+  {
+    "code": "consistency.path_mapping.invalid",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "consistency.path_mapping.missing_binding",
+    "fix": "Declare a preservation binding that covers every path equation the mapped target declares or inherits."
+  },
+  {
+    "code": "consistency.path_mapping.preserved",
+    "no_fix": "This records that the path mapping is admitted as preserving and names the class of its evidence; it is not a defect and has no repair."
+  },
+  {
+    "code": "consistency.schema.incompatible",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.schema.unpreserved_constraint",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.theory.malformed",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.theory.not_weakly_acyclic",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "consistency.theory.vacuous",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.composition.duplicate_instance",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "core.composition.instance_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "core.composition.mapping_gap",
+    "fix": "Map every retained source member exactly once to a unique compatible target member."
+  },
+  {
+    "code": "core.composition.parameter_ambiguous",
+    "no_fix": "Choosing between equally scoped candidates changes meaning; declare the intended candidate at a more specific scope."
+  },
+  {
+    "code": "core.composition.parameter_missing",
+    "fix": "Declare an effective candidate for the parameter or an explicit default."
+  },
+  {
+    "code": "core.composition.unresolved_pin",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "core.compute.ambiguous_grain",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.compute.unsupported_engine",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "core.graph.catalog_write",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.graph.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "core.graph.incomplete_classification",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.graph.role_conflict",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.graph.role_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.identity.collision",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.identity.reuse",
+    "fix": "Restore the deleted identity explicitly, or use a new identity."
+  },
+  {
+    "code": "core.laws.stale_evidence",
+    "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
+  },
+  {
+    "code": "core.laws.unresolved_scope",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.projection.publication_guard",
+    "no_fix": "The declared publication policy refused this projection; publishing it requires a policy decision, not an automatic repair."
+  },
+  {
+    "code": "core.txn.atomic_boundary",
+    "fix": "Keep the transaction within the single owning cell; split cross-cell work into explicit durable commands before preparing the action."
+  },
+  {
+    "code": "core.values.inexact",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.values.literal_unit",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "core.values.unit_binding_required",
+    "fix": "Declare the implementing unit and scale for the interface Decimal."
+  },
+  {
+    "code": "core.values.unit_mismatch",
+    "fix": "Pin the visible core unit catalog, use an admitted UCUM code, and declare any conversion explicitly."
+  },
+  {
+    "code": "customization.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "customization.validation.retired_boundary",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "defined_concept.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "derived.validation.incremental_not_supported",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "derived.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "derived.validation.io_in_view",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "entity.deprecation.v1_payload",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "entity.validation.invalid_mutation_authority",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "entity.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "entity.validation.layer_scope_mismatch",
+    "fix": "Set the artifact's scope.tenantId to the tenant of the layer it is checked in, or check the artifact in the layer it belongs to."
+  },
+  {
+    "code": "explain.selector.unknown_subject",
+    "fix": "Name exactly one declaration of the definition set: an action by its artifact id or action id, a law by its artifact id or law id, or a concept by its type name. The kinds are action, law and concept."
+  },
+  {
+    "code": "function.invocation.blank_value",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.fork_perform",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.freshness_shape",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.input_bound",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.manifest_mismatch",
+    "fix": "Build the command again from the currently admitted Function manifest. Never edit the manifest identity in the command to match."
+  },
+  {
+    "code": "function.invocation.mutable_input",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.non_canonical_text",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.non_scalar_input",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.secret_input",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.invocation.unbounded_command",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.authored_host",
+    "fix": "Declare the Function as a typed WASM component or an external worker instead of a host Function."
+  },
+  {
+    "code": "function.manifest.blank_value",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.conflicting_golden_runs",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.dependency_closure_mismatch",
+    "fix": "Recompute the dependency closure from the manifest's declared dependencies. Never edit the recorded closure to match."
+  },
+  {
+    "code": "function.manifest.duplicate_step",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "function.manifest.embedded_secret",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.inadmissible_evidence",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.missing_dependency_closure",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.missing_determinism_evidence",
+    "fix": "Supply the evidence the claim needs in the named field, or withdraw the claim. Never declare evidence you do not hold."
+  },
+  {
+    "code": "function.manifest.mutable_identity",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.non_canonical_text",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.profile_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.unbounded_resource",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.uncacheable_profile",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.manifest.unsupported_abi",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "function.receipt.attempt_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.receipt.blank_value",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.receipt.bound_exceeded",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.receipt.cache_origin",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.receipt.dispatch_mismatch",
+    "no_fix": "A receipt must report what was dispatched. This receipt was altered or belongs to another dispatch: obtain the receipt of this dispatch again. Never edit a receipt to match."
+  },
+  {
+    "code": "function.receipt.non_canonical_text",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.receipt.output_manifest_mismatch",
+    "no_fix": "The outputs or summary differ from what the receipt's output manifest was computed over. Run the Function again or obtain the unaltered receipt and outputs again. Never edit the digest to match."
+  },
+  {
+    "code": "function.receipt.summary_bound",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "function.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "graph_load.validation.excessive_depth",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "graph_load.validation.invalid_shape",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "graph_load.validation.missing_relation_kind",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "graph_load.validation.missing_scope",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "graph_load.validation.n_plus_one_risk",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "graph_load.validation.over_budget",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "identifier.validation.too_long",
+    "fix": "Shorten the reported identifier to its declared byte limit and update its references consistently."
+  },
+  {
+    "code": "interface.validation.duplicate_link_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.duplicate_property_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.invalid_inheritance",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_link_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_property_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_status_date",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.shadows_base",
+    "fix": "Do not redefine an installed base definition. Extend it or declare your own interface under another name."
+  },
+  {
+    "code": "interface.validation.tenant_interface",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "interface.validation.unknown_link_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "interface.validation.unknown_replacement",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ir.validation.invalid_artifact",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ir.validation.invalid_dependency",
+    "fix": "Remove the self-dependency or correct the dependency identity and version to reference the intended different declaration."
+  },
+  {
+    "code": "ir.validation.invalid_envelope",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ir.validation.kind_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ir.validation.required_field",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ir.validation.retired_kind",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ir.validation.unknown_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ir.validation.unsupported_version",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "labels.admission.conflicting_label",
+    "no_fix": "Two labels artifacts label the same target in the same locale; which wording stands is an authoring decision."
+  },
+  {
+    "code": "labels.admission.unknown_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "labels.lint.missing_label",
+    "fix": "Add a label in the reported locale for each listed definition."
+  },
+  {
+    "code": "labels.validation.bidi_control",
+    "fix": "Remove the bidi embedding, override or isolate control characters from the text."
+  },
+  {
+    "code": "labels.validation.blank_text",
+    "fix": "Give every entry a non-blank label, and remove blank descriptions."
+  },
+  {
+    "code": "labels.validation.duplicate_locale",
+    "fix": "Keep one entry per locale, comparing tags without case."
+  },
+  {
+    "code": "labels.validation.duplicate_target",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "labels.validation.invalid_locale",
+    "fix": "Use a well-formed BCP 47 language tag for the locale."
+  },
+  {
+    "code": "labels.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "labels.validation.not_nfc",
+    "fix": "Normalize the label or description to Unicode NFC."
+  },
+  {
+    "code": "labels.validation.unlabelled_locale",
+    "fix": "Add a label for the locale the description or review state names, or remove that locale."
+  },
+  {
+    "code": "law.exception.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "law.exception.dangling_override",
+    "fix": "Make the exception override its own law or an exception in the same tree."
+  },
+  {
+    "code": "law.exception.invalid_declaration",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "law.exception.limit",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "law.exception.two_homes",
+    "fix": "Declare the exceptions either on the rule or on its embedded law, not both."
+  },
+  {
+    "code": "law.exception.unsupported_response",
+    "no_fix": "This law response cannot be lifted by an exception; changing the law's response requires author review."
+  },
+  {
+    "code": "law.model.closure_refused",
+    "fix": "Supply every required pinned declaration and keep the complete closure within the graph budget."
+  },
+  {
+    "code": "law.model.predicate_type",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "law.model.unknown_binding",
+    "fix": "Correct the reported subject, scope, invariant or dependency binding to its admitted declaration. For wording, supply exactly one requirement bound to the current complete law, replacing stale pins and removing duplicate matches."
+  },
+  {
+    "code": "law.model.weakens_inherited",
+    "fix": "Retain the inherited law unchanged; strengthen it with an additional law identity."
+  },
+  {
+    "code": "law.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "law.validation.unsupported_temporal",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "law.wording.duplicate_locale",
+    "fix": "Keep one locale entry per case-insensitive BCP 47 identity."
+  },
+  {
+    "code": "law.wording.incomplete_locale",
+    "fix": "Supply every required template, semantic label and phrase for the declared locale."
+  },
+  {
+    "code": "law.wording.invalid_locale",
+    "fix": "Use a well-formed BCP 47 tag and declare it in the reviewed wording map."
+  },
+  {
+    "code": "law.wording.unknown_locale",
+    "fix": "Supply the reviewed wording map for the applicable law and choose a locale present in that map; omit wording when no law applies."
+  },
+  {
+    "code": "layout.validation.invalid_inline_field",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "layout.validation.merge_conflict",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "layout.validation.orphaned_entry",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.account.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.account.duplicate_unit",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.account.no_units",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.account.unknown_unit",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.amount.bound_overflow",
+    "no_fix": "No automatic repair preserves the declared arithmetic bounds; review the amount expression and parameter bounds without weakening protected constraints."
+  },
+  {
+    "code": "ledger.amount.constant_scale_exceeds_result",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.amount.duplicate_parameter_term",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.amount.normalization_overflow",
+    "no_fix": "Exact coefficient normalization exceeds the arithmetic representation; an equivalent representable expression requires author review."
+  },
+  {
+    "code": "ledger.amount.result_scale_exceeds_unit",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.amount.result_scale_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.amount.term_scale_exceeds_result",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.amount.unknown_parameter",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.certificate.claim_mismatch",
+    "fix": "Regenerate the certificate from the current deterministic checker result. Never edit its claims to match."
+  },
+  {
+    "code": "ledger.certificate.hash_mismatch",
+    "fix": "Regenerate the certificate with the checker from the ledger pack. A certificate whose identity does not match its claims was altered; never edit the hash to match."
+  },
+  {
+    "code": "ledger.certificate.pack_mismatch",
+    "fix": "Regenerate the certificate for the exact ledger pack being supplied, or supply the pack the certificate was issued for."
+  },
+  {
+    "code": "ledger.certificate.version_mismatch",
+    "fix": "Regenerate the certificate with the active checker and IR version."
+  },
+  {
+    "code": "ledger.commit.evidence_mismatch",
+    "no_fix": "The commit evidence differs from the prepared posting. Prepare the posting again and commit with the evidence that preparation returns. Never edit evidence to match."
+  },
+  {
+    "code": "ledger.commit.idempotency_mismatch",
+    "no_fix": "The idempotency lookup returned a record of another scope or key. That is a fault of the host's storage, not of the definitions; nothing an author edits repairs it."
+  },
+  {
+    "code": "ledger.commit.owner_version_overflow",
+    "no_fix": "The owner version is exhausted; this profile defines no safe reset or automatic version migration."
+  },
+  {
+    "code": "ledger.commit.partial_evidence",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.identifier.empty",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.layer.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.leg.account_unit_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.leg.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.leg.empty_layer",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.leg.unknown_account",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.leg.unknown_layer",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.leg.unknown_unit",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.numeric.invalid_integer",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.numeric.non_canonical_integer",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.ontology.empty_artifact_id",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.ontology.empty_artifact_version",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.ontology.invalid_artifact_sha256",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.ontology.non_exact_artifact_id",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.ontology.non_exact_artifact_version",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.empty_id",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.no_accounts",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.no_layers",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.no_templates",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.no_units",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.pack.unsupported_ir_version",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "ledger.parameter.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.parameter.invalid_bounds",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.parameter.scale_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.posting.certificate_coverage_mismatch",
+    "fix": "Regenerate the certificates so that exactly one covers each evaluated unit and layer partition."
+  },
+  {
+    "code": "ledger.posting.contract_version_mismatch",
+    "fix": "Use the posting contract version the message names as expected."
+  },
+  {
+    "code": "ledger.posting.identity_empty",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.posting.reference_mismatch",
+    "fix": "Prepare the posting again against the installed pack seal and the active checker. Never edit the references to match."
+  },
+  {
+    "code": "ledger.runtime.duplicate_parameter",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.runtime.evaluation_overflow",
+    "no_fix": "Exact coefficient multiplication or accumulation overflowed; changing the amounts or arithmetic contract requires author review."
+  },
+  {
+    "code": "ledger.runtime.missing_parameter",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ledger.runtime.parameter_out_of_bounds",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.runtime.parameter_scale_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.runtime.unbalanced",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.runtime.unknown_parameter",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.runtime.unknown_template",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.template.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.template.residual_overflow",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.template.too_few_legs",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.template.unbalanced_coefficient",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.template.unbalanced_constant",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.unit.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.unit.duplicate_unit_term",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.unit.empty_quantity_kind_term",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.unit.empty_unit_term",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.unit.inconsistent_dimension_binding",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.unit.invalid_quantity_kind_term",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.unit.invalid_unit_term",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.unit.scale_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ledger.validation.too_many_diagnostics",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "lifecycle.validation.dead_end_state",
+    "no_fix": "The intended permitted outgoing transition or terminal status requires review of the authored lifecycle."
+  },
+  {
+    "code": "lifecycle.validation.default_not_initial",
+    "fix": "Choose a default from the declared initial states."
+  },
+  {
+    "code": "lifecycle.validation.drops_guard",
+    "fix": "Restate every inherited guard; append refinements without dropping inherited conditions."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_lifecycle",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_state",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_transition",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_transition_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "lifecycle.validation.empty_guard",
+    "fix": "Supply a nonblank guard expression with the admitted boolean type."
+  },
+  {
+    "code": "lifecycle.validation.empty_initial",
+    "fix": "Declare at least one permitted initial state."
+  },
+  {
+    "code": "lifecycle.validation.empty_transition_source",
+    "fix": "Declare at least one valid source state for the transition."
+  },
+  {
+    "code": "lifecycle.validation.invalid_guard",
+    "fix": "Repair the guard as a typed boolean expression using admitted properties and operators."
+  },
+  {
+    "code": "lifecycle.validation.invalid_guard_diagnostic",
+    "fix": "Set guardRefusalCode to an inherited registered runtime error code."
+  },
+  {
+    "code": "lifecycle.validation.invalid_transition_id",
+    "fix": "Use a transition id matching [a-z][a-z0-9_]*."
+  },
+  {
+    "code": "lifecycle.validation.path_property_violated",
+    "no_fix": "A law-preserving route through the required state depends on the authored lifecycle and cannot be inferred automatically."
+  },
+  {
+    "code": "lifecycle.validation.property_computed",
+    "fix": "Bind the lifecycle to a stored property whose state changes through declared transitions."
+  },
+  {
+    "code": "lifecycle.validation.property_not_enum",
+    "fix": "Declare the lifecycle property as a local enum containing its states."
+  },
+  {
+    "code": "lifecycle.validation.property_nullable",
+    "fix": "Make the lifecycle property non-nullable and supply an admitted initial state."
+  },
+  {
+    "code": "lifecycle.validation.self_transition",
+    "fix": "Use a declared transition that changes state; remove the self-transition."
+  },
+  {
+    "code": "lifecycle.validation.terminal_has_transition",
+    "fix": "Remove the outgoing transition from the declared terminal state."
+  },
+  {
+    "code": "lifecycle.validation.undeclared_write",
+    "fix": "For creation, use an admitted initial state; for later state changes, use a declared transition matching the source and destination."
+  },
+  {
+    "code": "lifecycle.validation.unknown_property",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "lifecycle.validation.unknown_state",
+    "fix": "Reference an existing declared lifecycle property, state or transition with its exact identity."
+  },
+  {
+    "code": "lifecycle.validation.unreachable_state",
+    "no_fix": "The intended reachability contract must determine whether to connect or remove this state."
+  },
+  {
+    "code": "lifecycle.validation.widens_initial",
+    "fix": "Retain only initial states admitted by the inherited lifecycle."
+  },
+  {
+    "code": "lifecycle.validation.widens_transition",
+    "fix": "Retain only inherited transitions; a subtype may drop transitions but cannot introduce new ones."
+  },
+  {
+    "code": "mapping.interpretation.invalid_endpoint",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.interpretation.unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "mapping.model.expression_type",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.model.interface_not_implemented",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_condition",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_grantee",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_join",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_nesting",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_on_delete",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.lifecycle_member",
+    "fix": "Use a lifecycle mapping rule for lifecycle properties; use a property mapping rule when the named property has no lifecycle."
+  },
+  {
+    "code": "mapping.model.link_target_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.model.read_only_member",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.model.source_hash_mismatch",
+    "fix": "Review the source schema as it now is and bind the mapping to the hash of the version you reviewed; if the schema should not have changed, restore the reviewed schema. Never copy the new hash without that review."
+  },
+  {
+    "code": "mapping.model.undeclared_dependency",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unencodable_member",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.model.unknown_dataset",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_entitlement_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_interface",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_member",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_object_type",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unresolved_source",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.runtime.evaluation_failed",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.runtime.invalid_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.runtime.invalid_record",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.runtime.observed_out_of_band",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.validation.duplicate_map",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "mapping.validation.duplicate_member",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "mapping.validation.empty_scope",
+    "fix": "Populate the reported interface scope or map list with the intended declared interfaces or mappings."
+  },
+  {
+    "code": "mapping.validation.incomplete_entitlement_snapshot",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "mapping.validation.interface_out_of_scope",
+    "fix": "Add the interface artifact to the mapping's interfaces, or target an interface the mapping already lists."
+  },
+  {
+    "code": "mapping.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_entitlement_map",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_identity_binding",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_required_link",
+    "fix": "Map the required relationship from a source value that every record has: a record whose key for it evaluates to null cannot satisfy a required link."
+  },
+  {
+    "code": "mapping.validation.lifecycle_rule_shape",
+    "fix": "Specify exactly one of state or transition in the lifecycle mapping rule."
+  },
+  {
+    "code": "mapping.validation.unknown_target_map",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.vendor.invalid_contract",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.complexity_limit",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "metric.validation.currency_source_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "metric.validation.duplicate_metric",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "metric.validation.fan_out",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.grain_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.import_gap",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.invalid_additivity",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_conversion",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_currency",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_dimension",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_filter",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_measure",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_owner",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_time",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.mixed_currency",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.ontology_projection",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.partial_path",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.ratio_aggregation",
+    "fix": "Aggregate the declared numerator and denominator separately, then divide their sums."
+  },
+  {
+    "code": "metric.validation.undeclared_additivity",
+    "fix": "Declare additivity on the numeric property type before aggregating it."
+  },
+  {
+    "code": "metric.validation.unit_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "metric.validation.unknown_metric",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unknown_object",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unknown_path",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unsupported_semantics",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.computed_key_component",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.computed_with_default",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.default_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.default_type_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.default_unchecked",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.default_violates_constraint",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.duplicate_interface",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_invariant_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_key_component",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_key_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_link_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_normalization",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_property_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.empty_computed",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.empty_identity_rule",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.empty_invariant_expression",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.empty_invariant_message",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.empty_key",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.empty_normalization",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.extension_namespace_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.extension_of_local_type",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.extension_shadows_member",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.foreign_inverse",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.inadmissible_key_kind",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.inheritance_budget_exhausted",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "object_type.validation.inheritance_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "object_type.validation.interface_link_target_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.interface_link_widens_cardinality",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.interface_property_type_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.interface_property_widens_nullability",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.interface_requirement_conflict",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.invalid_accounting_leg_declaration",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_computed",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_extension_namespace",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_invariant_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_invariant_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_key_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_link_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_match_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_naming_series",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_owned_collection",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_property_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_status_date",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_override_changes_acyclic",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.link_override_redeclares",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.link_override_target_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.link_override_widens_cardinality",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.link_property_markings_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.link_property_protection_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.member_id_conflict",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.missing_interface_link",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "object_type.validation.missing_interface_property",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "object_type.validation.normalization_not_applicable",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.normalization_not_in_key",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.nullable_key_component",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.override_computed",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.override_type_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.override_widens_nullability",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.redundant_key",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.reserved_member_separator",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.shadows_base",
+    "fix": "Do not redefine an installed base definition. Extend it or add a subtype under your own name."
+  },
+  {
+    "code": "object_type.validation.tenant_type_not_subtype",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.tenant_type_outside_namespace",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.unknown_extension_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_interface",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_key_property",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_link_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_replacement",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_supertype",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unnamespaced_member",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "object_type.validation.unsatisfiable_constraints",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.deep_hierarchy",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.duplicate_definition",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ontology.lint.incomplete_provenance",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.mega_object",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.plural_type_name",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.redundant_member_prefix",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.source_mirroring",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.unknown_mapping_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ontology.lint.unmapped_required_member",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ontology.lint.unmapped_source_field",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.untraceable_provenance",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.versioned_name",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology.lint.weak_relationship",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "ontology_instance.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_link.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_pack.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_registry.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "policy.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.bound_exceeds_scale",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.bound_not_integer",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.bound_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.constraint_not_applicable",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.duplicate_enum_value",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.duplicate_member",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.empty_enum",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.empty_record",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.invalid_bound",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_enum_value",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_member",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_pattern",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_unit",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.inverted_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.ref_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "property_type.validation.scale_out_of_range",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.unknown_ref",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "question.validation.comparison_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "question.validation.duplicate_question",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "question.validation.duplicate_selection",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "question.validation.empty_metrics",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.fan_out_rollup",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.invalid_freshness",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_rollup",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_window",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.mixed_axis_rollup",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.non_additive_rollup",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.semi_additive_time",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.snapshot_aggregation",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "question.validation.unknown_comparison",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "relation.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "relation.validation.v2_relation_is_link",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.invalid_binding",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_decision_contract",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_fact_change",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_schema",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_source_command",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.jdm_custom_node_rejected",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "rule.validation.jdm_dangling_edge",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "rule.validation.jdm_function_node_rejected",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_hit_policy_rejected",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_invalid_edge",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_invalid_expression",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_io_node_count",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_recursive_sub_decision",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_switch_default",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_switch_unconnected_branch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_unknown_column",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_unknown_node_type",
+    "fix": "Replace the reported node with a node type supported by the admitted decision-table profile."
+  },
+  {
+    "code": "rule.validation.jdm_unreachable_node",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_unresolved_import",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_unresolved_sub_decision",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.ordered_fold_invalid",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.ordered_fold_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "sealing.extension_point.capability_missing",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.extension_point.contract_violation",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.extension_point.kind_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.extension_point.unresolved",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "sealing.input.duplicate_extension_point",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "sealing.input.duplicate_seal",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "sealing.monotonic.unseal_forbidden",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.overlay.base_mutation_denied",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.overlay.sealed_mutation",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.overlay.tenant_namespace_mismatch",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.overlay.tenant_namespace_required",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "sealing.runtime.capability_denied",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "sealing.upgrade.monotonic_violation",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "setting.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.blank_value",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "source_schema.validation.constraint_shape",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "source_schema.validation.duplicate_code",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.duplicate_field",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_evidence",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_source_identity",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_timestamp",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.profile_counts",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "source_schema.validation.promoted_inference",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "source_schema.validation.sample_bound",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "source_schema.validation.unknown_dataset",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "source_schema.validation.unknown_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "widget.interaction.control_missing_for_transition",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.control_without_legal_transition",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.dialog_no_keyboard_close",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.dialog_no_restore_target",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.keyboard_unreachable_control",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.nullable_without_clear",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.unnamed_control",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.interaction.unreachable_page",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "widget.validation.missing_dependency",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.validation.unsafe_action_binding",
+    "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  }
+]
