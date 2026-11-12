@@ -761,7 +761,7 @@ pub struct CatalogProperty {
     pub id: String,
     /// The resolved type (kind, unit, scale, additivity), or `null`.
     #[serde(rename = "type")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(schema_with = property_type_schema)]
     pub property_type: Option<norn_ir::PropertyType>,
 }
 
@@ -776,7 +776,7 @@ pub struct QuestionCatalog {
     /// The object types the listed metrics range over.
     pub object_types: Vec<CatalogObjectType>,
     /// The listed metrics, as declared, in name order.
-    #[schema(value_type = Vec<Object>)]
+    #[schema(schema_with = metrics_schema)]
     pub metrics: Vec<MetricDefinition>,
     /// Calendar grains a group-by may bucket a time property by; a group-by
     /// without a grain groups by the property's values.
@@ -789,6 +789,24 @@ pub struct QuestionCatalog {
     pub max_group_by: usize,
     /// Most buckets one answer may have (above it, 413).
     pub max_buckets: usize,
+}
+
+// `schema_with` replaces the field's schema, doc comment included, so each
+// helper restates its field's description.
+fn property_type_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+        true,
+    )
+}
+
+fn metrics_schema() -> utoipa::openapi::schema::Array {
+    let mut array = utoipa::openapi::schema::Array::new(crate::objects::free_form(
+        "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+        false,
+    ));
+    array.description = Some("The listed metrics, as declared, in name order.".to_owned());
+    array
 }
 
 /// `GET /v1/questions:catalog`: the metrics, object types and engine bounds
