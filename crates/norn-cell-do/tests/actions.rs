@@ -522,7 +522,7 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
     assert_eq!(tool["inputSchema"]["type"], "object");
 
     let key = "4b7a2c1e-0000-4000-8000-0000000000aa";
-    let call = |auth: &str, id: &str, key: &str| {
+    let invoke = |auth: &str, id: &str, key: &str| {
         rpc(
             auth,
             &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
@@ -531,7 +531,7 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
             }}),
         )
     };
-    let called = call(OPERATOR, "melt-9", key);
+    let called = invoke(OPERATOR, "melt-9", key);
     assert_eq!(called["result"]["isError"], false, "{called}");
     let receipt = called["result"]["structuredContent"].clone();
     assert_eq!(receipt["outcome"], "committed");
@@ -548,10 +548,13 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
         &melt_body("melt-10", "12", "10", "k-viewer"),
     );
     if tool_of(VIEWER).is_some() {
-        let refused = call(VIEWER, "melt-10", "k-viewer");
+        let refused = invoke(VIEWER, "melt-10", "k-viewer");
         assert_eq!(refused["result"]["isError"], true, "{refused}");
         assert_eq!(refused["result"]["structuredContent"], direct);
     } else {
-        assert_eq!(call(VIEWER, "melt-10", "k-viewer")["error"]["code"], -32602);
+        assert_eq!(
+            invoke(VIEWER, "melt-10", "k-viewer")["error"]["code"],
+            -32602
+        );
     }
 }
