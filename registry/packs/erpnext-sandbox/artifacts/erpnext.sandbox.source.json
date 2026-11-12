@@ -1,0 +1,459 @@
+{
+  "artifactId": "erpnext.sandbox.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "ERPNext sandbox: parties, items, lot balances and order lines",
+  "namespace": "erpnext",
+  "payload": {
+    "adapter": {
+      "name": "norn-pull",
+      "version": "1"
+    },
+    "codeSets": [
+      {
+        "dataset": "Warehouse Lot Balance",
+        "field": "unit",
+        "id": "holding_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Sales Order Item",
+        "field": "unit",
+        "id": "order_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "field": "valuation_method",
+        "id": "holding_valuation_method",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "moving_average"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_0",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_1",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Party",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_2",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Sales Order Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_3",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Item",
+        "kind": "document",
+        "nativeName": "Item"
+      },
+      {
+        "id": "Warehouse Lot Balance",
+        "kind": "document",
+        "nativeName": "Warehouse Lot Balance (custom DocType)"
+      },
+      {
+        "id": "Party",
+        "kind": "document",
+        "nativeName": "Customer"
+      },
+      {
+        "id": "Sales Order Item",
+        "kind": "document",
+        "nativeName": "Sales Order Item"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Item",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "code",
+        "nativeType": "Data",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "label",
+        "nativeType": "Data",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "sku",
+        "nativeType": "Data",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "price",
+        "nativeType": "Currency",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "resource_code",
+        "nativeType": "Data",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "quantity",
+        "nativeType": "Float",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "unit",
+        "nativeType": "Data",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "location",
+        "nativeType": "Data",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "item_ref",
+        "nativeType": "Data",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "owner_ref",
+        "nativeType": "Data",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "custodian_ref",
+        "nativeType": "Data",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "stock_cost",
+        "nativeType": "Float",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "cost_currency",
+        "nativeType": "Data",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "valuation_method",
+        "nativeType": "Data",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "label",
+        "nativeType": "Data",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "role",
+        "nativeType": "Data",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "custom_norn_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "quantity",
+        "nativeType": "Float",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "unit",
+        "nativeType": "Link",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "due_at",
+        "nativeType": "Data",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "provider_ref",
+        "nativeType": "Data",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "receiver_ref",
+        "nativeType": "Data",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "holding_ref",
+        "nativeType": "Data",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-12T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "2bd0d0747ae36ab2f010479b9bb159c67dce41adc8eef3b4017aa09d651c9eba",
+      "uri": "demo/sandboxes/erpnext/seed.py"
+    },
+    "source": {
+      "instance": "sandbox",
+      "system": "erpnext",
+      "version": "erpnext-16"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext-sandbox/artifacts/erpnext.sandbox.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

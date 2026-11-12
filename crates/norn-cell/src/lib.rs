@@ -84,6 +84,7 @@ pub fn builtin_registered(function_id: &str, version: u32) -> bool {
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use mapping_process::MappingOutcome;
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,

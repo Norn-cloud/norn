@@ -144,6 +144,21 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store
     }
 
+    /// This cell, its store, clock and outside world unchanged, under another
+    /// ledger event profile: a host that serves actions maps captured source
+    /// rows under the observation profile on the same store, then turns back.
+    #[must_use]
+    pub fn into_profile<E2>(self) -> SqliteCell<E2, C, I, S> {
+        SqliteCell {
+            store: self.store,
+            scope: self.scope,
+            now: self.now,
+            responder: self.responder,
+            published: self.published,
+            events: PhantomData,
+        }
+    }
+
     /// Capture pinned mapping evidence while the cell owns its store.
     ///
     /// # Errors
