@@ -59,6 +59,13 @@ impl MetricSpace {
         &self.candidates
     }
 
+    /// The catalog the candidates were derived from, with any conserved
+    /// terms recorded: what an ad-hoc question over them is admitted against.
+    #[must_use]
+    pub const fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
+    }
+
     /// Lower a selection through the existing checked compute seam.
     ///
     /// # Errors

@@ -126,8 +126,8 @@ pub fn admit(
     if max_items == 0
         || max_items
             > norn_ir::ResourceLimitProfile::norn_limits_v1()
-                .slice
-                .max_records
+                .question_limits()
+                .max_scanned_records
         || !question.search_around.is_empty()
         || question.comparison.is_some()
         || selection.inline.is_some()

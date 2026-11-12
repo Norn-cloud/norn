@@ -20,11 +20,12 @@ use norn_api::definition_routes::{
 };
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
+use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, list_metrics, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -231,7 +232,10 @@ pub fn handle_all<E: SqlEngine>(
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
     let question = question_path(path);
-    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let ad_hoc = matches!(
+        path,
+        "/v1/questions:evaluate" | "/v1/questions:trace" | "/v1/questions:metrics"
+    );
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
@@ -322,12 +326,13 @@ fn ad_hoc_question<E: SqlEngine>(
     query: &str,
     body: &str,
 ) -> Result<String, Refusal> {
-    if method != "POST" {
+    let listing = path == "/v1/questions:metrics";
+    if method != if listing { "GET" } else { "POST" } {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "ad-hoc questions are submitted with POST",
+            "ad-hoc questions are submitted with POST; their metrics are listed with GET",
         ));
     }
     let fields = parse(query, &["orgId", "environmentId"])?;
@@ -339,6 +344,9 @@ fn ad_hoc_question<E: SqlEngine>(
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(norn_api::authz::read_denied());
     };
+    if listing {
+        return document_json(&list_metrics(host, &scope, actor, runtime)?);
+    }
     let malformed = |error: serde_json::Error| {
         Refusal::invalid(format!(
             "the request body is not a valid submission: {error}"
@@ -423,6 +431,27 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     Some((kind, id, leaf))
 }
 
+/// HOST-READ-5: `GET /v1/objects/{type}:profile`, scoped by the query string.
+fn profiled<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&get_object_profile(
+        host,
+        &scope,
+        actor,
+        object_type,
+        &CellObjectAccess,
+    )?)
+}
+
 /// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
 /// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
 /// the query string.
@@ -442,6 +471,9 @@ fn objects<E: SqlEngine>(
             .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
     let object_type = decoded(object_type)?;
+    if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
+        return profiled(host, actor, kind, query);
+    }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
             query,

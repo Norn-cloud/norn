@@ -52,7 +52,7 @@ mod http;
 mod load;
 mod policy;
 
-use policy::{DevPrincipals, DevQuestions, LocalDeveloper};
+use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
 /// `norn-dev-host` options. The compile worker command follows `--`; the
 /// authoring CLI's `norn dev` supplies it.
@@ -273,10 +273,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         bearer: token.bearer.clone(),
         actor: manifest.dev.actor.clone(),
     };
-    let questions = DevQuestions {
-        handle_key: token.handle_key,
-        catalog: norn_checker::EffectiveCatalog::default(),
-    };
+    let questions = DevMetrics::new(token.handle_key, scope.clone());
     {
         let serving = Arc::clone(&serving);
         std::thread::spawn(move || http::serve(&listener, &serving, &principals, &questions));

@@ -12,7 +12,7 @@ use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_cell::engine::NativeEngine;
 
-use super::policy::{DevPrincipals, DevQuestions};
+use super::policy::{DevMetrics, DevPrincipals};
 
 /// Longest accepted request head (request line plus headers), in bytes.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
@@ -28,7 +28,7 @@ pub(crate) fn serve(
     listener: &TcpListener,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
 ) {
     for stream in listener.incoming().flatten() {
         // A broken connection affects only itself.
@@ -40,7 +40,7 @@ fn connection(
     mut stream: TcpStream,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let response = match read_request(&stream) {
@@ -148,7 +148,7 @@ fn dispatch(
     parsed: &Parsed,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
 ) -> Response {
     let Ok(guard) = serving.read() else {
         return refusal(&Refusal::host("the serving state is poisoned"));
@@ -162,10 +162,15 @@ fn dispatch(
         ));
     };
     let now = super::now_ms().checked_div(1000).unwrap_or_default();
+    // The active revision's metrics, derived before the request runs.
+    let questions = match questions.questions(host) {
+        Ok(questions) => questions,
+        Err(refused) => return refusal(&refused),
+    };
     server::handle_with(
         host,
         principals,
-        Some(questions),
+        Some(&questions),
         &Request {
             method: &parsed.method,
             path: &parsed.path,

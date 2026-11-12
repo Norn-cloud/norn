@@ -10,6 +10,8 @@
 //! - [`analytics`]: the scrap-yield cell and its admitted question runtime.
 //! - [`policy`]: HOST-READ-1 data-read decisions by the kernel PDP over an
 //!   `AccessIR` policy compiled against the cell model's Cedar projection.
+//! - [`questions`]: ad-hoc questions over the metrics the active revision
+//!   derives, for the dev host and a hosted cell alike.
 //! - [`seed`]: the public three-systems demo cell, provisioned idempotently.
 //! - [`server`]: read-only fetch dispatch over `norn_api`'s shared services.
 //! - `dev` (native only): `norn-dev-host`, the developer loop over a
@@ -20,6 +22,7 @@ pub mod analytics;
 pub mod dev;
 pub mod policy;
 pub mod principal;
+pub mod questions;
 pub mod seed;
 pub mod server;
 #[cfg(target_arch = "wasm32")]
