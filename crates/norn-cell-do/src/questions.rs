@@ -157,30 +157,34 @@ pub struct DerivedRuntime<'m> {
     derived: Arc<Derived>,
 }
 
-impl DerivedRuntime<'_> {
-    /// The object type a read of `resource` is governed by: a derived sum's
-    /// semantic model, a ratio's numerator's, and a type name itself.
-    fn governed<'a>(&'a self, resource: &'a str) -> &'a str {
-        let mut name = resource;
-        // A ratio names its numerator; a derived ratio never nests deeper.
-        for _ in 0..2 {
-            let Some(metric) = self
-                .derived
-                .definitions
-                .iter()
-                .find(|definition| definition.name == name)
-            else {
-                return name;
-            };
-            if let Some(params) = &metric.type_params.metric_aggregation_params {
-                return params.semantic_model.0.as_str();
-            }
-            match metric.type_params.numerator.as_deref() {
-                Some(numerator) => name = numerator,
-                None => return resource,
-            }
-        }
-        resource
+/// The object type a read of `resource` is governed by: a derived sum's
+/// semantic model, and a type name itself. A ratio is governed by its
+/// operands' type only when the numerator and the denominator are sums over
+/// the same type; otherwise it names no type and every read of it is refused.
+/// Admission authorizes each operand against its own type as well, so a
+/// caller who cannot read the denominator's type never gets the ratio.
+pub(crate) fn governed<'a>(definitions: &'a [MetricDefinition], resource: &'a str) -> &'a str {
+    let find = |name: &str| definitions.iter().find(|definition| definition.name == name);
+    let model = |name: &str| {
+        find(name)?
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .map(|params| params.semantic_model.0.as_str())
+    };
+    let Some(metric) = find(resource) else {
+        return resource;
+    };
+    if let Some(model) = model(resource) {
+        return model;
+    }
+    let operand = |name: Option<&'a String>| name.and_then(|name| model(name));
+    match (
+        operand(metric.type_params.numerator.as_ref()),
+        operand(metric.type_params.denominator.as_ref()),
+    ) {
+        (Some(numerator), Some(denominator)) if numerator == denominator => numerator,
+        _ => resource,
     }
 }
 
@@ -238,7 +242,10 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
             action_id: crate::policy::READ_ACTION.into(),
             resource: ResourceInput {
                 object_type: row
-                    .map_or_else(|| self.governed(question), |row| row.object_type.as_str())
+                    .map_or_else(
+                        || governed(&self.derived.definitions, question),
+                        |row| row.object_type.as_str(),
+                    )
                     .into(),
                 id: row.map_or(question, |row| row.id.as_str()).into(),
                 scope: key,

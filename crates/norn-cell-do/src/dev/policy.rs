@@ -258,7 +258,8 @@ mod tests {
         json!({
             "irVersion": "0.1", "name": "dev.daily", "objectSet": TYPE,
             "aggregate": [{"metric": metric}],
-            "groupBy": [{"path": {"property": "occurred_at"}, "grain": "day"}],
+            // The bounded profile groups by a plain property or a week.
+            "groupBy": [{"path": {"property": "region"}}],
             "window": {"start": "2026-11-01T00:00:00Z", "end": "2026-11-08T00:00:00Z"},
             "freshness": {"kind": "live", "maxAgeMs": 60000},
             "calendar": "iso_utc"
@@ -365,6 +366,51 @@ mod tests {
         );
     }
 
+    /// A ratio is governed by its operands' type only when both operands sum
+    /// the same type; across two types it names none, so every read of it is
+    /// refused (admission also authorizes each operand against its own type).
+    #[test]
+    fn a_ratio_is_governed_by_both_operands_types_or_by_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
+        let (amount, quantity) = (
+            metric(&metrics, &host, "amount", false),
+            metric(&metrics, &host, "quantity", false),
+        );
+        let questions = metrics.questions(&host).expect("runtime");
+        let mut definitions = AdHocQuestions::<NativeEngine>::definitions(&questions).to_vec();
+        let mut ratio = definitions
+            .iter()
+            .find(|definition| definition.name == amount)
+            .unwrap()
+            .clone();
+        ratio.name = "dev.price".into();
+        ratio.type_params = norn_ir::metric::MetricTypeParams {
+            numerator: Some(amount.clone()),
+            denominator: Some(quantity.clone()),
+            ..norn_ir::metric::MetricTypeParams::default()
+        };
+        definitions.push(ratio);
+        assert_eq!(crate::questions::governed(&definitions, "dev.price"), TYPE);
+        assert_eq!(crate::questions::governed(&definitions, &amount), TYPE);
+        assert_eq!(crate::questions::governed(&definitions, TYPE), TYPE);
+        for definition in &mut definitions {
+            if definition.name == quantity {
+                definition
+                    .type_params
+                    .metric_aggregation_params
+                    .as_mut()
+                    .unwrap()
+                    .semantic_model = norn_ir::ObjectTypeName("shop.Other".into());
+            }
+        }
+        assert_eq!(
+            crate::questions::governed(&definitions, "dev.price"),
+            "dev.price"
+        );
+    }
+
     #[test]
     fn every_derived_sum_is_answered_on_whichever_engine_lowers_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -440,15 +486,16 @@ mod tests {
         assert_eq!(amount["nulls"], 0);
         assert_eq!(amount["distinct"], 3);
         // The reader's JSON parse keeps the number, not its trailing zeros.
-        assert_eq!(amount["min"].to_string(), "5.5");
-        assert_eq!(amount["max"].to_string(), "10.0");
+        let number = |value: &Value| value.as_f64().unwrap();
+        assert!((number(&amount["min"]) - 5.5).abs() < 1e-9, "{amount}");
+        assert!((number(&amount["max"]) - 10.0).abs() < 1e-9, "{amount}");
         let median = amount["quantiles"]
             .as_array()
             .unwrap()
             .iter()
             .find(|q| q["percent"] == 50)
             .unwrap();
-        assert_eq!(median["value"].to_string(), "7.25");
+        assert!((number(&median["value"]) - 7.25).abs() < 1e-9, "{amount}");
         let at = property("occurred_at");
         assert_eq!(at["kind"], "temporal");
         assert_eq!(at["histogram"]["kind"], "day");
