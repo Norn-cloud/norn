@@ -9,6 +9,12 @@ import type { QuestionAnswer } from "@/lib/transport"
 import { fieldOf, type QuestionCatalog } from "./builder.tsx"
 import { AnswerView, RefusedNote } from "./answer-view.tsx"
 
+/** The answer's knowledge point, when it carries one: the trace then reads the answer as it was given. */
+const answeredAt = (answer: unknown): { readonly knownAsOf: number; readonly nowMs: number } | undefined => {
+  const { knownAsOf, nowMs } = (answer ?? {}) as { knownAsOf?: unknown; nowMs?: unknown }
+  return typeof knownAsOf === "number" && typeof nowMs === "number" ? { knownAsOf, nowMs } : undefined
+}
+
 /** Each bound the cell enforces, in words, for a 413 that carries no message of its own. */
 const BOUNDS: Record<string, string> = {
   "core.compute.bound_exceeded": "it would read more records than the cell allows",
@@ -45,7 +51,7 @@ export function RunQuestion({ question, catalog, label = "Run", compact = false 
     <div className="space-y-3">
       <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result ? "Run again" : label}</Button>
       {run.isError && <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
-      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} onStale={() => run.mutate()} />}
+      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, answeredAt(result.read.document))} onStale={() => run.mutate()} />}
       {result?.kind === "not-a-question" && <ValidationPanel title="The cell refused this question" issues={result.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer) }))} />}
       {result?.kind === "refused" && <RefusedNote refusal={result.refusal} />}
       {result && result.kind !== "answer" && result.kind !== "refused" && result.kind !== "not-a-question" && <p role="status" className="text-sm text-muted-foreground">{notRun(result)}</p>}

@@ -203,12 +203,18 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
         {field.spec.kind === "decimal" && field.spec.unit && <span className="text-meta font-normal text-muted-foreground">({field.spec.unit})</span>}
         {field.required && <span aria-hidden className="text-destructive">*</span>}
       </label>
-      {field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
+      {/* A field filled from where the action was opened says so; the definition's own help (written for typing it in) stays behind a disclosure. */}
+      {locked
+        ? <div id={`${id}-help`} className="text-meta text-muted-foreground">
+          Filled in from where you opened this action.
+          {field.description && <details className="mt-0.5"><summary className="cursor-pointer select-none underline-offset-4 hover:underline">About this field</summary><p className="pt-1">{field.description}</p></details>}
+        </div>
+        : field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
       {locked
         ? (
           <div className="relative">
             <Lock className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input id={id} readOnly aria-readonly value={String(value)} title="This record: set by where you opened the action"
+            <Input id={id} readOnly aria-readonly value={String(value)} title="Set by where you opened the action"
               className="h-9 cursor-default bg-muted/70 pl-8 font-mono text-xs text-muted-foreground focus-visible:ring-0" />
           </div>
         )
