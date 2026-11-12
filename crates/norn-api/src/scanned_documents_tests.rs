@@ -819,3 +819,61 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
         "released from quarantine"
     );
 }
+
+/// LAW-LINK-TARGET-WRITE: a native change to a ledger entry that would
+/// contradict a document booked to it refuses atomically; one that keeps the
+/// amount commits.
+#[test]
+fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(loaded(), "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let (entry, values, version) = {
+        let reader = cell.store().read();
+        let edge = reader
+            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("links")
+            .into_iter()
+            .find(|edge| edge.link == "ledger_entry")
+            .expect("SCAN-INV-0041 is booked");
+        let record = reader
+            .object(MAIN_WORLD, &edge.target_type, &edge.target)
+            .expect("read")
+            .expect("the booked entry");
+        (
+            FactKey::new(record.object_type.as_str(), record.id.clone()),
+            record.values,
+            record.version,
+        )
+    };
+    let change = |property: &str, value: &str| {
+        let mut values = values.clone();
+        values.insert(
+            property.into(),
+            RuntimeValue::from_json_text(value).expect("value"),
+        );
+        let mut native = CellCommit::empty();
+        native.writes.push(FactWrite {
+            key: entry.clone(),
+            expected: FactVersion(version),
+            mutation: FactMutation::Put { values },
+        });
+        native
+    };
+    let refusal = cell
+        .commit(change("amount", "31.00"))
+        .expect_err("the booked document says 30.50");
+    assert_eq!(refusal.code(), "core.laws.violated", "{refusal:?}");
+    assert_eq!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, entry.object_type.as_str(), &entry.key)
+            .expect("read")
+            .expect("entry")
+            .version,
+        version,
+        "nothing is written"
+    );
+    cell.commit(change("account_code", "\"6100\""))
+        .expect("a change that keeps the amount commits");
+}
