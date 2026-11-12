@@ -228,9 +228,11 @@ impl Catalog {
         actor: &str,
     ) -> Result<Self, Refusal> {
         let object_types = host.object_type_names()?;
-        let question_names = questions
-            .map(|runtime| runtime.question_names())
-            .unwrap_or_default();
+        let question_names = if let Some(runtime) = questions {
+            runtime.question_names()
+        } else {
+            Vec::new()
+        };
         let mut tools = generic_tools(&object_types, &question_names, questions.is_some())?;
         let query = ActionQuery {
             org_id: Some(scope.org_id.clone()),
