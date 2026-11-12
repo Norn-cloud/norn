@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.error_without_recovery",
+  "message": "a page machine error state has no transition a person or a timer drives: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

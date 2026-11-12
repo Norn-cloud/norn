@@ -1479,3 +1479,113 @@ fn a_runtime_defined_type_survives_a_restart() {
         Some("south")
     );
 }
+
+/// A request as the Worker hands it to the cell's connect routes.
+fn post<'a>(path: &'a str, query: &'a str, authorization: &'a str, body: &'a str) -> Request<'a> {
+    Request {
+        method: "POST",
+        path,
+        query,
+        authorization: Some(authorization),
+        now: NOW,
+        body,
+    }
+}
+
+/// UPLOAD-RECORD-1 across a restart: an upload completed before the host
+/// restarts is defined after it from the record the cell kept at
+/// `:complete`; a digest the client sends that differs is refused, never
+/// trusted in the kept one's place.
+#[test]
+fn a_completed_upload_survives_a_restart() {
+    use norn_cell_do::connect::Connect;
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    let q = query(&scope);
+    let mut set = full();
+    for name in [
+        "source.Synced.interface",
+        "source.Connection.entity",
+        "source.SyncRun.entity",
+        "source.Upload.entity",
+        "norn.connect.source",
+        "norn.connect.mapping",
+    ] {
+        set.push(
+            std::fs::read_to_string(format!(
+                "{}/../../registry/packs/sources/artifacts/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        );
+    }
+    let vars = json!({
+        "NORN_S3_ENDPOINT": "https://storage.example.test", "NORN_S3_BUCKET": "uploads-bucket",
+        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id", "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+    })
+    .to_string();
+    let csv = b"region,units\nnorth,3\nsouth,4\n";
+    let at = 4_000_000_000_000;
+    let upload_id = {
+        let cell = provisioned(&path, &scope, &set);
+        let host = cell.tenant.serving_host().expect("a served cell");
+        let mut connect = Connect::new("[]", &vars).unwrap();
+        let request = r#"{"fileName": "sales.csv", "contentType": "text/csv", "size": 30}"#;
+        let begun = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post("/v1/uploads:begin", &q, &owner, request),
+                at,
+            )
+            .unwrap();
+        assert_eq!(begun.response.status, 200, "{}", begun.response.body);
+        let id = json_of(&begun.response)["uploadId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let complete = format!("/v1/uploads/{id}:complete");
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post(&complete, &q, &owner, "{}"),
+                at,
+            )
+            .unwrap();
+        let (token, _read) = routed.then.expect("a read of the object");
+        let completed = connect.resume(Some(host), &token, 200, csv, at);
+        assert_eq!(completed.status, 200, "{}", completed.body);
+        id
+    };
+    // The restarted host: the reopened cell and a Connect that never saw it.
+    let cell = open(&path, &scope);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let kept = norn_api::sources::kept_upload(host, &upload_id)
+        .unwrap()
+        .expect("the kept record");
+    assert_eq!(kept.sha256, norn_api::uploads::sha256_hex(csv));
+    assert_eq!(kept.file_name, "sales.csv");
+    assert!(!kept.owner.is_empty());
+    let mut connect = Connect::new("[]", &vars).unwrap();
+    let define = format!("/v1/uploads/{upload_id}:define");
+    let mut define_with = |body: &str| {
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post(&define, &q, &owner, body),
+                at,
+            )
+            .unwrap();
+        let (token, _read) = routed.then.expect("a read of the object");
+        connect.resume(Some(host), &token, 200, csv, at)
+    };
+    let claimed = json!({"typeName": "Sales", "sha256": "0".repeat(64)}).to_string();
+    assert_eq!(define_with(&claimed).status, 409);
+    let defined = define_with(r#"{"typeName": "Sales"}"#);
+    assert_eq!(defined.status, 200, "{}", defined.body);
+    assert_eq!(json_of(&defined)["objectType"], "upload.Sales");
+}

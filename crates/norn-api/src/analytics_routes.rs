@@ -498,9 +498,20 @@ pub fn load_dataset<E: SqlEngine>(
     )?;
     let request: DatasetLoadRequest =
         serde_json::from_str(body).map_err(|e| Refusal::invalid(e.to_string()))?;
-    let record = uploads
-        .record(&request.upload_id)
-        .ok_or_else(dataset_not_found)?;
+    // UPLOAD-RECORD-1: an upload this host instance never saw complete is
+    // read from the record the cell kept at `:complete`.
+    let record = match uploads.record(&request.upload_id) {
+        Some(record) => record,
+        None => crate::sources::kept_upload(host, &request.upload_id)
+            .map_err(Refusal::host)?
+            .map(|kept| UploadRecord {
+                uri: kept.uri,
+                sha256: kept.sha256,
+                content_type: kept.content_type,
+                file_name: kept.file_name,
+            })
+            .ok_or_else(dataset_not_found)?,
+    };
     let loaded = load_upload(
         host,
         &request.object_type,

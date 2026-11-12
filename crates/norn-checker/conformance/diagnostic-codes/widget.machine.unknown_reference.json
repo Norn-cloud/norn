@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.unknown_reference",
+  "message": "a page machine names a state, event, field, node, binding, operation or navigation item it does not declare: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -60,6 +60,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "source.Synced.interface",
         "source.Connection.entity",
         "source.SyncRun.entity",
+        "source.Upload.entity",
         "norn.connect.source",
         "norn.connect.mapping",
     ] {
@@ -928,4 +929,58 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
         ),
         (Some(4), Some(3), Some(1))
     );
+}
+
+/// UPLOAD-RECORD-1: a completed upload is kept in the cell through its own
+/// mapping and read back as kept; the same bytes kept again change nothing,
+/// new bytes are the upload's next version, and an unknown id is not kept.
+#[test]
+fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
+    use norn_api::sources::{KeptUpload, keep_upload, kept_upload};
+    use norn_api::uploads::{Store, parse_csv, sha256_hex};
+    let host = host();
+    let csv = "Region,Units\nnorth,3\n";
+    let kept = KeptUpload {
+        upload_id: "u7570.0123456789abcdef0123456789abcdef".into(),
+        store: Store::Uploads,
+        uri: "s3://uploads/uploads/org/dev/sales.csv".into(),
+        sha256: sha256_hex(csv.as_bytes()),
+        size: 21,
+        content_type: "text/csv".into(),
+        file_name: "sales.csv".into(),
+        csv: true,
+        columns: parse_csv(csv).expect("parsed").columns,
+        owner: "user:owner".into(),
+        // The cell keeps an instant in its canonical RFC 3339 form.
+        completed_at: "2026-11-12T12:00:05Z".into(),
+    };
+    assert_eq!(kept_upload(&host, &kept.upload_id).expect("read"), None);
+    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept");
+    let mut read = kept_upload(&host, &kept.upload_id)
+        .expect("read")
+        .expect("the record");
+    // The profile's scale is not part of the record; the load re-profiles.
+    for column in &mut read.columns {
+        column.scale = 0;
+    }
+    let mut expected = kept.clone();
+    for column in &mut expected.columns {
+        column.scale = 0;
+    }
+    assert_eq!(read, expected);
+    keep_upload(&host, &kept, EXTRACTED_AT_MS).expect("kept again");
+    let replaced = KeptUpload {
+        sha256: sha256_hex(b"other bytes"),
+        size: 11,
+        ..kept.clone()
+    };
+    keep_upload(&host, &replaced, EXTRACTED_AT_MS + 1).expect("next version");
+    assert_eq!(
+        kept_upload(&host, &kept.upload_id)
+            .expect("read")
+            .expect("the record")
+            .sha256,
+        replaced.sha256
+    );
+    assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
 }

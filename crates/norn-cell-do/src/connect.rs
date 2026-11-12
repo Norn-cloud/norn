@@ -32,8 +32,12 @@
 //! UPLOAD-ID-1: an upload id carries its store and object key, sealed with the
 //! store's secret, so `:complete`, `:load` and `:read` work after the Durable
 //! Object restarts; an id resolves only in the scope whose prefix its key names
-//! (or `synthetic/`), and a `:load` after a restart checks the object against
-//! the `sha256` that `:complete` returned (UPLOAD-DIGEST-1).
+//! (or `synthetic/`).
+//! UPLOAD-RECORD-1: `:complete` keeps what the cell read back (URI, SHA-256,
+//! size, the CSV profile, who completed it) as a `source.Upload` object
+//! before it answers; after a restart `:load`, `:define` and the bulk loader
+//! read it there, and the object read at load time must match its digest
+//! (UPLOAD-DIGEST-1). A digest a client sends is only checked, never trusted.
 
 use std::collections::BTreeMap;
 
@@ -106,6 +110,7 @@ pub struct UploadRecord {
 enum Waiting {
     Complete {
         upload: String,
+        actor: String,
     },
     Load {
         upload: String,
@@ -320,6 +325,29 @@ impl Connect {
         owns(&upload.key, scope_key).then_some(upload)
     }
 
+    /// The upload `id` names in the cell `host` serves: [`Self::resolve`], its
+    /// completion read back from the cell's kept record (UPLOAD-RECORD-1)
+    /// when this instance never saw it complete (a restarted host).
+    fn resolve_kept<E: SqlEngine>(
+        &self,
+        host: &DevHost<E>,
+        id: &str,
+    ) -> Result<Option<Upload>, String> {
+        let Some(mut upload) = self.resolve(id, &host.scope().key()) else {
+            return Ok(None);
+        };
+        if upload.completed.is_none()
+            && let Some(kept) = norn_api::sources::kept_upload(host, id)?
+            && kept.uri == upload.uri
+        {
+            upload.completed = Some((kept.sha256, kept.size, kept.csv));
+            upload.columns = kept.columns;
+            upload.content_type = kept.content_type;
+            upload.file_name = kept.file_name;
+        }
+        Ok(Some(upload))
+    }
+
     /// The completed upload `id`, as recorded; `None` before `:complete`.
     #[must_use]
     pub fn upload_record(&self, id: &str) -> Option<UploadRecord> {
@@ -437,9 +465,12 @@ impl Connect {
                 }
             },
             Route::Begin => Routed::reply(self.begin(host, request.body, now_ms)),
-            Route::Complete(id) => self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
-                Waiting::Complete { upload }
-            }),
+            Route::Complete(id) => {
+                let actor = actor.clone();
+                self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
+                    Waiting::Complete { upload, actor }
+                })
+            }
             Route::Define(id) | Route::Load(id) => {
                 match serde_json::from_str::<LoadRequest>(request.body) {
                     Ok(load) => {
@@ -636,8 +667,8 @@ impl Connect {
         let sha256 = uploads::sha256_hex(body);
         let size = u64::try_from(body.len()).unwrap_or(u64::MAX);
         match waiting {
-            Waiting::Complete { upload } => {
-                self.complete((&upload, &host.scope().key()), body, &sha256, size)
+            Waiting::Complete { upload, actor } => {
+                self.complete(host, (&upload, &actor), body, (&sha256, size), now_ms)
             }
             Waiting::Load {
                 upload,
@@ -657,23 +688,46 @@ impl Connect {
         }
     }
 
-    fn complete(
+    /// UPLOAD-RECORD-1: what the cell read back is kept in the cell before
+    /// `:complete` answers, so the upload loads after the host restarts.
+    fn complete<E: SqlEngine>(
         &mut self,
-        (id, scope_key): (&str, &str),
+        host: &DevHost<E>,
+        (id, actor): (&str, &str),
         body: &[u8],
-        sha256: &str,
-        size: u64,
+        (sha256, size): (&str, u64),
+        now_ms: u64,
     ) -> Response {
-        let Some(resolved) = self.resolve(id, scope_key) else {
+        let Some(mut upload) = self.resolve(id, &host.scope().key()) else {
             return refused(404, "upload.not_found", "no such upload");
         };
-        let upload = self.uploads.entry(id.to_owned()).or_insert(resolved);
         let table = std::str::from_utf8(body).ok().map(uploads::parse_csv);
         let csv = matches!(table, Some(Ok(_)));
         upload.completed = Some((sha256.to_owned(), size, csv));
         if let Some(Ok(table)) = &table {
             upload.columns.clone_from(&table.columns);
         }
+        let kept = norn_api::sources::KeptUpload {
+            upload_id: id.to_owned(),
+            store: upload.store,
+            uri: upload.uri.clone(),
+            sha256: sha256.to_owned(),
+            size,
+            content_type: upload.content_type.clone(),
+            file_name: upload.file_name.clone(),
+            csv,
+            columns: upload.columns.clone(),
+            owner: actor.to_owned(),
+            completed_at: norn_api::sources::rfc3339(now_ms),
+        };
+        if let Err(reason) = norn_api::sources::keep_upload(host, &kept, now_ms) {
+            return refused(
+                500,
+                "host.error",
+                &format!("the upload was read but not kept: {reason}"),
+            );
+        }
+        self.uploads.insert(id.to_owned(), upload.clone());
         let mut document = serde_json::Map::new();
         document.insert("uploadId".into(), json!(id));
         document.insert("uri".into(), json!(upload.uri));
@@ -708,17 +762,21 @@ impl Connect {
         sha256: &str,
         (started_ms, now_ms): (u64, u64),
     ) -> Response {
-        let Some(upload) = self.resolve(id, &host.scope().key()) else {
-            return refused(404, "upload.not_found", "no such upload");
+        let upload = match self.resolve_kept(host, id) {
+            Ok(Some(upload)) => upload,
+            Ok(None) => return refused(404, "upload.not_found", "no such upload"),
+            Err(reason) => return refused(500, "host.error", &reason),
         };
-        // UPLOAD-DIGEST-1: the object read now is the one profiled; a cell that
-        // restarted since checks it against the digest `:complete` returned.
-        let recorded = upload
-            .completed
-            .clone()
-            .or_else(|| request.sha256.clone().map(|sha| (sha, 0, true)));
-        match &recorded {
-            Some((recorded, _, true)) if recorded == sha256 => {}
+        // UPLOAD-DIGEST-1: the object read now is the one the cell profiled at
+        // `:complete` (kept in the cell, UPLOAD-RECORD-1); a digest the client
+        // sends is only checked against it, never trusted in its place.
+        match &upload.completed {
+            Some((recorded, _, true))
+                if recorded == sha256
+                    && request
+                        .sha256
+                        .as_ref()
+                        .is_none_or(|expected| expected == recorded) => {}
             Some((_, _, true)) => {
                 return refused(
                     409,
