@@ -195,6 +195,12 @@ export class Cell {
     // SYNC-ONE-1: the due-check and its claim are one synchronous cell call, so two requests never start one connection twice.
     const due = this.cell.syncDue(Date.now());
     if (due) this.keep(this.runSync(due));
+    // The operator sees why a cell serves no action; a caller only ever sees the opaque denial.
+    const policyError = reply.policyError ?? null;
+    if (policyError !== this.policyError) {
+      if (policyError !== null) console.error(`action policy not installed: ${policyError}`);
+      this.policyError = policyError;
+    }
     reply = await this.settle(request, body, reply);
     if (reply instanceof Response) return reply;
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
