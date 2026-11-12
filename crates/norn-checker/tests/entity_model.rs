@@ -44,10 +44,11 @@ macro_rules! fixture {
     };
 }
 
-const CATALOG: [&str; 3] = [
+const CATALOG: [&str; 4] = [
     fixture!("property-types", "text.property-type.json"),
     fixture!("property-types", "boolean.property-type.json"),
     fixture!("property-types", "ref.property-type.json"),
+    fixture!("property-types", "decimal.property-type.json"),
 ];
 
 fn registry() -> BTreeSet<PropertyTypeName> {
@@ -377,6 +378,15 @@ fn every_code_has_a_negative_case() {
                     { "id": "display_name", "type": { "kind": "integer" } },
                     { "id": "email", "type": text }
                 ] }] }),
+        ),
+        (
+            codes::ADDITIVITY_NOT_REFINED,
+            "/objectTypes/0/implements/0",
+            serde_json::json!({
+                "interfaces": [{ "name": "test.Weighed", "properties": [{ "id": "weight",
+                    "type": { "kind": "ref", "name": "inventory.net_weight", "additivity": { "kind": "additive" } } }] }],
+                "objectTypes": [{ "name": "test.Thing", "implements": ["test.Weighed"], "properties": [{ "id": "weight",
+                    "type": { "kind": "ref", "name": "inventory.net_weight", "additivity": { "kind": "semi_additive" } } }] }] }),
         ),
         (
             codes::INTERFACE_PROPERTY_WIDENS_NULLABILITY,
