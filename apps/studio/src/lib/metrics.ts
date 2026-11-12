@@ -40,13 +40,17 @@ export function windowOf(profile: ObjectProfile, property: string): Window | und
   return { start: iso(monday(first)), end: iso(monday(last) + 7 * DAY), grain: "week" }
 }
 
+/** One "only where" condition: a property equal to a value, or empty (`null`). */
+export interface Condition { readonly property: string; readonly value: string | null }
+
 /** The question asking `metric` per `grain` of its time property over `window`, as the cell's evaluate route takes it. */
-export const metricQuestion = (metric: MetricSummary, window: Window) => ({
+export const metricQuestion = (metric: MetricSummary, window: Window, conditions: readonly Condition[] = []) => ({
   irVersion: "0.1",
   name: "studio.metric",
   objectSet: metric.objectType,
   aggregate: [{ metric: metric.name }],
   ...metric.timeProperty === null ? {} : { groupBy: [{ path: { property: metric.timeProperty }, grain: window.grain }] },
+  ...conditions.length === 0 ? {} : { filter: conditions.map(({ property, value }) => ({ path: { property }, operator: "eq", value })) },
   window: { start: window.start, end: window.end },
   freshness: { kind: "live", maxAgeMs: 60_000 },
   calendar: "iso_utc",
