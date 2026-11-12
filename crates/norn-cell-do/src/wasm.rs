@@ -79,6 +79,10 @@ pub struct Reply {
     /// The request to fetch, as JSON `{method, url, headers, body}`.
     #[wasm_bindgen(js_name = thenRequest)]
     pub then_request: Option<String>,
+    /// D102: the analytics engine call the Worker performs before re-entering
+    /// with `resume` (an `EngineCall` as JSON); `status` and `body` are then
+    /// not the answer.
+    pub engine: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -160,6 +164,45 @@ impl NornCell {
         })
     }
 
+    /// D102: answer questions on the tenant analytics engine the Worker
+    /// reaches (`NORN_OLAP_URL`); without it this cell has no analytics.
+    #[wasm_bindgen(js_name = enableAnalytics)]
+    pub fn enable_analytics(&mut self) {
+        self.tenant.enable_analytics();
+    }
+
+    /// Re-enter a request with the engine's answer to the call it ended with.
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        clippy::too_many_arguments,
+        reason = "wasm-bindgen passes strings by value; a re-entry carries the request and the answer"
+    )]
+    #[wasm_bindgen(js_name = resumeEngine)]
+    pub fn resume_engine(
+        &mut self,
+        method: &str,
+        path: &str,
+        query: &str,
+        authorization: Option<String>,
+        now_ms: f64,
+        body: Option<String>,
+        call: &str,
+        status: u16,
+        answer: String,
+    ) -> Reply {
+        if let Ok(call) = serde_json::from_str::<norn_api::analytics_routes::EngineCall>(call) {
+            self.tenant
+                .resume_engine(norn_api::analytics_routes::EngineAnswer {
+                    op: call.op,
+                    digest: call.digest,
+                    status,
+                    body: answer,
+                });
+        }
+        self.fetch(method, path, query, authorization, now_ms, body)
+    }
+
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
     ///
     /// # Errors
@@ -234,14 +277,27 @@ impl NornCell {
                 start_sync: routed.start_sync,
                 then_token,
                 then_request,
+                engine: None,
             };
         }
-        let response = self.tenant.handle(self.principals.resolver(), &request);
+        // D102: loads read the cell's own uploads.
+        let uploads = self
+            .connect
+            .as_ref()
+            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
+        let response = self
+            .tenant
+            .handle_analytics(self.principals.resolver(), uploads, &request)
+            .unwrap_or_else(|| self.tenant.handle(self.principals.resolver(), &request));
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
             #[cfg(feature = "fixtures")]
             Principals::Fixtures(_) => false,
         };
+        let engine = self
+            .tenant
+            .take_engine_call()
+            .and_then(|call| serde_json::to_string(&call).ok());
         Reply {
             status: response.status,
             body: response.body,
@@ -249,6 +305,7 @@ impl NornCell {
             start_sync: None,
             then_token: None,
             then_request: None,
+            engine,
         }
     }
 
@@ -322,6 +379,7 @@ impl NornCell {
             start_sync: None,
             then_token: None,
             then_request: None,
+            engine: None,
         }
     }
 }

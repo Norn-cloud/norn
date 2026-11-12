@@ -206,6 +206,8 @@ pub enum PackArtifactKind {
     DefinedConcept,
     /// Localized labels; a downstream pack may label upstream definitions.
     Labels,
+    /// A typed predictive model (`ModelIR`).
+    Model,
 }
 
 /// An ontology pack: a closed-world, semantic-only ontology profile.

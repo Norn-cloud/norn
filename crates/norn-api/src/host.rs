@@ -273,6 +273,24 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        // DEFS-REOPEN-1: a revision installs only under the model a restarted
+        // host rebuilds from its retained set (HOST-REOPEN-1); anything else
+        // would commit a layout the next open refuses. Checked before
+        // anything is written.
+        let reopened = crate::kernel_set::retained_artifacts(&input.canonical_set)
+            .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
+            .map_err(Refusal::host)?;
+        if reopened.model_hash() != candidate_model.model_hash()
+            || reopened.ddl_hash() != candidate_model.ddl_hash()
+        {
+            return Err(Refusal::host(format!(
+                "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
+                candidate_model.model_hash(),
+                reopened.model_hash(),
+                candidate_model.ddl_hash(),
+                reopened.ddl_hash()
+            )));
+        }
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
         let installed = cell
@@ -362,31 +380,22 @@ fn ingest_page<E: SqlEngine>(
         }
         other => other?,
     };
-    let start = out.len();
-    for (id, _new) in &captured {
-        for (member, outcome) in cell.process_mapping_page(id)?.unwrap_or_default() {
-            out.push(Ingested {
-                observation_id: member,
-                outcome,
-            });
-        }
+    // Each member this page consumed has its outcome; any other record (a
+    // conflict or identity finding, or a row consumed before) answers as it
+    // does one by one. One outcome per row, in row order.
+    let mut outcomes = std::collections::BTreeMap::new();
+    for (id, _new) in &captured.pages {
+        outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
     }
-    if out.len().saturating_sub(start) < page.len() {
-        let reported: std::collections::BTreeSet<String> = out
-            .iter()
-            .skip(start)
-            .map(|i| i.observation_id.clone())
-            .collect();
-        for raw in page {
-            let (id, _new) = cell.inject_mapping_bundle(raw, input)?;
-            if !reported.contains(&id) {
-                let outcome = cell.process_mapping_outcome(&id)?;
-                out.push(Ingested {
-                    observation_id: id,
-                    outcome,
-                });
-            }
-        }
+    for id in captured.records {
+        let outcome = match outcomes.remove(&id) {
+            Some(outcome) => outcome,
+            None => cell.process_mapping_outcome(&id)?,
+        };
+        out.push(Ingested {
+            observation_id: id,
+            outcome,
+        });
     }
     Ok(())
 }

@@ -8,6 +8,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use crate::server::{self, Request, Response};
+use norn_api::analytics_routes::{EngineQuestions, Transport};
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_cell::engine::NativeEngine;
@@ -29,10 +30,11 @@ pub(crate) fn serve(
     serving: &Serving,
     principals: &DevPrincipals,
     questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) {
     for stream in listener.incoming().flatten() {
         // A broken connection affects only itself.
-        let _ignored = connection(stream, serving, principals, questions);
+        let _ignored = connection(stream, serving, principals, questions, engine);
     }
 }
 
@@ -41,10 +43,11 @@ fn connection(
     serving: &Serving,
     principals: &DevPrincipals,
     questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let response = match read_request(&stream) {
-        Ok(parsed) => dispatch(&parsed, serving, principals, questions),
+        Ok(parsed) => dispatch(&parsed, serving, principals, questions, engine),
         Err(refused) => refusal(&refused),
     };
     let reason = match response.status {
@@ -149,6 +152,7 @@ fn dispatch(
     serving: &Serving,
     principals: &DevPrincipals,
     questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) -> Response {
     let Ok(guard) = serving.read() else {
         return refusal(&Refusal::host("the serving state is poisoned"));
@@ -167,19 +171,23 @@ fn dispatch(
         Ok(questions) => questions,
         Err(refused) => return refusal(&refused),
     };
-    server::handle_with(
-        host,
-        principals,
-        Some(&questions),
-        &Request {
-            method: &parsed.method,
-            path: &parsed.path,
-            query: &parsed.query,
-            authorization: parsed.authorization.as_deref(),
-            now,
-            body: &parsed.body,
-        },
-    )
+    let request = Request {
+        method: &parsed.method,
+        path: &parsed.path,
+        query: &parsed.query,
+        authorization: parsed.authorization.as_deref(),
+        now,
+        body: &parsed.body,
+    };
+    // D102: with an engine linked in, questions and profiles run on it.
+    let Some(engine) = engine else {
+        return server::handle_with(host, principals, Some(&questions), &request);
+    };
+    if let Some(response) = server::analytics(host, principals, engine, None, &request) {
+        return response;
+    }
+    let on_engine = EngineQuestions::new(&questions, engine, host.scope());
+    server::handle_with(host, principals, Some(&on_engine), &request)
 }
 
 fn refusal(refused: &Refusal) -> Response {

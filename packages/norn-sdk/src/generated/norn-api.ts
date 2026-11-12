@@ -86,6 +86,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/datasets:load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * BULK-LOAD-1: load a completed upload into the tenant's engine as the
+         *     dataset `objectType`, typed by that admitted definition. The engine reads
+         *     the object through a presigned URL, verifies its SHA-256, types every row,
+         *     and quarantines a row it cannot type (or that misses a required value)
+         *     with its reason. The load becomes the dataset's current one; each row
+         *     traces to `(uri, sha256, row)`. Only an admin or owner may load.
+         * @description # Errors
+         *     A denied caller (one opaque 403), an unknown upload or type (404), a
+         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         */
+        post: operations["load_dataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/decisions": {
         parameters: {
             query?: never;
@@ -443,6 +470,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}:export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * D102: every row of `object_type` the caller may read, with the named
+         *     properties plus `id` and `version`, from the tenant's engine, exact at the
+         *     cell's verified head (or a dataset's current load). The caller needs
+         *     Population and Values on the type; quarantined rows are left out, as on a
+         *     page. The host streams the engine's file; the snapshot it is exact at is
+         *     the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
+         * @description # Errors
+         *     A denied gate (one opaque 403), an unknown type (404), an unknown column
+         *     or format (400), or an unreachable engine.
+         */
+        get: operations["export_objects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}:profile": {
         parameters: {
             query?: never;
@@ -787,6 +841,13 @@ export interface components {
             type?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** @description `POST /v1/datasets:load` body. */
+        DatasetLoadRequest: {
+            /** @description The admitted object type the rows are typed by. */
+            objectType: string;
+            /** @description A completed upload of this cell. */
+            uploadId: string;
         };
         /**
          * @description Whether this call decided, or replayed an identical earlier call.
@@ -1366,7 +1427,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"] | components["schemas"]["NornArtifactEnvelopeModel"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -1508,6 +1569,18 @@ export interface components {
              * @enum {string}
              */
             kind: "mapping";
+        };
+        /** NornArtifactEnvelopeModel */
+        NornArtifactEnvelopeModel: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "model";
+            payload: components["schemas"]["NornIrModelPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "model";
         };
         /** NornArtifactEnvelopePolicy */
         NornArtifactEnvelopePolicy: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -1723,6 +1796,41 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /** @description The outcome of `POST /v1/datasets:load`. */
+        NornDatasetLoad: {
+            /**
+             * Format: int64
+             * @description File size in bytes.
+             */
+            bytes: number;
+            /** @description The load identity; answers over the dataset name it. */
+            load: string;
+            /**
+             * Format: int64
+             * @description Load time in milliseconds.
+             */
+            millis: number;
+            /** @description The dataset's object type. */
+            objectType: string;
+            /** @description Quarantined rows per reason code (`bulk.*`). */
+            reasons: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Rows quarantined.
+             */
+            rejected: number;
+            /**
+             * Format: int64
+             * @description Rows admitted.
+             */
+            rows: number;
+            /** @description The file's SHA-256, verified by the engine. */
+            sha256: string;
+            /** @description The file's durable URI. */
+            uri: string;
+        };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
             /**
@@ -2606,7 +2714,7 @@ export interface components {
             artifactId: string;
             version: string;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels";
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels" | "model";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -3242,6 +3350,34 @@ export interface components {
             name: string;
             op: components["schemas"]["NornIrCompareOp"];
             value: components["schemas"]["NornIrAccessLiteral"];
+        };
+        /** @description A closed check on one output's values. There are no free expressions. */
+        NornIrContractRule: components["schemas"]["NornIrContractRuleOneOf0"] | components["schemas"]["NornIrContractRuleOneOf1"] | components["schemas"]["NornIrContractRuleOneOf2"] | components["schemas"]["NornIrContractRuleOneOf3"];
+        /** @description Inclusive bounds on a numeric output; at least one bound. */
+        NornIrContractRuleOneOf0: {
+            /** @enum {string} */
+            kind: "range";
+            /** @description Inclusive upper bound. */
+            max?: string;
+            /** @description Inclusive lower bound. */
+            min?: string;
+        };
+        /** @description Every object gets a value. */
+        NornIrContractRuleOneOf1: {
+            /** @enum {string} */
+            kind: "notNull";
+        };
+        /** @description A numeric output is never NaN or infinite. */
+        NornIrContractRuleOneOf2: {
+            /** @enum {string} */
+            kind: "finite";
+        };
+        /** @description A categorical (`enum` or `text`) output takes one of these values. */
+        NornIrContractRuleOneOf3: {
+            /** @enum {string} */
+            kind: "oneOf";
+            /** @description The admitted values; non-empty and unique. */
+            values: string[];
         };
         /**
          * @description Conversion outputs.
@@ -6264,6 +6400,81 @@ export interface components {
             /** @description Numerator metric. */
             numerator?: string;
         };
+        /** @description A named contract on one output. */
+        NornIrModelContract: {
+            /** @description Unique contract id (`[a-z][a-z0-9_]*`). */
+            id: string;
+            /** @description The output it checks, by [`ModelOutput::id`]. */
+            output: string;
+            /** @description The check. */
+            rule: components["schemas"]["NornIrContractRule"];
+        };
+        /**
+         * @description What a model reads. A tagged union so later inputs (a transform, a
+         *     dataset) are additive variants.
+         */
+        NornIrModelInput: components["schemas"]["NornIrModelInputOneOf0"];
+        /**
+         * @description The live objects of one object type, by qualified name
+         *     (`sales.Customer`). Features and the target are its properties.
+         */
+        NornIrModelInputOneOf0: {
+            /** @enum {string} */
+            kind: "objectType";
+            /** @description The input object type. */
+            objectType: string;
+        };
+        /** @description How the model was built: display text only. */
+        NornIrModelMethod: {
+            /** @description The method (`logistic regression`). */
+            label: string;
+            /** @description The tool or method version (`sklearn 1.6`). */
+            version?: string;
+        };
+        /** @description One prediction column a model writes. */
+        NornIrModelOutput: {
+            /** @description Unique column id (`[a-z][a-z0-9_]*`). */
+            id: string;
+            /** @description Whether the model may leave the column empty for an object. */
+            nullable: boolean;
+            /**
+             * @description The column's value type, in the property type representation
+             *     (`EntityIR`); a quantity carries its unit inside a `decimal` type, as a
+             *     property does.
+             */
+            type: components["schemas"]["NornIrPropertyType"];
+        };
+        /** @description A typed predictive model with opaque internals ([`model`]). */
+        NornIrModelPayload: {
+            /** @description Checks every output must meet before it is written. Omitted when empty. */
+            contracts?: components["schemas"]["NornIrModelContract"][];
+            extensions?: components["schemas"]["NornIrModelPayloadPropertyExtensions"];
+            /** @description Input properties the model uses, in order; non-empty and unique. */
+            features: components["schemas"]["NornIrPropertyId"][];
+            /** @description What the model reads. */
+            input: components["schemas"]["NornIrModelInput"];
+            /** @description Display-only description of how the model was built. */
+            method: components["schemas"]["NornIrModelMethod"];
+            /** @description Dotted model id ([`MODEL_ID_PATTERN`], `sales.churn_model`). */
+            modelId: string;
+            /** @description Prediction columns; non-empty, ids unique. */
+            outputs: components["schemas"]["NornIrModelOutput"][];
+            /** @description The supervised target property; omitted for a scoring-only model. */
+            target?: string;
+            /** @description Human-readable title. */
+            title: string;
+            /**
+             * @description How far the outputs can be trusted without running the model.
+             * @enum {string}
+             */
+            trust: "native" | "proven" | "contract_checked" | "opaque";
+            /** @description The model artifact's version (SemVer 2.0.0). */
+            version: string;
+        };
+        /** @description Reserved versioned extension slots, as on other artifact roots. */
+        NornIrModelPayloadPropertyExtensions: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
          * @enum {string}
@@ -6795,7 +7006,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Artifact kinds a composition pack may contain (not `derived`). */
-        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law" | "labels";
+        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law" | "labels" | "model";
         /** @description One exact artifact version in a composition pack. */
         NornIrPackArtifactRef: {
             artifactId: string;
@@ -8768,6 +8979,11 @@ export interface components {
             target: string;
         };
         /**
+         * @description VIEW-TRUST-1: how far a definition's output can be trusted without running it.
+         * @enum {string}
+         */
+        NornIrTrustLevel: "native" | "proven" | "contract_checked" | "opaque";
+        /**
          * @description Budget for one synchronous cell turn (§1 row 2): one aggregate budget that
          *     every triggered decision, validation, and helper debits.
          */
@@ -8984,6 +9200,18 @@ export interface components {
             /** @description Typed path-to-page routes. */
             routes: components["schemas"]["NornIrWidgetRoute"][];
         };
+        /**
+         * @description Accessibility behaviours a node requires, named as UI SDK's behaviour
+         *     primitives (`@ui-sdk/core`). They say what the control must do for
+         *     keyboard, focus and assistive technology, never how it looks.
+         * @enum {string}
+         */
+        NornIrWidgetBehavior: "focus_scope" | "roving_focus" | "typeahead" | "selection" | "popup" | "dismiss" | "drag_and_drop" | "live_region";
+        /**
+         * @description Every way a call or read the page awaits can end.
+         * @enum {string}
+         */
+        NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
         /** @description Supported page components. */
         NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"];
         /** @description A named section or tab with explicit field inclusion and order. */
@@ -9394,6 +9622,192 @@ export interface components {
          */
         NornIrWidgetLayout: "table" | "detail" | "kanban" | "form" | "dashboard";
         /**
+         * @description A page's interaction statechart (UI-MACHINE-1).
+         *
+         *     Client state is the typed `fields` record, changed only by the `assign`
+         *     of a transition that a declared event fires. Effects are closed: call a
+         *     declared action binding, read a declared data binding, call a declared
+         *     host operation, cancel the awaited call, or navigate. The machine grants
+         *     no authority: the server decides every call and read it names.
+         */
+        NornIrWidgetMachine: {
+            /** @description Declared events and where each comes from. */
+            events: components["schemas"]["NornIrWidgetMachineEvent"][];
+            /** @description Typed client-state fields. */
+            fields: components["schemas"]["NornIrWidgetMachineField"][];
+            /** @description State the page opens in; it must have the `idle` role. */
+            initialStateId: string;
+            /**
+             * @description Version of the machine contract.
+             * @enum {string}
+             */
+            machineVersion: "0.1";
+            /** @description Declared states. */
+            states: components["schemas"]["NornIrWidgetMachineState"][];
+            /** @description Declared transitions. */
+            transitions: components["schemas"]["NornIrWidgetMachineTransition"][];
+        };
+        /** @description A server call or read named by a pending state or an effect. */
+        NornIrWidgetMachineCall: components["schemas"]["NornIrWidgetMachineCallOneOf0"] | components["schemas"]["NornIrWidgetMachineCallOneOf1"] | components["schemas"]["NornIrWidgetMachineCallOneOf2"];
+        /** @description Call the declared action binding. */
+        NornIrWidgetMachineCallOneOf0: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "action";
+        };
+        /** @description Read the declared data binding. */
+        NornIrWidgetMachineCallOneOf1: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "read";
+        };
+        /** @description Call a host operation by its `OpenAPI` operation id. */
+        NornIrWidgetMachineCallOneOf2: {
+            /** @enum {string} */
+            kind: "operation";
+            operationId: string;
+        };
+        /** @description Closed transition effects. */
+        NornIrWidgetMachineEffect: components["schemas"]["NornIrWidgetMachineEffectOneOf0"] | components["schemas"]["NornIrWidgetMachineEffectOneOf1"] | components["schemas"]["NornIrWidgetMachineEffectOneOf2"];
+        /** @description Start the call or read; its outcome arrives as an `outcome` event. */
+        NornIrWidgetMachineEffectOneOf0: {
+            call: components["schemas"]["NornIrWidgetMachineCall"];
+            input?: components["schemas"]["NornIrWidgetMachineEffectOneOf0PropertyInput"];
+            /** @enum {string} */
+            kind: "start";
+        };
+        /**
+         * @description Request members, each a ZEN expression over `input.fields` and
+         *     `input.event`. An action binding maps its own inputs and takes none.
+         */
+        NornIrWidgetMachineEffectOneOf0PropertyInput: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Cancel the awaited call; its outcome arrives as `cancelled`. */
+        NornIrWidgetMachineEffectOneOf1: {
+            /** @enum {string} */
+            kind: "cancel";
+        };
+        /** @description Navigate to a declared navigation item. */
+        NornIrWidgetMachineEffectOneOf2: {
+            itemId: string;
+            /** @enum {string} */
+            kind: "navigate";
+        };
+        /** @description One declared event. */
+        NornIrWidgetMachineEvent: {
+            /** @description Stable event id. */
+            eventId: string;
+            /**
+             * @description Typed payload members carried by a user or subscription event.
+             *     Outcome events carry the fixed payload of their outcome.
+             */
+            payload?: components["schemas"]["NornIrWidgetMachineField"][];
+            /** @description Where the event comes from. */
+            source: components["schemas"]["NornIrWidgetMachineEventSource"];
+        };
+        /**
+         * @description Closed event sources. Every source is an input: a person, the server, a
+         *     subscription, or a deadline the machine itself declared.
+         */
+        NornIrWidgetMachineEventSource: components["schemas"]["NornIrWidgetMachineEventSourceOneOf0"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf1"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf2"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf3"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf4"];
+        /** @description The page was opened by the host. */
+        NornIrWidgetMachineEventSourceOneOf0: {
+            /** @enum {string} */
+            kind: "page_opened";
+        };
+        /** @description A person used the control at `node_id` in this page's tree. */
+        NornIrWidgetMachineEventSourceOneOf1: {
+            /** @enum {string} */
+            kind: "user";
+            nodeId: string;
+        };
+        /** @description The server answered the call or read the current state awaits. */
+        NornIrWidgetMachineEventSourceOneOf2: {
+            /**
+             * @description For `refused` only: the refusal category matched. Omitted, it
+             *     matches every category.
+             * @enum {string}
+             */
+            category?: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+            /** @enum {string} */
+            kind: "outcome";
+            outcome: components["schemas"]["NornIrWidgetCallOutcome"];
+        };
+        /** @description A subscribed data binding delivered a new snapshot. */
+        NornIrWidgetMachineEventSourceOneOf3: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "subscription";
+        };
+        /** @description Fires `after_ms` after the source state of its transition is entered. */
+        NornIrWidgetMachineEventSourceOneOf4: {
+            afterMs: components["schemas"]["NornIrWholeNumber"];
+            /** @enum {string} */
+            kind: "timer";
+        };
+        /** @description One typed client-state field, or one typed member of an event payload. */
+        NornIrWidgetMachineField: {
+            /** @description Stable field id, unique within its record. */
+            fieldId: string;
+            /**
+             * @description Initial value of a state field. Required fields need one; payload
+             *     members never carry one.
+             */
+            initial?: components["schemas"]["NornIrJsonValue"];
+            /** @description Whether the value is always present (otherwise it may be null). */
+            required: boolean;
+            /**
+             * @description Scalar type.
+             * @enum {string}
+             */
+            type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+        };
+        /** @description One declared state. */
+        NornIrWidgetMachineState: {
+            /** @description The call or read a `pending` state waits for. */
+            awaits?: components["schemas"]["NornIrWidgetMachineCall"];
+            /**
+             * Format: uint64
+             * @description Deadline of a `pending` state; when it passes the runtime cancels the
+             *     call and raises the `timeout` outcome.
+             */
+            deadlineMs?: number;
+            /**
+             * @description Role of the state.
+             * @enum {string}
+             */
+            role: "idle" | "pending" | "error" | "terminal";
+            /** @description Stable state id. */
+            stateId: string;
+        };
+        /** @description One declared transition. */
+        NornIrWidgetMachineTransition: {
+            assign?: components["schemas"]["NornIrWidgetMachineTransitionPropertyAssign"];
+            /** @description Effects run when the transition fires, in order. */
+            effects?: components["schemas"]["NornIrWidgetMachineEffect"][];
+            /** @description Source state. */
+            from: string;
+            /**
+             * @description Boolean ZEN guard over `input.fields` and `input.event`. A guarded
+             *     transition refines; it never counts as covering an outcome.
+             */
+            guard?: string;
+            /** @description Triggering event. */
+            on: string;
+            /** @description Target state. */
+            target: string;
+            /** @description Stable transition id. */
+            transitionId: string;
+        };
+        /**
+         * @description New field values, each a ZEN expression over `input.fields` and
+         *     `input.event`, typed as the field.
+         */
+        NornIrWidgetMachineTransitionPropertyAssign: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /**
          * @description Host-native projections available to Widget UX.
          * @enum {string}
          */
@@ -9440,6 +9854,8 @@ export interface components {
         };
         /** @description One node in the page component tree. */
         NornIrWidgetNode: {
+            /** @description Accessibility behaviours this node requires (UI-VIEW-1). */
+            behaviors?: components["schemas"]["NornIrWidgetBehavior"][];
             /** @description Child components in presentation order. */
             children: components["schemas"]["NornIrWidgetNode"][];
             /** @description Closed component kind and its typed reference. */
@@ -9505,12 +9921,24 @@ export interface components {
         NornIrWidgetPage: {
             /** @description Typed values supplied by routes or the host when opening this page. */
             contextParams: components["schemas"]["NornIrWidgetContextParam"][];
+            /**
+             * @description Declared interaction statechart of this page (UI-MACHINE-1). The
+             *     renderer executes only this machine; the checker proves it has no
+             *     absorbing non-terminal state and that every pending state handles
+             *     every server outcome.
+             */
+            machine?: components["schemas"]["NornIrWidgetMachine"];
             /** @description Human-readable page name. */
             name: string;
             /** @description Stable page id. “Page” is an interaction surface, not computed data. */
             pageId: string;
             /** @description Root of the page component tree. */
             root: components["schemas"]["NornIrWidgetNode"];
+            /**
+             * @description What this page is in the UI ontology (UI-VIEW-1): a semantic view
+             *     kind bound to the domain concept it presents. Renderer-neutral.
+             */
+            view?: components["schemas"]["NornIrWidgetView"];
         };
         /** @description A requested page size and the hard maximum the host must enforce. */
         NornIrWidgetPageBounds: {
@@ -9581,6 +10009,11 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Refusal categories, as the server's `norn/refusal@2` documents them.
+         * @enum {string}
+         */
+        NornIrWidgetRefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
         /**
          * @description Projection renderers.
          * @enum {string}
@@ -9658,6 +10091,11 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetSortDirection: "asc" | "desc";
+        /**
+         * @description The role of a state. Roles drive the checker's laws.
+         * @enum {string}
+         */
+        NornIrWidgetStateRole: "idle" | "pending" | "error" | "terminal";
         /** @description The typed UX contract nested in a legacy `widget` payload. */
         NornIrWidgetUx: {
             /** @description Typed Norn action calls available to placements and forms. */
@@ -9727,6 +10165,30 @@ export interface components {
             /** @description Version or revision property on the edited object. */
             property: components["schemas"]["NornIrPropertyRef"];
         };
+        /**
+         * @description A page's place in the UI ontology (UI-VIEW-1).
+         *
+         *     A view is a semantic, typed UI concept, never a visual one. Its four
+         *     contracts are the page's typed data bindings (data), its `machine`
+         *     (interaction), the `behaviors` on its nodes (accessibility), and the
+         *     capability catalog derived by [`WidgetUx::renderer_capabilities`]
+         *     (what a renderer must implement to draw it). Renderers are compile
+         *     targets of this contract; swapping one never touches the page.
+         */
+        NornIrWidgetView: {
+            /**
+             * @description Semantic kind of the view.
+             * @enum {string}
+             */
+            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+            /** @description The domain concept the view presents. */
+            subject: components["schemas"]["NornIrWidgetViewSubject"];
+        };
+        /**
+         * @description Closed semantic view kinds.
+         * @enum {string}
+         */
+        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
         /** @description One render state of a widget. */
         NornIrWidgetViewState: {
             kind: components["schemas"]["NornIrWidgetViewStateKind"];
@@ -9739,6 +10201,49 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetViewStateKind: "empty" | "loading" | "ready" | "error" | "preview";
+        /** @description The domain concept a view presents. */
+        NornIrWidgetViewSubject: components["schemas"]["NornIrWidgetViewSubjectOneOf0"] | components["schemas"]["NornIrWidgetViewSubjectOneOf1"] | components["schemas"]["NornIrWidgetViewSubjectOneOf2"] | components["schemas"]["NornIrWidgetViewSubjectOneOf3"] | components["schemas"]["NornIrWidgetViewSubjectOneOf4"] | components["schemas"]["NornIrWidgetViewSubjectOneOf5"] | components["schemas"]["NornIrWidgetViewSubjectOneOf6"];
+        /** @description An object type (entity artifact). */
+        NornIrWidgetViewSubjectOneOf0: {
+            /** @enum {string} */
+            kind: "object_type";
+            object: components["schemas"]["NornIrArtifactRef"];
+        };
+        /** @description An action artifact. */
+        NornIrWidgetViewSubjectOneOf1: {
+            action: components["schemas"]["NornIrArtifactRef"];
+            /** @enum {string} */
+            kind: "action";
+        };
+        /** @description A retained question definition. */
+        NornIrWidgetViewSubjectOneOf2: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "question";
+        };
+        /** @description A transform. */
+        NornIrWidgetViewSubjectOneOf3: {
+            /** @enum {string} */
+            kind: "transform";
+            transformId: string;
+        };
+        /** @description A retained dashboard definition. */
+        NornIrWidgetViewSubjectOneOf4: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "dashboard";
+        };
+        /** @description A retained flow definition. */
+        NornIrWidgetViewSubjectOneOf5: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "flow";
+        };
+        /** @description The viewer's decisions. */
+        NornIrWidgetViewSubjectOneOf6: {
+            /** @enum {string} */
+            kind: "decisions";
+        };
         /**
          * @description MetricFlow timestamp selection.
          * @enum {string}
@@ -10321,10 +10826,23 @@ export interface components {
         NornQueryRow: {
             /** @description Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group). */
             bucket: unknown;
+            /**
+             * Format: int64
+             * @description D102: contributing members, present when `members` is not listed
+             *     because the population exceeds the question's bound (the analytics
+             *     engine answered); the trace pages them.
+             */
+            memberCount?: number | null;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
+            /**
+             * @description MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each
+             *     as `<identity bytes>:<identity>,<version>` then `,<coefficient>` per
+             *     operand (empty when absent) and `;`. Present with `memberCount`.
+             */
+            membershipDigest?: string | null;
             /**
              * @description Per operand, in `totals` order: how many members' measured value was
              *     null. A null is skipped by the sum, never read as 0. Absent when no
@@ -10987,6 +11505,80 @@ export interface operations {
                 };
             };
             /** @description The request was refused: the definitions are not admissible. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    load_dataset: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetLoadRequest"];
+            };
+        };
+        responses: {
+            /** @description The load. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDatasetLoad"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The file was refused. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12225,6 +12817,74 @@ export interface operations {
             };
             /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    export_objects: {
+        parameters: {
+            query: {
+                /** @description Organization scope. */
+                orgId?: string;
+                /** @description Environment scope. */
+                environmentId?: string;
+                /** @description Comma-separated property ids; each row also carries `id` and `version`. */
+                columns: string;
+                /** @description `parquet` (the default) or `jsonl`. */
+                format?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to export. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.apache.parquet": unknown;
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -79,6 +79,7 @@ pub mod mapping;
 mod markings;
 pub mod metric;
 pub mod metric_interchange;
+mod model;
 #[allow(
     missing_docs,
     clippy::pedantic,
@@ -163,6 +164,8 @@ pub mod source_schema;
 pub mod tool_ports;
 pub mod typed_roots;
 pub mod ui_interaction;
+pub mod ui_machine;
+pub mod ui_view;
 pub mod verification;
 pub mod widget_ux;
 

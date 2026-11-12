@@ -35,6 +35,10 @@ const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics
 // minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
 // bounds count from the fetch, and every refresh fetches anew.
 let lastJwks = null;
+// D102: engine steps one request may take (frontier, sync batches, the question).
+const ENGINE_STEPS = 64;
+// A hung engine call must not hold the object.
+const ENGINE_TIMEOUT_MS = 120_000;
 
 export class Cell {
   constructor(ctx, env) {
@@ -83,6 +87,8 @@ export class Cell {
       } catch (error) {
         console.error(`source connections not configured: ${error}`);
       }
+      // D102: questions are answered on the tenant analytics engine when the Worker has one.
+      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -94,6 +100,66 @@ export class Cell {
   serve(request, body) {
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
+  }
+  /**
+   * D102: perform one engine call the cell asked for. The engine trusts only
+   * this Worker's token; the cell decided the call and checks the answer.
+   */
+  async engine(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      return { status: response.status, body: await response.text() };
+    } catch (error) {
+      console.error(`analytics engine call failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /** The engine's file for a streamed call, or its refusal for the cell to map. */
+  async stream(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      if (response.status !== 200) return { status: response.status, body: await response.text() };
+      const headers = { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", ...call.stream };
+      return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+      console.error(`analytics engine stream failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /**
+   * Run the cell's engine calls until it answers; each re-entry is decided afresh.
+   * A call marked `stream` (an export the cell authorized) is answered by
+   * streaming the engine's file to the caller with the cell's headers.
+   */
+  async settle(request, body, reply) {
+    const url = new URL(request.url);
+    for (let step = 0; reply.engine !== undefined && step < ENGINE_STEPS; step++) {
+      const call = JSON.parse(reply.engine);
+      if (call.stream !== undefined) {
+        const streamed = await this.stream(call);
+        if (streamed instanceof Response) return streamed;
+        reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, streamed.status, streamed.body);
+        continue;
+      }
+      const answer = await this.engine(call);
+      reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, answer.status, answer.body);
+    }
+    if (reply.engine !== undefined) {
+      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
+    }
+    return reply;
   }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
@@ -129,6 +195,8 @@ export class Cell {
     // SYNC-ONE-1: the due-check and its claim are one synchronous cell call, so two requests never start one connection twice.
     const due = this.cell.syncDue(Date.now());
     if (due) this.keep(this.runSync(due));
+    reply = await this.settle(request, body, reply);
+    if (reply instanceof Response) return reply;
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
