@@ -264,6 +264,18 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
                                  {k: v for k, v in self.full.items() if k != "reason"})
 
+    def test_duckdb_runs_when_norn_cell_is_reached_not_only_changed(self):
+        # norn-kernel is upstream of norn-cell, so a kernel-only change reaches it and plans the
+        # DuckDB phase; norn-api is not, so an api-only change does not (#1206).
+        for path, planned in (("crates/norn-kernel/src/lib.rs", True), ("crates/norn-api/src/lib.rs", False)):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertNotIn("norn-cell", plan["reason"])
+                self.assertEqual("duckdb" in plan["phase"], planned, plan["phase"])
+
     def test_markdown_only_keeps_policy_and_provenance(self):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)

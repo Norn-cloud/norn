@@ -191,6 +191,7 @@ PY
       # The workspace never enables the optional DuckDB backend, so a change that breaks it
       # compiles everywhere else (#513, #1152). Build it and run its integration test; full
       # plans run this phase, and affected plans run it whenever norn-cell is reached.
+      cargo clippy --locked -p norn-cell --features duckdb --lib --test duckdb_question -- -D warnings
       cargo test --locked -p norn-cell --features duckdb --test duckdb_question
       ;;
     wasm)
