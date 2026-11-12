@@ -1,4 +1,4 @@
-//! #921: recorded responses of the live ERPNext and Odoo sandboxes, pulled by
+//! #921: recorded responses of the live `ERPNext` and Odoo sandboxes, pulled by
 //! the generic engine from each pack's `norn.pull/1` profile, land as canonical
 //! objects through the cell's own mapping path (`DevHost::ingest`).
 //!
@@ -8,6 +8,9 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::string_slice,
+    clippy::type_complexity,
     reason = "recorded sandbox scenarios"
 )]
 use norn_api::host::{DevHost, Ingested};
