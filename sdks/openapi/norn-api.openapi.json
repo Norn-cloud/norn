@@ -9486,6 +9486,13 @@
             "description": "When this finding was most recently observed.",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
           },
+          "links": {
+            "type": "object",
+            "description": "LAW-LINK-1: for a law that reads its subject's to-one links, the exact\nversion of each target it read, by link id (a link with no target is\nabsent), so the evaluation replays exactly. Empty for every other\nfinding, and then omitted.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrFactRef"
+            }
+          },
           "message": {
             "type": "string",
             "description": "Human-readable summary of the finding."
