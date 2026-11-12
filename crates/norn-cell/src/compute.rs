@@ -549,9 +549,7 @@ fn subject_contributions<E: SqlEngine>(
 }
 
 /// Every `(root identity, versioned contribution)` pair.
-fn entries(
-    contributions: &Contributions,
-) -> impl Iterator<Item = (&String, &(u64, Contribution))> {
+fn entries(contributions: &Contributions) -> impl Iterator<Item = (&String, &(u64, Contribution))> {
     contributions
         .iter()
         .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
