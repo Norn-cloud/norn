@@ -514,9 +514,12 @@ fn the_question_catalog_lists_only_what_the_caller_may_read() {
             .any(|p| p["id"] == "recovered" && p["type"]["unit"]["code"] == "g"),
         "{properties:?}"
     );
-    assert_eq!(catalog["grains"], json!(["week"]));
+    assert_eq!(
+        catalog["grains"],
+        json!(["day", "week", "month", "quarter", "year"])
+    );
     assert_eq!(catalog["operators"], json!(["eq", "ne"]));
-    assert_eq!(catalog["maxGroupBy"], json!(1));
+    assert_eq!(catalog["maxGroupBy"], json!(4));
     assert_eq!(catalog["maxBuckets"], json!(analytics::AD_HOC_MAX_BUCKETS));
     // An ungranted operand is not listed, nor is any ratio over it.
     cell.runtime.ungranted = Some("demo.recovered");
