@@ -7,18 +7,18 @@ import type { Catalog, Concept } from "./lib/catalog.ts"
 type TypeNode = Node<{ concept: Concept }, "type">
 
 const WIDTH = 220
-const GAP_X = 90
-const GAP_Y = 30
+const GAP_X = 40
+const GAP_Y = 90
 const HEIGHT = 76
 
 function TypeCard({ data: { concept } }: NodeProps<TypeNode>) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
     <div className="w-[220px] cursor-pointer rounded-xl border bg-card px-3 py-2 shadow-sm transition-shadow hover:shadow-md">
-      <Handle type="target" position={Position.Left} className="!opacity-0" />
+      <Handle type="target" position={Position.Top} className="!opacity-0" />
       <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
       <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links{systems.length > 0 ? ` · ${systems.join(", ")}` : ""}</div>
-      <Handle type="source" position={Position.Right} className="!opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   )
 }
@@ -26,9 +26,9 @@ function TypeCard({ data: { concept } }: NodeProps<TypeNode>) {
 const NODE_TYPES = { type: TypeCard }
 
 /**
- * Lay the object types out left to right by the links they declare: a type sits one column
- * right of the farthest type linking to it (cycles stop at the first visit), and each column
- * stacks its types in name order.
+ * Lay the object types out top to bottom by the links they declare: a type sits one row
+ * below the farthest type linking to it (cycles stop at the first visit), and each row
+ * lines its types up in name order.
  */
 export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { readonly x: number; readonly y: number }> {
   const names = new Set(concepts.map(({ name }) => name))
@@ -48,7 +48,7 @@ export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { read
     const at = column.get(name) ?? 0
     const row = rows.get(at) ?? 0
     rows.set(at, row + 1)
-    positions.set(name, { x: at * (WIDTH + GAP_X), y: row * (HEIGHT + GAP_Y) })
+    positions.set(name, { x: row * (WIDTH + GAP_X), y: at * (HEIGHT + GAP_Y) })
   }
   return positions
 }
@@ -68,7 +68,7 @@ export function ModelGraph({ catalog }: { readonly catalog: Catalog }) {
   }, [types])
   const rows = Math.max(1, ...nodes.map(({ position }) => position.y / (HEIGHT + GAP_Y) + 1))
   return (
-    <div className="h-[min(70vh,max(320px,calc(var(--rows)*106px+80px)))] overflow-hidden rounded-md border bg-surface-subtle" style={{ "--rows": rows } as CSSProperties}>
+    <div className="h-[min(75vh,max(360px,calc(var(--rows)*166px+60px)))] overflow-hidden rounded-md border bg-surface-subtle" style={{ "--rows": rows } as CSSProperties}>
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView colorMode="system" minZoom={0.2}
         onNodeClick={(_, node) => void navigate({ to: "/sources/$concept", params: { concept: node.id } })}
         nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
