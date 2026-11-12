@@ -330,7 +330,7 @@ fn evaluate<E: SqlEngine>(
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
     let result = store
-        .evaluate_transform(&plan, MAIN_WORLD, host.scope().key(), |row| {
+        .evaluate_transform(&plan, MAIN_WORLD, &host.scope().key(), |row| {
             Ok(row_access(host, access, &actor, row))
         })
         .map_err(Refusal::from_compute)?;
