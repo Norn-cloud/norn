@@ -168,6 +168,8 @@ routes! {
     UploadLoad => ("POST", "/v1/uploads/{id}:load"),
     /// `POST /v1/uploads/{id}:define`, dispatched by the entry point (`connect`).
     UploadDefine => ("POST", "/v1/uploads/{id}:define"),
+    /// `POST /v1/observations:load`, dispatched by the entry point (`connect`).
+    ObservationsLoad => ("POST", "/v1/observations:load"),
     /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
@@ -199,6 +201,7 @@ impl Route {
                 | Self::UploadComplete
                 | Self::UploadLoad
                 | Self::UploadDefine
+                | Self::ObservationsLoad
         )
     }
 
@@ -208,6 +211,7 @@ impl Route {
         match path {
             "/v1/access" => return Some(Self::Access),
             "/v1/uploads:begin" => return Some(Self::UploadBegin),
+            "/v1/observations:load" => return Some(Self::ObservationsLoad),
             "/v1/uploads:read" => return Some(Self::UploadRead),
             "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
