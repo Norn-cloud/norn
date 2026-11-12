@@ -119,7 +119,15 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<NumericTrace, CellError> {
         let LineageDisclosure { values, source } = disclosure;
         let incomplete = || refused("core.projection.lineage_incomplete");
-        self.question_snapshot_with(plan, context, &mut visible, |snapshot, budget| {
+        self.question_snapshot_with(plan, context, &mut visible, |snapshot, _scan| {
+            // A trace returns records and their sources: it decodes them under
+            // the slice bound on what a read returns, not the question's scan
+            // bound (ruling 2026-11-12).
+            let budget = &mut crate::reactive::DecodeBudget::new(
+                &crate::reactive::ReactiveLimits::from_profile(
+                    &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+                ),
+            );
             let result = snapshot.result;
             if !result.complete || result.freshness != Freshness::Exact {
                 return Err(refused("core.compute.stale_input"));
