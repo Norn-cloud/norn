@@ -5,10 +5,15 @@ pub mod action_admission;
 pub mod actions;
 /// Typed-question answer documents.
 pub mod answers;
+/// The `approval` retained-definition kind (APPROVAL-1).
+pub mod approval_definitions;
+/// APPROVAL-1: a call of an approval-gated action parks as a decision.
+pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
 pub mod clock;
 pub mod contracts;
+pub mod decisions;
 pub mod openapi;
 /// Stable host refusal wire contract.
 pub mod refusal;
@@ -23,6 +28,7 @@ pub mod binding_definitions;
 pub mod definition_routes;
 /// The `flow` retained-definition kind (automations lowered by `lowerFlow`).
 pub mod flow_definitions;
+pub mod flow_driver;
 /// Shared cell and definition epoch.
 pub mod host;
 /// RFC 8785 JSON canonicalization for connector manifest digests.
@@ -43,6 +49,8 @@ pub mod objects;
 pub mod question_routes;
 /// Authorized read services shared by transports.
 pub mod routes;
+/// Start, read and list runs of installed flows (RUN-ROUTES-1).
+pub mod run_routes;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 

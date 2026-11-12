@@ -170,17 +170,31 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
     Ok(request)
 }
 
+/// What an action call answers: its receipt, or, for a call of an
+/// approval-gated action (APPROVAL-1), the decision it waits on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionAnswer {
+    /// Committed now, or replayed (200).
+    Receipt(ActionReceipt),
+    /// Parked behind an approval; nothing was committed (202).
+    Pending(crate::approvals::PendingAction),
+}
+
 /// Call one admitted action as the verified caller: it commits, or an
-/// identical earlier call replays with its original receipt.
+/// identical earlier call replays with its original receipt. While an
+/// approval gates the action (APPROVAL-1), a call that would commit parks
+/// instead, as one open decision, and answers 202 with it; a call that would
+/// be refused is refused exactly as it would be ungated, and parks nothing.
 /// # Errors
 /// One opaque 403, decided before any storage read, for a missing or
 /// unverified caller, a denied policy, a foreign scope or an unknown action;
 /// the same opaque 403 for every visibility or permission refusal the kernel
 /// decides (an invisible or absent target, a denied policy decision);
 /// 409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
-/// refusal, its detail disclosed only under an explicit diagnostic grant. A
-/// refusal commits nothing.
-#[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: a stale pin or a conflicting retry.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+/// refusal, its detail disclosed only under an explicit diagnostic grant;
+/// for a gated call whose decision was resolved, 409 `approval.rejected` or
+/// 410 `approval.expired`. A refusal commits nothing.
+#[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 202, description = "An approval gates the action: the call waits for a person's decision, and nothing was committed.", body = crate::approvals::PendingAction), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: a stale pin, a conflicting retry, or a rejected approval.", body = Refusal), (status = 410, description = "The approval the call waited on expired.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn call_action<E: SqlEngine>(
     host: &DevHost<E>,
     query: &ActionQuery,
@@ -189,7 +203,7 @@ pub fn call_action<E: SqlEngine>(
     request: &ActionRequest,
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
-) -> Result<ActionReceipt, Refusal> {
+) -> Result<ActionAnswer, Refusal> {
     // `disclosure` is the cell's read runtime: its handle key and collection
     // grants decide which receipt coordinate the caller sees (D53).
     let actor = actor
@@ -260,44 +274,110 @@ pub fn call_action<E: SqlEngine>(
             consumes: None,
         },
     };
-    let outcome = norn_kernel::commit_action(
-        &mut *cell,
-        &catalog,
-        &kernel_call,
-        &KernelAuthorizer(host.authorizer.as_ref()),
-    )
-    .map_err(|error| {
-        let refusal = error.refusal();
-        // Visibility and permission refusals are the one opaque action
-        // document: the kernel decides them per target, so a typed 404 or 403
-        // would tell a known action from an unknown one. Laws, preconditions,
-        // conflicts, invalid input and limits stay typed.
-        if matches!(
-            refusal.category,
-            norn_kernel::RefusalCategory::Visibility | norn_kernel::RefusalCategory::Permission
-        ) {
-            return action_denied();
-        }
-        crate::refusal_disclosure::project_refusal(
-            host.authorizer.as_ref(),
-            &RefusalDetailRequest {
-                scope: host.scope(),
-                actor,
-                action_id,
-            },
-            refusal,
+    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call)? {
+        Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
+        Gated::Replayed(outcome) => *outcome,
+        Gated::Commit => norn_kernel::commit_action(
+            &mut *cell,
+            &catalog,
+            &kernel_call,
+            &KernelAuthorizer(host.authorizer.as_ref()),
         )
-    })?;
+        .map_err(|error| kernel_refusal(host, actor, action_id, &error))?,
+    };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
-    caller_receipt(store, action_id, request, outcome, raw_hash, key)
+    caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+/// The caller's view of a kernel refusal. Visibility and permission refusals
+/// are the one opaque action document: the kernel decides them per target, so
+/// a typed 404 or 403 would tell a known action from an unknown one. Laws,
+/// preconditions, conflicts, invalid input and limits stay typed.
+fn kernel_refusal<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    action_id: &str,
+    error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
+) -> Refusal {
+    let refusal = error.refusal();
+    if matches!(
+        refusal.category,
+        norn_kernel::RefusalCategory::Visibility | norn_kernel::RefusalCategory::Permission
+    ) {
+        return action_denied();
+    }
+    crate::refusal_disclosure::project_refusal(
+        host.authorizer.as_ref(),
+        &RefusalDetailRequest {
+            scope: host.scope(),
+            actor,
+            action_id,
+        },
+        refusal,
+    )
+}
+
+/// What an approval gate (APPROVAL-1) does with a call.
+enum Gated {
+    /// No gate, or a decider approved exactly this call: commit it.
+    Commit,
+    /// An identical earlier call committed: its replay.
+    Replayed(Box<ActionOutcome>),
+    /// It parked, or waits on the decision it parked as.
+    Pending(crate::approvals::PendingAction),
+}
+
+/// APPROVAL-1: while an approval gates the action, the kernel's whole
+/// pipeline decides the call for its caller against a host that stops at the
+/// commit point. A call that reaches it parks, unless a decider already
+/// approved exactly this call; a refusal is the ungated one, and parks
+/// nothing.
+fn through_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &mut crate::host::ActionCell<E>,
+    catalog: &TypeCatalog<'_>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
+) -> Result<Gated, Refusal> {
+    let action_id = kernel_call.action.action_id.as_str();
+    let Some(gate) = crate::approvals::gate(cell, action_id)? else {
+        return Ok(Gated::Commit);
+    };
+    let dry = norn_kernel::commit_action(
+        &mut crate::approvals::WouldCommit(&*cell),
+        catalog,
+        kernel_call,
+        &KernelAuthorizer(host.authorizer.as_ref()),
+    );
+    match dry {
+        Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
+        Err(error) if crate::approvals::would_have_committed(&error) => {
+            let requester = host
+                .authorizer
+                .verified_principal(&kernel_call.actor)
+                .ok_or_else(action_denied)?;
+            let parked = crate::approvals::ParkedCall {
+                action: action_id.to_owned(),
+                input: kernel_call.input.clone(),
+                idempotency_key: kernel_call.idempotency_key.clone(),
+                requester,
+            };
+            Ok(
+                match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
+                    crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
+                    crate::approvals::Held::Approved => Gated::Commit,
+                },
+            )
+        }
+        Err(error) => Err(kernel_refusal(host, &kernel_call.actor, action_id, &error)),
+    }
 }
 
 /// The kernel turn's time: the cell clock after advancing it to `now` and the
 /// stored floor. It is the clock the receipt records, so a naming series and
 /// the receipt agree even after a refused call moved the cell clock past `now`
 /// without moving the floor.
-fn turn_clock<E: SqlEngine>(
+pub(crate) fn turn_clock<E: SqlEngine>(
     cell: &mut crate::host::ActionCell<E>,
     now: LogicalTime,
 ) -> Result<LogicalTime, Refusal> {

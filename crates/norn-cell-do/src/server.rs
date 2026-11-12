@@ -1,8 +1,10 @@
 //! Fetch dispatch over `norn_api`'s shared, authorized services: the read
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
-//! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `/v1/definitions/{id}:retire`), the one governed action route,
+//! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`), and the decision routes (`GET /v1/decisions`,
+//! `POST /v1/decisions/{id}:decide`).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -13,7 +15,9 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
+use norn_api::actions::{
+    ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
+};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
@@ -132,6 +136,14 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/runs` (RUN-ROUTES-1).
+    RunStart => ("POST", "/v1/runs"),
+    /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
+    Run => ("GET", "/v1/runs/{id}"),
+    /// `GET /v1/decisions` (DECISIONS-1).
+    Decisions => ("GET", "/v1/decisions"),
+    /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
+    Decide => ("POST", "/v1/decisions/{id}:decide"),
 }
 
 impl Route {
@@ -143,7 +155,22 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            "/v1/runs" => return Some(Self::RunStart),
+            "/v1/decisions" => return Some(Self::Decisions),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/decisions/")
+            .and_then(|rest| rest.strip_suffix(":decide"))
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Decide);
+        }
+        if path
+            .strip_prefix("/v1/runs/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Run);
         }
         if let Some(route) = definitions_route(path) {
             return Some(match route {
@@ -230,6 +257,11 @@ pub fn handle_all<E: SqlEngine>(
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
+    if let Some(response) =
+        crate::runs::dispatch(host, questions, principals.caller(), actor, request)
+    {
+        return response;
+    }
     let question = question_path(path);
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
@@ -240,6 +272,15 @@ pub fn handle_all<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let served = Route::of(path).is_some_and(|route| route != Route::Access);
+    if let (true, Some(action)) = (served, action) {
+        return respond(governed_action(
+            host,
+            questions,
+            actor,
+            (method, action, query, body),
+            now,
+        ));
+    }
     let result = if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -249,8 +290,6 @@ pub fn handle_all<E: SqlEngine>(
         ))
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
-    } else if let Some(action) = action {
-        governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if method != "GET" {
@@ -299,9 +338,14 @@ pub fn handle_all<E: SqlEngine>(
             )),
         }
     };
+    respond(result.map(|body| (StatusCode::OK, body)))
+}
+
+/// A route's answer, or its refusal, as the response.
+fn respond(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -357,14 +401,15 @@ fn ad_hoc_question<E: SqlEngine>(
 /// (`orgId`, `environmentId`, optional `version` pin) with the call in a JSON
 /// body. The shared service authorizes, admits and commits; the cell's
 /// question runtime is its receipt-disclosure authority (D53), so a cell
-/// without one serves no action.
+/// without one serves no action. A call an approval holds answers 202 with
+/// the decision it waits on (APPROVAL-1).
 fn governed_action<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
     (method, action, query, body): (&str, &str, &str, &str),
     now: u64,
-) -> Result<String, Refusal> {
+) -> Result<(StatusCode, String), Refusal> {
     if method != "POST" {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -396,15 +441,10 @@ fn governed_action<E: SqlEngine>(
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
     let request = decode_action_request(body)?;
     let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
-    document_json(&call_action(
-        host,
-        &query,
-        actor,
-        &action,
-        &request,
-        named(runtime),
-        now,
-    )?)
+    match call_action(host, &query, actor, &action, &request, named(runtime), now)? {
+        ActionAnswer::Receipt(receipt) => Ok((StatusCode::OK, document_json(&receipt)?)),
+        ActionAnswer::Pending(pending) => Ok((StatusCode::ACCEPTED, document_json(&pending)?)),
+    }
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
@@ -687,7 +727,7 @@ fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<
     runtime
 }
 
-fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
+pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
     serde_json::to_string(document).map_err(Refusal::host)
 }
 
@@ -710,7 +750,10 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 }
 
 /// A bounded query string with only `allowed` keys, each at most once.
-fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
+pub(crate) fn parse(
+    query: &str,
+    allowed: &[&'static str],
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
     parse_within(query, allowed, MAX_QUERY_BYTES)
 }
 
