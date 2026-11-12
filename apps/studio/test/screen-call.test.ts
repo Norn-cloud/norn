@@ -32,6 +32,7 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
       () => ({ kind: "refused", status: 422, code: "action.precondition_failed", message: "no", diagnostics: [] }) as const,
       () => ({ kind: "unavailable" }) as const,
       () => ({ kind: "no-cell" }) as const,
+      () => ({ kind: "pending", decision: { id: `d${seq}`, expiresAtMs: 9 } }) as const,
     ])()
     const msg: Msg = pick(r, [
       // The view holds the fields still while a call is out, so it sends no edit then.
@@ -137,4 +138,15 @@ test("per-record offers only ever narrow the served catalog, in its order; witho
   }
   expect(offeredFor(catalog, { id: "r" })).toBe(catalog)
   expect(offeredFor(catalog, { id: "r", offers: "a" })).toBe(catalog)
+})
+
+test("an approval-gated call commits nothing: it waits for a decider, reads nothing again, and a new draft may follow", () => {
+  const sending = update(init({ actionId: "ops.refund", risky: false }, "k0"), { kind: "submit", input: "{}" })[0]
+  expect(sending.phase.kind).toBe("sending")
+  const [pending, cmds] = update(sending, { kind: "answered", result: { kind: "pending", decision: { id: "d1", expiresAtMs: 5 } } })
+  expect(pending.phase).toEqual({ kind: "pending", decision: { id: "d1", expiresAtMs: 5 } })
+  expect(cmds).toEqual([])
+  const [again] = update(pending, { kind: "again", key: "k1" })
+  expect(again.phase.kind).toBe("editing")
+  expect(again.key).toBe("k1")
 })

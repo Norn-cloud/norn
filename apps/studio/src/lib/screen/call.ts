@@ -1,4 +1,4 @@
-import type { ActionReceipt, ActionSummary, CallResult, Diagnostic } from "../actions.ts"
+import type { ActionReceipt, ActionSummary, CallResult, Diagnostic, PendingDecision } from "../actions.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -35,6 +35,8 @@ export type Phase =
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
   | { readonly kind: "failed"; readonly reason: Unreachable; readonly message: string | null }
   | { readonly kind: "done"; readonly receipt: ActionReceipt; readonly undo: UndoOffer | null }
+  /** Sent for approval: nothing committed; the decision waits in the inbox. */
+  | { readonly kind: "pending"; readonly decision: PendingDecision }
   | { readonly kind: "undoing"; readonly receipt: ActionReceipt; readonly undo: UndoOffer }
   /**
    * The undo did not come back with a receipt. `known`: the cell answered without committing (a refusal,
@@ -84,7 +86,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
     case "edit": {
       // The view holds the fields still while a call is out (and the draft is gone after a commit), so an
       // edit then is not one: the call that is out keeps its body and key, and nothing unsent is lost.
-      if (inFlight(state) || phase.kind === "done" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
+      if (inFlight(state) || phase.kind === "done" || phase.kind === "pending" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
       // A refusal stays visible while the user fixes the fields it names; a confirm or an outage clears.
       const next: Phase = phase.kind === "confirm" || phase.kind === "failed" ? { kind: "editing" } : phase
       return [{ ...state, phase: next, key: msg.key }, []]
@@ -103,7 +105,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       return [state, []]
     case "again":
       // A new draft is a new call; an undo left unconfirmed keeps its own Retry until then.
-      if (phase.kind !== "done" && phase.kind !== "undone" && phase.kind !== "undo-failed") return [state, []]
+      if (phase.kind !== "done" && phase.kind !== "undone" && phase.kind !== "undo-failed" && phase.kind !== "pending") return [state, []]
       return [{ ...state, phase: { kind: "editing" }, key: msg.key, sent: null }, []]
     case "undo":
       if (phase.kind !== "done" || phase.undo === null) return [state, []]
@@ -117,7 +119,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       if (phase.kind === "undoing") {
         const result = msg.result
         if (result.kind === "receipt") return [{ ...state, phase: { kind: "undone", receipt: phase.receipt, reversal: result.receipt } }, [REFETCH]]
-        const message = result.kind === "refused" ? result.message : null
+        const message = result.kind === "refused" ? result.message : result.kind === "pending" ? "The undo was sent for approval; it runs once a decider approves it." : null
         return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message, known: true } }, []]
       }
       // An answer nobody is waiting for (a late reply after the state moved on) changes nothing.
@@ -128,6 +130,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
 function answered(result: CallResult): Phase {
   switch (result.kind) {
     case "receipt": return { kind: "done", receipt: result.receipt, undo: undoOf(result.receipt) }
+    case "pending": return { kind: "pending", decision: result.decision }
     case "refused": return { kind: "refused", status: result.status, code: result.code, message: result.message, diagnostics: result.diagnostics, ...result.explanation === undefined ? {} : { explanation: result.explanation } }
     case "no-cell": return { kind: "failed", reason: "no-cell", message: null }
     case "unavailable": return { kind: "failed", reason: "unavailable", message: null }
