@@ -15,7 +15,8 @@
 //!
 //! A snapshot is the recorded-export shape of `registry/packs/*/synthetic.json`:
 //! `{ "profile": "...", "snapshot": [{ "dataset", "record" }] }`, plus optional
-//! `"source"` and `"mapping"`. Without them, a `synthetic-<system>-three/1`
+//! `"source"`, `"mapping"` and `"connectorInstance"` (default `demo`, the
+//! instance the three-systems source schemas pin). Without the first two, a `synthetic-<system>-three/1`
 //! profile names source `synthetic-<system>` and mapping
 //! `<system>.three.mapping`. Each record's identity is its `id` or `name`.
 //! `incremental` rows are not loaded yet.
@@ -45,6 +46,7 @@ struct Snapshot {
     path: PathBuf,
     source: String,
     mapping: String,
+    instance: String,
     rows: Vec<(String, Value)>,
 }
 
@@ -64,6 +66,8 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
     let mapping = named("mapping")
         .or_else(|| system.as_ref().map(|system| format!("{system}.three.mapping")))
         .ok_or_else(|| format!("{}: name its \"mapping\" (or use a synthetic-<system>-three profile)", path.display()))?;
+    // The mapping's source schema pins the connector instance it accepts.
+    let instance = named("connectorInstance").unwrap_or_else(|| "demo".to_owned());
     let rows = document
         .get("snapshot")
         .and_then(Value::as_array)
@@ -77,7 +81,7 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Snapshot { path: path.to_owned(), source, mapping, rows })
+    Ok(Snapshot { path: path.to_owned(), source, mapping, instance, rows })
 }
 
 /// The raw observation of one recorded row, as a connector extract writes it.
@@ -129,7 +133,7 @@ pub(crate) fn load(
             let input = MappingInput {
                 mapping: snapshot.mapping.clone(),
                 dataset: dataset.clone(),
-                connector_instance: "dev-load".into(),
+                connector_instance: snapshot.instance.clone(),
                 partition: "snapshot".into(),
                 recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
             };
