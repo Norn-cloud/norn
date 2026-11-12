@@ -218,6 +218,68 @@ A transform is a `derived` artifact whose `calc` is `relational`: a closed DAG o
 
 Named scenarios (`crates/norn-checker/tests/transform.rs`): `link_and_key_joins_are_the_only_joins`, `fanned_sums_refuse_and_aggregating_first_counts_once`, `aggregates_follow_the_metric_additivity_law`, `windows_and_dedupes_need_a_total_order`, `unions_need_one_shape`, `projections_keep_the_grain`, `evaluation_is_deterministic_under_input_order`, `calendar_buckets_follow_iso_utc`.
 
+## The tenant analytics engine (D102)
+
+A hosted cell answers analytical questions, profiles and exports on its
+tenant's analytics engine (DuckDB in a native sidecar next to the cell host),
+never by an analytics scan of the cell's own store. The cell keeps ledger,
+laws, decisions and authorization: it admits and authorizes every request,
+decides the row gates, lowers the admitted plan to a typed engine question and
+verifies every answer. The engine executes only typed operations
+(`norn_cell::analytics`); no request carries SQL, a table or a column
+expression (#733). The exact in-cell engine is the oracle: the equivalence
+property tests run both at the same frontier.
+
+- **ANALYTICS-TENANT-1:** a tenant's database is named by the SHA-256 of the
+  scope key the cell verified; the engine never reads claims and never opens
+  another tenant's file for a request.
+- **ANALYTICS-FRONTIER-1:** the governed-fact mirror keeps every committed
+  object version with its commit interval, synced by the cell in whole
+  commits; an answer at frontier `F` reads exactly the versions current at
+  `F`. A batch that does not continue the mirror's frontier refuses whole.
+- **HOST-READ-5 (engine):** `:profile` on a host with an engine is computed
+  by it over the snapshot an export reads, in the exact profile's shape and
+  semantics (named scenario
+  `the_engine_profile_equals_the_exact_profile_of_every_demo_type`).
+- **QUERY-ENGINE-1 (engine):** within the plan's bound the engine's envelope
+  equals the exact engine's, normalizing only `engine`; the same Core 03
+  refusals apply. Past the bound the engine answers where the exact engine
+  refuses: each bucket carries `memberCount` and `membershipDigest` instead
+  of listing members, and the trace pages them.
+- **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
+  identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
+  then `,<coefficient>` per operand (empty when absent), then `;`.
+  Recomputing it over the paged members gives the same digest.
+- **BULK-LOAD-1:** a dataset loads from the object store at bulk speed into
+  its admitted object type's table. The file's SHA-256 must be the one the
+  cell recorded. Every row is typed exactly by its column: no value is
+  rounded, and a timestamp is admitted exactly when the cell reads it as one,
+  with the cell's own ordering key. A row that cannot be typed, or misses a
+  required value, is quarantined with its first reason (`bulk.*`).
+- **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
+  sha256)`; every row is numbered from its file, so each number traces to
+  `(uri, sha256, row)`, and an answer over the dataset is exact at its load.
+
+Laws on loaded datasets, honestly: pointwise laws are checked at load (the
+value types, required values, enum values, numeric bounds and text lengths);
+a property with a constraint the engine does not evaluate (a pattern) refuses
+the load (`bulk.unsupported_law`) rather than admitting unchecked rows. Laws
+that relate rows (uniqueness, conservation, sums, lifecycles, links) and
+invariants that the checker has not lowered to a row predicate are **not**
+enforced on a dataset. A dataset is
+analytical evidence, not governed facts: a fact that must hold under those laws
+goes through the kernel's governed path.
+
+Named scenarios (`crates/norn-cell/tests/analytics_engine.rs`):
+`query_three_scrap_yield_engine_matches_exact_after_correction_and_retraction`,
+`generated_histories_match_exact_envelopes`,
+`an_answer_at_an_earlier_frontier_reads_only_versions_current_then`,
+`a_population_past_the_bound_answers_with_digests_that_paging_recomputes`,
+`a_row_of_another_scope_refuses_as_stale`, `a_sync_that_skips_commits_is_refused`,
+`a_load_types_rows_and_quarantines_refused_ones_with_reasons`,
+`a_loaded_dataset_answers_as_the_same_rows_in_a_cell` and
+`loaded_timestamps_order_exactly_as_the_cell_reads_them`.
+
 ## Evaluation and obligation semantics
 
 1. Resolve the pinned graph and read scope. Materialize bounded complete dependencies, including empty partitions and memberships; pagination cannot stand for a universal domain. Sort by the declared total order before each fold; missing/duplicate final IDs refuse.

@@ -894,9 +894,13 @@ pub fn install<E: SqlEngine>(
                 crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
             }
         })?;
+    // HOST-REOPEN-1: the model the cell reopens under, never the bare kernel
+    // model (which lacks the kernel's action tables).
+    let model = crate::kernel_set::retained_artifacts(&admitted.canonical_set)
+        .and_then(|set| crate::kernel_set::serving_model(&set))?;
     let installed = host
         .install_definitions(
-            admitted.model,
+            model,
             norn_cell::InstalledDefinitionInput {
                 canonical_set: admitted.canonical_set,
                 registry: vec![],

@@ -241,16 +241,19 @@ pub use widget::{
 pub use widget_ux::{
     ArtifactRef as WidgetArtifactRef, LocaleText, PropertyRef, WIDGET_UX_V1_VERSION,
     WidgetActionConfirmation, WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity,
-    WidgetApp, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
-    WidgetContextParam, WidgetDataBinding, WidgetDataQuery, WidgetDismissalMethod,
-    WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl, WidgetFieldFormat,
-    WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter, WidgetFilterOperator,
-    WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit, WidgetKeyValue,
+    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetComponent, WidgetConfirmationStrength,
+    WidgetConflictBehavior, WidgetContextParam, WidgetDataBinding, WidgetDataQuery,
+    WidgetDismissalMethod, WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl,
+    WidgetFieldFormat, WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter,
+    WidgetFilterOperator, WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit,
+    WidgetKeyValue, WidgetMachine, WidgetMachineCall, WidgetMachineEffect, WidgetMachineEvent,
+    WidgetMachineEventSource, WidgetMachineField, WidgetMachineState, WidgetMachineTransition,
     WidgetNativeProjection, WidgetNavigationDestination, WidgetNavigationItem, WidgetNode,
     WidgetOutcomeState, WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds,
-    WidgetPageRef, WidgetRoute, WidgetRouteParameter, WidgetSection, WidgetSectionKind,
-    WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection, WidgetUx,
-    WidgetUxActionBinding, WidgetValueType, WidgetVersionConflictBinding, ZenCondition,
+    WidgetPageRef, WidgetRefusalCategory, WidgetRoute, WidgetRouteParameter, WidgetSection,
+    WidgetSectionKind, WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection,
+    WidgetStateRole, WidgetUx, WidgetUxActionBinding, WidgetValueType,
+    WidgetVersionConflictBinding, WidgetView, WidgetViewKind, WidgetViewSubject, ZenCondition,
 };
 
 /// Representation-independent JSON number classification (issue #2440).

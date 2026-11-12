@@ -2452,6 +2452,98 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "widget.machine.absorbing_state",
+    "fix": "Add a transition out of the state, or give it the terminal role if the page is done there."
+  },
+  {
+    "code": "widget.machine.await_outside_pending",
+    "fix": "Give the state the pending role, or remove awaits and deadlineMs."
+  },
+  {
+    "code": "widget.machine.cancel_outside_pending",
+    "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome."
+  },
+  {
+    "code": "widget.machine.duplicate_id",
+    "fix": "Give every field, event, state and transition of the page machine its own id."
+  },
+  {
+    "code": "widget.machine.error_without_recovery",
+    "fix": "Add a retry, edit or dismiss transition on a user event, or a timed recovery."
+  },
+  {
+    "code": "widget.machine.initial_not_idle",
+    "fix": "Start the machine in an idle state and start calls from a page_opened transition."
+  },
+  {
+    "code": "widget.machine.input_free_cycle",
+    "fix": "Break the cycle with a user, outcome or subscription event; subscribe to the data instead of polling it."
+  },
+  {
+    "code": "widget.machine.invalid_event",
+    "fix": "Give timers a positive delay, categories only to refused outcomes, payloads only to user and subscription events, and use page_opened only from the initial state."
+  },
+  {
+    "code": "widget.machine.invalid_expression",
+    "fix": "Write guards as Boolean ZEN over input.fields and input.event, and assignments typed as their field."
+  },
+  {
+    "code": "widget.machine.invalid_field",
+    "fix": "Give every required state field an initial value of its declared type; payload members carry none."
+  },
+  {
+    "code": "widget.machine.nondeterministic",
+    "fix": "Keep one unguarded transition per event and outcome, and guard the others."
+  },
+  {
+    "code": "widget.machine.outcome_impossible",
+    "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, and cancelled only where the state offers a cancel."
+  },
+  {
+    "code": "widget.machine.outcome_outside_pending",
+    "fix": "Move the transition to the pending state that awaits the call."
+  },
+  {
+    "code": "widget.machine.pending_abandoned",
+    "fix": "Stay in the pending state and issue a cancel effect; leave on the outcome that follows."
+  },
+  {
+    "code": "widget.machine.pending_entered_without_start",
+    "fix": "Add one start effect with the target state's awaits call to the transition."
+  },
+  {
+    "code": "widget.machine.pending_outcome_uncovered",
+    "fix": "Add an unguarded transition for each listed outcome; guarded transitions refine but do not cover."
+  },
+  {
+    "code": "widget.machine.pending_without_await",
+    "fix": "Set awaits to the action binding, data binding or operation the state waits for."
+  },
+  {
+    "code": "widget.machine.pending_without_deadline",
+    "fix": "Set deadlineMs on the pending state and handle its timeout outcome."
+  },
+  {
+    "code": "widget.machine.start_without_pending",
+    "fix": "Target a pending state that awaits the started call, and start it only on entry."
+  },
+  {
+    "code": "widget.machine.terminal_has_transition",
+    "fix": "Remove the transition, or give the state a non-terminal role."
+  },
+  {
+    "code": "widget.machine.trap_region",
+    "fix": "Add a path from the state back to an idle state or on to a terminal one."
+  },
+  {
+    "code": "widget.machine.unknown_reference",
+    "fix": "Declare the referenced state, event, field, binding or navigation item, or reference one that exists in this widget."
+  },
+  {
+    "code": "widget.machine.unreachable_state",
+    "fix": "Add a transition that leads to the state, or remove it."
+  },
+  {
     "code": "widget.validation.invalid_payload",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
@@ -2462,5 +2554,17 @@
   {
     "code": "widget.validation.unsafe_action_binding",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "widget.view.behavior_unfit",
+    "fix": "Put item behaviours on lists, grids and navigation, overlay behaviours on dialogs, live regions on sections, details and lists."
+  },
+  {
+    "code": "widget.view.subject_mismatch",
+    "fix": "Present object types in collection, record or lineage views, actions in forms, questions and transforms in question views, dashboards, flows and decisions in their own kinds."
+  },
+  {
+    "code": "widget.view.subject_unbound",
+    "fix": "Add a data binding that reads the object type or an action binding that calls the action, or change the subject."
   }
 ]

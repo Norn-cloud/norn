@@ -1,0 +1,15 @@
+{
+  "kind": "approval",
+  "id": "ml.modelversion.promote.approval",
+  "payload": {
+    "action": "ml.modelversion.promote",
+    "decider": {
+      "roles": [
+        "admin",
+        "owner"
+      ]
+    },
+    "question": "Promote this model version to production?",
+    "risk": "high"
+  }
+}

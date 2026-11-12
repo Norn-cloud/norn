@@ -1,0 +1,7 @@
+{
+  "code": "widget.view.subject_unbound",
+  "message": "a page view's object type or action is neither read nor called by the contract: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

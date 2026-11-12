@@ -2454,6 +2454,98 @@
       "message": "صفحة في التطبيق ليس لها عنصر تحكم يصل إليها من صفحة الدخول: {$detail}",
       "review": "needs_review"
     },
+    "widget.machine.absorbing_state": {
+      "message": "حالة غير نهائية في ترسيمة الصفحة ليس لها مخرج: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.await_outside_pending": {
+      "message": "حالة ليست حالة انتظار في ترسيمة الصفحة تعلن انتظارًا أو مهلة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.cancel_outside_pending": {
+      "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.duplicate_id": {
+      "message": "ترسيمة الصفحة تعلن المعرّف نفسه لحقل أو حدث أو حالة أو انتقال مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.error_without_recovery": {
+      "message": "حالة خطأ في ترسيمة الصفحة ليس لها انتقال يقوده شخص أو مؤقّت: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.initial_not_idle": {
+      "message": "الحالة الابتدائية لترسيمة الصفحة ليست حالة خاملة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.input_free_cycle": {
+      "message": "حالة في ترسيمة الصفحة تقع على دورة تعمل بالمؤقّتات وحدها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_event": {
+      "message": "حدث في ترسيمة الصفحة غير سليم البنية: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_expression": {
+      "message": "شرط أو إسناد في ترسيمة الصفحة لا يُترجم أو لا يتوافق نوعه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_field": {
+      "message": "حقل أو عضو حمولة في ترسيمة الصفحة قيمته الابتدائية مفقودة أو من نوع خاطئ: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.nondeterministic": {
+      "message": "حالة في ترسيمة الصفحة لها أكثر من انتقال غير مشروط على الحدث أو النتيجة نفسها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.outcome_impossible": {
+      "message": "ترسيمة الصفحة تعالج نتيجة لا يمكن أن يصل إليها الاستدعاء المنتظر: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.outcome_outside_pending": {
+      "message": "حدث نتيجة في ترسيمة الصفحة ينطلق من حالة ليست حالة انتظار: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_abandoned": {
+      "message": "ترسيمة الصفحة تغادر حالة انتظار بحدث ليس نتيجة الاستدعاء: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_entered_without_start": {
+      "message": "انتقال يدخل حالة انتظار في ترسيمة الصفحة دون أن يبدأ الاستدعاء الذي تنتظره تحديدًا: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_outcome_uncovered": {
+      "message": "حالة انتظار في ترسيمة الصفحة ليس لها انتقال غير مشروط لنتيجة ممكنة لاستدعائها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_without_await": {
+      "message": "حالة انتظار في ترسيمة الصفحة لا تسمّي الاستدعاء أو القراءة التي تنتظرها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_without_deadline": {
+      "message": "حالة انتظار في ترسيمة الصفحة ليس لها مهلة موجبة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.start_without_pending": {
+      "message": "ترسيمة الصفحة تبدأ استدعاءً لا تنتظره أي حالة انتظار، أو استدعاءً جاريًا بالفعل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.terminal_has_transition": {
+      "message": "حالة نهائية في ترسيمة الصفحة لها انتقال خارج منها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.trap_region": {
+      "message": "لا يمكن الوصول إلى حالة خاملة أو نهائية من حالة في ترسيمة الصفحة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.unknown_reference": {
+      "message": "ترسيمة الصفحة تشير إلى حالة أو حدث أو حقل أو عقدة أو ربط أو عملية أو عنصر تنقّل غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.unreachable_state": {
+      "message": "حالة في ترسيمة الصفحة لا يمكن الوصول إليها من الحالة الابتدائية: {$detail}",
+      "review": "needs_review"
+    },
     "widget.validation.invalid_payload": {
       "message": "حمولة WidgetIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
@@ -2464,6 +2556,18 @@
     },
     "widget.validation.unsafe_action_binding": {
       "message": "ربط الإجراء يجب أن يستهدف إجراء Norn أو أمر عملية، لا تعديلًا خامًا",
+      "review": "needs_review"
+    },
+    "widget.view.behavior_unfit": {
+      "message": "عقدة تحمل سلوك إتاحة لا يناسب مكوّنها، أو تذكره مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.view.subject_mismatch": {
+      "message": "نوع عرض الصفحة لا يمكنه تقديم موضوعه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.view.subject_unbound": {
+      "message": "نوع الكائن أو الإجراء في عرض الصفحة لا يقرؤه العقد ولا يستدعيه: {$detail}",
       "review": "needs_review"
     }
   }

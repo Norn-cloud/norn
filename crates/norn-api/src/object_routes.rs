@@ -137,6 +137,34 @@ pub(crate) fn collection<'h, E: SqlEngine>(
     Ok((epoch, actor.to_owned()))
 }
 
+/// D102: the collection gate, then the row gate asked once for every row of
+/// `object_type`, for a host whose read policy decides rows by their type
+/// alone (it is asked for [`norn_cell::compute::ALL_MEMBERS`]). The answer is
+/// whether the caller may also read the rows' values.
+///
+/// # Errors
+/// A denied collection or population gate (one opaque 403).
+pub fn uniform_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<bool, Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let every = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+        scope: host.scope().key(),
+        version: 0,
+        values: std::collections::BTreeMap::new(),
+    };
+    if !permitted(host, access, &actor, &every, Population) {
+        return Err(read_denied());
+    }
+    Ok(permitted(host, access, &actor, &every, Values))
+}
+
 /// One page of a concept's visible, unquarantined objects after `after`.
 ///
 /// # Errors

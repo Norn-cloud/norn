@@ -5,6 +5,8 @@ pub mod action_admission;
 pub mod action_catalog;
 /// HOST-ACTION-1: the one governed action service shared by transports.
 pub mod actions;
+/// D102: questions, loads and exports on the tenant analytics engine.
+pub mod analytics_routes;
 /// Typed-question answer documents.
 pub mod answers;
 /// The `approval` retained-definition kind (APPROVAL-1).
