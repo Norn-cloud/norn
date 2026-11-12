@@ -319,17 +319,17 @@ pub fn get_object<E: SqlEngine>(
 pub const MAX_QUERY_SCAN: usize = 10_000;
 
 /// One row a grid query lists: Population held; `readable` when Values is too.
-struct Listed {
-    row: ObjectRecord,
-    readable: bool,
+pub(crate) struct Listed {
+    pub(crate) row: ObjectRecord,
+    pub(crate) readable: bool,
 }
 
 /// The rows one snapshot holds after `after`, up to the visible bound, with what the
 /// caller may see of each.
-struct Scan {
-    listed: Vec<Listed>,
-    quarantined: u64,
-    exhausted: bool,
+pub(crate) struct Scan {
+    pub(crate) listed: Vec<Listed>,
+    pub(crate) quarantined: u64,
+    pub(crate) exhausted: bool,
     version: (u64, Option<(u64, u64)>),
 }
 
@@ -400,7 +400,7 @@ pub(crate) fn locked<E: SqlEngine, T>(
 /// outside the cell lock, as for HOST-READ-2 pages. A readable row is held
 /// back when quarantined; a withheld row is listed whatever its evidence,
 /// which is value-level and not the caller's to see (D67).
-fn scan_listed<E: SqlEngine>(
+pub(crate) fn scan_listed<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,

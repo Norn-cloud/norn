@@ -20,6 +20,7 @@ use norn_api::definition_routes::{
 };
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
+use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
@@ -121,7 +122,14 @@ pub fn handle_all<E: SqlEngine>(
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
-    let object = path.strip_prefix("/v1/objects/").and_then(object_path);
+    let profile = path
+        .strip_prefix("/v1/objects/")
+        .and_then(|rest| rest.strip_suffix(":profile"))
+        .filter(|kind| !kind.is_empty() && !kind.contains('/'));
+    let object = path
+        .strip_prefix("/v1/objects/")
+        .filter(|_| profile.is_none())
+        .and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
@@ -129,6 +137,7 @@ pub fn handle_all<E: SqlEngine>(
         || ad_hoc
         || action.is_some()
         || object.is_some()
+        || profile.is_some()
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
     let result = if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
@@ -152,6 +161,10 @@ pub fn handle_all<E: SqlEngine>(
         ))
     } else {
         match (question, questions) {
+            (None, _) if profile.is_some() => profile.map_or_else(
+                || Err(norn_api::authz::read_denied()),
+                |kind| profiled(host, actor, kind, query),
+            ),
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
@@ -311,6 +324,30 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
         return None;
     }
     Some((kind, id, leaf))
+}
+
+/// HOST-READ-5: `GET /v1/objects/{type}:profile`, scoped by the query string.
+fn profiled<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let object_type = percent_encoding::percent_decode_str(object_type)
+        .decode_utf8()
+        .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))?;
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&get_object_profile(
+        host,
+        &scope,
+        actor,
+        &object_type,
+        &CellObjectAccess,
+    )?)
 }
 
 /// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),

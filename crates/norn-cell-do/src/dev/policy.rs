@@ -427,13 +427,12 @@ mod tests {
             })
             .unwrap();
         DevHost::from_store(store, scope(), |command| command.payload.clone())
-            .ok()
             .expect("host")
             .with_authorizer(LocalDeveloper { actor: ACTOR.into() })
     }
 
     fn call(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str, body: &Value) -> (u16, Value) {
-        let questions = metrics.questions(host).ok().expect("runtime");
+        let questions = metrics.questions(host).expect("runtime");
         let principals = DevPrincipals { bearer: BEARER.into(), actor: ACTOR.into() };
         let body = body.to_string();
         let authorization = format!("Bearer {BEARER}");
@@ -453,6 +452,26 @@ mod tests {
         (response.status, serde_json::from_str(&response.body).unwrap())
     }
 
+    fn get(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str) -> (u16, Value) {
+        let questions = metrics.questions(host).expect("runtime");
+        let principals = DevPrincipals { bearer: BEARER.into(), actor: ACTOR.into() };
+        let authorization = format!("Bearer {BEARER}");
+        let response = handle_with(
+            host,
+            &principals,
+            Some(&questions),
+            &Request {
+                method: "GET",
+                path,
+                query: "orgId=org_dev&environmentId=local",
+                authorization: Some(&authorization),
+                now: 1_800_000_000,
+                body: "",
+            },
+        );
+        (response.status, serde_json::from_str(&response.body).unwrap())
+    }
+
     fn question(metric: &str) -> Value {
         json!({
             "irVersion": "0.1", "name": "dev.daily", "objectSet": TYPE,
@@ -465,7 +484,7 @@ mod tests {
     }
 
     fn metric(metrics: &DevMetrics, host: &DevHost<NativeEngine>, property: &str, ratio: bool) -> String {
-        let questions = metrics.questions(host).ok().expect("runtime");
+        let questions = metrics.questions(host).expect("runtime");
         questions
             .definitions()
             .iter()
@@ -479,8 +498,10 @@ mod tests {
                         .as_ref()
                         .is_none_or(|params| params.agg_time_dimension == "occurred_at")
             })
-            .map(|definition| definition.name.clone())
-            .unwrap_or_else(|| panic!("no derived {property} metric among {:?}", questions.definitions().iter().map(|d| &d.label).collect::<Vec<_>>()))
+            .map_or_else(
+                || panic!("no derived {property} metric among {:?}", questions.definitions().iter().map(|d| &d.label).collect::<Vec<_>>()),
+                |definition| definition.name.clone(),
+            )
     }
 
     #[test]
@@ -520,7 +541,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
         let metrics = DevMetrics::new([7_u8; 32], scope());
-        let questions = metrics.questions(&host).ok().expect("runtime");
+        let questions = metrics.questions(&host).expect("runtime");
         assert!(!questions.definitions().is_empty());
         // Every derived sum answers, on whichever engine lowered it.
         for definition in questions.definitions().iter().filter(|d| d.type_params.numerator.is_none()) {
@@ -539,11 +560,48 @@ mod tests {
         let active = host.active_definitions().ok().flatten().expect("active");
         let admitted = super::super::admit::admit(&artifacts(false), 3_000).ok().expect("admitted");
         host.install_definitions(admitted.model, admitted.input, Some(active.version))
-            .ok()
             .expect("installed");
-        let questions = metrics.questions(&host).ok().expect("runtime");
+        let questions = metrics.questions(&host).expect("runtime");
         assert!(questions.definitions().iter().all(|definition| definition.name != amount));
         let (status, refused) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&amount)}));
         assert_ne!(status, 200, "{refused}");
+    }
+
+    #[test]
+    fn a_profile_counts_the_visible_rows_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let (status, profile) = get(&host, &metrics, &format!("/v1/objects/{TYPE}:profile"));
+        assert_eq!(status, 200, "{profile}");
+        assert_eq!(profile["rows"], 3);
+        assert_eq!(profile["withheldRows"], 0);
+        assert_eq!(profile["approximate"], false);
+        let property = |name: &str| {
+            profile["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["property"] == name)
+                .unwrap()
+                .clone()
+        };
+        let amount = property("amount");
+        assert_eq!(amount["kind"], "numeric");
+        assert_eq!(amount["count"], 3);
+        assert_eq!(amount["nulls"], 0);
+        assert_eq!(amount["distinct"], 3);
+        assert_eq!(amount["min"].to_string(), "5.50");
+        assert_eq!(amount["max"].to_string(), "10.00");
+        let median = amount["quantiles"].as_array().unwrap().iter().find(|q| q["percent"] == 50).unwrap();
+        assert_eq!(median["value"].to_string(), "7.25");
+        let at = property("occurred_at");
+        assert_eq!(at["kind"], "temporal");
+        assert_eq!(at["histogram"]["kind"], "day");
+        assert_eq!(at["histogram"]["bins"].as_array().unwrap().len(), 2);
+        let region = property("region");
+        assert_eq!((region["kind"].as_str(), region["distinct"].as_u64()), (Some("text"), Some(2)));
+        let (status, _) = get(&host, &metrics, "/v1/objects/shop.Missing:profile");
+        assert_ne!(status, 200);
     }
 }
