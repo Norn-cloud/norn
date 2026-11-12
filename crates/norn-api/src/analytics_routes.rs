@@ -341,7 +341,8 @@ pub struct ExportQuery {
     pub org_id: Option<String>,
     /// Environment scope.
     pub environment_id: Option<String>,
-    /// Comma-separated property ids; each row also carries `id` and `version`.
+    /// Comma-separated stored property ids, each once; each row also carries
+    /// its own `id` and `version`, so no property of those names is exported.
     pub columns: String,
     /// `parquet` (the default) or `jsonl`.
     pub format: Option<String>,
@@ -355,8 +356,9 @@ pub struct ExportQuery {
 /// the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
 ///
 /// # Errors
-/// A denied gate (one opaque 403), an unknown type (404), an unknown column
-/// or format (400), or an unreachable engine.
+/// A denied gate (one opaque 403), an unknown type (404), an unknown,
+/// repeated or reserved column or an unknown format (400), or an
+/// unreachable engine.
 #[utoipa::path(get, path = "/v1/objects/{type}:export", params(("type" = String, Path, description = "The concept to export."), ExportQuery), responses((status = 200, description = "The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at.", content_type = "application/vnd.apache.parquet"), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn export_objects<E: SqlEngine>(
     host: &DevHost<E>,
@@ -386,6 +388,23 @@ pub fn export_objects<E: SqlEngine>(
         .collect();
     let guard = host.cell()?;
     let store = guard.store();
+    let table = store.analytics_table(object_type).map_err(engine_failure)?;
+    let mut named = std::collections::BTreeSet::new();
+    for column in &columns {
+        if ["id", "version"].contains(&column.as_str()) {
+            return Err(Refusal::invalid(format!(
+                "`{column}` is each row's own column; a property of that name is not exported"
+            )));
+        }
+        if !table.columns.iter().any(|c| &c.id == column) {
+            return Err(Refusal::invalid(format!(
+                "`{column}` is not a stored property of {object_type}"
+            )));
+        }
+        if !named.insert(column) {
+            return Err(Refusal::invalid(format!("`{column}` is named twice")));
+        }
+    }
     let tenant = TenantId::of_scope(&host.scope().key());
     let (source, snapshot) = store
         .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
