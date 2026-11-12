@@ -630,7 +630,8 @@ def studio_browser_pin_canaries() -> None:
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
                 ("not in the plan", " integration browser formal ", " integration formal "),
-                ("no checker-admission test", "        NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts\n", ""),
+                ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
+                ("no named-case check", "        grep -qF '(pass) the checker admits what a drawn decision lowers to' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test", "bun test")):
             if core.count(before) != 1:
                 raise AssertionError(f"browser pin canary target drifted: {label}")
@@ -685,7 +686,7 @@ def studio_browser_phase_canaries() -> None:
         bin_dir.mkdir()
         tools = {
             "cargo": "exit 0",
-            "bun": 'if [ "$1" = test ]; then exit "$BUN_TEST_STATUS"; fi; exit 0',
+            "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
@@ -708,7 +709,9 @@ def studio_browser_phase_canaries() -> None:
                 ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
                 ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
                 ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
-                ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99")):
+                ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -724,7 +727,11 @@ def studio_browser_phase_canaries() -> None:
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
                                                                 "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
                                                                 "WASM_LIBDIR": libdir, "RAN": ran,
-                                                                "BUN_TEST_STATUS": "1" if "checker-admission" in label else "0",
+                                                                "BUN_TEST_STATUS": "1" if label.endswith("test fails") else "0",
+                                                                "BUN_TEST_OUTPUT": {
+                                                                    "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
+                                                                    "config, checker-admission case missing": "(pass) the decider reads the real time limit",
+                                                                }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
                                                                 "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
@@ -766,7 +773,7 @@ def workflow_concurrency_canaries() -> None:
     validator = load_module("norn_workflow_concurrency_canaries", VALIDATOR)
     workflows = ROOT / ".github/workflows"
     sources = {f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
-               for path in sorted(workflows.glob("*.yml"))}
+               for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])}
     # Every checked-in workflow passes, including the out-of-scope pull_request_target
     # (cla.yml) and workflow_run (trusted-merge-group.yml) lanes.
     validator.validate_pull_request_concurrency(sources)
@@ -776,31 +783,87 @@ def workflow_concurrency_parity() -> None:
     """validate.py reaches the shared verdicts the skeleton guard's own test asserts.
 
     crates/norn-skeleton-guard/src/ci/mod.rs checks `concurrency_error` against the same
-    file, so the two implementations of the rule cannot drift apart unnoticed.
+    file, so the two implementations of the rule cannot drift apart unnoticed. The fixture
+    may gain cases anywhere; it cannot lose, flip or change a case validate.py pins.
     """
     validator = load_module("norn_workflow_concurrency_parity", VALIDATOR)
     cases = json.loads(CONCURRENCY_CASES.read_text(encoding="utf-8"))["cases"]
     check_concurrency_cases(validator, cases)
-    # The fixture can lose no gate-pinned case: drop one, then flip one.
-    for label, mutated in (
-        ("a deleted reject case", cases[:-1]),
-        ("a flipped verdict", [{**cases[0], "expect": "reject" if cases[0]["expect"] == "accept" else "accept"}]
-         + cases[1:]),
-    ):
-        try:
-            check_concurrency_cases(validator, mutated)
-        except AssertionError:
-            continue
-        raise AssertionError(f"concurrency parity accepted {label} in the fixture")
+    # Correct, unpinned cases added first and last still pass, and every canary below runs
+    # on that grown list too, choosing its case by name from the pin, never by position.
+    extra = {**cases[0], "name": "an unpinned case added later"}
+    grown = [extra, *cases, extra]
+    check_concurrency_cases(validator, grown)
+    for listed in (cases, grown):
+        for name in validator.PULL_REQUEST_CONCURRENCY_CASES:
+            def named(case: dict) -> bool:
+                return case.get("name") == name
+            for problem, mutated in (
+                    ("lost", [case for case in listed if not named(case)]),
+                    ("flipped", [{**case, "expect": "reject" if case["expect"] == "accept" else "accept"}
+                                 if named(case) else case for case in listed]),
+                    ("input changed", [{**case, "concurrency": None if case.get("concurrency") is not None
+                                        else "concurrency:\n  group: changed\n"}
+                                       if named(case) else case for case in listed])):
+                try:
+                    check_concurrency_cases(validator, mutated)
+                except PinnedConcurrencyCase as error:
+                    if error.problems == [f"{name}: {problem}"]:
+                        continue
+                    raise AssertionError(f"concurrency pin canary ({name}: {problem}) reported {error.problems}")
+                raise AssertionError(f"concurrency parity accepted a {problem} pinned case: {name}")
+    rust_concurrency_parity_canaries(validator)
+
+
+class PinnedConcurrencyCase(AssertionError):
+    """The parity fixture lost, flipped or changed a case validate.py pins."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__(f"concurrency parity fixture lost, flipped or changed gate-pinned cases: {problems}")
+        self.problems = problems
+
+
+def pinned_case_problems(validator, cases: list) -> list[str]:
+    """Each pinned case the fixture lost, flipped or changed; every copy of a pinned name must match."""
+    problems = []
+    for name, (expect, digest) in validator.PULL_REQUEST_CONCURRENCY_CASES.items():
+        found = [case for case in cases if isinstance(case, dict) and case.get("name") == name]
+        if not found:
+            problems.append(f"{name}: lost")
+        elif any(case.get("expect") != expect for case in found):
+            problems.append(f"{name}: flipped")
+        elif any(validator.concurrency_case_digest(case) != digest for case in found):
+            problems.append(f"{name}: input changed")
+    return problems
+
+
+def rust_concurrency_parity_canaries(validator) -> None:
+    """Removing any pinned marker of the Rust parity test, or ignoring a test, is refused."""
+    source = validator.SKELETON_GUARD_CI.read_text(encoding="utf-8")
+    mutations = [(marker.strip(), marker, "") for marker in validator.RUST_CONCURRENCY_PARITY_MARKERS]
+    mutations.append(("an ignored test", "    #[test]\n    fn the_parity_fixture_keeps_every_gate_pinned_case",
+                      "    #[test]\n    #[ignore]\n    fn the_parity_fixture_keeps_every_gate_pinned_case"))
+    with tempfile.TemporaryDirectory() as directory:
+        mutated = Path(directory) / "mod.rs"
+        for label, before, after in mutations:
+            if before not in source:
+                raise AssertionError(f"Rust parity canary target drifted: {label}")
+            mutated.write_text(source.replace(before, after, 1), encoding="utf-8")
+            validator.SKELETON_GUARD_CI = mutated
+            try:
+                validator.validate_rust_concurrency_parity()
+            except validator.InvalidCoverage:
+                continue
+            finally:
+                validator.SKELETON_GUARD_CI = ROOT / "crates/norn-skeleton-guard/src/ci/mod.rs"
+            raise AssertionError(f"Rust parity mutation passed: {label}")
 
 
 def check_concurrency_cases(validator, cases: list) -> None:
-    """Every fixture case reaches its verdict, and every gate-pinned case is present."""
-    pinned = validator.PULL_REQUEST_CONCURRENCY_CASES
-    present = {case.get("name"): case.get("expect") for case in cases if isinstance(case, dict)}
-    missing = sorted(name for name, expect in pinned.items() if present.get(name) != expect)
-    if missing:
-        raise AssertionError(f"concurrency parity fixture lost or flipped gate-pinned cases: {missing}")
+    """Every gate-pinned case is present unchanged, and every fixture case reaches its verdict."""
+    problems = pinned_case_problems(validator, cases)
+    if problems:
+        raise PinnedConcurrencyCase(problems)
     verdicts = set()
     for case in cases:
         if (not isinstance(case, dict) or not set(case) <= {"name", "on", "concurrency", "expect", "source"}

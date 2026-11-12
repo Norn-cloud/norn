@@ -827,15 +827,17 @@ mod tests {
 
     /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
     /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
-    /// gate file, so it may gain cases freely; `validate.py`'s gate-pinned
-    /// `PULL_REQUEST_CONCURRENCY_CASES` stops it losing or flipping one, and changing that
-    /// list needs `/approve-gates`.
+    /// gate file, so it may gain cases anywhere in its list; `validate.py`'s gate-pinned
+    /// `PULL_REQUEST_CONCURRENCY_CASES` stops it losing a case, flipping a verdict or
+    /// changing a case's input, and changing that list needs `/approve-gates`. This test is
+    /// itself pinned by `validate.py`'s `RUST_CONCURRENCY_PARITY_MARKERS`.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
     const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");
 
-    /// `validate.py`'s `PULL_REQUEST_CONCURRENCY_CASES`, one `"name": "verdict",` per line.
-    fn pinned_concurrency_cases() -> super::BTreeMap<String, String> {
+    /// `validate.py`'s `PULL_REQUEST_CONCURRENCY_CASES`, one `"name": ["verdict", "sha256"],`
+    /// per line: name to (verdict, input digest).
+    fn pinned_concurrency_cases() -> super::BTreeMap<String, (String, String)> {
         let block = VALIDATOR
             .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
             .and_then(|(_, rest)| rest.split_once("\n}\n"))
@@ -844,68 +846,123 @@ mod tests {
         let entries = block
             .lines()
             .map(|line| line.trim().trim_end_matches(','))
-            .collect::<Vec<_>>()
-            .join(",");
-        let parsed =
-            serde_json::from_str::<super::BTreeMap<String, String>>(&format!("{{{entries}}}"));
+            .collect::<Vec<_>>();
+        let parsed = serde_json::from_str::<super::BTreeMap<String, (String, String)>>(&format!(
+            "{{{}}}",
+            entries.join(",")
+        ));
         assert!(parsed.is_ok(), "PULL_REQUEST_CONCURRENCY_CASES: {parsed:?}");
         let pinned = parsed.unwrap_or_default();
+        // One entry per line, no duplicate names: the parsed pin is the whole block.
         assert!(
-            pinned.len() > 2,
-            "PULL_REQUEST_CONCURRENCY_CASES not found in validate.py"
+            !pinned.is_empty() && pinned.len() == entries.len(),
+            "PULL_REQUEST_CONCURRENCY_CASES: {} entries parsed from {} lines",
+            pinned.len(),
+            entries.len()
         );
         pinned
     }
 
-    /// The gate-pinned cases the fixture lost, or whose verdict it flipped.
-    fn missing_pinned_cases(cases: &[Value]) -> Vec<String> {
-        let present = cases
-            .iter()
-            .map(|case| (case["name"].as_str(), case["expect"].as_str()))
-            .collect::<super::BTreeMap<_, _>>();
+    /// `validate.py`'s `concurrency_case_digest`: sha256 of compact JSON `[on, concurrency]`.
+    fn concurrency_case_digest(case: &Value) -> String {
+        use sha2::{Digest, Sha256};
+        let input = Value::Array(vec![case["on"].clone(), case["concurrency"].clone()]).to_string();
+        format!("{:x}", Sha256::digest(input.as_bytes()))
+    }
+
+    /// Each gate-pinned case the fixture lost, flipped or changed, as `"<name>: <problem>"`.
+    /// Every copy of a pinned name must match; unpinned cases are free.
+    fn pinned_case_problems(cases: &[Value]) -> Vec<String> {
         pinned_concurrency_cases()
             .into_iter()
-            .filter(|(name, expect)| {
-                present.get(&Some(name.as_str())) != Some(&Some(expect.as_str()))
+            .filter_map(|(name, (expect, digest))| {
+                let found = cases
+                    .iter()
+                    .filter(|case| case["name"].as_str() == Some(name.as_str()))
+                    .collect::<Vec<_>>();
+                let problem = if found.is_empty() {
+                    "lost"
+                } else if found.iter().any(|case| case["expect"] != expect.as_str()) {
+                    "flipped"
+                } else if found
+                    .iter()
+                    .any(|case| concurrency_case_digest(case) != digest)
+                {
+                    "input changed"
+                } else {
+                    return None;
+                };
+                Some(format!("{name}: {problem}"))
             })
-            .map(|(name, _)| name)
             .collect()
+    }
+
+    fn fixture_cases() -> Vec<Value> {
+        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
+        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
+        parsed.unwrap_or_default()["cases"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[test]
     fn the_parity_fixture_keeps_every_gate_pinned_case() {
-        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
-        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
-        let cases = parsed.unwrap_or_default()["cases"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(missing_pinned_cases(&cases), Vec::<String>::new());
-        // Canaries: deleting a case, or flipping its verdict, is caught.
-        let mut deleted = cases.clone();
-        let last = deleted.pop().unwrap_or_default();
-        assert_eq!(
-            missing_pinned_cases(&deleted),
-            vec![last["name"].as_str().unwrap_or_default().to_owned()]
-        );
-        let mut flipped = cases;
-        if let Some(first) = flipped.first_mut() {
-            first["expect"] = Value::from(if first["expect"] == "accept" {
-                "reject"
-            } else {
-                "accept"
-            });
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
+        // The fixture may gain correct, unpinned cases first and last; every canary below
+        // runs on that grown list too, choosing its case by name, never by position.
+        let mut extra = cases.first().cloned().unwrap_or_default();
+        extra["name"] = Value::from("an unpinned case added later");
+        let mut grown = vec![extra.clone()];
+        grown.extend(cases.iter().cloned());
+        grown.push(extra);
+        assert_eq!(pinned_case_problems(&grown), Vec::<String>::new());
+        for list in [&cases, &grown] {
+            for name in pinned_concurrency_cases().into_keys() {
+                let named = |case: &Value| case["name"].as_str() == Some(name.as_str());
+                let deleted = list
+                    .iter()
+                    .filter(|case| !named(case))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    pinned_case_problems(&deleted),
+                    vec![format!("{name}: lost")]
+                );
+                let mut flipped = list.clone();
+                for case in flipped.iter_mut().filter(|case| named(case)) {
+                    let other = if case["expect"] == "accept" {
+                        "reject"
+                    } else {
+                        "accept"
+                    };
+                    case["expect"] = Value::from(other);
+                }
+                assert_eq!(
+                    pinned_case_problems(&flipped),
+                    vec![format!("{name}: flipped")]
+                );
+                let mut changed = list.clone();
+                for case in changed.iter_mut().filter(|case| named(case)) {
+                    case["concurrency"] = if case["concurrency"].is_null() {
+                        Value::from("concurrency:\n  group: changed\n")
+                    } else {
+                        Value::Null
+                    };
+                }
+                assert_eq!(
+                    pinned_case_problems(&changed),
+                    vec![format!("{name}: input changed")]
+                );
+            }
         }
-        assert_eq!(missing_pinned_cases(&flipped).len(), 1);
     }
 
     #[test]
     fn pull_request_concurrency_matches_the_shared_parity_fixture() {
-        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
-        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
-        let fixture = parsed.unwrap_or_default();
-        let cases = fixture["cases"].as_array().cloned().unwrap_or_default();
-        assert_eq!(missing_pinned_cases(&cases), Vec::<String>::new());
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
         let mut verdicts = std::collections::BTreeSet::new();
         for case in &cases {
             let text = |key: &str| case[key].as_str().unwrap_or_default().to_owned();
