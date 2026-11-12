@@ -218,7 +218,11 @@ fn a_link_a_timestamp_or_a_text_target_is_not_an_admitted_kind() {
         ("/features/3", json!("signed_up")),
         ("/target", json!("region")),
     ] {
-        let payload = with(pointer, value);
+        let mut payload = with(pointer, value);
+        if pointer == "/target" {
+            // `region` stops being a feature, so only its kind is refused.
+            payload["features"] = json!(["tenure_months", "monthly_spend", "plan"]);
+        }
         assert_eq!(
             model_set_codes(&[account(), customer(), model(&payload)], &[]),
             one("model.admission.feature_kind"),
@@ -317,7 +321,7 @@ fn an_output_is_an_inline_scalar_column() {
     for value in [
         json!({ "kind": "timestamp", "timezone": "utc" }),
         json!({ "kind": "ref", "name": "sales.grade" }),
-        json!({ "kind": "decimal", "scale": 2, "currencySource": { "links": [], "property": "currency" } }),
+        json!({ "kind": "decimal", "scale": 2, "unitSource": ["unit"] }),
     ] {
         // Opaque and without contracts, so only the column itself is refused.
         let mut payload = with("/outputs/0/type", value.clone());

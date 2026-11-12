@@ -4842,6 +4842,9 @@
           },
           {
             "$ref": "#/components/schemas/NornArtifactEnvelopeLabels"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeModel"
           }
         ],
         "title": "NornArtifactEnvelope",
@@ -4859,6 +4862,7 @@
             "labels": "#/components/schemas/NornArtifactEnvelopeLabels",
             "law": "#/components/schemas/NornArtifactEnvelopeLaw",
             "mapping": "#/components/schemas/NornArtifactEnvelopeMapping",
+            "model": "#/components/schemas/NornArtifactEnvelopeModel",
             "policy": "#/components/schemas/NornArtifactEnvelopePolicy",
             "relation": "#/components/schemas/NornArtifactEnvelopeRelation",
             "rule": "#/components/schemas/NornArtifactEnvelopeRule",
@@ -5175,6 +5179,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeMapping"
+      },
+      "NornArtifactEnvelopeModel": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "model"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrModelPayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeModel"
       },
       "NornArtifactEnvelopePolicy": {
         "allOf": [
@@ -7977,6 +8007,13 @@
             "enum": [
               "labels"
             ]
+          },
+          {
+            "type": "string",
+            "description": "`ModelIR`: a typed predictive model with opaque internals\n([`model`]).",
+            "enum": [
+              "model"
+            ]
           }
         ]
       },
@@ -9772,6 +9809,105 @@
           },
           "value": {
             "$ref": "#/components/schemas/NornIrAccessLiteral"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrContractRule": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrContractRuleOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrContractRuleOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrContractRuleOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrContractRuleOneOf3"
+          }
+        ],
+        "description": "A closed check on one output's values. There are no free expressions."
+      },
+      "NornIrContractRuleOneOf0": {
+        "type": "object",
+        "description": "Inclusive bounds on a numeric output; at least one bound.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "range"
+            ]
+          },
+          "max": {
+            "type": "string",
+            "description": "Inclusive upper bound.",
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+          },
+          "min": {
+            "type": "string",
+            "description": "Inclusive lower bound.",
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrContractRuleOneOf1": {
+        "type": "object",
+        "description": "Every object gets a value.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "notNull"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrContractRuleOneOf2": {
+        "type": "object",
+        "description": "A numeric output is never NaN or infinite.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "finite"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrContractRuleOneOf3": {
+        "type": "object",
+        "description": "A categorical (`enum` or `text`) output takes one of these values.",
+        "required": [
+          "kind",
+          "values"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "oneOf"
+            ]
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The admitted values; non-empty and unique."
           }
         },
         "additionalProperties": false
@@ -17626,6 +17762,194 @@
         },
         "additionalProperties": false
       },
+      "NornIrModelContract": {
+        "type": "object",
+        "description": "A named contract on one output.",
+        "required": [
+          "id",
+          "output",
+          "rule"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique contract id (`[a-z][a-z0-9_]*`).",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "output": {
+            "type": "string",
+            "description": "The output it checks, by [`ModelOutput::id`].",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/NornIrContractRule",
+            "description": "The check."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrModelInput": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrModelInputOneOf0"
+          }
+        ],
+        "description": "What a model reads. A tagged union so later inputs (a transform, a\ndataset) are additive variants."
+      },
+      "NornIrModelInputOneOf0": {
+        "type": "object",
+        "description": "The live objects of one object type, by qualified name\n(`sales.Customer`). Features and the target are its properties.",
+        "required": [
+          "kind",
+          "objectType"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "objectType"
+            ]
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The input object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrModelMethod": {
+        "type": "object",
+        "description": "How the model was built: display text only.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The method (`logistic regression`)."
+          },
+          "version": {
+            "type": "string",
+            "description": "The tool or method version (`sklearn 1.6`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrModelOutput": {
+        "type": "object",
+        "description": "One prediction column a model writes.",
+        "required": [
+          "id",
+          "type",
+          "nullable"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique column id (`[a-z][a-z0-9_]*`).",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "nullable": {
+            "type": "boolean",
+            "description": "Whether the model may leave the column empty for an object."
+          },
+          "type": {
+            "$ref": "#/components/schemas/NornIrPropertyType",
+            "description": "The column's value type, in the property type representation\n(`EntityIR`); a quantity carries its unit inside a `decimal` type, as a\nproperty does."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrModelPayload": {
+        "type": "object",
+        "description": "A typed predictive model with opaque internals ([`model`]).",
+        "required": [
+          "modelId",
+          "title",
+          "version",
+          "input",
+          "features",
+          "outputs",
+          "trust",
+          "method"
+        ],
+        "properties": {
+          "contracts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrModelContract"
+            },
+            "description": "Checks every output must meet before it is written. Omitted when empty."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/NornIrModelPayloadPropertyExtensions"
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            },
+            "description": "Input properties the model uses, in order; non-empty and unique."
+          },
+          "input": {
+            "$ref": "#/components/schemas/NornIrModelInput",
+            "description": "What the model reads."
+          },
+          "method": {
+            "$ref": "#/components/schemas/NornIrModelMethod",
+            "description": "Display-only description of how the model was built."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "Dotted model id ([`MODEL_ID_PATTERN`], `sales.churn_model`)."
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrModelOutput"
+            },
+            "description": "Prediction columns; non-empty, ids unique."
+          },
+          "target": {
+            "type": "string",
+            "description": "The supervised target property; omitted for a scoring-only model.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable title."
+          },
+          "trust": {
+            "type": "string",
+            "description": "How far the outputs can be trusted without running the model.",
+            "enum": [
+              "native",
+              "proven",
+              "contract_checked",
+              "opaque"
+            ],
+            "x-enumDescriptions": [
+              "Computed by Norn from declared semantics on any qualified engine (exact or DuckDB).",
+              "Native and covered by a machine-checked proof.",
+              "Opaque internals whose outputs are checked against declared contracts before they are written.",
+              "Opaque internals; outputs are labelled and not trusted beyond their type."
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "The model artifact's version (SemVer 2.0.0)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrModelPayloadPropertyExtensions": {
+        "type": "object",
+        "description": "Reserved versioned extension slots, as on other artifact roots.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
       "NornIrMultiplicity": {
         "type": "string",
         "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
@@ -18783,6 +19107,13 @@
             "description": "Localized labels; a downstream pack may label upstream definitions.",
             "enum": [
               "labels"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "A typed predictive model (`ModelIR`).",
+            "enum": [
+              "model"
             ]
           }
         ],
@@ -24046,6 +24377,22 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrTrustLevel": {
+        "type": "string",
+        "description": "VIEW-TRUST-1: how far a definition's output can be trusted without running it.",
+        "enum": [
+          "native",
+          "proven",
+          "contract_checked",
+          "opaque"
+        ],
+        "x-enumDescriptions": [
+          "Computed by Norn from declared semantics on any qualified engine (exact or DuckDB).",
+          "Native and covered by a machine-checked proof.",
+          "Opaque internals whose outputs are checked against declared contracts before they are written.",
+          "Opaque internals; outputs are labelled and not trusted beyond their type."
+        ]
       },
       "NornIrTurnBudget": {
         "type": "object",
