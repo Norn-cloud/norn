@@ -761,6 +761,41 @@ fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
     }
 }
 
+/// Removing a file under a gate directory is a gate change, even with its record removed.
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "stage the removal in disposable policy test data"
+)]
+fn trusted_policy_refuses_removing_a_file_under_a_gate_directory() {
+    let base = policy_fixture();
+    let path = "crates/norn-skeleton-guard/src/ci/yaml.rs";
+    let mut candidate = policy_fixture();
+    std::fs::remove_file(candidate.root().join(path)).expect("remove");
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.records.remove(record);
+    candidate.save();
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(candidate.root())
+            .args(["add", "-A"])
+            .status()
+            .expect("git rm")
+            .success()
+    );
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+}
+
 /// Gated sources cannot stand an ungated file in for gated code: refused even with no gate
 /// change (a tree checked against itself), so a merged one could never be the base.
 /// Every `include!` target is scanned as Rust whatever its extension, and must be tracked.

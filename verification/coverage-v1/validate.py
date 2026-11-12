@@ -18,11 +18,35 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
-from proof_enrollment import validate as validate_enrollment  # noqa: E402
-import coverage_manifest  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+_verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
+selector_is_declared = _verification_attestation.selector_is_declared
+_proof_enrollment = _sibling("proof_enrollment", ROOT / "scripts")
+validate_enrollment = _proof_enrollment.validate
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
 
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"

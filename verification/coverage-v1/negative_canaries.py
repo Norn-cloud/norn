@@ -47,10 +47,32 @@ VERIFICATION_TOOL_ROOT = Path(
     )
 )
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import coverage_manifest  # noqa: E402
-import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
+quint_apalache = _sibling("quint_apalache", ROOT / "scripts")
 
 
 CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
@@ -1172,7 +1194,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
             if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        command = 'python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
