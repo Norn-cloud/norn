@@ -428,11 +428,6 @@ pub struct DefinitionSummary {
     /// With `uses`: the binding version this flow's performs are pinned to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
-    /// For a flow: whether this caller may start a run of it, decided by
-    /// the same gate `POST /v1/runs` applies. Absent for other kinds; a start
-    /// is decided again at the call.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub can_start: Option<bool>,
 }
 
 /// One page of definitions, ordered by id.
@@ -1301,8 +1296,21 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
+                // The admitted set's model knows only the artifacts; a cell
+                // that serves actions also declares the kernel's own action
+                // types, and installing a flow must not drop them.
+                let serves_actions = cell
+                    .store()
+                    .model()
+                    .object_types()
+                    .any(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE);
+                let model = if serves_actions {
+                    crate::action_admission::prepare_action_model(&admitted.model)?
+                } else {
+                    admitted.model
+                };
                 (
-                    admitted.model,
+                    model,
                     admitted.canonical_set,
                     admitted.receipt_sha256,
                     Some(admitted.receipt),
@@ -1705,8 +1713,6 @@ pub fn list_definitions<E: SqlEngine>(
         items: rows
             .into_iter()
             .map(|(row, pinned_version)| DefinitionSummary {
-                can_start: (row.definition.kind == "flow")
-                    .then(|| may_start(host, actor, &row.definition.id)),
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,
@@ -1718,22 +1724,6 @@ pub fn list_definitions<E: SqlEngine>(
             .collect(),
         cursor,
     })
-}
-
-/// Whether `actor` may start a run of `flow`: the authorizer's answer to
-/// [`Operation::StartRun`], the gate `POST /v1/runs` applies, with no second
-/// check here.
-fn may_start<E: SqlEngine>(host: &DevHost<E>, actor: Option<&str>, flow: &str) -> bool {
-    let actor = actor.filter(|actor| !actor.trim().is_empty());
-    actor.is_some()
-        && host
-            .authorizer
-            .authorize(&AccessRequest {
-                scope: host.scope(),
-                actor,
-                operation: Operation::StartRun(flow.to_owned()),
-            })
-            .is_ok()
 }
 
 /// `GET /v1/definitions/{id}`: one version of one definition, the current

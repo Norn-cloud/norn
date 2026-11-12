@@ -241,25 +241,6 @@ fn starts_are_decided_by_the_declared_starters_and_refuse_with_typed_codes() {
     );
 }
 
-/// RUN-START-LISTED: the flow list says, per caller, whether a start would
-/// pass the gate `POST /v1/runs` applies, and the start agrees.
-#[test]
-fn the_flow_list_says_who_may_start_each_flow_as_the_start_gate_decides() {
-    let cell = cell();
-    install(&cell, "norn.decision");
-    let listed = |auth| {
-        let (status, page) = get(&cell, "/v1/definitions:list", "&kind=flow", auth);
-        assert_eq!(status, 200, "{page}");
-        assert_eq!(page["items"][0]["id"], json!(FLOW_ID));
-        page["items"][0]["canStart"].clone()
-    };
-    assert_eq!(listed(MEMBER), json!(true));
-    assert_eq!(listed(ADMIN), json!(true));
-    assert_eq!(listed(GUEST), json!(false));
-    assert_eq!(start(&cell, GUEST, FLOW_ID, "run-1").0, 403);
-    assert_eq!(start(&cell, MEMBER, FLOW_ID, "run-1").0, 201);
-}
-
 /// RUN-READ-GATED: a reader without Values on the Run type gets exactly the
 /// absent run's refusal.
 #[test]
