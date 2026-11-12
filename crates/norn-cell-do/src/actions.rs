@@ -62,6 +62,42 @@ fn payload<T: serde::de::DeserializeOwned>(artifact: &ArtifactEnvelope) -> Resul
         .map_err(|error| SeedError(format!("{}: {error}", artifact.artifact_id)))
 }
 
+/// The rules of each governing policy, each narrowed to the actions that
+/// name that policy; a rule left with no action is dropped.
+fn narrowed(
+    governs: &BTreeMap<&str, BTreeSet<&str>>,
+    policies: &BTreeMap<&str, (&str, AccessIr)>,
+) -> Result<Vec<AccessRule>, SeedError> {
+    let mut rules: Vec<AccessRule> = Vec::new();
+    for (policy_id, governed) in governs {
+        let Some((_, access)) = policies.get(policy_id) else {
+            continue;
+        };
+        if !access.generic_rules.is_empty() || access.extensions.is_some() {
+            return Err(SeedError(format!(
+                "{policy_id}: generic rules and extensions are not served on this host"
+            )));
+        }
+        for rule in &access.rules {
+            let actions: Vec<String> = rule
+                .actions
+                .iter()
+                .filter(|action| governed.contains(action.as_str()))
+                .cloned()
+                .collect();
+            if actions.is_empty() {
+                continue;
+            }
+            rules.push(AccessRule {
+                rule_id: format!("{policy_id}.{}", rule.rule_id),
+                actions,
+                ..rule.clone()
+            });
+        }
+    }
+    Ok(rules)
+}
+
 impl ActionPolicy {
     /// Compile the action policy of the definitions `artifacts` installed over
     /// `model`, for `scope`. `Ok(None)` when no action is callable.
@@ -132,33 +168,7 @@ impl ActionPolicy {
                 .or_default()
                 .insert(action.action_id.as_str());
         }
-        let mut rules: Vec<AccessRule> = Vec::new();
-        for (policy_id, governed) in &governs {
-            let Some((_, access)) = policies.get(policy_id) else {
-                continue;
-            };
-            if !access.generic_rules.is_empty() || access.extensions.is_some() {
-                return Err(SeedError(format!(
-                    "{policy_id}: generic rules and extensions are not served on this host"
-                )));
-            }
-            for rule in &access.rules {
-                let actions: Vec<String> = rule
-                    .actions
-                    .iter()
-                    .filter(|action| governed.contains(action.as_str()))
-                    .cloned()
-                    .collect();
-                if actions.is_empty() {
-                    continue;
-                }
-                rules.push(AccessRule {
-                    rule_id: format!("{policy_id}.{}", rule.rule_id),
-                    actions,
-                    ..rule.clone()
-                });
-            }
-        }
+        let rules = narrowed(&governs, &policies)?;
         let callable: BTreeSet<String> = rules
             .iter()
             .flat_map(|rule| rule.actions.iter().cloned())
@@ -228,7 +238,8 @@ impl ActionPolicy {
             capabilities: self.callable.iter().cloned().collect(),
             binding: None,
         };
-        let pdp = Pdp::new(self.base.policy_set().clone(), &[grant]).map_err(|_| denied())?;
+        let pdp =
+            Pdp::new(self.base.policy_set().clone(), &[grant]).map_err(|_unbuildable| denied())?;
         let key = self.key.clone();
         let roles = caller.roles.clone();
         PdpActionAuthorizer::new(pdp, move |call: &ActionAuthzRequest<'_>| {
