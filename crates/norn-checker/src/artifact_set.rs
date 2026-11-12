@@ -385,6 +385,11 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_base,
                 ))
+                .chain(crate::transform::check_transform_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                    normalized_context.registry,
+                ))
                 .chain(crate::model::check_model_set(
                     &normalized_artifacts,
                     &normalized_base,

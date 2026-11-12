@@ -495,7 +495,19 @@ pub fn load_dataset<E: SqlEngine>(
             "load a completed upload into an admitted object type",
         )
     };
-    let record = uploads.record(&request.upload_id).ok_or_else(not_found)?;
+    // UPLOAD-RECORD-1: an upload this host instance never saw complete is
+    // read from the record the cell kept at `:complete`.
+    let record = match uploads.record(&request.upload_id) {
+        Some(record) => record,
+        None => crate::sources::kept_upload(host, &request.upload_id)
+            .map_err(Refusal::host)?
+            .map(|kept| UploadRecord {
+                uri: kept.uri,
+                sha256: kept.sha256,
+                content_type: kept.content_type,
+            })
+            .ok_or_else(not_found)?,
+    };
     let guard = host.cell()?;
     let store = guard.store();
     let table = store
