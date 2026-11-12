@@ -146,6 +146,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}:profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-5: profile the caller's authorized snapshot of `object_type`.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), an engine that
+         *     cannot prove one snapshot (503), a commit while the snapshot was read
+         *     (409 `object.snapshot_moved`, `retryable`), or a host failure.
+         */
+        get: operations["get_object_profile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions/{question}/answer": {
         parameters: {
             query?: never;
@@ -209,6 +232,29 @@ export interface paths {
          *     compute refusal.
          */
         post: operations["evaluate_question"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/questions:metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * F2b: list the metrics an ad-hoc question may name. A metric is listed
+         *     only when the caller may read its concept's population (HOST-READ-1), so
+         *     the list never names a concept the caller cannot read.
+         *     # Errors
+         *     No actor, or a host failure.
+         */
+        get: operations["list_metrics"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -778,6 +824,18 @@ export interface components {
              */
             kind: "widget";
         };
+        /** @description One histogram bin. */
+        NornBin: {
+            /**
+             * Format: int64
+             * @description Rows in the bin.
+             */
+            count: number;
+            /** @description The smallest value in the bin, or the calendar label. */
+            lower: Record<string, never>;
+            /** @description The largest value in the bin, or the calendar label. */
+            upper: Record<string, never>;
+        };
         /** @description A current checker admission receipt. */
         NornCheckReceipt: {
             /** @description Whether the candidate set passed admission. */
@@ -1175,6 +1233,17 @@ export interface components {
          * @enum {string}
          */
         NornGuaranteesUnitSystem: "ucum" | "qudt";
+        /** @description A histogram. */
+        NornHistogram: {
+            /** @description Bins in ascending order. */
+            bins: components["schemas"]["NornBin"][];
+            /**
+             * @description `equal_population` (numeric: bins of equal row count, bounded by the
+             *     values at their edges, so no bin edge is computed), `day` or `month`
+             *     (temporal: calendar bins in UTC).
+             */
+            kind: string;
+        };
         /** @description An answer read at a knowledge cutoff, beside its historical world. */
         NornHistoricalQuestionResult: {
             /**
@@ -6397,6 +6466,20 @@ export interface components {
             /** @description Link path ending in a scalar property. */
             path: components["schemas"]["NornIrDimensionPath"];
         };
+        /**
+         * @description Bounds on an analytical question (ruling 2026-11-12). A question returns a
+         *     handful of aggregate rows but scans many source records, so the records it
+         *     scans are bounded apart from [`SliceLimits::max_records`], which bounds the
+         *     records a read returns. Over the bound a question is refused
+         *     (`core.compute.bound_exceeded`), never truncated.
+         */
+        NornIrQuestionLimits: {
+            /**
+             * Format: uint32
+             * @description Maximum source records one evaluation of a question may scan.
+             */
+            max_scanned_records: number;
+        };
         /** @description A selected metric, optionally with an explicit re-aggregation request. */
         NornIrQuestionMetric: {
             /** @description Inline calculation at the terminal population; metric names its output. */
@@ -6930,6 +7013,13 @@ export interface components {
             id: string;
             /** @description Working memory. */
             memory: components["schemas"]["NornIrMemoryLimits"];
+            /**
+             * @description Bounds on an analytical question. Absent from `norn.limits/1`, whose
+             *     bytes and hash are unchanged; a profile without them bounds questions
+             *     by [`QuestionLimits::DEFAULT`] (see
+             *     [`ResourceLimitProfile::question_limits`]).
+             */
+            question?: components["schemas"]["NornIrQuestionLimits"] | null;
             /** @description The declared input slice. */
             slice: components["schemas"]["NornIrSliceLimits"];
             /** @description The whole synchronous cell turn: one aggregate budget. */
@@ -8944,6 +9034,30 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /** @description The metrics ad-hoc questions may name, among those the caller may read. */
+        NornMetricList: {
+            /** @description In name order. */
+            metrics: components["schemas"]["NornMetricSummary"][];
+        };
+        /** @description One metric an ad-hoc question may name. */
+        NornMetricSummary: {
+            /** @description The denominator metric, for a ratio. */
+            denominator: string | null;
+            /** @description The aggregated expression (a property), for a simple metric. */
+            expression: string | null;
+            /** @description `simple`, `ratio`, `cumulative`, `derived` or `conversion`. */
+            kind: string;
+            /** @description Its label. */
+            label: string;
+            /** @description The metric's name, as a question's `aggregate` names it. */
+            name: string;
+            /** @description The numerator metric, for a ratio. */
+            numerator: string | null;
+            /** @description The concept it aggregates, for a simple metric. */
+            objectType: string | null;
+            /** @description The time property its buckets use, for a simple metric. */
+            timeProperty: string | null;
+        };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {
             /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
@@ -9009,6 +9123,41 @@ export interface components {
             /** @description The last scanned identity: the next page starts after it. */
             scannedThrough: string | null;
         };
+        /** @description The profile of a concept's objects as the caller may see them. */
+        NornObjectProfile: {
+            /**
+             * @description True when the scan bound was reached: the profile covers only the rows
+             *     read, and every count is a lower bound.
+             */
+            approximate: boolean;
+            /** @description The engine that computed the profile: `cell`, the native exact engine. */
+            engine: string;
+            /** @description The concept profiled; rows may be of its subtypes. */
+            objectType: string;
+            /** @description One profile per declared property, in declared order. */
+            properties: components["schemas"]["NornPropertyProfile"][];
+            /**
+             * Format: int64
+             * @description Rows held back by source disputes or open quarantining findings.
+             */
+            quarantinedRows: number;
+            /**
+             * Format: int64
+             * @description Rows whose values were profiled.
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description The visible-row scan bound.
+             */
+            scanLimit: number;
+            /**
+             * Format: int64
+             * @description Rows the caller may know exist but whose values are withheld; none of
+             *     their values is counted.
+             */
+            withheldRows: number;
+        };
         /** @description One object as the cell stores it, at its current version. */
         NornObjectRecord: {
             /** @description The object's identity. */
@@ -9026,6 +9175,45 @@ export interface components {
              * @description The owner version (`+1` per write).
              */
             version: number;
+        };
+        /** @description The profile of one property over the profiled rows. */
+        NornPropertyProfile: {
+            /**
+             * Format: int64
+             * @description Rows with a value.
+             */
+            count: number;
+            /**
+             * Format: int64
+             * @description Distinct values.
+             */
+            distinct: number;
+            histogram: components["schemas"]["NornHistogram"] | null;
+            /** @description `numeric`, `temporal`, `boolean`, `text` or `other`. */
+            kind: string;
+            /** @description The largest value (numeric and temporal properties). */
+            max: Record<string, never> | null;
+            /** @description The smallest value (numeric and temporal properties). */
+            min: Record<string, never> | null;
+            /**
+             * Format: int64
+             * @description Rows without one.
+             */
+            nulls: number;
+            /** @description The property id. */
+            property: string;
+            /** @description Quantiles by nearest rank (numeric and temporal properties). */
+            quantiles: components["schemas"]["NornQuantile"][];
+        };
+        /** @description One quantile. */
+        NornQuantile: {
+            /**
+             * Format: int32
+             * @description The percentile, 0 to 100.
+             */
+            percent: number;
+            /** @description The value at that nearest rank. */
+            value: Record<string, never>;
         };
         /**
          * @description The evaluator that produced an answer.
@@ -9741,6 +9929,68 @@ export interface operations {
             };
         };
     };
+    get_object_profile: {
+        parameters: {
+            query: {
+                orgId: string;
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to profile. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profile of the caller's authorized snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectProfile"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The snapshot moved while it was read; retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_answer: {
         parameters: {
             query: {
@@ -9963,6 +10213,49 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_metrics: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metrics ad-hoc questions may name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornMetricList"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
