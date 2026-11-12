@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
+use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{Delivery, result_turn, run_state};
 use crate::host::{ActionCell, DevHost};
 use crate::question_routes::{QuestionRuntime, handle_key, world_values};
@@ -409,7 +410,12 @@ fn open_decision<E: SqlEngine>(
         // Already answered; the consuming commit is pending.
         return Ok(None);
     }
-    let Some(payload) = pending.command.command.get("payload") else {
+    let Some(payload) = pending
+        .command
+        .command
+        .get("payload")
+        .filter(|payload| text(payload, "function") == Some(DECISION_FUNCTION))
+    else {
         return Ok(None);
     };
     let (Some(run_id), Some(step), Some(attempt)) = (

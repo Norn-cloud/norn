@@ -231,7 +231,13 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
-        let response = if path == "/v1/access" {
+        // Runs and decisions first: their action steps act as the recorded
+        // starter through this cell's caller slot (ACTION-STEP-1).
+        let runs =
+            crate::runs::handle_runs(&self.host, resolver, questions, &self.caller, &request);
+        let response = if let Some(response) = runs {
+            response
+        } else if path == "/v1/access" {
             server::access(
                 &self.host,
                 resolver,
