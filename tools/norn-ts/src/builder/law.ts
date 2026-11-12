@@ -49,6 +49,8 @@ export interface LawDef {
   readonly version: string
   readonly law: LawIR
   readonly dependencies: ReadonlyArray<{ readonly artifactId: string; readonly kind: "entity" | "action" | "rule" | "policy" | "law" | "connector" | "mapping" | "relation" | "derived" | "setting"; readonly version: string; readonly required: boolean }>
+  /** `law(name, spec)` (A3): `provenance.sourcePath` is the compiled module's path. */
+  readonly inferSourcePath?: true
 }
 
 /** Reuse the existing typed expression builder; Rust remains the admission authority. */
@@ -65,7 +67,8 @@ export function law(meta: Omit<LawDef, "_tag">): LawDef {
 }
 
 export function lowerLaw(def: LawDef, options: EnvelopeOptions): { readonly ok: true; readonly artifact: Json } {
-  return { ok: true, artifact: envelope({ kind: "law", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version, dependencies: toJson(def.dependencies) as Json[] }, def.law, options) }
+  const law: LawIR = def.inferSourcePath ? { ...def.law, provenance: { ...def.law.provenance, sourcePath: options.sourcePath } } : def.law
+  return { ok: true, artifact: envelope({ kind: "law", artifactId: def.id, namespace: def.id.split(".")[0]!, name: def.title, version: def.version, dependencies: toJson(def.dependencies) as Json[] }, law, options) }
 }
 
 /** Inverse source face. Scope and envelope provenance come from the same options. */

@@ -3,7 +3,7 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
-use norn_expr::env::FieldSource;
+use norn_expr::env::{FieldSource, RecordKind};
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
@@ -147,6 +147,16 @@ fn check_exception_tree(law: &LawIR, artifact: &ArtifactEnvelope, out: &mut Vec<
             artifact,
             "/payload/exceptions",
             "an invariant identity is an unconditional always law; an exception would change its meaning",
+        ));
+    }
+    // The translation goal's premise is the law's condition alone; an
+    // exception would make that goal stronger than the law.
+    if matches!(law.response, LawResponse::TranslationPreserves { .. }) {
+        out.push(finding(
+            exception_codes::UNSUPPORTED_RESPONSE,
+            artifact,
+            "/payload/exceptions",
+            "a translation_preserves goal does not model exceptions yet",
         ));
     }
     if let Err(refusal) = check_tree(&law.id, &law.exceptions) {
@@ -1105,6 +1115,12 @@ impl LawContext<'_> {
                 "/payload/response",
                 "interfaces do not declare lifecycle transition contracts",
             )),
+            LawResponse::TranslationPreserves { .. } => out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation source must be a concrete object type",
+            )),
         }
     }
 
@@ -1252,6 +1268,65 @@ impl LawContext<'_> {
                         "transition response must bind a subject lifecycle transition",
                     ));
                 }
+            }
+            LawResponse::TranslationPreserves {
+                target_type,
+                assignments,
+                observation,
+            } => self.check_translation(law, artifact, target_type, assignments, observation, out),
+        }
+    }
+
+    /// TRANSLATION-PRESERVES-1: admit a total, executable map to a resolved target.
+    /// Typing inside the goal fragment is decided by lowering, which stays Unknown.
+    fn check_translation(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        target_type: &str,
+        assignments: &std::collections::BTreeMap<String, norn_ir::ZenExpression>,
+        observation: &norn_ir::verification::translation::TranslationObservation,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if !matches!(law.modality, LawModality::Always {}) || law.timing.is_some() {
+            out.push(finding(
+                codes::UNSUPPORTED_TEMPORAL,
+                artifact,
+                "/payload/modality",
+                "translation preservation is an untimed always law",
+            ));
+        }
+        let stored: Option<std::collections::BTreeSet<_>> = self
+            .env
+            .and_then(|env| env.record(target_type))
+            .filter(|record| record.kind == RecordKind::Object)
+            .map(|record| {
+                record
+                    .fields
+                    .iter()
+                    .filter(|(_, field)| matches!(field.source, FieldSource::Property { .. }))
+                    .map(|(id, _)| id)
+                    .collect()
+            });
+        if stored.is_none_or(|stored| !stored.iter().copied().eq(assignments.keys())) {
+            out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation target must be a concrete object type, assigned exactly its properties",
+            ));
+        }
+        for source in assignments
+            .values()
+            .chain([&observation.source, &observation.target])
+        {
+            if let Err(error) = Expression::compile(source.as_str()) {
+                out.push(finding(
+                    codes::PREDICATE_TYPE,
+                    artifact,
+                    "/payload/response",
+                    error.to_string(),
+                ));
             }
         }
     }

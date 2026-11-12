@@ -143,3 +143,7 @@ mod action_quantity;
 pub mod execution_profile;
 
 mod profile_ownership;
+
+/// Versioned single-cell read evidence and context validation.
+pub mod read_envelope;
+mod read_token_check;

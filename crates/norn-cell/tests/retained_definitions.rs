@@ -231,7 +231,15 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
     }
     exporter.verify().await.expect("verify");
     let restored_path = directory.path().join("restored.sqlite");
-    let bindings = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+    // CELL-ID-RESTORE: restore names the source's logical identity.
+    let bindings = BTreeMap::from([
+        ("scope".to_owned(), SCOPE.to_owned()),
+        ("cell_id".to_owned(), records[0].bindings["cell_id"].clone()),
+        (
+            "cell_identity_format".to_owned(),
+            norn_cell::cell_identity::FORMAT.to_owned(),
+        ),
+    ]);
     CellStore::restore_from(
         &mut exporter,
         &restored_path,
