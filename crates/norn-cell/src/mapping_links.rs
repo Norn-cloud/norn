@@ -437,6 +437,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .push(entry);
         }
         let present = |key: &FactKey| self.present_after(model, commit, key);
+        // Each source's live links, read once per plan: a source's journal
+        // can hold every claim of every earlier version of its records.
+        let mut live: BTreeMap<FactKey, BTreeSet<LinkKey>> = BTreeMap::new();
         let mut links = BTreeMap::new();
         let mut sealed = Vec::new();
         for ((source, role), group) in &groups {
@@ -458,7 +461,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             for (entry, standing) in group.iter().zip(&ranked) {
                 let Some(to) = target(entry) else { continue };
                 let key = LinkKey::new(source.clone(), role.as_str(), to.clone());
-                let exists = self.mapping_link_exists(&key, model)?;
+                let exists = self.mapping_link_exists(&key, model, &mut live)?;
                 let supported = group
                     .iter()
                     .zip(&ranked)
@@ -526,11 +529,19 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         key: &LinkKey,
         model: CommitModel<'_, '_>,
+        live: &mut BTreeMap<FactKey, BTreeSet<LinkKey>>,
     ) -> Result<bool, CellError> {
-        Ok(GuardView(self)
-            .links_of(&key.source)?
-            .iter()
-            .any(|live| model.canonical_link(live) == model.canonical_link(key)))
+        let links = match live.entry(key.source.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(
+                GuardView(self)
+                    .links_of(&key.source)?
+                    .iter()
+                    .map(|link| model.canonical_link(link))
+                    .collect(),
+            ),
+        };
+        Ok(links.contains(&model.canonical_link(key)))
     }
 
     fn mapping_link_write(
