@@ -50,6 +50,14 @@ pub trait PrincipalResolver {
     /// Forget the request's principal. Required: the dispatch calls it when
     /// a request ends, on every exit path ([`RequestScope`]).
     fn end_request(&self);
+
+    /// The slot this resolver records the verified caller into, which the
+    /// cell's policy reads: a run's starter is recorded from it, and a run's
+    /// action steps act as that starter through it (ACTION-STEP-1). `None`
+    /// for a resolver with no slot, whose runs' action steps are denied.
+    fn caller(&self) -> Option<&CallerSlot> {
+        None
+    }
 }
 
 /// The lifetime of one request's verified principal: it ends when this
@@ -81,6 +89,10 @@ impl PrincipalResolver for NoPrincipals {
 
     fn end_request(&self) {
         self.0.record(None);
+    }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.0)
     }
 }
 
@@ -277,6 +289,10 @@ impl PrincipalResolver for TokenPrincipals {
     fn end_request(&self) {
         self.slot.record(None);
     }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
+    }
 }
 
 /// Synthetic principals for tests and local smoke builds, named as
@@ -339,5 +355,9 @@ impl PrincipalResolver for FixturePrincipals {
     }
     fn end_request(&self) {
         self.slot.record(None);
+    }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
     }
 }

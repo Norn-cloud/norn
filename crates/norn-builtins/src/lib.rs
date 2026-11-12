@@ -1,7 +1,8 @@
 //! Norn-owned host built-in Functions (FUNCTION-HOST-1, Core 07; #761).
 //!
-//! This crate is the engine's compiled-in registry. Its only entry so far is
-//! [`decision`] (`norn.decision@1`). A built-in's manifest pins this crate
+//! This crate is the engine's compiled-in registry: [`decision`]
+//! (`norn.decision@1`, a person decides) and [`action`] (`norn.action@1`, the
+//! cell calls a governed action). A built-in's manifest pins this crate
 //! by name, version and HOST-TREE-1 source-tree digest. The digest lives in
 //! `registry/builtins/norn-builtins.json`, outside the tree it digests.
 //! `build.rs` recomputes the digest and fails the build when the crate's
@@ -13,6 +14,7 @@
 //!
 //! Ring 0: pure, sans-IO and wasm32-portable.
 
+pub mod action;
 pub mod decision;
 
 use norn_ir::function::{
@@ -124,17 +126,53 @@ impl Registered {
 /// # Errors
 /// A [`RegistryError`].
 pub fn registered_decision() -> Result<Registered, RegistryError> {
-    Registered::new(decision_manifest()?)
+    Registered::new(host_manifest(&HostFunction {
+        id: decision::FUNCTION_ID,
+        version: decision::VERSION,
+        schemas: [
+            ("norn.decision.input", decision::INPUT_SCHEMA),
+            ("norn.decision.output", decision::OUTPUT_SCHEMA),
+            ("norn.decision.error", decision::ERROR_SCHEMA),
+        ],
+        max_input_bytes: decision::MAX_REQUEST_BYTES,
+    })?)
 }
 
-/// The `norn.decision@1` manifest. A host-format, effectful, uncacheable
-/// Function that runs only behind `perform` and makes no sandbox claim. The
-/// dependency closure is empty: the Norn crates it builds on ship in the same
-/// engine release as `runtime`, which this manifest pins exactly.
+/// The registered `norn.action@1`.
 ///
 /// # Errors
 /// A [`RegistryError`].
-fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
+pub fn registered_action() -> Result<Registered, RegistryError> {
+    Registered::new(host_manifest(&HostFunction {
+        id: action::FUNCTION_ID,
+        version: action::VERSION,
+        schemas: [
+            ("norn.action.input", action::INPUT_SCHEMA),
+            ("norn.action.output", action::OUTPUT_SCHEMA),
+            ("norn.action.error", action::ERROR_SCHEMA),
+        ],
+        max_input_bytes: action::MAX_INPUT_BYTES,
+    })?)
+}
+
+/// A compiled-in host Function: its identity, its input, output and error
+/// schemas (each its id and document), and its input bound.
+struct HostFunction {
+    id: &'static str,
+    version: u32,
+    schemas: [(&'static str, &'static str); 3],
+    max_input_bytes: u64,
+}
+
+/// A built-in's manifest. A host-format, effectful, uncacheable Function
+/// that runs only behind `perform` and makes no sandbox claim. The dependency
+/// closure is empty: the Norn crates it builds on ship in the same engine
+/// release as `runtime`, which this manifest pins exactly.
+///
+/// # Errors
+/// A [`RegistryError`].
+fn host_manifest(function: &HostFunction) -> Result<FunctionManifest, RegistryError> {
+    let [input, output, error] = function.schemas;
     let tree = source_tree_pin()?;
     let closure = DependencyClosure {
         digest: Digest(String::new()),
@@ -148,15 +186,15 @@ fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
     };
     Ok(FunctionManifest {
         abi: FUNCTION_ABI_V1.to_owned(),
-        function_id: decision::FUNCTION_ID.to_owned(),
-        version: decision::VERSION,
-        input_schema: schema("norn.decision.input", decision::INPUT_SCHEMA)?,
-        output_schema: schema("norn.decision.output", decision::OUTPUT_SCHEMA)?,
-        error_schema: schema("norn.decision.error", decision::ERROR_SCHEMA)?,
+        function_id: function.id.to_owned(),
+        version: function.version,
+        input_schema: schema(input.0, input.1)?,
+        output_schema: schema(output.0, output.1)?,
+        error_schema: schema(error.0, error.1)?,
         implementation: Implementation {
             format: ImplementationFormat::Host,
             digest: tree.clone(),
-            entry_point: "norn.decision@1".to_owned(),
+            entry_point: format!("{}@{}", function.id, function.version),
             locator: Some(format!("{CRATE}/{CRATE_VERSION}@{}", tree.0)),
         },
         dependency_closure: Some(closure),
@@ -178,7 +216,7 @@ fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
             max_cpu_millis: None,
             max_wall_millis: None,
             max_memory_bytes: None,
-            max_input_bytes: Some(decision::MAX_REQUEST_BYTES),
+            max_input_bytes: Some(function.max_input_bytes),
             max_decoded_bytes: None,
             max_output_bytes: Some(norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES),
         },
@@ -190,14 +228,17 @@ fn decision_manifest() -> Result<FunctionManifest, RegistryError> {
 
 /// PARKED-1: whether a perform command waits outside the FIFO perform queue
 /// until the cell resolves it: a `norn.decision@1` perform, which a person
-/// answers. `payload` is the kernel command's payload (the flow's perform
+/// answers, or a `norn.action@1` perform, which the cell executes itself. `payload` is the kernel command's payload (the flow's perform
 /// record `{kind: "perform", function, functionVersion, ...}`). Compiled in, so
 /// every host and every replay classifies a command the same way.
 #[must_use]
 pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
     let text = |name: &str| payload.get(name).and_then(norn_ir::RuntimeValue::as_str);
     text("kind") == Some("perform")
-        && text("function") == Some(decision::FUNCTION_ID)
+        && matches!(
+            text("function"),
+            Some(decision::FUNCTION_ID | action::FUNCTION_ID)
+        )
         && text("functionVersion") == Some("1")
 }
 
@@ -210,6 +251,8 @@ pub fn parks(payload: &norn_ir::RuntimeValue) -> bool {
 pub fn resolve(function_id: &str, version: u32) -> Result<Option<Registered>, RegistryError> {
     if function_id == decision::FUNCTION_ID && version == decision::VERSION {
         registered_decision().map(Some)
+    } else if function_id == action::FUNCTION_ID && version == action::VERSION {
+        registered_action().map(Some)
     } else {
         Ok(None)
     }

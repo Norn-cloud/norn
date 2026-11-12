@@ -380,3 +380,54 @@ fn a_tenant_cell_lists_and_answers_its_derived_metrics() {
     let anonymous = cell.call("GET", "/v1/questions:metrics", None, "");
     assert_eq!(anonymous.status, 403, "{}", anonymous.body);
 }
+
+/// The kernel's call records (who called what, with which input and
+/// idempotency key) are read by admins and owners only.
+#[test]
+fn kernel_call_records_are_read_by_admins_and_owners_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("a.sqlite"),
+        &with_policy(&["member"]),
+    );
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("member")), "m1").status,
+        200
+    );
+    let calls = format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE);
+    for role in ["member", "viewer"] {
+        let response = cell.call("GET", &calls, Some(&user(role)), "");
+        assert_ne!(response.status, 200, "{role}: {}", response.body);
+        assert!(!response.body.contains("m1"), "{role}");
+    }
+    for role in ["admin", "owner"] {
+        let response = cell.call("GET", &calls, Some(&user(role)), "");
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        let page: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(page["records"].as_array().map(Vec::len), Some(1), "{role}");
+    }
+}
+
+/// An idempotency key another caller already used is refused: a second
+/// caller never replays, or learns, the first caller's call.
+#[test]
+fn a_second_caller_reusing_an_idempotency_key_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("a.sqlite"),
+        &with_policy(&["member", "admin"]),
+    );
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("member")), "k1").status,
+        200
+    );
+    let reused = cell.melt(MELT_ACTION, Some(&user("admin")), "k1");
+    let refusal: Value = serde_json::from_str(&reused.body).unwrap();
+    assert_eq!(
+        (reused.status, refusal["code"].as_str()),
+        (409, Some("action.idempotency_conflict")),
+        "{}",
+        reused.body
+    );
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+}

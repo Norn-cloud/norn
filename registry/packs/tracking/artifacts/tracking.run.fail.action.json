@@ -1,0 +1,64 @@
+{
+  "artifactId": "tracking.run.fail.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Fail run",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.run.fail",
+    "effectProgram": {
+      "entityArtifactId": "tracking.Run.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "run_id",
+      "objectKind": "tracking.Run",
+      "transition": "fail"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Fail run",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "tracking.Run"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.run.fail.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "_tag": { "type": "string", "enum": ["Denied", "Refused"] },
+    "code": { "type": "string" }
+  },
+  "required": ["_tag"],
+  "additionalProperties": false
+}
