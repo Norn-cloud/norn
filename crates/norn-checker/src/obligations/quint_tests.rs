@@ -34,6 +34,7 @@ pub(super) fn fixture() -> Vec<Value> {
                     unit: None,
                     currency_source: None,
                     per_unit: None,
+                    unit_source: Vec::new(),
                 }
             },
             constraints: norn_ir::PropertyConstraints::default(),

@@ -16,10 +16,15 @@
 //! - [`server`]: read-only fetch dispatch over `norn_api`'s shared services.
 //! - [`mcp`]: `POST /v1/mcp`, the cell's catalog as MCP tools whose calls
 //!   re-enter [`server`] as the same caller.
+//! - [`base`]: the trusted base this host compiles in.
+//! - [`tenant`]: one scope's cell, vacant until `POST /v1/cell:provision`
+//!   (HOST-PROVISION-1) creates it, then served and reopened on restart.
 //! - `dev` (native only): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 
 pub mod analytics;
+pub mod base;
+pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
 pub mod mcp;
@@ -29,5 +34,6 @@ pub mod questions;
 mod runs;
 pub mod seed;
 pub mod server;
+pub mod tenant;
 #[cfg(target_arch = "wasm32")]
 mod wasm;

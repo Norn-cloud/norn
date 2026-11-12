@@ -110,6 +110,16 @@
         },
         "name": "document",
         "objectType": "docs.ScannedDocument"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "correction_evidence"
+          }
+        },
+        "name": "evidence",
+        "objectType": "docs.FieldEvidence"
       }
     ],
     "title": "Correct an extracted total",

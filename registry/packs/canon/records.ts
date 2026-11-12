@@ -26,8 +26,9 @@ export const PartyRole = Norn.type({
 export const Holding = Norn.type({
   name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource],
   properties: Schema.Struct({
-    // A holding is a stock: summable across holdings at one instant, never over time.
-    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" } }),
+    // A holding is a stock: summable across holdings at one instant, never over time. Every canon
+    // quantity is held in `unit` or, for money, `currency` (METRIC-UNIT-PARTITION-1).
+    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
     location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
@@ -44,7 +45,7 @@ export const OrderLine = Norn.type({
   properties: Schema.Struct({
     status: Schema.Literals(["requested", "promised", "fulfilled", "cancelled", "breached"]),
     // An ordered quantity is a flow: additive across lines and over due_at.
-    due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" } }),
+    due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
   links: [
@@ -58,7 +59,7 @@ export const Delivery = Norn.type({
   properties: Schema.Struct({
     action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
     // A delivered quantity is a flow: additive across events and over occurred_at.
-    occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" } }),
+    occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
   links: [

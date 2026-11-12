@@ -113,8 +113,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
       {phase.kind === "refused" && (
         <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span className="font-medium">{phase.message}</span>
-          {phase.explanation && <span className="text-meta text-foreground">{phase.explanation}</span>}
+          <span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span>
+          {phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>}
           <span className="font-mono text-xs opacity-80">{phase.code}</span>
           {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta">{d.message}</span>)}
           {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
@@ -166,6 +166,21 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       </div>
     </form>
   )
+}
+
+/**
+ * Headlines for the cell's refusal codes, in plain words; the cell's own message and explanation
+ * stay below. A code not listed here keeps the cell's message as its headline.
+ */
+const REFUSED: Readonly<Record<string, string>> = {
+  "core.laws.violated": "Breaks a rule",
+  "action.precondition_failed": "A condition for this action does not hold",
+  "action.target_not_found": "The record to change does not exist",
+  "action.slice_object_missing": "A record this action reads does not exist",
+  "action.invalid_input": "The input doesn't fit this action",
+  "action.idempotency_conflict": "This request was already used for a different change",
+  "authz.denied": "Not allowed",
+  "defs.stale": "The definitions changed: open the action again",
 }
 
 function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {

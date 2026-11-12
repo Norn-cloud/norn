@@ -16,6 +16,23 @@ pub enum Operation {
     /// Start a run of the named installed flow (RUN-ROUTES-1). A run holds no
     /// grants of its own: this decides only who may start one.
     StartRun(String),
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
+    /// Start a sync of the named source connection, or sign, complete, load
+    /// or read an upload (`upload`): a write of the cell's sources, decided
+    /// like a definitions write.
+    SyncSource(String),
+    /// Decide a decision a flow run waits on, whose request declares these
+    /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
+    /// run; it grants the run nothing.
+    Decide {
+        /// The roles the request declares; the caller must hold one.
+        roles: Vec<String>,
+        /// The law the request names, if any.
+        law: Option<String>,
+    },
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -192,6 +209,11 @@ mod tests {
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
                 Operation::StartRun("demo.flow".into()),
+                Operation::ProvisionCell,
+                Operation::Decide {
+                    roles: vec!["viewer".into()],
+                    law: None,
+                },
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

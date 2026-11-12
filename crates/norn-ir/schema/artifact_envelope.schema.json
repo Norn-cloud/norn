@@ -9155,6 +9155,13 @@
             },
             "unit": {
               "$ref": "#/$defs/UnitRef"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the sibling properties whose values\ntogether are this quantity's unit, when it has no static `unit`.\nAggregating questions must group by or fix each of them.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
@@ -9321,6 +9328,13 @@
             "name": {
               "description": "The referenced [`PropertyTypeDef`] name.",
               "$ref": "#/$defs/PropertyTypeName"
+            },
+            "unitSource": {
+              "description": "METRIC-UNIT-PARTITION-1: the unit source at this use site, for a\nref that resolves to a decimal declaring none of its own.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PropertyId"
+              }
             }
           },
           "additionalProperties": false,
@@ -9452,6 +9466,12 @@
       "description": "Bounds on an analytical question (ruling 2026-11-12). A question returns a\nhandful of aggregate rows but scans many source records, so the records it\nscans are bounded apart from [`SliceLimits::max_records`], which bounds the\nrecords a read returns. Over the bound a question is refused\n(`core.compute.bound_exceeded`), never truncated.",
       "type": "object",
       "properties": {
+        "max_scanned_bytes": {
+          "description": "Maximum stored bytes those records may decode to: the scan's memory\nbound.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "max_scanned_records": {
           "description": "Maximum source records one evaluation of a question may scan.",
           "type": "integer",
@@ -9461,7 +9481,8 @@
       },
       "additionalProperties": false,
       "required": [
-        "max_scanned_records"
+        "max_scanned_records",
+        "max_scanned_bytes"
       ]
     },
     "ReceiptAcceptance": {

@@ -242,16 +242,17 @@ export class SchemaProjection {
           throw new CompileError("NORN-FLOW-LITERAL", `Norn.decimal takes an integer literal scale between 0 and ${MAX_DECIMAL_SCALE}`, scale)
         }
         const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
-        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding" && key !== "additivity") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
+        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding" && key !== "additivity" && key !== "unitSource") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
         const unitNode = options.get("unit")
         const currencyNode = options.get("currency")
         const modeNode = options.get("rounding")
         const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
         if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
         const additivity = this.additivity(options.get("additivity"))
+        const unitSource = this.unitSource(options.get("unitSource"))
         const rounded = (type: E.PropertyType): E.PropertyType => {
           if (type.kind !== "decimal") throw new CompileError("NORN-FLOW-LITERAL", "rounding requires Decimal", call)
-          return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }) }
+          return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }), ...(unitSource.length === 0 ? {} : { unitSource }) }
         }
 
         if (currencyNode !== undefined) {
@@ -270,8 +271,8 @@ export class SchemaProjection {
       case "@norn/authoring#Norn.ref": {
         const name = this.stringLiteral(a[0], call, "the property type name")
         const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
-        for (const key of options.keys()) if (key !== "additivity") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.ref option ${key}`, a[1]!)
-        return { kind: "value-type", type: E.ref(name, this.additivity(options.get("additivity"))), node: call }
+        for (const key of options.keys()) if (key !== "additivity" && key !== "unitSource") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.ref option ${key}`, a[1]!)
+        return { kind: "value-type", type: E.ref(name, this.additivity(options.get("additivity")), this.unitSource(options.get("unitSource"))), node: call }
       }
       case "@norn/authoring#Norn.timestamp": {
         const timezone = this.stringLiteral(a[0], call, "the timezone policy")
@@ -283,6 +284,20 @@ export class SchemaProjection {
       default:
         throw projection(`${id ?? call.expression.getText()} is not a schema in the structural subset`, call)
     }
+  }
+
+  /** METRIC-UNIT-PARTITION-1: a literal array of distinct sibling property ids holding the unit. */
+  private unitSource(node: ts.Expression | undefined): string[] {
+    if (node === undefined) return []
+    const list = this.unwrap(node)
+    if (!ts.isArrayLiteralExpression(list) || list.elements.length === 0) throw new CompileError("NORN-FLOW-LITERAL", "unitSource is a non-empty literal array of property ids", node)
+    const ids = list.elements.map((element) => {
+      const id = this.stringLiteral(element, node, "a unitSource property id")
+      if (id.match(/^[a-z][a-z0-9_]*$/)?.[0] !== id) throw new CompileError("NORN-FLOW-LITERAL", "unitSource property ids match [a-z][a-z0-9_]*", element)
+      return id
+    })
+    if (new Set(ids).size !== ids.length) throw new CompileError("NORN-FLOW-LITERAL", "unitSource property ids are distinct", node)
+    return ids
   }
 
   /** METRIC-ADDITIVITY-1 / -REF-1: one closed additivity class; `undeclared` is omitted. */

@@ -42,6 +42,10 @@ pub struct MetricCandidate {
     pub time_grains: [TimeGrain; 5],
     /// Conservation evidence, when the law supplies term additivity.
     pub conservation: Vec<ConservationSource>,
+    /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit.
+    /// A question selecting this candidate groups by each, or fixes it with
+    /// an `eq` filter (`eq null` included), or admission refuses `mixed_unit`.
+    pub unit_partition: Vec<DimensionPath>,
 }
 
 /// Generated candidates and checker-owned law admission evidence.
@@ -266,7 +270,9 @@ fn candidates_at_time(
         }
         let definition = sum(object, &property.id, time_path, &proof);
         sums.insert(property.id.clone(), definition.name.clone());
-        candidates.push(candidate(definition, dimensions, proof));
+        let mut generated = candidate(definition, dimensions, proof);
+        generated.unit_partition = unit_partition(object, &[&property.id]);
+        candidates.push(generated);
     }
     declared_ratios(
         object,
@@ -337,7 +343,9 @@ fn declared_ratios(
         };
         definition.norn.additivity = MetricAdditivity::NonAdditive;
         definition.norn.currency = None;
-        candidates.push(candidate(definition, dimensions, proof));
+        let mut generated = candidate(definition, dimensions, proof);
+        generated.unit_partition = unit_partition(object, &[numerator, denominator]);
+        candidates.push(generated);
     }
 }
 
@@ -378,7 +386,9 @@ fn conserved_ratios(
                 ..MetricTypeParams::default()
             };
             definition.norn.additivity = MetricAdditivity::NonAdditive;
-            candidates.push(candidate(definition, dimensions, vec![source.clone()]));
+            let mut generated = candidate(definition, dimensions, vec![source.clone()]);
+            generated.unit_partition = unit_partition(object, &[output, &source.input]);
+            candidates.push(generated);
         }
     }
 }
@@ -551,6 +561,24 @@ fn encoded_name(name: &str) -> String {
         .collect()
 }
 
+/// The direct unit-source paths of `measures`, deduplicated in declaration order.
+fn unit_partition(object: &EffectiveObjectType, measures: &[&PropertyId]) -> Vec<DimensionPath> {
+    let mut paths: Vec<DimensionPath> = Vec::new();
+    for id in measures {
+        if let Some(EffectiveKind::Base(PropertyType::Decimal { unit_source, .. })) =
+            object.property(id.as_str()).map(|property| &property.kind)
+        {
+            for source in unit_source {
+                let path = direct(source);
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    paths
+}
+
 fn candidate(
     definition: MetricDefinition,
     dimensions: &[DimensionPath],
@@ -560,6 +588,7 @@ fn candidate(
         definition,
         dimensions: dimensions.to_vec(),
         conservation,
+        unit_partition: Vec::new(),
         time_grains: [
             TimeGrain::Day,
             TimeGrain::Week,
@@ -722,6 +751,7 @@ mod ontology_derived_measures {
                         rounding: None,
                         per_unit: None,
                         additivity: PropertyAdditivity::Undeclared {},
+                        unit_source: Vec::new(),
                     },
                 )
             })
@@ -1043,6 +1073,7 @@ mod ontology_derived_measures {
                     numerator: PropertyId("recovered".to_owned()),
                     denominator: PropertyId("input".to_owned()),
                 },
+                unit_source: Vec::new(),
             },
         ));
         artifacts[0].payload = payload(&ArtifactKind::Entity, &root);

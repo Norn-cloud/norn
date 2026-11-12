@@ -5,6 +5,7 @@ import { RecordActions } from "./actions/record-actions.tsx"
 import { Findings as FindingsPanel } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
 import { readFindings } from "./evidence/review.ts"
+import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 
 /**
  * A record the cell does not serve. When the cell holds it in quarantine (its findings route says
@@ -17,6 +18,7 @@ export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectT
     queryFn: () => readFindings(objectType, id),
     retry: false,
   })
+  const corrections = useEvidenceActions(objectType, id)
   const absent = <p className="text-muted-foreground">This record is not available: it does not exist, or you may not read it.</p>
   if (findings.isPending) return <p className="text-muted-foreground">Reading the record…</p>
   if (findings.isError) return findings.error instanceof NotServed || (findings.error instanceof CellRefusal && findings.error.status === 404) ? absent : <p role="alert" className="text-destructive">{findings.error.message}</p>
@@ -31,9 +33,10 @@ export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectT
           <p className="text-sm text-muted-foreground">The cell loaded this record but does not serve it: it breaks a law. It stays out of every answer until it is corrected.</p>
         </div>
       </div>
-      <FindingsPanel objectType={objectType} id={id} />
+      <FindingsPanel objectType={objectType} id={id} actionFor={corrections.actionFor} />
       <History objectType={objectType} id={id} />
       <RecordActions objectType={objectType} id={id} onDone={onDone} />
+      {corrections.sheet(onDone)}
     </div>
   )
 }

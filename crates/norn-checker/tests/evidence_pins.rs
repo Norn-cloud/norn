@@ -31,6 +31,7 @@ fn pool() -> Vec<Value> {
         }),
         currency_source: None,
         per_unit: None,
+        unit_source: Vec::new(),
     };
     let mut mass = artifacts[0]["payload"]["objectType"]["properties"][1].clone();
     mass["id"] = json!("mass");
