@@ -14,6 +14,8 @@ mod query_support;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 
+use proptest::strategy::Strategy as _;
+
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     EvaluateResponse, FileFormat, FileSource, GroupKey, LoadRequest, MembersRequest,
@@ -477,6 +479,59 @@ proptest::proptest! {
                 let exact_member = exact_row.members.get(&member.id).unwrap_or_else(|| panic!("member {:?} is not among {:?}", member.id, exact_row.members.keys()));
                 let amounts: Vec<Option<Decimal>> = member.amounts.iter().map(|a| a.map(|v| Decimal::parse(&format!("{v}e-6")).expect("coefficient"))).collect();
                 proptest::prop_assert_eq!(Some(amounts), exact_member.amounts.clone());
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(48))]
+    /// BULK-LOAD-1: a loaded timestamp is admitted exactly when the cell reads
+    /// it as one, with the cell's own UTC ordering key; any other is
+    /// quarantined as not a timestamp.
+    #[test]
+    fn loaded_timestamps_order_exactly_as_the_cell_reads_them(
+        (year, month, day) in (1900u32..2100, 1u32..13, 1u32..32),
+        (hour, minute, second) in (0u32..25, 0u32..60, 0u32..61),
+        fraction in proptest::option::of("[0-9]{1,10}"),
+        zone in proptest::prop_oneof![
+            proptest::strategy::Just("Z".to_owned()),
+            (0u32..25, 0u32..61, proptest::bool::ANY).prop_map(|(h, m, west)| format!("{}{h:02}:{m:02}", if west { '-' } else { '+' })),
+        ],
+    ) {
+        let text = format!(
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{}{zone}",
+            fraction.map_or(String::new(), |f| format!(".{f}"))
+        );
+        let expected = norn_checker::metric::compute::contribution::instant_key(&text, false);
+        let (_dir, engine) = engine();
+        let (file, sha256) = csv(&engine, &["at", &text]);
+        let mut request = load_request(&by_metal(true, 100).1, "t", sha256);
+        request.table = norn_cell::analytics::TableSchema {
+            name: "probe.Times".into(),
+            columns: vec![norn_cell::analytics::Column {
+                id: "at".into(),
+                kind: norn_cell::analytics::ColumnKind::Timestamp,
+                nullable: true,
+            }],
+            pin: "probe".into(),
+        };
+        let loaded = engine.load(&request, file.path()).expect("loaded");
+        match expected {
+            None => proptest::prop_assert_eq!(loaded.reasons, BTreeMap::from([("core.bulk.not_timestamp".to_owned(), 1)])),
+            Some((secs, nanos)) => {
+                proptest::prop_assert_eq!(loaded.rows, 1);
+                let profile = engine
+                    .profile(&norn_cell::analytics::ProfileRequest {
+                        tenant: tenant(),
+                        source: Source::Dataset { table: "probe.Times".into(), load: "t".into() },
+                        columns: vec!["at".into()],
+                    })
+                    .expect("profile");
+                proptest::prop_assert_eq!(
+                    profile.columns[0].min.clone(),
+                    Some(norn_cell::analytics::Value::Instant { text: text.clone(), secs, nanos })
+                );
             }
         }
     }

@@ -1138,58 +1138,95 @@ fn sha256_file(path: &Path) -> std::io::Result<(String, u64)> {
     Ok((hex(&hasher.finalize()), bytes))
 }
 
-const TIMESTAMP_SHAPE: &str = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$";
-const DATE_SHAPE: &str = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
-
-/// The reason a present text value is not of `kind`, or SQL NULL when it is.
-fn reason_sql(kind: ColumnKind, v: &str) -> String {
-    match kind {
-        // Digits with at most a sign, then an exact cast: no pattern match per row.
-        ColumnKind::Integer => format!(
-            "CASE WHEN translate({v}, '0123456789', '') IN ('', '-', '+') AND TRY_CAST({v} AS DECIMAL(38,0)) IS NOT NULL THEN NULL ELSE 'core.bulk.not_integer' END"
-        ),
-        // Digits around at most one point, with at most a sign; more
-        // fractional digits than the scale is refused, never rounded.
-        ColumnKind::Decimal { scale } => format!(
-            "CASE WHEN translate({v}, '0123456789', '') NOT IN ('', '.', '-', '+', '-.', '+.') OR ltrim({v}, '+-') LIKE '.%' OR {v} LIKE '%.' THEN 'core.bulk.not_decimal' \
-             WHEN strpos({v}, '.') > 0 AND strlen({v}) - strpos({v}, '.') > {scale} THEN 'core.bulk.scale_exceeded' \
-             WHEN TRY_CAST({v} AS DECIMAL(38,{scale})) IS NULL THEN 'core.bulk.not_decimal' ELSE NULL END"
-        ),
-        ColumnKind::Boolean => format!(
-            "CASE WHEN lower({v}) IN ('true', 'false') THEN NULL ELSE 'core.bulk.not_boolean' END"
-        ),
-        ColumnKind::Timestamp => format!(
-            "CASE WHEN regexp_full_match({v}, '{TIMESTAMP_SHAPE}') AND TRY_CAST(substr({v}, 1, 10) AS DATE) IS NOT NULL \
-             AND CAST(substr({v}, 12, 2) AS INTEGER) <= 23 AND CAST(substr({v}, 15, 2) AS INTEGER) <= 59 \
-             AND CAST(substr({v}, 18, 2) AS INTEGER) <= 59 \
-             AND (right({v}, 1) = 'Z' OR (CAST(substr(right({v}, 6), 2, 2) AS INTEGER) <= 23 AND CAST(right({v}, 2) AS INTEGER) <= 59)) \
-             THEN NULL ELSE 'core.bulk.not_timestamp' END"
-        ),
-        ColumnKind::Date => format!(
-            "CASE WHEN regexp_full_match({v}, '{DATE_SHAPE}') AND TRY_CAST({v} AS DATE) IS NOT NULL THEN NULL ELSE 'core.bulk.not_date' END"
-        ),
-        ColumnKind::Text | ColumnKind::Opaque => "NULL".to_owned(),
-    }
+/// One column of the single load pass: the typed value and, for instants,
+/// the exact UTC ordering key, each parsed once from the text column `c`, and
+/// the flags its reason is decided from. Shapes are checked on characters,
+/// never by a pattern engine; casts are exact or yield null, never rounded.
+struct Parsed {
+    /// Typed value (and `t`/`n` for instants), named `v{i}`, `t{i}`, `n{i}`.
+    columns: Vec<String>,
+    /// The reason a present value is refused, or SQL NULL, over the columns above.
+    reason: String,
 }
 
-/// The exact UTC ordering key `(seconds, nanoseconds)` of a validated
-/// RFC 3339 timestamp (or a date's midnight), in integer arithmetic.
-fn instant_sql(kind: ColumnKind, v: &str) -> (String, String) {
-    let days = format!("datediff('day', DATE '1970-01-01', CAST(substr({v}, 1, 10) AS DATE))");
-    if kind == ColumnKind::Date {
-        return (format!("CAST({days} AS BIGINT) * 86400"), "0".to_owned());
+#[allow(clippy::too_many_lines, reason = "one arm per column kind")]
+fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
+    let c = format!("c{i}");
+    let v = format!("v{i}");
+    match kind {
+        ColumnKind::Text | ColumnKind::Opaque => Parsed {
+            columns: vec![format!("{c} AS {v}")],
+            reason: "NULL".to_owned(),
+        },
+        ColumnKind::Integer => Parsed {
+            columns: vec![format!(
+                "CASE WHEN translate({c}, '0123456789', '') IN ('', '-', '+') THEN TRY_CAST({c} AS DECIMAL(38,0)) END AS {v}"
+            )],
+            reason: format!("CASE WHEN {v} IS NULL THEN 'core.bulk.not_integer' END"),
+        },
+        ColumnKind::Decimal { scale } => Parsed {
+            columns: vec![
+                format!(
+                    "translate({c}, '0123456789', '') IN ('', '.', '-', '+', '-.', '+.') AND NOT ltrim({c}, '+-') LIKE '.%' AND NOT {c} LIKE '%.' AS s{i}"
+                ),
+                format!("strpos({c}, '.') = 0 OR strlen({c}) - strpos({c}, '.') <= {scale} AS f{i}"),
+                format!(
+                    "CASE WHEN translate({c}, '0123456789', '') IN ('', '.', '-', '+', '-.', '+.') AND (strpos({c}, '.') = 0 OR strlen({c}) - strpos({c}, '.') <= {scale}) THEN TRY_CAST({c} AS DECIMAL(38,{scale})) END AS {v}"
+                ),
+            ],
+            reason: format!(
+                "CASE WHEN NOT s{i} THEN 'core.bulk.not_decimal' WHEN NOT f{i} THEN 'core.bulk.scale_exceeded' WHEN {v} IS NULL THEN 'core.bulk.not_decimal' END"
+            ),
+        },
+        ColumnKind::Boolean => Parsed {
+            columns: vec![format!(
+                "CASE lower({c}) WHEN 'true' THEN TRUE WHEN 'false' THEN FALSE END AS {v}"
+            )],
+            reason: format!("CASE WHEN {v} IS NULL THEN 'core.bulk.not_boolean' END"),
+        },
+        ColumnKind::Date => Parsed {
+            columns: vec![
+                format!("{c} AS {v}"),
+                format!(
+                    "CASE WHEN strlen({c}) = 10 AND translate({c}, '0123456789', '') = '--' AND substr({c}, 5, 1) = '-' AND substr({c}, 8, 1) = '-' \
+                     THEN CAST(datediff('day', DATE '1970-01-01', TRY_CAST({c} AS DATE)) AS BIGINT) * 86400 END AS t{i}"
+                ),
+                format!("0 AS n{i}"),
+            ],
+            reason: format!("CASE WHEN t{i} IS NULL THEN 'core.bulk.not_date' END"),
+        },
+        ColumnKind::Timestamp => {
+            // RFC 3339 as the cell reads it: `YYYY-MM-DDTHH:MM:SS`, then an
+            // optional `.` and 1–9 digits, then `Z` or `±HH:MM`.
+            let zone = format!(
+                "CASE WHEN right({c}, 1) = 'Z' THEN 'Z' WHEN translate(right({c}, 6), '0123456789', '') IN ('+:', '-:') \
+                 AND substr(right({c}, 6), 4, 1) = ':' AND substr(right({c}, 6), 2, 2) <= '23' AND substr(right({c}, 6), 5, 2) <= '59' THEN right({c}, 6) END"
+            );
+            let fraction = format!("substr({c}, 20, strlen({c}) - 19 - strlen({zone}))");
+            let shape = format!(
+                "strlen({c}) BETWEEN 20 AND 35 AND translate(substr({c}, 1, 19), '0123456789', '') = '--T::' \
+                 AND substr({c}, 5, 1) = '-' AND substr({c}, 8, 1) = '-' AND substr({c}, 11, 1) = 'T' AND substr({c}, 14, 1) = ':' \
+                 AND substr({c}, 17, 1) = ':' AND substr({c}, 12, 2) <= '23' AND substr({c}, 18, 2) <= '59' AND {zone} IS NOT NULL \
+                 AND ({fraction} = '' OR (substr({fraction}, 1, 1) = '.' AND strlen({fraction}) BETWEEN 2 AND 10 AND translate(substr({fraction}, 2), '0123456789', '') = ''))"
+            );
+            let offset = format!(
+                "CASE WHEN {zone} = 'Z' THEN 0 ELSE (CASE WHEN substr({zone}, 1, 1) = '-' THEN -1 ELSE 1 END) * \
+                 (CAST(substr({zone}, 2, 2) AS BIGINT) * 3600 + CAST(substr({zone}, 5, 2) AS BIGINT) * 60) END"
+            );
+            Parsed {
+                columns: vec![
+                    format!("{c} AS {v}"),
+                    format!(
+                        "CASE WHEN {shape} THEN epoch_ms(TRY_CAST(substr({c}, 1, 19) AS TIMESTAMP)) // 1000 - {offset} END AS t{i}"
+                    ),
+                    format!(
+                        "CASE WHEN {shape} THEN CAST(rpad(substr({fraction}, 2), 9, '0') AS INTEGER) END AS n{i}"
+                    ),
+                ],
+                reason: format!("CASE WHEN t{i} IS NULL THEN 'core.bulk.not_timestamp' END"),
+            }
+        }
     }
-    let offset = format!(
-        "CASE WHEN right({v}, 1) = 'Z' THEN 0 ELSE (CASE WHEN substr(right({v}, 6), 1, 1) = '-' THEN -1 ELSE 1 END) * \
-         (CAST(substr(right({v}, 6), 2, 2) AS BIGINT) * 3600 + CAST(right({v}, 2) AS BIGINT) * 60) END"
-    );
-    let secs = format!(
-        "(CAST({days} AS BIGINT) * 86400 + CAST(substr({v}, 12, 2) AS BIGINT) * 3600 + CAST(substr({v}, 15, 2) AS BIGINT) * 60 + CAST(substr({v}, 18, 2) AS BIGINT) - {offset})"
-    );
-    let nanos = format!(
-        "CAST(rpad(COALESCE(regexp_extract({v}, '^[^.]*\\.([0-9]{{1,9}})', 1), ''), 9, '0') AS INTEGER)"
-    );
-    (secs, nanos)
 }
 
 fn dataset_ddl(table: &TableSchema) -> String {
@@ -1203,19 +1240,18 @@ fn dataset_ddl(table: &TableSchema) -> String {
     columns.join(", ")
 }
 
-/// Read the file into `":raw"`: one nullable text column `c<i>` per table
-/// column, found by its header (or Parquet field) name, numbered from 1 in
-/// file order; an empty or blank field is null.
-fn read_raw(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()> {
+/// Read the file once into `":file"` (insertion order is the file's), then
+/// in one pass into `":checked"`: per table column `c{i}` its text (found by
+/// header or Parquet field name; an empty or blank field is null), its
+/// parsed value, and `":reason"`, the first refusal in column order.
+fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()> {
     let path = file.to_string_lossy().replace('\'', "''");
-    let blank = |c: &str| format!("CASE WHEN trim({c}) = '' THEN NULL ELSE {c} END");
     let source = match request.file.format {
         FileFormat::Csv => format!(
             "SELECT * FROM read_csv('{path}', header = true, all_varchar = true, delim = ',', quote = '\"', escape = '\"', strict_mode = true, null_padding = false)"
         ),
         FileFormat::Parquet => format!("SELECT * FROM read_parquet('{path}', file_row_number = true)"),
     };
-    // Materialized in file order (insertion order is preserved).
     db(conn.execute_batch(&format!("CREATE OR REPLACE TEMP TABLE \":file\" AS {source}")))?;
     let mut statement = db(conn.prepare(
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ':file'",
@@ -1224,32 +1260,43 @@ fn read_raw(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     }))?
     .collect::<Result<_, _>>())?;
-    let mut select = Vec::new();
+    let mut texts = Vec::new();
+    let mut parsed = Vec::new();
+    let mut reasons = Vec::new();
     for (i, column) in request.table.columns.iter().enumerate() {
         let name = request.headers.get(&column.id).unwrap_or(&column.id);
         let Some(data_type) = present.get(name) else {
             return Err(refusal("core.bulk.missing_column", format!("the file has no column {name}")));
         };
-        let c = ident(name);
+        let f = ident(name);
         let text = match (column.kind, data_type.as_str()) {
             (ColumnKind::Timestamp, kind) if kind.starts_with("TIMESTAMP") => {
-                format!("strftime(CAST({c} AS TIMESTAMP), '%Y-%m-%dT%H:%M:%S.%fZ')")
+                format!("strftime(CAST({f} AS TIMESTAMP), '%Y-%m-%dT%H:%M:%S.%fZ')")
             }
-            (ColumnKind::Date, "DATE") => format!("strftime({c}, '%Y-%m-%d')"),
-            _ => format!("CAST({c} AS VARCHAR)"),
+            (ColumnKind::Date, "DATE") => format!("strftime({f}, '%Y-%m-%d')"),
+            _ => format!("CAST({f} AS VARCHAR)"),
         };
-        select.push(format!("{} AS c{i}", blank(&text)));
+        texts.push(format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"));
+        let Parsed { columns, reason } = parse_sql(column.kind, i);
+        parsed.extend(columns);
+        let missing = if column.nullable { "NULL" } else { "'core.bulk.required'" };
+        reasons.push(format!("CASE WHEN c{i} IS NULL THEN {missing} ELSE {reason} END"));
     }
-    let row = match request.file.format {
-        // Inside the load's transaction row ids start at a local offset; their
-        // order is still the file's.
-        FileFormat::Csv => "CAST(row_number() OVER (ORDER BY rowid) AS UBIGINT)",
-        FileFormat::Parquet => "CAST(file_row_number + 1 AS UBIGINT)",
+    let order = match request.file.format {
+        FileFormat::Csv => "rowid",
+        FileFormat::Parquet => "file_row_number",
     };
-    let separator = if select.is_empty() { "" } else { ", " };
+    let reason = if reasons.is_empty() {
+        "NULL".to_owned()
+    } else {
+        format!("coalesce({})", reasons.join(", "))
+    };
+    let separator = if texts.is_empty() { "" } else { ", " };
     db(conn.execute_batch(&format!(
-        "CREATE OR REPLACE TEMP TABLE \":raw\" AS SELECT {row} AS \":row\"{separator}{} FROM \":file\" ORDER BY 1",
-        select.join(", ")
+        "CREATE OR REPLACE TEMP TABLE \":checked\" AS SELECT *, {reason} AS \":reason\" FROM (\
+         SELECT *{separator}{} FROM (SELECT CAST(row_number() OVER (ORDER BY {order}) AS UBIGINT) AS \":row\"{separator}{} FROM \":file\") AS t) AS p",
+        parsed.join(", "),
+        texts.join(", "),
     )))?;
     Ok(())
 }
@@ -1260,29 +1307,7 @@ fn load_file(
     file: &Path,
 ) -> Outcome<(u64, BTreeMap<String, u64>)> {
     let table = &request.table;
-    read_raw(conn, request, file)?;
-    // The first reason per row, in column order.
-    let mut reasons = Vec::new();
-    for (i, column) in table.columns.iter().enumerate() {
-        let v = format!("c{i}");
-        let missing = if column.nullable {
-            "NULL".to_owned()
-        } else {
-            "'core.bulk.required'".to_owned()
-        };
-        reasons.push(format!(
-            "CASE WHEN {v} IS NULL THEN {missing} ELSE {} END",
-            reason_sql(column.kind, &v)
-        ));
-    }
-    let reason = if reasons.is_empty() {
-        "NULL".to_owned()
-    } else {
-        format!("coalesce({})", reasons.join(", "))
-    };
-    db(conn.execute_batch(&format!(
-        "CREATE OR REPLACE TEMP TABLE \":checked\" AS SELECT *, {reason} AS \":reason\" FROM \":raw\""
-    )))?;
+    check_file(conn, request, file)?;
     let dataset = dataset_table(&table.name);
     let quarantine = quarantine_table(&table.name);
     db(conn.execute_batch(&format!(
@@ -1299,15 +1324,13 @@ fn load_file(
     let mut columns = Vec::new();
     let mut values = Vec::new();
     for (i, column) in table.columns.iter().enumerate() {
-        let v = format!("c{i}");
         columns.push(ident(&column.id));
-        values.push(format!("CASE WHEN {v} IS NULL THEN NULL ELSE {} END", cast(column.kind, &v)));
+        values.push(format!("v{i}"));
         if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
-            let (secs, nanos) = instant_sql(column.kind, &v);
             columns.push(derived(&column.id, "t"));
-            values.push(format!("CASE WHEN {v} IS NULL THEN NULL ELSE {secs} END"));
+            values.push(format!("t{i}"));
             columns.push(derived(&column.id, "n"));
-            values.push(format!("CASE WHEN {v} IS NULL THEN NULL ELSE {nanos} END"));
+            values.push(format!("n{i}"));
         }
     }
     let separator = if columns.is_empty() { "" } else { ", " };
@@ -1338,7 +1361,7 @@ fn load_file(
         Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
     }))?
     .collect::<Result<_, _>>())?;
-    db(conn.execute_batch("DROP TABLE \":checked\"; DROP TABLE \":raw\"; DROP TABLE IF EXISTS \":file\";"))?;
+    db(conn.execute_batch("DROP TABLE \":checked\"; DROP TABLE \":file\";"))?;
     set_meta(conn, &format!("load:{}", table.name), &request.load)?;
     set_meta(conn, &format!("dataset:{}", table.name), &schema_text(table)?)?;
     set_meta(
