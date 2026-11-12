@@ -123,16 +123,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if input.get("observationId").and_then(RuntimeValue::as_str) != Some(observation_id) {
             return Err(invalid());
         }
-        let observed: norn_kernel::Observed<RuntimeValue> =
+        let mut observed: norn_kernel::Observed<RuntimeValue> =
             norn_ir::runtime::decode(input.get("observed").ok_or_else(invalid)?)
                 .map_err(CellError::Encoding)?;
+        if observed.id.0 != *observation_id {
+            return Err(invalid());
+        }
+        if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+            observed = page_member(input, &instance)?;
+        }
         if observed.input.get("artifactPins").is_none() {
             return Ok(None);
         }
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-        if observed.id.0 != *observation_id
-            || *observation_id != format!("mapping-bundle:{}", bundle.digest)
+        if observed.id.0 != format!("mapping-bundle:{}", bundle.digest)
             || receipt.body.definitions_version != bundle.definitions_version
         {
             return Err(invalid());
@@ -140,6 +145,40 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.recheck_mapping_bundle(&bundle)?;
         source_from_bundle(&bundle, &instance).map(Some)
     }
+}
+
+/// OBS-PAGE-1: the member whose bundle maps `instance`, among the members a
+/// page commit consumed (retained in its consumed input).
+fn page_member(
+    input: &RuntimeValue,
+    instance: &ObjectRecord,
+) -> Result<norn_kernel::Observed<RuntimeValue>, CellError> {
+    let invalid = || CellError::MappingBundleMismatch;
+    let members: Vec<crate::PendingObservation> =
+        norn_ir::runtime::decode(input.get("members").ok_or_else(invalid)?)
+            .map_err(CellError::Encoding)?;
+    for member in members {
+        let candidate: norn_kernel::Observed<RuntimeValue> =
+            norn_ir::runtime::decode(&member.observed).map_err(CellError::Encoding)?;
+        let maps = candidate
+            .input
+            .get("records")
+            .and_then(RuntimeValue::as_array)
+            .is_some_and(|records| {
+                records.iter().any(|r| {
+                    r.get("key").and_then(RuntimeValue::as_str) == Some(instance.id.as_str())
+                        && r.get("objectType").and_then(RuntimeValue::as_str)
+                            == Some(instance.object_type.as_str())
+                })
+            });
+        if maps {
+            if candidate.id.0 != member.observation_id {
+                return Err(invalid());
+            }
+            return Ok(candidate);
+        }
+    }
+    Err(invalid())
 }
 
 fn source_from_bundle(
