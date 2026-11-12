@@ -1,6 +1,7 @@
 //! VIEW-ENGINE-1: an admitted transform returns the same rows and row lineage
 //! from embedded `DuckDB` as from the exact interpreter over one snapshot.
 #![allow(
+    clippy::arithmetic_side_effects,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
