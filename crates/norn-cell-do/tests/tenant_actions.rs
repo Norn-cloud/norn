@@ -431,3 +431,25 @@ fn a_second_caller_reusing_an_idempotency_key_is_refused() {
     );
     assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
 }
+
+/// A profile of a type the cell does not declare answers at once, exactly
+/// as the object routes answer for that type: no hang, and nothing that
+/// tells an undeclared type from one the caller may not see.
+#[test]
+fn a_profile_of_an_undeclared_type_answers_as_the_object_routes_do() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("p.sqlite"), &with_policy(&["admin"]));
+    for auth in [Some(user("admin")), Some(user("viewer")), None] {
+        let page = cell.call("GET", "/v1/objects/shop.Missing", auth.as_deref(), "");
+        let profile = cell.call("GET", "/v1/objects/shop.Missing:profile", auth.as_deref(), "");
+        assert_ne!(profile.status, 200, "{}", profile.body);
+        assert_eq!(
+            (profile.status, profile.body.as_str()),
+            (page.status, page.body.as_str()),
+            "{auth:?}"
+        );
+    }
+    // A declared type still profiles.
+    let melts = cell.call("GET", &format!("/v1/objects/{MELT}:profile"), Some(&user("admin")), "");
+    assert_eq!(melts.status, 200, "{}", melts.body);
+}
