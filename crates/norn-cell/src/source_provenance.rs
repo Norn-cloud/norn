@@ -44,6 +44,11 @@ pub struct InstanceSourceProvenance {
     pub field_provenance: BTreeMap<PropertyId, InstanceProvenance>,
 }
 
+/// The receipt bytes one trace may read beyond its slice budget: a page of
+/// the most records OBS-PAGE-1 admits (1,000) writes a receipt of about
+/// 1.3 MB.
+const TRACE_RECEIPT_ALLOWANCE: u64 = 2 * 1024 * 1024;
+
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// Resolve an immutable fact's consumed bundle under current host disclosure policy.
     /// The host must authorize source-provenance disclosure separately from numeric
@@ -80,15 +85,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if instance.object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
             return Ok(None);
         }
-        let receipt = self
-            .receipt_for_fact_version_with_budget(
-                world,
-                fact.object_type.as_str(),
-                &fact.key,
-                fact.version,
-                budget,
-            )?
-            .ok_or_else(invalid)?;
+        // A trace reads and hashes the whole receipt of the fact's commit; an
+        // OBS-PAGE-1 page commit's receipt lists every fact the page wrote, so
+        // that one read gets an allowance sized to the largest page the law
+        // admits rather than the caller's slice budget.
+        let receipt = budget
+            .with_allowance(TRACE_RECEIPT_ALLOWANCE, |budget| {
+                self.receipt_for_fact_version_with_budget(
+                    world,
+                    fact.object_type.as_str(),
+                    &fact.key,
+                    fact.version,
+                    budget,
+                )
+            })?
+            .ok_or_else(exhausted)?;
         let Some(crate::Consumption::Observation { observation_id }) = &receipt.body.consumed
         else {
             return Ok(None);

@@ -118,7 +118,8 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
         .iter()
         .find(|row| row["dataset"] == "Sales Order Item")
         .unwrap();
-    for n in 1..=300 {
+    // One full page: 500 order lines.
+    for n in 1..=(500 - snapshot.len()) {
         let mut line = order.clone();
         line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
         line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
