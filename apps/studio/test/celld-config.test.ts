@@ -83,3 +83,11 @@ test("a write that fails leaves no secret-bearing file behind", async () => {
   writeSecretConfig(path, { vars: {} })
   expect(existsSync(path)).toBe(true)
 })
+
+test("STUDIO_MCP=on serves /mcp and OAuth discovery from the Worker; anything else refuses", () => {
+  const config = celldConfig(celldStudio({ ...BASE, STUDIO_MCP: "on" }))
+  expect((config.vars as Record<string, string>).STUDIO_MCP).toBe("on")
+  expect((config.assets as { run_worker_first: string[] }).run_worker_first).toEqual(["/api/*", "/mcp", "/.well-known/*"])
+  expect((celldConfig(celldStudio(BASE)).vars as Record<string, string>).STUDIO_MCP).toBeUndefined()
+  expect(() => celldStudio({ ...BASE, STUDIO_MCP: "yes" })).toThrow(/STUDIO_MCP/)
+})

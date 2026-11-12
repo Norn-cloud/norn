@@ -15,7 +15,8 @@ import { awaitServed, entryChunk } from "./served-build.ts"
 // script); the checks then apply to that checkout. It defaults to this script's own app.
 //
 // Environment (see #1027): STUDIO_STAGE, BETTER_AUTH_URL, BETTER_AUTH_SECRET,
-// STUDIO_DEFAULT_ORG, NORN_HOST_SERVICE, AI_GATEWAY_URL + AI_GATEWAY_TOKEN +
+// STUDIO_DEFAULT_ORG, NORN_HOST_SERVICE, STUDIO_MCP (on: /mcp for assistants, needs migration 0007),
+// AI_GATEWAY_URL + AI_GATEWAY_TOKEN +
 // NORN_CHECKER_WASM_PKG (the assistant), CELLD_BUCKET, S3_ENDPOINT, AWS_REGION,
 // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. `celld` and `esbuild` on PATH.
 
