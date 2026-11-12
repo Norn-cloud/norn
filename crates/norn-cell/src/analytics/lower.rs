@@ -212,6 +212,11 @@ fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
 /// # Errors
 /// Unsupported semantics, or a window that is not a pair of timestamps.
 pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
+    // METRIC-GRAIN-LINK-1 reads each row's time through its to-one link; that
+    // join is not in this profile yet, so it refuses rather than misread a time.
+    if plan.time_link().is_some() {
+        return Err(refused());
+    }
     let question = plan.question();
     let first = plan.sums().first().ok_or_else(refused)?;
     let time = first.time_property.as_str();

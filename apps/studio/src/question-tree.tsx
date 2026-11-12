@@ -333,7 +333,7 @@ export function QuestionTreePage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Build a question</h1>
+        <h1 className="text-title font-semibold tracking-tight">Build a question</h1>
         <p className="max-w-2xl text-muted-foreground">Choose left to right: what to measure, how to group it, which records count and over which dates. The server recommends a pick in each column from what the cell declares, checks every change and says the question back in plain words.</p>
       </div>
       {(catalog.isPending || tree.isPending) && <p className="text-muted-foreground">Reading the catalogue…</p>}

@@ -72,11 +72,12 @@ export const Delivery = Norn.type({
     { id: "reverses", target: "core.EconomicEvent", cardinality: { to: "one", from: "one" } },
   ],
 })
-// Posting.amount and SettlementObservation.amount stay undeclared (#1171): neither has a time
-// grain of its own (the time lives on the linked event), and core.money_amount binds no currency.
+// A posting's amount is a flow: additive, its time is its event's (METRIC-GRAIN-LINK-1), and its
+// sums split by `currency`, since core.money_amount binds none (METRIC-UNIT-PARTITION-1).
+// SettlementObservation.amount stays undeclared: its currencySource is free text (#1171).
 export const Posting = Norn.type({
   name: "canon.Posting", title: "Signed ledger observation, not a posting command", version: "0.1.0", implements: [LedgerEffect],
-  properties: Schema.Struct({ account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount"), currency: Norn.ref("core.code"), book: Schema.String, account_role: Schema.String }),
+  properties: Schema.Struct({ account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount", { additivity: { kind: "additive" }, unitSource: ["currency"] }), currency: Norn.ref("core.code"), book: Schema.String, account_role: Schema.String }),
   links: [{ id: "event", target: Delivery, cardinality: { to: "one", from: "many", required: true } }],
 })
 export const Settlement = Norn.interfaceType({

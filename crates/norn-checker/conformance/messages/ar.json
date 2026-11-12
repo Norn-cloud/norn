@@ -554,6 +554,14 @@
       "message": "حمولة المفهوم المعرَّف لا تطابق جذرها الصارم",
       "review": "needs_review"
     },
+    "derived.validation.column_conflict": {
+      "message": "عقدة في العرض العلائقي تُخرج عمودين بالاسم نفسه",
+      "review": "needs_review"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "إسقاط في العرض العلائقي يحذف أو يغيّر عمودًا يعرّف صفوفه",
+      "review": "needs_review"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "الصيانة \"incremental\" محجوزة لمرحلة IVM مستقبلية وغير مدعومة بعد؛ استخدم \"recompute_on_read\"",
       "review": "needs_review"
@@ -562,8 +570,36 @@
       "message": "حمولة DerivedIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
     },
+    "derived.validation.invalid_plan": {
+      "message": "خطة العرض العلائقي تشير إلى مدخل أو عقدة أو مخرج غير معلن، أو فيها دورة أو عقدة غير موصولة، أو تستخدم شكلًا لا يقبله ViewIR v1",
+      "review": "needs_review"
+    },
     "derived.validation.io_in_view": {
       "message": "نوع الحساب \"effectful_ts\" غير مسموح داخل عرض مشتق (الإدخال والإخراج يكونان في أداة Effect)",
+      "review": "needs_review"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "العرض العلائقي يربط على شيء ليس رابطًا معلنًا ولا مفتاحًا معلنًا للنوع الأيمن",
+      "review": "needs_review"
+    },
+    "derived.validation.order_not_total": {
+      "message": "نافذة أو إزالة تكرار في العرض العلائقي ترتب الصفوف بمفاتيح لا تغطي هوية صفوف المدخل",
+      "review": "needs_review"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "العرض العلائقي يعلن مخطط مخرجاته بنفسه، بينما يستنتجه ViewIR v1",
+      "review": "needs_review"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "تعبير أو عمود في العرض العلائقي ليس من النوع الذي يحتاجه المعامل",
+      "review": "needs_review"
+    },
+    "derived.validation.union_shape": {
+      "message": "العرض العلائقي يوحّد مدخلات تختلف أعمدتها أو أنواعها أو عقودها أو حبيبتها",
+      "review": "needs_review"
+    },
+    "derived.validation.unknown_column": {
+      "message": "العرض العلائقي يسمي عمودًا غير موجود في صف مدخله",
       "review": "needs_review"
     },
     "entity.deprecation.v1_payload": {
@@ -1575,7 +1611,7 @@
       "review": "needs_review"
     },
     "metric.validation.partial_path": {
-      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "message": "مُدخلات العملة والسعر تتطلب مسارات كاملة.",
       "review": "needs_review"
     },
     "metric.validation.ratio_aggregation": {

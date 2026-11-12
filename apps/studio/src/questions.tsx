@@ -1,14 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { useState } from "react"
-import { ChartLine, Clock, Plus, Rows3, Sigma } from "lucide-react"
+import { Fragment, useState } from "react"
+import { ChartLine, Clock, Plus, Rows3, Sigma, X } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { useView } from "@/lib/view"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
@@ -32,6 +33,7 @@ export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-
 
 /** One metric the cell derives, asked per day or week over every date its records carry. */
 function MetricCard({ metric }: { readonly metric: MetricSummary }) {
+  const { view } = useView()
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   // A sum the cell will not add across units starts with one condition per property it must fix; the reader picks each value.
   const [conditions, setConditions] = useState<readonly Condition[]>(() => (metric.unitPartition ?? []).map((property) => ({ property, value: "" })))
@@ -47,7 +49,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const what = metric.kind === "simple" && metric.expression !== null ? `Total ${metric.expression.replaceAll("_", " ")}` : metric.label
   return (
     <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
-      action={<span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}>
+      action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span> : undefined}>
       <Well className="space-y-3 p-4">
         {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
         {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
@@ -80,20 +82,25 @@ function Conditions({ fields, conditions, onChange }: { readonly fields: readonl
   const set = (index: number, next: Partial<Condition>) => onChange(conditions.map((condition, at) => at === index ? { ...condition, ...next } : condition))
   return (
     <div className="space-y-2">
-      {conditions.map((condition, index) => (
-        <div key={index} className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">{index === 0 ? "Only where" : "and"}</span>
-          <select aria-label={`Field of condition ${index + 1}`} className="h-8 rounded-md border bg-background px-2" value={condition.property} onChange={(event) => set(index, { property: event.target.value })}>
-            {fields.map((field) => <option key={field} value={field}>{field.replaceAll("_", " ")}</option>)}
-          </select>
-          <span className="text-muted-foreground">is</span>
-          {condition.value === null
-            ? <span className="rounded-md border px-2 py-1 text-muted-foreground">empty</span>
-            : <input aria-label={`Value of condition ${index + 1}`} className="h-8 w-32 rounded-md border bg-background px-2" value={condition.value} onChange={(event) => set(index, { value: event.target.value })} />}
-          <label className="flex items-center gap-1 text-muted-foreground"><input type="checkbox" checked={condition.value === null} onChange={(event) => set(index, { value: event.target.checked ? null : "" })} />empty</label>
-          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(conditions.filter((_, at) => at !== index))}>Remove</Button>
+      {conditions.length > 0 && (
+        // One row per condition on a shared grid, so fields, values and the remove control line up.
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-2 text-sm">
+          {conditions.map((condition, index) => (
+            <Fragment key={index}>
+              <span className="text-muted-foreground">{index === 0 ? "Only where" : "and"}</span>
+              <select aria-label={`Field of condition ${index + 1}`} className="h-8 min-w-0 rounded-md border bg-background px-2" value={condition.property} onChange={(event) => set(index, { property: event.target.value })}>
+                {fields.map((field) => <option key={field} value={field}>{field.replaceAll("_", " ")}</option>)}
+              </select>
+              <span className="text-muted-foreground">is</span>
+              {condition.value === null
+                ? <span className="flex h-8 items-center rounded-md border border-dashed px-2 text-muted-foreground">empty</span>
+                : <input aria-label={`Value of condition ${index + 1}`} className="h-8 min-w-0 rounded-md border bg-background px-2" value={condition.value} onChange={(event) => set(index, { value: event.target.value })} />}
+              <label className="flex items-center gap-1.5 text-muted-foreground"><input type="checkbox" checked={condition.value === null} onChange={(event) => set(index, { value: event.target.checked ? null : "" })} />empty</label>
+              <Button type="button" variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Remove condition ${index + 1}`} title="Remove" onClick={() => onChange(conditions.filter((_, at) => at !== index))}><X /></Button>
+            </Fragment>
+          ))}
         </div>
-      ))}
+      )}
       {fields.length > 0 && <Button type="button" variant="outline" size="sm" onClick={() => onChange([...conditions, { property: fields[0] ?? "", value: "" }])}><Plus />Only where…</Button>}
     </div>
   )
@@ -164,11 +171,8 @@ export function QuestionsPage() {
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-title font-medium">Questions</h1>
-        <p className="max-w-2xl text-muted-foreground">Business questions answered exactly by the server. Every number opens to the records it was added up from.</p>
-        <div className="flex flex-wrap gap-2"><Button asChild size="sm"><Link to="/questions/build"><Plus />Build a question</Link></Button><Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question (form)</Link></Button></div>
-      </div>
+      <PageHeader title="Questions" description="Business questions answered exactly by the server. Every number opens to the records it was added up from."
+        actions={<><Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question (form)</Link></Button><Button asChild size="sm"><Link to="/questions/build"><Plus />Build a question</Link></Button></>} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>
         {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}

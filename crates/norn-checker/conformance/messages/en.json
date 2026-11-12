@@ -416,14 +416,41 @@
     "defined_concept.validation.invalid_payload": {
       "message": "defined-concept payload does not match its strict root"
     },
+    "derived.validation.column_conflict": {
+      "message": "a relational view's node outputs two columns with one name"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "a relational view's projection drops or changes a column that identifies its rows"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\""
     },
     "derived.validation.invalid_payload": {
       "message": "DerivedIR payload is invalid at {$path}: {$detail}"
     },
+    "derived.validation.invalid_plan": {
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit"
+    },
     "derived.validation.io_in_view": {
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type"
+    },
+    "derived.validation.order_not_total": {
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "a relational view's expression or column does not have the type its operator needs"
+    },
+    "derived.validation.union_shape": {
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ"
+    },
+    "derived.validation.unknown_column": {
+      "message": "a relational view names a column that its input row does not have"
     },
     "entity.deprecation.v1_payload": {
       "message": "entity {$artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\""
@@ -1182,7 +1209,7 @@
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
     "metric.validation.partial_path": {
-      "message": "Mandatory time, currency and rate inputs require total paths."
+      "message": "Currency and rate inputs require total paths."
     },
     "metric.validation.ratio_aggregation": {
       "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."

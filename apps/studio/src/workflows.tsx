@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
-import { Background, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Panel, Well } from "@/components/panel"
+import { PageHeader, Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { transport } from "./lib/transport.ts"
@@ -23,15 +23,18 @@ const Names = createContext<(name: string) => string>(words)
 const useNames = () => use(Names)
 
 type Pick = (id: string | undefined) => void
-type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
+type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
 type StepData = { pinned: string | undefined; order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
 type MoreData = { count: number; onExpand: () => void }
 
-const tile = (faded: boolean, lit: boolean) => cn("rounded-xl border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-30", lit && "border-primary ring-2 ring-primary/20")
+/** Every card on the chart floats with the shared node depth; the lit path takes the accent ring, the rest fades. */
+const tile = (faded: boolean, lit: boolean) => cn("canvas-node rounded-node border border-node-border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-35", lit && "canvas-node-selected")
+/** A state's kind, as a tinted dot: where records start, where they end, or a stop on the way. */
+const dot = (start: boolean, terminal: boolean) => <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: start ? "var(--tint-start)" : terminal ? "var(--tint-outcome)" : "var(--tint-state)" }} />
 const hidden = "!opacity-0 !border-0 !bg-transparent"
 
-/** The tree's fixed zoom and padding: readable at any width, scrolled sideways when wider than the page. */
-const ZOOM = 0.85
+/** The tree's fixed zoom and padding: full size, scrolled sideways when wider than the page. */
+const ZOOM = 1
 const PAD = 24
 /** The page renders at 90% (root font-size), so the px layout scales with it; the cards (rem) already do. */
 const SCALE = 0.9
@@ -47,14 +50,18 @@ const activate = (run: () => void) => ({
 
 function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
   return (
-    <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-60 p-3" : "w-48 px-3 py-2")}>
+    <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-64 px-3.5 py-3" : "w-52 px-3.5 py-2.5")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
       <button type="button" aria-pressed={data.pinned === id} {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-        <div className={cn("font-medium", data.start && "text-base")}>{data.label}</div>
-        {data.start && data.description && <div className="line-clamp-1 text-meta text-muted-foreground">{data.description}</div>}
+        <div className="flex items-start gap-2">
+          {dot(data.start, data.terminal)}
+          <div className="min-w-0">
+            <div className={cn("font-medium leading-snug", data.start ? "text-panel" : "text-sm")}>{data.label}</div>
+          </div>
+        </div>
       </button>
-      <div className="mt-1.5 flex flex-wrap gap-1">
+      <div className={cn("flex flex-wrap gap-1 ps-4", (data.start || data.terminal || data.backs.length > 0) && "mt-2")}>
         {data.start && <Badge variant="secondary">Starts here</Badge>}
         {data.terminal && <Badge variant="outline">Ends here</Badge>}
         {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
@@ -72,11 +79,14 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
+    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-56 px-3.5 py-2.5 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
-      <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[0.6875rem] tabular-nums">{data.order}</span>{data.label}</div>
-      <div className="truncate text-meta text-muted-foreground">{data.sub}</div>
+      <div className="flex items-start gap-2 font-medium leading-snug">
+        <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-[0.6875rem] tabular-nums" style={{ background: "color-mix(in oklab, var(--tint-route) 14%, transparent)", color: "var(--tint-route)" }}>{data.order}</span>
+        <span className="line-clamp-2">{data.label}</span>
+      </div>
+      <div className="line-clamp-2 ps-7 pt-0.5 text-meta text-muted-foreground">{data.sub}</div>
     </button>
   )
 }
@@ -126,10 +136,10 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
-    const position = { x: ((node.column >> 1) * 420 + (node.column % 2) * 230) * SCALE, y: node.row * 120 * SCALE }
+    const position = { x: ((node.column >> 1) * 500 + (node.column % 2) * 272) * SCALE, y: node.row * 136 * SCALE }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
-      return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, description: workflow.description, laws: workflow.laws.length,
+      return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, laws: workflow.laws.length,
         backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
     }
     const guards = node.transition.guards ?? []
@@ -137,12 +147,13 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${fields.join(", ")}`) } }
   })
   if (folded > 0) {
-    const right = Math.max(...nodes.map(({ position }) => position.x)) + 260 * SCALE
+    const right = Math.max(...nodes.map(({ position }) => position.x)) + 290 * SCALE
     nodes.push({ id: "more", type: "more", position: { x: right, y: 8 * SCALE }, data: { count: folded, onExpand: () => setExpanded(true) } })
   }
   const edges: Edge[] = tree.edges.filter(({ source, target }) => shown.has(source) && shown.has(target)).map(({ source, target }) => ({
     id: `${source}>${target}`, source, target, type: "default",
-    style: { stroke: lit?.has(source) && lit.has(target) ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: 1.25, opacity: lit && !(lit.has(source) && lit.has(target)) ? 0.3 : 1, transition: "opacity 200ms" },
+    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: lit?.has(source) && lit.has(target) ? "var(--edge-active)" : "var(--edge)" },
+    style: { stroke: lit?.has(source) && lit.has(target) ? "var(--edge-active)" : "var(--edge)", strokeWidth: lit?.has(source) && lit.has(target) ? 2 : 1.5, opacity: lit && !(lit.has(source) && lit.has(target)) ? 0.3 : 1, transition: "opacity 200ms" },
   }))
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { pin(undefined); setHover(undefined); return }
@@ -156,10 +167,23 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     if (next) { setHover(next); pin(next) }
   }
   // The tree at one readable zoom, as wide as it needs: the page scrolls it sideways instead of cutting it off or shrinking it.
-  const width = Math.max(...nodes.map(({ position }) => position.x)) + (280 + 2 * PAD) * SCALE
-  const height = Math.max(...nodes.map(({ position }) => position.y)) + (200 + 2 * PAD) * SCALE
+  const width = Math.max(...nodes.map(({ position }) => position.x)) + (300 + 2 * PAD) * SCALE
+  // When the chart runs past the panel, its right edge fades, so it reads as scrolling, not cut off.
+  const [more, setMore] = useState(false)
+  useEffect(() => {
+    const element = frame.current
+    if (!element) return
+    const check = () => setMore(element.scrollLeft + element.clientWidth < element.scrollWidth - 4)
+    check()
+    element.addEventListener("scroll", check, { passive: true })
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(check)
+    observer?.observe(element)
+    return () => { element.removeEventListener("scroll", check); observer?.disconnect() }
+  }, [width])
+  // As tall as the lowest card (a start state with its badges is the tallest), no taller.
+  const height = Math.max(...nodes.map(({ position }) => position.y)) + (130 + 2 * PAD) * SCALE
   return (
-    <div ref={frame} role="group" className="w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+    <div ref={frame} role="group" className={cn("w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30", more && "[mask-image:linear-gradient(to_right,black_calc(100%-64px),transparent)]")} tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       <div style={{ width: width * ZOOM, height: height * ZOOM, minWidth: "100%" }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
           // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
@@ -254,6 +278,8 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
   const back = backOf(tree, pinned)
   const stepped = node?.kind === "step" ? node.transition : back?.transition
   const step = stepped && workflow.steps.find(({ transition }) => transition.id === stepped.id)
+  // A generated flow's run reads in plain words in the business view; the builder's own note stays under Technical.
+  const about = view !== "technical" && flow ? `Each run of the ${flow.title.toLowerCase()} automation moves through these states.` : workflow.description
   return (
     <Names value={state}>
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
@@ -262,26 +288,28 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
           <h2 className="text-section font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
           {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
-        <p className="text-meta text-muted-foreground">
-          {[view !== "technical" && flow ? `Each run of the ${flow.title.toLowerCase()} automation moves through these states.` : workflow.description,
+        <p className="max-w-[80ch] text-meta text-muted-foreground">
+          {[about,
             `Starts as ${lifecycle.initial.map(state).join(" or ")}.`,
             lifecycle.terminal?.length ? `Ends as ${lifecycle.terminal.map(state).join(" or ")}.` : undefined,
             lifecycle.immutable?.length ? `Its details are locked while ${lifecycle.immutable.map(state).join(" or ")}.` : undefined,
           ].filter(Boolean).join(" ")}
         </p>
       </div>
-      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <Panel label="Steps" action="Hover or select a state or step; arrow keys move, Enter pins, Esc clears">
+      {/* The chart takes the full width; what is pinned opens beside it, and only then. */}
+      <div className={cn("grid gap-3", pinned !== undefined && "xl:grid-cols-[minmax(0,1fr)_20rem]")}>
+        <Panel label="Steps" action="Select a state or step to see its condition, action and laws; arrow keys move, Esc clears">
           {pinned && <Breadcrumb tree={tree} pinned={pinned} />}
-          <Well><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
+          <Well className="bg-canvas-surface"><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
         </Panel>
-        <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"}>
-          <Well>
-            {step && <StepCard workflow={workflow} step={step} />}
-            {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
-            {node === undefined && step === undefined && <p className="p-4 text-sm text-muted-foreground">Select a state or a step to see its condition, action and laws.</p>}
-          </Well>
-        </Panel>
+        {pinned !== undefined && (
+          <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"} action={<Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPinned(undefined)}>Clear</Button>}>
+            <Well>
+              {step && <StepCard workflow={workflow} step={step} />}
+              {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
+            </Well>
+          </Panel>
+        )}
       </div>
     </section>
     </Names>
@@ -321,10 +349,7 @@ export function WorkflowsPage() {
   const flows = useRunTypeFlows()
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-title font-medium">Workflows</h1>
-        <p className="max-w-2xl text-muted-foreground">How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it.</p>
-      </div>
+      <PageHeader title="Workflows" description="How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it." />
       <Automations />
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
