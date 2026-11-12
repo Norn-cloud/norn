@@ -55,7 +55,7 @@ impl IncrementalQuestion {
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
         let (snapshot, source_pins, receipt_pin) =
-            store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
+            store.question_snapshot_at_with(plan, context, knowledge, false, visible, |snapshot, _| {
                 let reader = store.read();
                 let pins = reader.question_source_pins(&snapshot.finding_members)?;
                 let receipt = reader

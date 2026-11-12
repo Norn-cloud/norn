@@ -328,6 +328,7 @@ fn trace_query(lineage: &str) -> TraceQuery {
         environment_id: Some("dev".into()),
         lineage_ref: Some(lineage.into()),
         bucket: Some(WEEK.into()),
+        ..TraceQuery::default()
     }
 }
 

@@ -114,12 +114,53 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         matches: &dyn Fn(&str) -> bool,
         bucket: &str,
+        visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        disclosure: LineageDisclosure<'_>,
+    ) -> Result<NumericTrace, CellError> {
+        self.trace_matching_at(plan, context, None, matches, bucket, visible, disclosure)
+    }
+
+    /// [`Self::trace_question_matching`] for a live answer given when the cell
+    /// had `frontier` commits, at `context.now_ms` (the answer's `knownAsOf`
+    /// and `nowMs`). The answer is recomputed from that commit and pinned as
+    /// it was given, so a later commit does not move it: if the handle names
+    /// it, it is traced as it was answered. Authorization is current.
+    /// # Errors
+    /// As [`Self::trace_question`]; `core.projection.answer_moved` when the
+    /// recomputed answer is not the one the handle names.
+    #[allow(clippy::too_many_arguments, reason = "one trace's fixed coordinates")]
+    pub fn trace_question_answered_matching(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        frontier: u64,
+        matches: &dyn Fn(&str) -> bool,
+        bucket: &str,
+        visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        disclosure: LineageDisclosure<'_>,
+    ) -> Result<NumericTrace, CellError> {
+        let cutoff = crate::KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(context.now_ms),
+            frontier,
+        };
+        self.trace_matching_at(plan, context, Some(cutoff), matches, bucket, visible, disclosure)
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "one trace's fixed coordinates")]
+    fn trace_matching_at(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        answered_at: Option<crate::KnowledgeCutoff>,
+        matches: &dyn Fn(&str) -> bool,
+        bucket: &str,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         disclosure: LineageDisclosure<'_>,
     ) -> Result<NumericTrace, CellError> {
         let LineageDisclosure { values, source } = disclosure;
         let incomplete = || refused("core.projection.lineage_incomplete");
-        self.question_snapshot_with(plan, context, &mut visible, |snapshot, _scan| {
+        let answered = answered_at.is_some();
+        self.question_snapshot_at_with(plan, context, answered_at, answered, &mut visible, |snapshot, _scan| {
             // A trace returns records and their sources: it decodes them under
             // the slice bound on what a read returns, not the question's scan
             // bound (ruling 2026-11-12).

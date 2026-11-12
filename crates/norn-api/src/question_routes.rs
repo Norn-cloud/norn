@@ -144,6 +144,21 @@ pub struct TraceQuery {
     /// Canonical bucket key from that result.
     #[param(required = true, nullable = false)]
     pub bucket: Option<String>,
+    /// The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+    /// given, even after the cell has committed since. Without them the
+    /// trace is of the cell's current answer.
+    pub known_as_of: Option<u64>,
+    /// The answer's `nowMs`, with `knownAsOf`.
+    pub now_ms: Option<u64>,
+}
+
+/// The answer's coordinates a trace may name: both, or neither.
+fn answered_at(known_as_of: Option<u64>, now_ms: Option<u64>) -> Result<Option<(u64, u64)>, Refusal> {
+    match (known_as_of, now_ms) {
+        (Some(frontier), Some(now)) => Ok(Some((frontier, now))),
+        (None, None) => Ok(None),
+        _ => Err(Refusal::invalid("knownAsOf and nowMs are given together")),
+    }
 }
 
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
@@ -379,7 +394,8 @@ pub fn get_numeric_trace<E: SqlEngine>(
         .bucket
         .as_deref()
         .ok_or_else(|| Refusal::invalid("bucket is required"))?;
-    trace_plan(host, runtime, actor, question, &plan, key, lineage, bucket)
+    let answered = answered_at(query.known_as_of, query.now_ms)?;
+    trace_plan(host, runtime, actor, question, &plan, key, lineage, bucket, answered)
 }
 
 /// Trace one bucket of an admitted `plan`'s current exact result, named by
@@ -394,9 +410,10 @@ fn trace_plan<E: SqlEngine>(
     key: &[u8],
     lineage: &str,
     bucket: &str,
+    answered: Option<(u64, u64)>,
 ) -> Result<NumericTrace, Refusal> {
     let cell = host.cell()?;
-    let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
+    let mut snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
@@ -407,20 +424,35 @@ fn trace_plan<E: SqlEngine>(
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let mut trace = cell
-        .store()
-        .trace_question_matching(
+    let matches = |internal: &str| lineage_handle_matches(key, internal, lineage);
+    let disclosure = LineageDisclosure {
+        values: &mut |row| permits(row, Values),
+        source: &mut |row| permits(row, Sources),
+    };
+    let mut trace = match answered {
+        // The answer as it was given: recomputed from its commit, at its clock.
+        Some((frontier, now)) => {
+            snapshot.context.now_ms = now;
+            cell.store().trace_question_answered_matching(
+                plan,
+                snapshot.context,
+                frontier,
+                &matches,
+                bucket,
+                |row| visible_recording(row, &permits, &mut withheld),
+                disclosure,
+            )
+        }
+        None => cell.store().trace_question_matching(
             plan,
             snapshot.context,
-            &|internal| lineage_handle_matches(key, internal, lineage),
+            &matches,
             bucket,
             |row| visible_recording(row, &permits, &mut withheld),
-            LineageDisclosure {
-                values: &mut |row| permits(row, Values),
-                source: &mut |row| permits(row, Sources),
-            },
-        )
-        .map_err(Refusal::from_compute)?;
+            disclosure,
+        ),
+    }
+    .map_err(Refusal::from_compute)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
@@ -531,6 +563,13 @@ pub struct AdHocTraceRequest {
     pub lineage_ref: String,
     /// Canonical bucket key from that answer.
     pub bucket: String,
+    /// The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+    /// given, even after the cell has committed since.
+    #[serde(default)]
+    pub known_as_of: Option<u64>,
+    /// The answer's `nowMs`, with `knownAsOf`.
+    #[serde(default)]
+    pub now_ms: Option<u64>,
 }
 
 fn bucket_bound_exceeded() -> Refusal {
@@ -738,6 +777,7 @@ pub fn trace_ad_hoc<E: SqlEngine>(
     let actor = actor.ok_or_else(read_denied)?;
     let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
     let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;
+    let answered = answered_at(request.known_as_of, request.now_ms)?;
     trace_plan(
         host,
         runtime,
@@ -747,6 +787,7 @@ pub fn trace_ad_hoc<E: SqlEngine>(
         key,
         &request.lineage_ref,
         &request.bucket,
+        answered,
     )
 }
 

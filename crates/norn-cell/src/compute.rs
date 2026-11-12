@@ -315,22 +315,21 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
-        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+        self.question_snapshot_at_with(plan, context, cutoff, false, visible, |snapshot, _| {
+            Ok(snapshot)
+        })
     }
-    fn question_snapshot_with<T>(
-        &self,
-        plan: &QuestionPlan,
-        context: QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
-    ) -> Result<T, CellError> {
-        self.question_snapshot_at_with(plan, context, None, visible, consume)
-    }
-    fn question_snapshot_at_with<T>(
+    /// The question's snapshot, read live or as of `cutoff`. An `answered`
+    /// read is a live answer recomputed from the commit it was given at: its
+    /// rows are read as of `cutoff`, but it is pinned as the live answer was
+    /// (no slice pin, no historical receipt), so it reproduces that answer's
+    /// lineage pin exactly when nothing it read has changed since.
+    pub(crate) fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,
         cutoff: Option<crate::KnowledgeCutoff>,
+        answered: bool,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
     ) -> Result<T, CellError> {
@@ -347,7 +346,9 @@ impl<E: SqlEngine> CellStore<E> {
             let (ids, complete) = if let Some(cutoff) = cutoff {
                 (revision, frontier_receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                if !answered {
+                    historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                }
                 historical::history_ids(
                     &reader,
                     &context.world,
@@ -413,7 +414,8 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
-            let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
+            let (query_pin, definition_pin) =
+                self.question_pins(plan, cutoff.filter(|_| !answered))?;
             let result = materialize(
                 plan,
                 (context, exclusions),

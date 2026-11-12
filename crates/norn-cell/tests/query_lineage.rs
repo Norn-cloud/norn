@@ -191,7 +191,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
     assert!(matches!(
         store.trace_question(
             &plan,
-            context,
+            context.clone(),
             &result.lineage_ref,
             WEEK,
             |_| Ok(true),
@@ -203,6 +203,35 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
         Err(CellError::ComputeRefused(
             "core.projection.answer_moved"
         ))
+    ));
+    // Named as it was given (its commit count, at its clock), the answer is
+    // recomputed from that commit and traced as it was, after the change.
+    let answered = |frontier: u64| {
+        store.trace_question_answered_matching(
+            &plan,
+            context.clone(),
+            frontier,
+            &|lineage| lineage == result.lineage_ref,
+            WEEK,
+            |_| Ok(true),
+            LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(true),
+            },
+        )
+    };
+    let traced = answered(result.known_as_of).expect("traced as answered");
+    assert_eq!(traced.result, result);
+    assert!(
+        traced
+            .contributions
+            .iter()
+            .all(|contribution| contribution.fact.key != "correction")
+    );
+    // Any other commit is not the answer the handle names.
+    assert!(matches!(
+        answered(result.known_as_of.checked_add(1).expect("next commit")),
+        Err(CellError::ComputeRefused("core.projection.answer_moved"))
     ));
 }
 

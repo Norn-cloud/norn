@@ -173,16 +173,37 @@ pub fn handle_all<E: SqlEngine>(
                 })
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => {
-                parse(query, &["orgId", "environmentId", "lineageRef", "bucket"])
-                    .and_then(|mut fields| {
-                        let query = TraceQuery {
-                            org_id: fields.remove("orgId"),
-                            environment_id: fields.remove("environmentId"),
-                            lineage_ref: fields.remove("lineageRef"),
-                            bucket: fields.remove("bucket"),
-                        };
-                        get_numeric_trace(host, &query, actor, name, named(runtime))
-                    })
+                parse(
+                    query,
+                    &[
+                        "orgId",
+                        "environmentId",
+                        "lineageRef",
+                        "bucket",
+                        "knownAsOf",
+                        "nowMs",
+                    ],
+                )
+                .and_then(|mut fields| {
+                    let number = |field: Option<String>, name: &str| {
+                        field
+                            .map(|text| {
+                                text.parse::<u64>().map_err(|_invalid| {
+                                    Refusal::invalid(format!("{name} is not a whole number"))
+                                })
+                            })
+                            .transpose()
+                    };
+                    let query = TraceQuery {
+                        org_id: fields.remove("orgId"),
+                        environment_id: fields.remove("environmentId"),
+                        lineage_ref: fields.remove("lineageRef"),
+                        bucket: fields.remove("bucket"),
+                        known_as_of: number(fields.remove("knownAsOf"), "knownAsOf")?,
+                        now_ms: number(fields.remove("nowMs"), "nowMs")?,
+                    };
+                    get_numeric_trace(host, &query, actor, name, named(runtime))
+                })
                     .and_then(|document| document_json(&document))
             }
             (Some(_), None) => Err(Refusal::new(
