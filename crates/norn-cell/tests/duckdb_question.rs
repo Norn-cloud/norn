@@ -47,9 +47,21 @@ fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> Que
 }
 
 fn scaled_fixture(scales: [u64; 2], sum: bool) -> (CellStore, QuestionPlan, QueryContext) {
+    nullable_fixture(scales, sum, false)
+}
+
+/// `recovered` may be declared nullable: a missing measurement is no value, not 0.
+fn nullable_fixture(
+    scales: [u64; 2],
+    sum: bool,
+    nullable: bool,
+) -> (CellStore, QuestionPlan, QueryContext) {
     let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
+        if property.id.as_str() == "recovered" {
+            property.constraints.nullable = nullable;
+        }
         if let PropertyType::Decimal { scale: places, .. } = &mut property.property_type {
             *places = WholeNumber(if property.id.as_str() == "recovered" {
                 scales[1]
@@ -141,6 +153,66 @@ proptest::proptest! {
         let writes=population.iter().enumerate().map(|(i,(input,recovered))|scaled_row(&format!("G{i}"),*input,*recovered,[3,3])).collect();
         commit(&mut store,writes);
         compare(&store,&plan,context);
+    }
+}
+
+/// Sums skip a null measured value, never read it as 0, and count it per bucket and
+/// operand; the embedded SQL engine agrees exactly, and a retraction restores the counts.
+#[test]
+fn a_null_measured_value_is_skipped_and_counted_by_both_engines() {
+    for sum in [true, false] {
+        let (mut store, plan, context) = nullable_fixture([3, 3], sum, true);
+        let rows = [
+            ("G1", 1000, Some(900)),
+            ("G2", 2000, None),
+            ("G3", 4000, Some(3000)),
+            ("G4", 500, None),
+        ];
+        commit(
+            &mut store,
+            rows.iter()
+                .map(|(id, input, recovered)| nullable_row(id, *input, *recovered))
+                .collect(),
+        );
+        let result = compare(&store, &plan, context.clone());
+        assert_eq!(result.rows.len(), 1, "one bucket");
+        let row = result.rows.values().next().expect("bucket");
+        let recovered = Decimal::parse("3.9").expect("exact");
+        if sum {
+            // demo.recovered: 0.9 + 3.0 over the two present values; two nulls skipped.
+            assert_eq!(row.totals, vec![recovered]);
+            assert_eq!(row.null_counts, vec![2]);
+        } else {
+            // The ratio's two operands: input is never null, recovered is null twice.
+            let mut counts = row.null_counts.clone();
+            counts.sort_unstable();
+            assert_eq!(counts, vec![0, 2], "{row:?}");
+            assert!(row.totals.contains(&recovered), "{row:?}");
+        }
+        let wire = serde_json::to_string(row).expect("wire");
+        assert!(wire.contains("\"nullCounts\""), "{wire}");
+        // Correcting a null to a value moves it from the count into the sum, in both engines.
+        commit(&mut store, vec![nullable_row("G2", 2000, Some(100))]);
+        let corrected = compare(&store, &plan, context.clone());
+        let row = corrected.rows.values().next().expect("bucket");
+        assert_eq!(row.null_counts.iter().sum::<u64>(), 1, "{row:?}");
+        // With no null left, the answer carries no nullCounts at all.
+        commit(&mut store, vec![nullable_row("G4", 500, Some(400))]);
+        let complete = compare(&store, &plan, context);
+        assert!(complete.rows.values().all(|row| row.null_counts.is_empty()));
+    }
+}
+
+fn nullable_row(id: &str, input: i64, recovered: Option<i64>) -> FactWriteRow {
+    let exact = |value: i64| Decimal::parse(&format!("{value}e-3")).expect("declared scale");
+    FactWriteRow::Put {
+        object_type: TYPE.into(),
+        key: id.into(),
+        values: norn_ir::runtime_object! {
+            "input" => exact(input),
+            "recovered" => recovered.map_or(norn_ir::RuntimeValue::Null, |value| norn_ir::RuntimeValue::from(exact(value))),
+            "loss" => Decimal::from(0i64), "occurred_at" => "2026-10-23T12:00:00Z", "metal" => "e\u{301}",
+        }.as_object().expect("object literal").clone(),
     }
 }
 
