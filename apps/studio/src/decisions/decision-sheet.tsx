@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { Clock } from "lucide-react"
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 import "@ui-sdk/web/radio"
 import "@ui-sdk/web/textarea"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
@@ -62,13 +62,14 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
   const { locale } = useLocale()
   const navigate = useNavigate()
   const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => loadEngine(), staleTime: Infinity, retry: false })
-  const host = useRef<HTMLDivElement>(null)
+  // A callback ref: the sheet's portal mounts its content after this component commits.
+  const [host, setHost] = useState<HTMLDivElement | null>(null)
   const element = useRef<NornDecisionSheet | null>(null)
   const callbacks = useRef({ onClose, onSettled })
   callbacks.current = { onClose, onSettled }
 
   useEffect(() => {
-    const target = host.current
+    const target = host
     if (decision === null || engine.data === undefined || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
@@ -88,7 +89,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
     element.current = sheet
     return () => { sheet.remove(); element.current = null }
     // A new decision (or the engine arriving) mounts a fresh machine; `now` only repaints.
-  }, [decision?.id, engine.data, locale])
+  }, [decision?.id, engine.data, locale, host])
 
   useEffect(() => {
     if (now !== undefined) (element.current as unknown as { setNow?: (ms: number) => void } | null)?.setNow?.(now)
@@ -107,7 +108,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
         <SheetDescription className="sr-only">{decision ? `${flowTitle(decision)} · ${stepTitle(decision)}` : ""}</SheetDescription>
         {engine.isError
           ? <p role="alert" className="p-6 text-sm text-destructive">The decision engine is not part of this build, so nothing can be decided here.</p>
-          : <div ref={host} className="contents" />}
+          : <div ref={setHost} className="contents" />}
       </SheetContent>
     </Sheet>
   )
