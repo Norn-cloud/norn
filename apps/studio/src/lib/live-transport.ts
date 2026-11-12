@@ -4,7 +4,7 @@
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
 import { useQuery } from "@tanstack/react-query"
-import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -42,7 +42,8 @@ export type Mode = { readonly kind: "live"; readonly catalog: Read<readonly Arti
 export async function readMode(fetcher: Fetch): Promise<Mode> {
   let scope: StudioScope | null
   try { scope = await readStudioScope(fetcher) } catch (error) {
-    if (error instanceof CellUnavailable) return { kind: "recorded" }
+    // No session server answered (a preview without the Worker, or one that reports no scope): nothing is connected.
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) return { kind: "recorded" }
     throw error
   }
   if (scope === null) return { kind: "recorded" }
