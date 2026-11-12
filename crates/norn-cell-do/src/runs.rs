@@ -1,8 +1,8 @@
-//! RUN-ROUTES-1 and DECISIONS-1 on the DO host: start (`POST /v1/runs`),
-//! list (`GET /v1/runs`) and read (`GET /v1/runs/{id}`) runs through
-//! `norn_api::run_routes`, and list (`GET /v1/decisions`) and decide
-//! (`POST /v1/decisions/{id}:decide`) the decisions runs wait on through
-//! `norn_api::decisions`, scoped by the query string. Starting is the host
+//! RUN-ROUTES-1 and DECISIONS-1 on the DO host: start (`POST /v1/runs`) and
+//! read (`GET /v1/runs/{id}`) runs through `norn_api::run_routes`, and list
+//! (`GET /v1/decisions`) and decide (`POST /v1/decisions/{id}:decide`) the
+//! decisions runs wait on through `norn_api::decisions`, scoped by the query
+//! string. Starting is the host
 //! operation `StartRun`, decided by the cell's policy; every run read is the
 //! caller's ordinary Values read of the run's object type, mapped by
 //! [`collection_access`]. A caller with no verified principal reads nothing.
@@ -15,7 +15,7 @@ use norn_api::decisions::{DecideRequest, DecisionsQuery, decide, list_decisions}
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::refusal::Refusal;
-use norn_api::run_routes::{RunsQuery, StartRunRequest, get_run, list_runs, start_run};
+use norn_api::run_routes::{StartRunRequest, get_run, start_run};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 
@@ -49,7 +49,7 @@ pub(crate) fn dispatch<E: SqlEngine>(
     })
 }
 
-/// A run route: `/v1/runs` (start or list) or `/v1/runs/{id}`.
+/// A run route: `/v1/runs` (start) or `/v1/runs/{id}` (read).
 #[derive(Debug, Clone, Copy)]
 enum RunsRoute<'p> {
     Collection,
@@ -96,35 +96,6 @@ fn runs<E: SqlEngine>(
             let (status, run) = start_run(host, &scope, actor, &body, &reads(subject), now)?;
             Ok((status, document_json(&run)?))
         }
-        (RunsRoute::Collection, "GET") => {
-            let mut fields = parse(
-                request.query,
-                &["orgId", "environmentId", "flow", "state", "cursor", "limit"],
-            )?;
-            let Some(subject) = actor else {
-                return Err(norn_api::authz::read_denied());
-            };
-            let limit = fields
-                .remove("limit")
-                .map(|limit| {
-                    limit
-                        .parse::<u32>()
-                        .map_err(|error| Refusal::invalid(format!("limit: {error}")))
-                })
-                .transpose()?;
-            let query = RunsQuery {
-                org_id: fields.remove("orgId"),
-                environment_id: fields.remove("environmentId"),
-                flow: fields.remove("flow"),
-                state: fields.remove("state"),
-                cursor: fields.remove("cursor"),
-                limit,
-            };
-            Ok((
-                StatusCode::OK,
-                document_json(&list_runs(host, &query, subject, &reads(subject))?)?,
-            ))
-        }
         (RunsRoute::One(id), "GET") => {
             let mut fields = parse(request.query, &["orgId", "environmentId"])?;
             let scope = scope_of(&mut fields);
@@ -139,9 +110,7 @@ fn runs<E: SqlEngine>(
                 document_json(&get_run(host, &scope, subject, &id, &reads(subject))?)?,
             ))
         }
-        (RunsRoute::Collection, _) => Err(not_allowed(
-            "runs are started with POST and listed with GET",
-        )),
+        (RunsRoute::Collection, _) => Err(not_allowed("a run is started with POST")),
         (RunsRoute::One(_), _) => Err(not_allowed("a run is read with GET")),
     }
 }
@@ -223,12 +192,16 @@ fn decisions<E: SqlEngine>(
                     collection_access(&scope, &subject, capability, object_type)
                 }
             };
-            Ok((
-                StatusCode::OK,
-                document_json(&decide(
-                    host, &scope, actor, &id, &body, &reads, runtime, now,
-                )?)?,
-            ))
+            match decide(host, &scope, actor, &id, &body, &reads, runtime, now) {
+                Ok(decided) => Ok((StatusCode::OK, document_json(&decided)?)),
+                // A refusal carries who resolved the decision first, when
+                // someone did.
+                Err(refused) => Ok((
+                    StatusCode::from_u16(refused.refusal.status)
+                        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                    document_json(&*refused)?,
+                )),
+            }
         }
         (DecisionsRoute::Collection, _) => Err(not_allowed("decisions are listed with GET")),
         (DecisionsRoute::Decide(_), _) => Err(not_allowed("a decision is decided with POST")),

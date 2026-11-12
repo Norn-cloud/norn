@@ -184,7 +184,7 @@ pub struct DecisionDocument {
     /// What it is about.
     pub context: DecisionContext,
     /// Reserved; always `null` in this version.
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<std::collections::BTreeMap<String, serde_json::Value>>)]
     pub input_schema: Option<serde_json::Value>,
 }
 
@@ -313,6 +313,28 @@ pub struct DecisionResolution {
     pub at_ms: u64,
     /// The chosen option, only for a reader who may read the run.
     pub choice: Option<String>,
+}
+
+/// A refused decide call: the shared refusal, and on `decision.resolved` who
+/// resolved the decision first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecideRefusal {
+    /// The refusal.
+    #[serde(flatten)]
+    pub refusal: Refusal,
+    /// Who resolved the decision first; on `decision.resolved` only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<DecisionResolution>,
+}
+
+impl From<Refusal> for Box<DecideRefusal> {
+    fn from(refusal: Refusal) -> Self {
+        Box::new(DecideRefusal {
+            refusal,
+            resolution: None,
+        })
+    }
 }
 
 /// An open decision as the cell holds it.
@@ -673,7 +695,7 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 /// `decision.note_too_long` (`/note`) or `request.invalid`, 409
 /// `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
 /// run's result turn; a host failure.
-#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = Refusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn decide<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -683,7 +705,7 @@ pub fn decide<E: SqlEngine>(
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
-) -> Result<Decided, Refusal> {
+) -> Result<Decided, Box<DecideRefusal>> {
     let _epoch = host.definition_read()?;
     let key = handle_key(disclosure)?;
     let reader = Reader {
@@ -706,26 +728,26 @@ pub fn decide<E: SqlEngine>(
         return resolved_answer(&reader, &cell, id, body);
     };
     if !may_decide(host, actor, &decision.request) {
-        return Err(not_found());
+        return Err(Box::from(not_found()));
     }
     let now = crate::actions::turn_clock(&mut cell, now)?;
     if now.as_millis() >= decision.expires_at_ms {
         expire(&mut cell, &decision, now)?;
-        return Err(Refusal::new(
+        return Err(Box::from(Refusal::new(
             StatusCode::GONE,
             decision_codes::EXPIRED,
             "the decision expired",
             "its deadline passed before anyone decided",
-        ));
+        )));
     }
     if decision.request.decider.law.is_some() {
         // No decider law is evaluated on this host yet: fail closed.
-        return Err(Refusal::new(
+        return Err(Box::from(Refusal::new(
             StatusCode::FORBIDDEN,
             decision_codes::LAW_NOT_SATISFIED,
             "the decider law is not satisfied",
             "this decision names a law the cell cannot evaluate for the caller",
-        ));
+        )));
     }
     if !decision
         .request
@@ -733,31 +755,31 @@ pub fn decide<E: SqlEngine>(
         .iter()
         .any(|option| option.id == body.choice)
     {
-        return Err(at(
+        return Err(Box::from(at(
             decision_codes::UNKNOWN_CHOICE,
             "/choice",
             "choice names no option of this decision",
-        ));
+        )));
     }
     if body
         .note
         .as_deref()
         .is_some_and(|note| note.chars().count() > MAX_TEXT_CHARS)
     {
-        return Err(at(
+        return Err(Box::from(at(
             decision_codes::NOTE_TOO_LONG,
             "/note",
             "the note is longer than 500 characters",
-        ));
+        )));
     }
     if body.idempotency_key.trim().is_empty()
         || body.idempotency_key.len() > MAX_IDEMPOTENCY_KEY_BYTES
     {
-        return Err(at(
+        return Err(Box::from(at(
             codes::INVALID_REQUEST,
             "/idempotencyKey",
             "idempotencyKey must be 1-128 bytes",
-        ));
+        )));
     }
     let row = cell
         .store()
@@ -831,7 +853,7 @@ pub fn decide<E: SqlEngine>(
             }
             Refusal::host(host_error)
         })?;
-    answer(&reader, &cell, id, body, DecideOutcome::Decided)
+    Ok(answer(&reader, &cell, id, body, DecideOutcome::Decided)?)
 }
 
 /// DECISION-TERMINAL-1: resolve a decision past its deadline as expired. The
@@ -947,33 +969,33 @@ fn resolved_answer<E: SqlEngine>(
     cell: &ActionCell<E>,
     id: &str,
     body: &DecideRequest,
-) -> Result<Decided, Refusal> {
+) -> Result<Decided, Box<DecideRefusal>> {
     let Some(row) = cell
         .store()
         .read()
         .decision_resolution(MAIN_WORLD, id)
         .map_err(Refusal::host)?
     else {
-        return Err(not_found());
+        return Err(Box::from(not_found()));
     };
     let own = row.resolved.decided_by.as_deref() == Some(reader.actor);
     if own && row.resolved.idempotency_key.as_deref() == Some(body.idempotency_key.as_str()) {
         return if row.resolved.request_hash.as_deref() == Some(request_hash(body)?.as_str()) {
-            answer(reader, cell, id, body, DecideOutcome::Replayed)
+            Ok(answer(reader, cell, id, body, DecideOutcome::Replayed)?)
         } else {
-            Err(Refusal::new(
+            Err(Box::from(Refusal::new(
                 StatusCode::CONFLICT,
                 decision_codes::IDEMPOTENCY_CONFLICT,
                 "the idempotency key was used for another answer",
                 "use a new idempotencyKey for a different choice or note",
-            ))
+            )))
         };
     }
     let reads_run = reader.reads_run(cell, &row.resolved.run_id)?;
     if !own && !reads_run {
-        return Err(not_found());
+        return Err(Box::from(not_found()));
     }
-    let mut refusal = Refusal::new(
+    let refusal = Refusal::new(
         StatusCode::CONFLICT,
         decision_codes::RESOLVED,
         "the decision was already resolved",
@@ -989,8 +1011,10 @@ fn resolved_answer<E: SqlEngine>(
             None
         },
     };
-    refusal.resolution = Some(Box::new(resolution));
-    Err(refusal)
+    Err(Box::new(DecideRefusal {
+        refusal,
+        resolution: Some(resolution),
+    }))
 }
 
 fn answer<E: SqlEngine>(

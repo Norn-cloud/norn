@@ -108,10 +108,6 @@ pub struct Refusal {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
     pub restatement: Option<Box<RefusalRestatement>>,
-    /// On `decision.resolved` only: who resolved the decision first, and
-    /// when. Absent otherwise.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolution: Option<Box<crate::decisions::DecisionResolution>>,
 }
 
 /// One checker finding in a refusal.
@@ -235,7 +231,6 @@ impl Refusal {
             explanation: explanation.into(),
             diagnostics: Vec::new(),
             restatement: None,
-            resolution: None,
         }
     }
 

@@ -168,10 +168,7 @@ fn a_run_starts_once_and_reads_back_with_its_timeline() {
     let (status, again) = start(&cell, MEMBER, FLOW_ID, "run-1");
     assert_eq!((status, &again), (200, &run));
     assert_eq!(get(&cell, "/v1/runs/run-1", "", MEMBER), (200, run.clone()));
-    assert_eq!(get(&cell, "/v1/runs/run-1", "", ADMIN), (200, run.clone()));
-    let (status, page) = get(&cell, "/v1/runs", "&flow=crm.route_message", MEMBER);
-    assert_eq!(status, 200, "{page}");
-    assert_eq!(page, json!({ "runs": [run] }));
+    assert_eq!(get(&cell, "/v1/runs/run-1", "", ADMIN), (200, run));
 }
 
 /// A tool step the cell does not execute waits on an executor.
@@ -232,8 +229,11 @@ fn starts_are_decided_by_the_declared_starters_and_refuse_with_typed_codes() {
         &json!({ "flow": FLOW_ID, "runId": "run-1", "as": "admin" }),
     );
     assert_eq!((status, &extra["code"]), (400, &json!("request.invalid")));
-    let (status, page) = get(&cell, "/v1/runs", "", ADMIN);
-    assert_eq!((status, page), (200, json!({ "runs": [] })));
+    // Nothing committed: the refused run ids are free.
+    assert_eq!(
+        get(&cell, "/v1/runs/run-1", "", ADMIN).1["code"],
+        json!("run.not_found")
+    );
     let (status, method) = call(&cell, "DELETE", "/v1/runs/run-1", SCOPE, ADMIN, "");
     assert_eq!(
         (status, &method["code"]),
@@ -242,7 +242,7 @@ fn starts_are_decided_by_the_declared_starters_and_refuse_with_typed_codes() {
 }
 
 /// RUN-READ-GATED: a reader without Values on the Run type gets exactly the
-/// absent run's refusal, and lists nothing.
+/// absent run's refusal.
 #[test]
 fn an_unreadable_run_is_indistinguishable_from_an_absent_one() {
     let cell = cell();
@@ -255,10 +255,6 @@ fn an_unreadable_run_is_indistinguishable_from_an_absent_one() {
         (404, hidden.clone())
     );
     assert_eq!(get(&cell, "/v1/runs/absent", "", MEMBER), (404, hidden));
-    assert_eq!(
-        get(&cell, "/v1/runs", "", GUEST),
-        (200, json!({ "runs": [] }))
-    );
     let (status, anonymous) = get(&cell, "/v1/runs/run-1", "", None);
     assert_eq!((status, &anonymous["code"]), (403, &json!("authz.denied")));
 }

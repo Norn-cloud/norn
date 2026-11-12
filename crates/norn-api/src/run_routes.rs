@@ -6,8 +6,8 @@
 //!
 //! `POST /v1/runs` starts a run of an installed flow: the flow's `decide` rule
 //! evaluates its start turn, and the cell commits the run object, the first
-//! steps' commands and the ledger row in one commit. `GET /v1/runs/{id}` and
-//! `GET /v1/runs?flow=&state=&cursor=&limit=` read runs. Every route admits
+//! steps' commands and the ledger row in one commit. `GET /v1/runs/{id}`
+//! reads a run. Every route admits
 //! explicit scope first. Starting is the host operation
 //! [`crate::authz::Operation::StartRun`], decided by the trusted [`crate::authz::Authorizer`];
 //! a run holds no grants of its own. Every run read passes the ordinary
@@ -25,23 +25,19 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::engine::SqlEngine;
-use norn_cell::flow_run::{FlowRef, RunFilter, RunRow, RunStart};
+use norn_cell::flow_run::{FlowRef, RunRow, RunStart};
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuleRoot, RuntimeValue};
 use norn_kernel::{DecisionTurn, EnvelopeLimits, FactKey, LogicalTime, TypeCatalog, World};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use utoipa::{IntoParams, ToSchema};
+use utoipa::ToSchema;
 
 use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
 use crate::flow_definitions::{DECISION_FUNCTION, owned_ids};
 use crate::host::DevHost;
 use crate::refusal::{Refusal, codes};
 use crate::scope::ScopeQuery;
-
-/// The most ledger rows one list request examines. A caller who can read
-/// few of them gets a short page; filtering by flow keeps pages dense.
-pub const MAX_RUN_SCAN: usize = 2000;
 
 /// The longest run id, in bytes.
 pub const MAX_RUN_ID_BYTES: usize = 128;
@@ -240,38 +236,6 @@ pub struct RunDecision {
     pub id: String,
     /// When it expires (logical milliseconds).
     pub expires_at_ms: u64,
-}
-
-/// One page of runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RunPage {
-    /// The runs the caller may read, in run-id order.
-    pub runs: Vec<RunDocument>,
-    /// Pass as `cursor` for the next page; absent on the last page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-}
-
-/// `GET /v1/runs` query.
-#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[into_params(parameter_in = Query, rename_all = "camelCase")]
-pub struct RunsQuery {
-    /// Organization (required).
-    #[param(required = true, nullable = false)]
-    pub org_id: Option<String>,
-    /// Environment (required).
-    #[param(required = true, nullable = false)]
-    pub environment_id: Option<String>,
-    /// Only runs of this flow (its definition id).
-    pub flow: Option<String>,
-    /// Only runs in this lifecycle state.
-    pub state: Option<String>,
-    /// The previous page's `nextCursor`.
-    pub cursor: Option<String>,
-    /// Page size, 1 to 200 (default 50).
-    pub limit: Option<u32>,
 }
 
 fn run_exists() -> Refusal {
@@ -622,78 +586,6 @@ fn run_flow<E: SqlEngine>(store: &CellStore<E>, row: &RunRow) -> Result<FlowView
         }
         Err(refusal) => Err(refusal),
     }
-}
-
-/// `GET /v1/runs`: one page in run-id order, holding only runs the caller may
-/// read. The cursor advances past every examined row, readable or not.
-///
-/// # Errors
-/// Missing or foreign scope, an invalid limit, or a host failure.
-#[utoipa::path(get, path = "/v1/runs", params(RunsQuery), responses((status = 200, description = "One page of the runs the caller may read.", body = RunPage), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
-pub fn list_runs<E: SqlEngine>(
-    host: &DevHost<E>,
-    query: &RunsQuery,
-    actor: &str,
-    access: ReadAccess<'_>,
-) -> Result<RunPage, Refusal> {
-    let _epoch = host.definition_read()?;
-    host.scope()
-        .admit(query.org_id.as_deref(), query.environment_id.as_deref())?;
-    let limit = query.limit.unwrap_or(50);
-    if !(1..=norn_cell::flow_run::MAX_RUN_PAGE).contains(&limit) {
-        return Err(Refusal::invalid("limit must be 1-200"));
-    }
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    let wanted = usize::try_from(limit).unwrap_or(usize::MAX);
-    let page = usize::try_from(norn_cell::flow_run::MAX_RUN_PAGE).unwrap_or(usize::MAX);
-    let mut rows = Vec::new();
-    let mut after = query.cursor.clone();
-    let mut scanned = 0_usize;
-    let mut more = true;
-    // Scan whole ledger pages until the page holds `limit` readable runs, the
-    // ledger ends, or the scan bound is reached. The cursor names the last
-    // examined row, so it never reveals more than the scan already passed.
-    while rows.len() < wanted && scanned < MAX_RUN_SCAN && more {
-        let batch = reader
-            .flow_runs(
-                MAIN_WORLD,
-                &RunFilter {
-                    flow: query.flow.clone(),
-                    state: query.state.clone(),
-                    after: after.clone(),
-                    limit: norn_cell::flow_run::MAX_RUN_PAGE,
-                },
-            )
-            .map_err(Refusal::host)?;
-        more = batch.len() == page;
-        for row in batch {
-            scanned = scanned.saturating_add(1);
-            after = Some(row.run_id.clone());
-            if readable(host, access, &row) {
-                rows.push(row);
-                if rows.len() == wanted {
-                    more = true;
-                    break;
-                }
-            }
-        }
-    }
-    let mut flows: BTreeMap<String, FlowView> = BTreeMap::new();
-    let mut runs = Vec::with_capacity(rows.len());
-    for row in rows {
-        let flow = match flows.entry(row.flow.id.clone()) {
-            std::collections::btree_map::Entry::Occupied(known) => known.into_mut(),
-            std::collections::btree_map::Entry::Vacant(slot) => {
-                slot.insert(run_flow(cell.store(), &row)?)
-            }
-        };
-        runs.push(document(host, actor, cell.store(), flow, row)?);
-    }
-    Ok(RunPage {
-        runs,
-        next_cursor: if more { after } else { None },
-    })
 }
 
 /// The run document for `row`, with its timeline.
