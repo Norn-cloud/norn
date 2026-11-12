@@ -114,6 +114,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {phase.kind === "refused" && (
         <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span className="font-medium">{phase.message}</span>
+          {phase.explanation && <span className="text-meta text-foreground">{phase.explanation}</span>}
+          <span className="font-mono text-xs opacity-80">{phase.code}</span>
           {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta">{d.message}</span>)}
           {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
         </div>
