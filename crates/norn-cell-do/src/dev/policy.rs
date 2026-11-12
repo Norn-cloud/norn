@@ -5,28 +5,8 @@
 //! `.norn/dev.token`; any other caller is denied by default. This is server
 //! policy, stated on every `ready` event, never client logic.
 use crate::principal::PrincipalResolver;
-use norn_api::authz::{
-    AccessRequest, Authorizer, DenyAll, ReadCapability, ReadRequest, RefusalDetailRequest,
-};
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
-
-use norn_api::host::DevHost;
-use norn_api::question_routes::{AdHocQuestions, QuestionRuntime, QuestionSnapshot};
+use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
 use norn_api::refusal::Refusal;
-use norn_api::scope::CellScope;
-use norn_cell::engine::NativeEngine;
-#[cfg(feature = "duckdb")]
-use norn_cell::CellError;
-#[cfg(feature = "duckdb")]
-use norn_cell::compute::QueryResult;
-use norn_cell::compute::QueryContext;
-use norn_cell::{CellStore, InstalledDefinitionSet, ObjectRecord};
-use norn_checker::EffectiveCatalog;
-use norn_checker::metric::compute::QuestionPlan;
-use norn_checker::metric::derive::derive_metric_space;
-use norn_ir::{ArtifactEnvelope, LawRoot, MetricDefinition};
-use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput};
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
 };
@@ -109,235 +89,7 @@ impl PrincipalResolver for DevPrincipals {
     fn end_request(&self) {}
 }
 
-/// Metric definitions derived from one installed definitions revision.
-pub(crate) struct Derived {
-    /// The receipt of the revision they were derived from.
-    receipt: String,
-    definitions: Vec<MetricDefinition>,
-    catalog: EffectiveCatalog,
-}
-
-/// The dev host's question authority across revisions: the per-session
-/// lineage handle key, and the metric space of the last revision asked about.
-///
-/// METRIC-DERIVE-1: the metrics are derived from the active revision's
-/// admitted artifacts (sums of properties declared additive, declared ratios
-/// and conserved ratios, each at a time grain), never declared by a request.
-/// A new revision is derived again on its first question; nothing is cached
-/// across revisions.
-pub(crate) struct DevMetrics {
-    pub(crate) handle_key: [u8; 32],
-    pub(crate) scope: CellScope,
-    cache: Mutex<Option<Arc<Derived>>>,
-}
-
-impl DevMetrics {
-    pub(crate) fn new(handle_key: [u8; 32], scope: CellScope) -> Self {
-        Self {
-            handle_key,
-            scope,
-            cache: Mutex::new(None),
-        }
-    }
-
-    /// The question runtime for `host`'s active revision.
-    pub(crate) fn questions(
-        &self,
-        host: &DevHost<NativeEngine>,
-    ) -> Result<DevQuestions<'_>, Refusal> {
-        let active = host.active_definitions()?;
-        let receipt = active
-            .as_ref()
-            .map_or_else(String::new, |set| set.receipt_sha256.clone());
-        let mut cache = self.cache.lock().map_err(Refusal::host)?;
-        let derived = match cache.as_ref() {
-            Some(derived) if derived.receipt == receipt => Arc::clone(derived),
-            Some(_) | None => {
-                let derived = Arc::new(derive(&self.scope, receipt, active.as_ref())?);
-                *cache = Some(Arc::clone(&derived));
-                derived
-            }
-        };
-        Ok(DevQuestions {
-            metrics: self,
-            derived,
-        })
-    }
-}
-
-/// Derive the metric space of an installed revision. A cell with nothing
-/// installed has no metrics.
-fn derive(
-    scope: &CellScope,
-    receipt: String,
-    active: Option<&InstalledDefinitionSet>,
-) -> Result<Derived, Refusal> {
-    let Some(active) = active else {
-        return Ok(Derived {
-            receipt,
-            definitions: Vec::new(),
-            catalog: EffectiveCatalog::default(),
-        });
-    };
-    let artifacts: Vec<ArtifactEnvelope> =
-        serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
-    // The dev checker admits against an empty registry (`admit.rs`); derive
-    // against the same, at the cell's own law scope.
-    let space = derive_metric_space(
-        &artifacts,
-        &BTreeSet::new(),
-        &LawRoot::Cell(scope.key()),
-    )
-    .map_err(|findings| {
-        Refusal::host(format!(
-            "the active revision's metric space does not derive: {} finding(s)",
-            findings.len()
-        ))
-    })?;
-    Ok(Derived {
-        receipt,
-        definitions: space
-            .candidates()
-            .iter()
-            .map(|candidate| candidate.definition.clone())
-            .collect(),
-        catalog: space.catalog().clone(),
-    })
-}
-
-/// Rows an ad-hoc question may read per evaluation on the dev cell.
-pub(crate) const DEV_MAX_ROWS: u32 = 50_000;
-/// Buckets an ad-hoc answer may hold on the dev cell.
-pub(crate) const DEV_MAX_BUCKETS: usize = 5_000;
-
-/// One request's view of [`DevMetrics`]: the active revision's metrics.
-/// Questions are ad hoc (`:evaluate`, `:trace`); the dev cell declares no
-/// named questions.
-pub(crate) struct DevQuestions<'m> {
-    metrics: &'m DevMetrics,
-    derived: Arc<Derived>,
-}
-
-impl QuestionRuntime<NativeEngine> for DevQuestions<'_> {
-    fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
-        Err(Refusal::new(
-            http::StatusCode::NOT_FOUND,
-            "question.not_found",
-            "no such admitted question",
-            "the dev cell declares no named questions; ask through /v1/questions:evaluate",
-        ))
-    }
-    /// The dev cell's own frontier: its main world, the developer as the
-    /// population, the active revision as the mapping pin, and the host
-    /// clock. It tracks no external source, so there is no source frontier.
-    fn snapshot(
-        &self,
-        _store: &CellStore<NativeEngine>,
-        _plan: &QuestionPlan,
-        actor: &str,
-    ) -> Result<QuestionSnapshot, Refusal> {
-        Ok(QuestionSnapshot {
-            context: QueryContext {
-                world: norn_cell::MAIN_WORLD.to_owned(),
-                scope: self.metrics.scope.key(),
-                population_pin: format!("dev:{actor}"),
-                authorization_epoch: 1,
-                mapping_pin: format!("dev:{}", self.derived.receipt),
-                now_ms: super::now_ms(),
-                source_cursors: BTreeMap::new(),
-                watermarks: BTreeMap::new(),
-            },
-            cutoff: None,
-        })
-    }
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        question: &str,
-        capability: ReadCapability,
-        row: Option<&ObjectRecord>,
-    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
-        let key = crate::policy::scope_key(scope);
-        Ok(norn_kernel::authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: crate::policy::capability_name(capability).into(),
-            action_id: crate::policy::READ_ACTION.into(),
-            resource: ResourceInput {
-                object_type: row.map_or(question, |row| row.object_type.as_str()).into(),
-                id: row.map_or(question, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
-    }
-    fn collection_access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
-        Ok(crate::policy::collection_access(
-            scope,
-            actor,
-            capability,
-            object_type,
-        ))
-    }
-    fn min_disclosed_bucket(&self) -> usize {
-        norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET
-    }
-    fn handle_key(&self) -> &[u8] {
-        &self.metrics.handle_key
-    }
-    /// With the `duckdb` feature, a plan DuckDB lowers (one keyed sum, or a
-    /// ratio of two, over decimals of scale at most 6) is answered there;
-    /// anything else falls back to the native exact engine. The answer's
-    /// `engine` names which one answered.
-    #[cfg(feature = "duckdb")]
-    fn evaluate(
-        &self,
-        store: &CellStore<NativeEngine>,
-        plan: &QuestionPlan,
-        context: QueryContext,
-        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
-    ) -> Result<QueryResult, CellError> {
-        match store.evaluate_question_duckdb(plan, context.clone(), &mut *visible) {
-            Err(CellError::ComputeRefused(code))
-                if code == norn_checker::metric::compute::UNSUPPORTED_ENGINE =>
-            {
-                store.evaluate_question(plan, context, visible)
-            }
-            answered => answered,
-        }
-    }
-}
-
-impl AdHocQuestions<NativeEngine> for DevQuestions<'_> {
-    fn definitions(&self) -> &[MetricDefinition] {
-        &self.derived.definitions
-    }
-    fn catalog(&self) -> &EffectiveCatalog {
-        &self.derived.catalog
-    }
-    fn max_rows(&self) -> u32 {
-        DEV_MAX_ROWS
-    }
-    fn max_buckets(&self) -> usize {
-        DEV_MAX_BUCKETS
-    }
-}
+pub(crate) use crate::questions::{DerivedQuestions as DevMetrics, DerivedRuntime as DevQuestions};
 
 #[cfg(test)]
 #[allow(
@@ -352,7 +104,12 @@ mod tests {
     //! and re-derives them when a new revision is installed.
     use super::*;
     use crate::server::{Request, handle_with};
+    use norn_api::host::DevHost;
+    use norn_api::question_routes::AdHocQuestions;
+    use norn_api::scope::CellScope;
+    use norn_cell::CellStore;
     use norn_cell::engine::NativeEngine;
+    use std::collections::BTreeMap;
     use norn_cell::{CommitBatch, FactWriteRow, StoreOptions};
     use norn_ir::{Decimal, RuntimeValue};
     use serde_json::{Value, json};
@@ -485,8 +242,7 @@ mod tests {
 
     fn metric(metrics: &DevMetrics, host: &DevHost<NativeEngine>, property: &str, ratio: bool) -> String {
         let questions = metrics.questions(host).expect("runtime");
-        questions
-            .definitions()
+        AdHocQuestions::<NativeEngine>::definitions(&questions)
             .iter()
             .find(|definition| {
                 let is_ratio = definition.type_params.numerator.is_some();
@@ -499,7 +255,7 @@ mod tests {
                         .is_none_or(|params| params.agg_time_dimension == "occurred_at")
             })
             .map_or_else(
-                || panic!("no derived {property} metric among {:?}", questions.definitions().iter().map(|d| &d.label).collect::<Vec<_>>()),
+                || panic!("no derived {property} metric among {:?}", AdHocQuestions::<NativeEngine>::definitions(&questions).iter().map(|d| &d.label).collect::<Vec<_>>()),
                 |definition| definition.name.clone(),
             )
     }
@@ -508,7 +264,7 @@ mod tests {
     fn an_ad_hoc_question_is_answered_and_traced_over_the_derived_metrics() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
         let amount = metric(&metrics, &host, "amount", false);
         // The metrics a question may name are listed for the reader.
         let (status, listed) = get(&host, &metrics, "/v1/questions:metrics");
@@ -547,11 +303,11 @@ mod tests {
     fn every_derived_sum_is_answered_on_whichever_engine_lowers_it() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(!questions.definitions().is_empty());
+        assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
         // Every derived sum answers, on whichever engine lowered it.
-        for definition in questions.definitions().iter().filter(|d| d.type_params.numerator.is_none()) {
+        for definition in AdHocQuestions::<NativeEngine>::definitions(&questions).iter().filter(|d| d.type_params.numerator.is_none()) {
             let (status, answer) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&definition.name)}));
             assert_eq!(status, 200, "{} {answer}", definition.name);
             assert!(matches!(answer["engine"].as_str(), Some("cell" | "duckdb")));
@@ -562,14 +318,14 @@ mod tests {
     fn a_new_revision_is_derived_again_and_an_undeclared_measure_is_no_metric() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
         let amount = metric(&metrics, &host, "amount", false);
         let active = host.active_definitions().ok().flatten().expect("active");
         let admitted = super::super::admit::admit(&artifacts(false), 3_000).ok().expect("admitted");
         host.install_definitions(admitted.model, admitted.input, Some(active.version))
             .expect("installed");
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(questions.definitions().iter().all(|definition| definition.name != amount));
+        assert!(AdHocQuestions::<NativeEngine>::definitions(&questions).iter().all(|definition| definition.name != amount));
         let (status, refused) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&amount)}));
         assert_ne!(status, 200, "{refused}");
     }
@@ -578,7 +334,7 @@ mod tests {
     fn a_profile_counts_the_visible_rows_exactly() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
-        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let metrics = DevMetrics::new([7_u8; 32], scope(), super::super::now_ms);
         let (status, profile) = get(&host, &metrics, &format!("/v1/objects/{TYPE}:profile"));
         assert_eq!(status, 200, "{profile}");
         assert_eq!(profile["rows"], 3);
