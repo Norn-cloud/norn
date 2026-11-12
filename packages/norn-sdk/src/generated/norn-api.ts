@@ -997,7 +997,7 @@ export interface components {
             description?: string | null;
             /** @description How its effect changes that object. */
             effect: components["schemas"]["NornActionEffect"];
-            /** @description The admitted input schema, in the action's closed input dialect. */
+            /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
             inputSchema: {
                 [key: string]: unknown;
             };
