@@ -1212,7 +1212,7 @@ impl ObservationAuthorization {
                 &mut remaining,
                 true,
             )
-            .map_err(|error| refuse(format!("{error:?}")))?;
+            .map_err(|_error| refuse("invariant evaluation refused".into()))?;
             let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &key);
             let findings = findings_for(
                 catalog,
@@ -1239,7 +1239,7 @@ impl ObservationAuthorization {
                 &mut remaining,
                 true,
             )
-            .map_err(|error| refuse(format!("{error:?}")))?;
+            .map_err(|_error| refuse("invariant evaluation refused".into()))?;
             let mut links =
                 crate::commit_check::CommitLinks::new(commit, model, view, &authorized.key);
             let findings = findings_for(

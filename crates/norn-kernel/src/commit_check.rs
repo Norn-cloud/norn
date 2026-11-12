@@ -811,27 +811,26 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
     let mut remaining = EvaluationBudget::default().units();
-    let mut evaluate =
-        |key: &FactKey,
-         values: &crate::cell_host::JsonObject,
-         remaining: &mut u64|
-         -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
-            let mut links = CommitLinks::new(commit, model, view, key);
-            let evaluated = crate::governing_laws::evaluate_linked(
-                model.catalog,
-                key,
-                values,
-                &mut links,
-                remaining,
-            );
-            if let Some(error) = links.take_host_error() {
-                return Err(CommitError::Host(error));
-            }
-            evaluated.map_err(|reason| CommitError::Law {
-                key: key.clone(),
-                reason,
-            })
-        };
+    let evaluate = |key: &FactKey,
+                    values: &crate::cell_host::JsonObject,
+                    remaining: &mut u64|
+     -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
+        let mut links = CommitLinks::new(commit, model, view, key);
+        let evaluated = crate::governing_laws::evaluate_linked(
+            model.catalog,
+            key,
+            values,
+            &mut links,
+            remaining,
+        );
+        if let Some(error) = links.take_host_error() {
+            return Err(CommitError::Host(error));
+        }
+        evaluated.map_err(|reason| CommitError::Law {
+            key: key.clone(),
+            reason,
+        })
+    };
     let refuse = |key: &FactKey, failures: Vec<crate::governing_laws::LawFailure>| {
         failures
             .into_iter()

@@ -192,7 +192,7 @@ pub fn laws_reading_target<'a>(
     target: &ObjectTypeName,
 ) -> Result<Vec<(ObjectTypeName, String)>, LawEvaluationError> {
     let mut found = Vec::new();
-    for subject in catalog.object_type_names() {
+    for subject in &catalog.object_type_names() {
         for artifact in catalog.governing_laws(subject)? {
             let law = decode(artifact)?;
             for link in law_link_reads(catalog, subject, &law)? {
