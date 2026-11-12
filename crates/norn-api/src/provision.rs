@@ -491,8 +491,12 @@ pub fn provision_cell<E: SqlEngine>(
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
     let input = install_input(admitted, now_ms);
     // Every provisioned cell can serve governed actions: the kernel's own
-    // receipt and owned-row types are part of its model from the start.
-    let model = crate::action_admission::prepare_action_model(&admitted.model)?;
+    // receipt and owned-row types are part of its model from the start. It
+    // is the model a reopen rebuilds from the installed set (DEFS-REOPEN-1).
+    let model = crate::kernel_set::retained_artifacts(&input.canonical_set)
+        .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
+        .map_err(Refusal::host)?;
+    crate::host::check_reopens(&model, &input.canonical_set)?;
     let store =
         CellStore::provision_definitions(engine, model, &input, &scope.key()).map_err(|error| {
             if matches!(error, CellError::IdempotencyConflict(_)) {

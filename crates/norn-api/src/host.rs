@@ -46,6 +46,32 @@ impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
     }
 }
 
+/// DEFS-REOPEN-1: a revision installs only under the model a restarted
+/// host rebuilds from its retained set (HOST-REOPEN-1); anything else
+/// would commit a layout the next open refuses. Every path that installs
+/// a model (definitions, flows, uploads, provisioning) checks it here,
+/// before anything is written.
+/// # Errors
+/// `host.error` when the candidate's model or layout differs from the
+/// serving model of `canonical_set`, or the set cannot be read.
+pub fn check_reopens(candidate_model: &Model, canonical_set: &str) -> Result<(), Refusal> {
+    let reopened = crate::kernel_set::retained_artifacts(canonical_set)
+        .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
+        .map_err(Refusal::host)?;
+    if reopened.model_hash() != candidate_model.model_hash()
+        || reopened.ddl_hash() != candidate_model.ddl_hash()
+    {
+        return Err(Refusal::host(format!(
+            "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
+            candidate_model.model_hash(),
+            reopened.model_hash(),
+            candidate_model.ddl_hash(),
+            reopened.ddl_hash()
+        )));
+    }
+    Ok(())
+}
+
 /// What one captured source row came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ingested {
@@ -273,24 +299,7 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
-        // DEFS-REOPEN-1: a revision installs only under the model a restarted
-        // host rebuilds from its retained set (HOST-REOPEN-1); anything else
-        // would commit a layout the next open refuses. Checked before
-        // anything is written.
-        let reopened = crate::kernel_set::retained_artifacts(&input.canonical_set)
-            .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
-            .map_err(Refusal::host)?;
-        if reopened.model_hash() != candidate_model.model_hash()
-            || reopened.ddl_hash() != candidate_model.ddl_hash()
-        {
-            return Err(Refusal::host(format!(
-                "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
-                candidate_model.model_hash(),
-                reopened.model_hash(),
-                candidate_model.ddl_hash(),
-                reopened.ddl_hash()
-            )));
-        }
+        check_reopens(&candidate_model, &input.canonical_set)?;
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
         let installed = cell
