@@ -200,5 +200,8 @@ passes `--norn` with the running binary's own path.
 - The behaviour-proposal extractor, the Frappe and Shopify schema importers and
   their captured fixtures are not in this repository. `behaviour.py` holds only
   the hook ledger and evidence helpers the code ontology needs.
+- Parity admits a unit's definition directory as one self-contained set, through
+  `norn check` with an empty context. Composing registry packages into that
+  set is not available; a unit that names a `registry` is refused.
 - Fixtures here are written for these tests. They are not copies of any
   upstream application.

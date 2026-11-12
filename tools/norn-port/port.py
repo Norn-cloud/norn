@@ -109,31 +109,38 @@ def original(spec, source_root, cases):
 def eval_command(spec, defs, norn):
     command = [norn, "eval", "--defs", str(defs), "--org", "port-calibration", "--env", "offline",
                "--rule", spec["artifactId"]]
-    for package in spec.get("registry", []):
-        command.extend(["--registry", package])
+    self_contained(spec)
     return command
 
 
-def admitted_context(specs, defs, norn):
-    """Re-admit the complete candidate plus registry through the authority.
+def self_contained(spec):
+    """This CLI composes no registry packages: a unit's definitions are its whole set."""
+    if spec.get("registry"):
+        raise ValueError("registry composition is not available; parity definitions must be self-contained")
 
-    CheckReceipt.artifactSet includes every candidate AND every composed base
+
+def admitted_context(specs, defs, norn):
+    """Re-admit the complete candidate set through the authority.
+
+    The set is every definition file in name order under an empty context,
+    exactly what `norn eval` admits. CheckReceipt.artifactSet carries every
     artifact's canonical identity. Never substitute a home-grown digest here.
     """
-    selections = [spec.get("registry", []) for spec in specs]
-    registry = selections[0] if selections else []
-    if not all(equal(selection, registry) for selection in selections):
-        raise ValueError("parity units must use the same admitted registry context")
-    command = [norn, "check", "--definitions-only", "--defs", str(defs), "--org", "port-calibration", "--env", "offline"]
-    for package in registry:
-        command.extend(["--registry", package])
-    checked = subprocess.run(command, text=True, capture_output=True, timeout=120)
+    for spec in specs:
+        self_contained(spec)
+    documents = [path.read_text() for path in sorted(Path(defs).glob("*.json"))]
+    with tempfile.TemporaryDirectory() as temp:
+        artifacts, context = Path(temp) / "artifacts.json", Path(temp) / "context.json"
+        artifacts.write_text("[" + ",".join(documents) + "]")
+        context.write_text("{}\n")
+        checked = subprocess.run([norn, "check", "--artifacts", str(artifacts), "--context", str(context)],
+                                 text=True, capture_output=True, timeout=120)
     if checked.returncode:
-        raise ValueError("current definition context refused: " + checked.stderr[-2000:])
+        raise ValueError("current definition context refused: " + (checked.stderr or checked.stdout)[-2000:])
     report = json.loads(checked.stdout)
     if not report.get("admitted") or not report.get("receipt", {}).get("admitted"):
         raise ValueError("current definition context is not admitted")
-    return {key: report[key] for key in ("receiptSha256", "receipt", "registry")}
+    return {key: report[key] for key in ("receiptSha256", "receipt")}
 
 
 def translation(spec, defs, norn, cases):
