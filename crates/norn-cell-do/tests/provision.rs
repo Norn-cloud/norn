@@ -45,6 +45,8 @@ use norn_cell_do::{base, seed};
 use serde_json::{Value, json};
 
 const ISSUER: &str = "https://studio-preview.example";
+/// A stage lineage key, as the deployed host passes one.
+const LINEAGE_KEY: [u8; 32] = [7; 32];
 const NOW: u64 = 1_800_000_000;
 /// The recorded three-systems set: its artifacts outside the reserved
 /// namespaces are a tenant's submission.
@@ -141,8 +143,15 @@ fn with_engine<E: SqlEngine + 'static>(
     scope: &CellScope,
     open: impl Fn() -> Result<E, String> + 'static,
 ) -> Result<Cell<E>, String> {
-    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open), None)
-        .map_err(|error| error.to_string())?;
+    // As wasm.rs builds a deployed tenant: with the stage's lineage key, so
+    // every route sees the receipt-handle runtime a deployed cell has.
+    let tenant = Tenant::open(
+        scope.clone(),
+        &DEMO_GRANTS,
+        Box::new(open),
+        Some(&LINEAGE_KEY),
+    )
+    .map_err(|error| error.to_string())?;
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
         .map_err(|refusal| refusal.code)?;
     Ok(Cell { tenant, tokens })
@@ -707,6 +716,11 @@ fn outsider_requests(scope: &CellScope) -> Vec<(&'static str, String, String, &'
             ("GET", "/v1/definitions/studio.dashboard.d1", ""),
             ("POST", "/v1/definitions:install", "{}"),
             ("POST", "/v1/definitions:admit", "not json"),
+            (
+                "POST",
+                "/v1/definitions:install",
+                r#"{"kind":"dashboard","id":"studio.dashboard.d1","payload":{"title":"","tiles":[]}}"#,
+            ),
             ("POST", "/v1/definitions/studio.dashboard.d1:retire", "{}"),
             ("GET", "/v1/objects/canon.Item", ""),
             ("GET", "/v1/objects/tenant.Unknown", ""),
@@ -1252,7 +1266,8 @@ fn waiting_demo_cell(handles: Option<&[u8]>) -> (Cell<NativeEngine>, String) {
     let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
     let tenant = Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
         .unwrap()
-        .with_receipt_handles(handles);
+        .with_receipt_handles(handles)
+        .unwrap();
     let tokens =
         TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW).unwrap();
     let mut cell = Cell { tenant, tokens };
@@ -1388,4 +1403,21 @@ fn a_cell_that_cannot_decide_lists_nothing() {
         (decided.status, code(&decided).as_str()),
         (404, "decision.not_found")
     );
+}
+
+/// A lineage key shorter than 32 bytes refuses to open the cell rather than
+/// serve weakly keyed receipt handles.
+#[test]
+fn a_short_lineage_key_refuses_to_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let refused = Tenant::open(
+        scope("org_a", "prod"),
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&path, StoreOptions::default()).map_err(|error| error.to_string())
+        }),
+        Some(&[1; 16]),
+    );
+    assert!(refused.is_err());
 }
