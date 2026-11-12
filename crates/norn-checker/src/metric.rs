@@ -831,12 +831,7 @@ impl<'a> Checker<'a> {
     fn time_and_filters(&mut self, metric: &BoundMetric, root: &str, at: &str) {
         if let Some(path) = self.path(root, &metric.time_dimension, &format!("{at}/timeDimension"))
         {
-            // METRIC-SNAPSHOT-ASOF-1: a snapshot keeps its own valid time.
-            let linked_snapshot = metric.snapshot && !metric.time_dimension.links.is_empty();
-            if path.fan_out
-                || linked_snapshot
-                || path.properties.iter().any(|p| !is_time(p) || p.nullable)
-            {
+            if path.fan_out || path.properties.iter().any(|p| !is_time(p) || p.nullable) {
                 self.reject(codes::INVALID_TIME, &format!("{at}/timeDimension"));
             }
             // METRIC-GRAIN-LINK-1: rows an optional link does not reach have no
@@ -1146,6 +1141,8 @@ impl<'a> Checker<'a> {
             if matches!(source.additivity, MetricAdditivity::SemiAdditive { .. })
                 && !(source.snapshot
                     && source.snapshot_groupings.is_empty()
+                    // A snapshot keeps its own valid time.
+                    && source.time_dimension.links.is_empty()
                     && source.additivity
                         == (MetricAdditivity::SemiAdditive {
                             over: norn_ir::metric::AdditivityAxis::Time,

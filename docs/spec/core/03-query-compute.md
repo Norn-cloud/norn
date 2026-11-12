@@ -113,8 +113,8 @@ time. It is treated exactly like a null measured value: skipped, never given an
 invented time, and counted, with the answer reporting the count as `unlinked`.
 Each row reads the linked object's current version at the answer's frontier,
 so correcting an event's time moves its rows. A snapshot
-(METRIC-SNAPSHOT-ASOF-1) keeps its own valid time, and a linked time refuses
-there. The question window applies to the linked time. The exact engine
+(METRIC-SNAPSHOT-ASOF-1) keeps its own valid time: a question over a snapshot
+whose time is linked still refuses `question.validation.snapshot_aggregation`. The question window applies to the linked time. The exact engine
 supports one hop, sums rather than ratios, and a time grouping on that same
 path; anything else refuses as an unsupported engine shape.
 
