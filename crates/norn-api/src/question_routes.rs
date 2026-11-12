@@ -741,6 +741,103 @@ pub fn trace_ad_hoc<E: SqlEngine>(
     )
 }
 
+/// One metric an ad-hoc question may name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornMetricSummary {
+    /// The metric's name, as a question's `aggregate` names it.
+    pub name: String,
+    /// Its label.
+    pub label: String,
+    /// `simple`, `ratio`, `cumulative`, `derived` or `conversion`.
+    pub kind: String,
+    /// The concept it aggregates, for a simple metric.
+    #[schema(required = true, nullable = true)]
+    pub object_type: Option<String>,
+    /// The aggregated expression (a property), for a simple metric.
+    #[schema(required = true, nullable = true)]
+    pub expression: Option<String>,
+    /// The time property its buckets use, for a simple metric.
+    #[schema(required = true, nullable = true)]
+    pub time_property: Option<String>,
+    /// The numerator metric, for a ratio.
+    #[schema(required = true, nullable = true)]
+    pub numerator: Option<String>,
+    /// The denominator metric, for a ratio.
+    #[schema(required = true, nullable = true)]
+    pub denominator: Option<String>,
+}
+
+/// The metrics ad-hoc questions may name, among those the caller may read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornMetricList {
+    /// In name order.
+    pub metrics: Vec<NornMetricSummary>,
+}
+
+/// F2b: list the metrics an ad-hoc question may name. A metric is listed
+/// only when the caller may read its concept's population (HOST-READ-1), so
+/// the list never names a concept the caller cannot read.
+/// # Errors
+/// No actor, or a host failure.
+#[utoipa::path(get, path = "/v1/questions:metrics", params(ScopeQuery), responses((status = 200, description = "The metrics ad-hoc questions may name.", body = NornMetricList), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn list_metrics<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<NornMetricList, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let named: &dyn QuestionRuntime<E> = runtime;
+    let readable = |object_type: &str| {
+        mapped(host, named, actor, object_type, Population, None).is_ok_and(|access| {
+            host.read_access(
+                scope,
+                &ReadRequest {
+                    capability: Population,
+                    access: &access,
+                },
+            )
+            .is_ok()
+        })
+    };
+    let mut metrics: Vec<NornMetricSummary> = runtime
+        .definitions()
+        .iter()
+        .map(|definition| {
+            let aggregation = definition.type_params.metric_aggregation_params.as_ref();
+            NornMetricSummary {
+                name: definition.name.clone(),
+                label: definition.label.clone(),
+                kind: serde_json::to_value(&definition.metric_type)
+                    .ok()
+                    .and_then(|kind| kind.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+                object_type: aggregation.map(|params| params.semantic_model.0.clone()),
+                expression: definition.type_params.expr.clone(),
+                time_property: aggregation.map(|params| params.agg_time_dimension.clone()),
+                numerator: definition.type_params.numerator.clone(),
+                denominator: definition.type_params.denominator.clone(),
+            }
+        })
+        .collect();
+    // A ratio is listed when both of its operands are.
+    let simple: BTreeSet<String> = metrics
+        .iter()
+        .filter(|metric| metric.object_type.as_deref().is_some_and(&readable))
+        .map(|metric| metric.name.clone())
+        .collect();
+    metrics.retain(|metric| {
+        simple.contains(&metric.name)
+            || (metric.object_type.is_none()
+                && metric.numerator.as_ref().is_some_and(|name| simple.contains(name))
+                && metric.denominator.as_ref().is_some_and(|name| simple.contains(name)))
+    });
+    metrics.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(NornMetricList { metrics })
+}
+
 /// Hold the definition epoch across evaluation, as a named question does.
 fn collection_epoch<'h, E: SqlEngine>(
     host: &'h DevHost<E>,

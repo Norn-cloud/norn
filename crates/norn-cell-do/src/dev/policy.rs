@@ -510,6 +510,13 @@ mod tests {
         let host = host(dir.path());
         let metrics = DevMetrics::new([7_u8; 32], scope());
         let amount = metric(&metrics, &host, "amount", false);
+        // The metrics a question may name are listed for the reader.
+        let (status, listed) = get(&host, &metrics, "/v1/questions:metrics");
+        assert_eq!(status, 200, "{listed}");
+        let listed = listed["metrics"].as_array().unwrap();
+        let entry = listed.iter().find(|metric| metric["name"] == amount.as_str()).unwrap();
+        assert_eq!(entry["objectType"], TYPE);
+        assert_eq!(entry["timeProperty"], "occurred_at");
         let (status, answer) = call(&host, &metrics, "/v1/questions:evaluate", &json!({"question": question(&amount)}));
         assert_eq!(status, 200, "{answer}");
         let rows = answer["rows"].as_object().unwrap();
