@@ -2181,7 +2181,8 @@
               "object",
               "null"
             ],
-            "description": "The resolved type (kind, unit, scale, additivity), or `null`."
+            "description": "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+            "additionalProperties": true
           }
         }
       },
@@ -25808,7 +25809,9 @@
           "metrics": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "description": "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+              "additionalProperties": true
             },
             "description": "The listed metrics, as declared, in name order."
           },

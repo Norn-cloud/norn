@@ -480,8 +480,10 @@ export interface components {
         CatalogProperty: {
             /** @description The property id: what a group-by or filter path names. */
             id: string;
-            /** @description The resolved type (kind, unit, scale, additivity), or `null`. */
-            type?: Record<string, never> | null;
+            /** @description The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type. */
+            type?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -9482,7 +9484,9 @@ export interface components {
             /** @description Most group-bys one question may have. */
             maxGroupBy: number;
             /** @description The listed metrics, as declared, in name order. */
-            metrics: Record<string, never>[];
+            metrics: {
+                [key: string]: unknown;
+            }[];
             /** @description The object types the listed metrics range over. */
             objectTypes: components["schemas"]["CatalogObjectType"][];
             /** @description Filter operators the engine admits. */
