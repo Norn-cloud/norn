@@ -18603,6 +18603,13 @@
             "type": "string",
             "description": "The referenced [`PropertyTypeDef`] name.",
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          },
+          "unitSource": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            },
+            "description": "METRIC-UNIT-PARTITION-1: the unit source at this use site, for a\nref that resolves to a decimal declaring none of its own."
           }
         },
         "additionalProperties": false
@@ -18652,6 +18659,13 @@
           },
           "unit": {
             "$ref": "#/components/schemas/NornIrUnitRef"
+          },
+          "unitSource": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            },
+            "description": "METRIC-UNIT-PARTITION-1: the sibling properties whose values\ntogether are this quantity's unit, when it has no static `unit`.\nAggregating questions must group by or fix each of them."
           }
         },
         "additionalProperties": false

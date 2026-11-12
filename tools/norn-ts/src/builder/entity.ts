@@ -50,14 +50,14 @@ export type PropertyAdditivity =
 export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer"; readonly additivity?: PropertyAdditivity }
-  | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
+  | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding; readonly unitSource?: ReadonlyArray<string> }
   | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }
   | { readonly kind: "duration" }
   | { readonly kind: "enum"; readonly values: ReadonlyArray<EnumValue> }
-  | { readonly kind: "ref"; readonly name: string; readonly additivity?: PropertyAdditivity }
+  | { readonly kind: "ref"; readonly name: string; readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }
 
 export const text = (format?: TextFormat): PropertyType => (format === undefined ? { kind: "text" } : { kind: "text", format })
 export const integer: PropertyType = { kind: "integer" }
@@ -88,9 +88,13 @@ export const enumeration = (...values: ReadonlyArray<string | EnumValue>): Prope
 /**
  * A shared property type by name: a local `propertyTypes` entry or a registry value type (`iso4217.currency_code`).
  * `additivity` is the use-site aggregation contract (METRIC-ADDITIVITY-REF-1); undeclared is omitted.
+ * `unitSource` names the sibling properties holding the unit (METRIC-UNIT-PARTITION-1); empty is omitted.
  */
-export const ref = (name: string, additivity?: PropertyAdditivity): PropertyType =>
-  additivity === undefined || additivity.kind === "undeclared" ? { kind: "ref", name } : { kind: "ref", name, additivity }
+export const ref = (name: string, additivity?: PropertyAdditivity, unitSource: ReadonlyArray<string> = []): PropertyType => ({
+  kind: "ref", name,
+  ...(additivity === undefined || additivity.kind === "undeclared" ? {} : { additivity }),
+  ...(unitSource.length === 0 ? {} : { unitSource: [...unitSource] }),
+})
 
 // -------------------------------------------------------------- members
 

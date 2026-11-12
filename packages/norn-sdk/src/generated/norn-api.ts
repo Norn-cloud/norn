@@ -6768,6 +6768,11 @@ export interface components {
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
             name: string;
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the unit source at this use site, for a
+             *     ref that resolves to a decimal declaring none of its own.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /**
          * @description An exact decimal with a fixed number of fraction digits, optionally a
@@ -6799,6 +6804,12 @@ export interface components {
              */
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description METRIC-UNIT-PARTITION-1: the sibling properties whose values
+             *     together are this quantity's unit, when it has no static `unit`.
+             *     Aggregating questions must group by or fix each of them.
+             */
+            unitSource?: components["schemas"]["NornIrPropertyId"][];
         };
         /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {

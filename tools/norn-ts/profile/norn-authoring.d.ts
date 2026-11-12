@@ -69,7 +69,7 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string } | { readonly unitSource: ReadonlyArray<string> }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
     function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
@@ -80,9 +80,11 @@ declare module "@norn/authoring" {
      * local shared type. The checker resolves the name. `additivity` declares
      * the aggregation contract at this use site (METRIC-ADDITIVITY-REF-1): it
      * applies only to an integer or decimal type that declares none itself,
-     * so a flow and a stock can share one value type.
+     * so a flow and a stock can share one value type. `unitSource` names the
+     * sibling properties holding a decimal's unit (METRIC-UNIT-PARTITION-1):
+     * a question aggregating it groups by or fixes each of them.
      */
-    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity }): S
+    function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): S
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String

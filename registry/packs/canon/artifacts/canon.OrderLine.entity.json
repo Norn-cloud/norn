@@ -79,7 +79,11 @@
               "kind": "additive"
             },
             "kind": "ref",
-            "name": "core.quantity"
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
           }
         },
         {
