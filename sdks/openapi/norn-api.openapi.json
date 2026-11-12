@@ -735,7 +735,7 @@
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
-          "crate::object_profile"
+          "crate::object_routes"
         ],
         "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
         "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
