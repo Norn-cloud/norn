@@ -377,9 +377,6 @@ fn inapplicable(rule: &ContractRule, property_type: &PropertyType) -> Option<Str
             if !numeric {
                 return Some(format!("range applies to a numeric output, not {kind}"));
             }
-            let bound = |literal: Option<&norn_ir::DecimalLiteral>| {
-                literal.map(|literal| Decimal::parse_str(literal.as_str()).ok_or(literal.as_str()))
-            };
             match (bound(min.as_ref()), bound(max.as_ref())) {
                 (None, None) => Some("a range declares min, max or both".into()),
                 (Some(Err(text)), _) | (_, Some(Err(text))) => {
@@ -427,6 +424,12 @@ fn inapplicable(rule: &ContractRule, property_type: &PropertyType) -> Option<Str
             })
         }
     }
+}
+
+/// A range bound parsed for comparison, or its text when it is not an exact
+/// decimal literal.
+fn bound(literal: Option<&norn_ir::DecimalLiteral>) -> Option<Result<Decimal<'_>, &str>> {
+    literal.map(|literal| Decimal::parse_str(literal.as_str()).ok_or(literal.as_str()))
 }
 
 /// The admitted-kind class of an input property.
