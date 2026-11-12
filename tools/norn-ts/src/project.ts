@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { dirname, isAbsolute, resolve } from "node:path"
 import type { Diagnostic } from "./check.ts"
 
 export interface Project {
@@ -24,15 +24,19 @@ function object(value: unknown, keys: readonly string[]): value is Record<string
     && Object.keys(value).length === keys.length && keys.every(key => key in value)
 }
 function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0 }
+/** A relative path that stays inside the project: not absolute, no `..` segment. */
+function inside(value: unknown): value is string {
+  return text(value) && !isAbsolute(value) && !/^[a-zA-Z]:/.test(value) && !value.split(/[\\/]/).includes("..")
+}
 
 export function parseProject(value: unknown): Project {
   if (object(value, ["format", "name", "sources", "scope", "dev", "cell"])
     && value.format === "norn-project/1" && text(value.name)
-    && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.every(text)
+    && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.every(inside)
     && new Set(value.sources).size === value.sources.length
     && object(value.scope, ["orgId", "environmentId"]) && text(value.scope.orgId) && text(value.scope.environmentId)
     && object(value.dev, ["port", "actor"]) && typeof value.dev.port === "number" && Number.isInteger(value.dev.port)
-    && value.dev.port >= 0 && value.dev.port <= 65535 && text(value.dev.actor) && text(value.cell)) {
+    && value.dev.port >= 0 && value.dev.port <= 65535 && text(value.dev.actor) && inside(value.cell)) {
     return { format: value.format, name: value.name, sources: value.sources,
       scope: { orgId: value.scope.orgId, environmentId: value.scope.environmentId },
       dev: { port: value.dev.port, actor: value.dev.actor }, cell: value.cell }

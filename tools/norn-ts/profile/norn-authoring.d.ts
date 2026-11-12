@@ -303,6 +303,17 @@ declare module "@norn/authoring" {
       /** Input and output: Effect Schema structs, lowered to closed schemas. */
       readonly input: I
       readonly output: O
+      /**
+       * Display-only labels for top-level input fields (D66): a title of 1 to
+       * 120 characters and an optional description. They change no admission
+       * semantics; forms show them.
+       */
+      readonly inputLabels?: { readonly [field in keyof I["Type"] & string]?: { readonly title?: string; readonly description?: string } }
+      /**
+       * Wizard steps over the input (D66): each field (an RFC 6901 pointer
+       * such as `/valuation_method`) in at most one group.
+       */
+      readonly inputGroups?: ReadonlyArray<{ readonly id: string; readonly title: string; readonly fields: ReadonlyArray<string> }>
       /** Ordered bounded reads, with property keys rooted at `from: "input"`. */
       readonly slice?: ReadonlyArray<SliceSpec>
       /** Ordered deterministic ZEN transformations before validation and preconditions. */

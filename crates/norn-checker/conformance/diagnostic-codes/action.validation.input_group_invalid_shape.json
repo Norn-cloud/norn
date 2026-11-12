@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_group_invalid_shape",
+  "message": "ActionIR input x-norn.groups is not a list of {id, title, fields}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

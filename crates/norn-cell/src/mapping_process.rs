@@ -4,7 +4,7 @@ use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
     CellCommit, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent, Observed,
-    TypeCatalog, World,
+    TypeCatalog,
 };
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -60,7 +60,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let turn = DecisionTurn {
             id: observation_id.to_owned(),
             now: self.now(),
-            world: World::Main,
+            world: self.store().world(),
             consumes: Some(observed.consumed()),
         };
         let mut commit = CellCommit::empty().consuming(observed.consumed());
