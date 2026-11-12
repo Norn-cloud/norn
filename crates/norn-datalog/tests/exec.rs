@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 
 use norn_datalog::{
     Atom, Budget, Code, ExecBudget, Facts, Literal, Mode, Predicate, Program, RelationKind, Rule,
-    Term, Tuple, Value, Version, evaluate,
+    Term, Tuple, Usage, Value, Version, evaluate,
 };
 use proptest::prelude::*;
 
@@ -256,7 +256,8 @@ fn constants_seeds_and_every_value_kind_take_part_in_joins() {
     );
     assert_eq!(result.tuples("root").to_vec(), vec![vec![text("b")]]);
     assert_eq!(result.tuples("rooted").to_vec(), vec![vec![text("b")]]);
-    assert_eq!(result.usage.input_facts, 4);
+    assert_eq!(result.usage.input_facts, 3);
+    assert_eq!(result.usage.supplied_facts, 4);
 }
 
 #[test]
@@ -369,6 +370,80 @@ fn an_exhausted_budget_refuses_and_names_the_rule_that_was_running() {
     assert_eq!(bytes.code, Code::BudgetExhausted);
 }
 
+/// The reviewers' size programs: a rule that would copy one large value into
+/// a million facts, and a rule too wide to bind. Both refuse before any large
+/// allocation.
+#[test]
+fn result_size_and_rule_width_are_bounded_before_anything_large_is_held() {
+    let program = Program {
+        version: Version::V1,
+        predicates: vec![
+            predicate("big", 1, RelationKind::Input),
+            predicate("e", 1, RelationKind::Input),
+            predicate("d", 3, RelationKind::Derived),
+        ],
+        rules: vec![rule(
+            "d",
+            over("d", &["x", "y", "z"]),
+            vec![
+                Literal::Positive(over("big", &["x"])),
+                Literal::Positive(over("e", &["y"])),
+                Literal::Positive(over("e", &["z"])),
+            ],
+        )],
+    };
+    let facts = Facts::from([
+        ("big".to_owned(), vec![vec![text(&"x".repeat(1 << 20))]]),
+        (
+            "e".to_owned(),
+            (0..1_000).map(|n| vec![text(&format!("{n:04}"))]).collect(),
+        ),
+    ]);
+    let refusal = refused(&program, &facts, ExecBudget::default());
+    assert_eq!(
+        (refusal.code, refusal.rule_id.as_deref()),
+        (Code::BudgetExhausted, Some("d"))
+    );
+    // `h(A) :- e(A), e(B), w(C1, ..., C8000)`: too wide to admit at all.
+    let wide: Vec<String> = (1..=8_000).map(|n| format!("c{n}")).collect();
+    let wide: Vec<&str> = wide.iter().map(String::as_str).collect();
+    let program = Program {
+        version: Version::V1,
+        predicates: vec![
+            predicate("e", 1, RelationKind::Input),
+            predicate("w", 8_000, RelationKind::Input),
+            predicate("h", 1, RelationKind::Derived),
+        ],
+        rules: vec![rule(
+            "h",
+            over("h", &["a"]),
+            vec![
+                Literal::Positive(over("e", &["a"])),
+                Literal::Positive(over("e", &["b"])),
+                Literal::Positive(over("w", &wide)),
+            ],
+        )],
+    };
+    let refusal = refused(&program, &Facts::new(), ExecBudget::default());
+    assert_eq!(refusal.code, Code::BudgetExhausted);
+}
+
+#[test]
+fn which_bad_fact_is_reported_does_not_depend_on_tuple_order() {
+    let program = reachability();
+    let bad = [vec![text("x")], vec![text("e\u{301}"), text("y")]];
+    for order in [[0, 1], [1, 0]] {
+        let facts = Facts::from([(
+            "edge".to_owned(),
+            order.iter().map(|index| bad[*index].clone()).collect(),
+        )]);
+        assert_eq!(
+            refused(&program, &facts, ExecBudget::default()).code,
+            Code::ArityMismatch
+        );
+    }
+}
+
 #[test]
 fn facts_that_do_not_fit_the_declared_signatures_are_refused() {
     let program = reachability();
@@ -477,10 +552,65 @@ proptest! {
             let again = tuples.clone();
             tuples.extend(again);
         }
-        prop_assert_eq!(&run(&program, &repeated).relations, &baseline.relations);
+        let again = run(&program, &repeated);
+        prop_assert_eq!(&again.relations, &baseline.relations);
+        // Only the raw supplied count sees the repeats.
+        prop_assert_eq!(
+            Usage { supplied_facts: baseline.usage.supplied_facts, ..again.usage },
+            baseline.usage
+        );
         let mut reversed = program;
         reversed.rules.reverse();
         reversed.predicates.reverse();
-        prop_assert_eq!(&run(&reversed, &facts).relations, &baseline.relations);
+        let flipped = run(&reversed, &facts);
+        prop_assert_eq!(&flipped.relations, &baseline.relations);
+        prop_assert_eq!(flipped.usage, baseline.usage);
+    }
+
+    /// A recursive rule with two premises from its own stratum (path joined
+    /// with path) still computes exactly graph reachability: the delta must
+    /// be tried at every recursive premise, not only the first.
+    #[test]
+    fn a_doubly_recursive_closure_agrees_with_graph_search((nodes, edges, _starts) in graphs()) {
+        let program = Program {
+            version: Version::V1,
+            predicates: vec![
+                predicate("edge", 2, RelationKind::Input),
+                predicate("path", 2, RelationKind::Derived),
+            ],
+            rules: vec![
+                rule(
+                    "path.edge",
+                    over("path", &["a", "b"]),
+                    vec![Literal::Positive(over("edge", &["a", "b"]))],
+                ),
+                rule(
+                    "path.join",
+                    over("path", &["a", "c"]),
+                    vec![
+                        Literal::Positive(over("path", &["a", "b"])),
+                        Literal::Positive(over("path", &["b", "c"])),
+                    ],
+                ),
+            ],
+        };
+        let mut facts = graph_facts(nodes, &edges, &[]);
+        facts.retain(|name, _| name == "edge");
+        let result = run(&program, &facts);
+        let paths: Vec<Tuple> = closure(nodes, &edges)
+            .iter()
+            .map(|(from, to)| vec![text(&name(*from)), text(&name(*to))])
+            .collect();
+        prop_assert_eq!(result.tuples("path"), paths.as_slice());
+    }
+
+    /// Every row held between derivation and the model was charged first.
+    #[test]
+    fn rows_held_never_exceed_what_was_charged((nodes, edges, starts) in graphs()) {
+        let result = run(&reachability(), &graph_facts(nodes, &edges, &starts));
+        let usage = result.usage;
+        prop_assert!(usage.peak_pending_values <= usage.derived_values);
+        let width: usize = result.relations.iter().flat_map(|relation| &relation.tuples).map(Vec::len).sum();
+        prop_assert_eq!(width, usage.derived_values);
     }
 }

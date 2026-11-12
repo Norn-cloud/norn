@@ -50,12 +50,17 @@ with the declared width and NFC text (`datalog.derived_in_input`,
 rule runs and constants are numbered in canonical-encoding order, so the
 result and the metered work depend only on the set of input facts: not on
 their order, repeats, or rule order. Output relations are in name order and
-their tuples in canonical order. `ExecBudget` bounds supplied facts, text
-bytes, derived facts and work (one unit per value read, per tuple a join
-scans, per negation probe and per fact produced); reaching any limit refuses
-with `datalog.budget_exhausted`, naming the running rule, and returns nothing
-partial. Joins scan in body order using ordered prefix ranges; there is no
-query planner, so a pack should order its premises from most to least bound.
+their tuples in canonical order. `ExecBudget` bounds supplied facts and text,
+derived facts, derived values, result bytes and work; memory is charged before
+it is held (joins are depth-first over one binding, and each derived fact is
+charged for its values and their encoded bytes before it is stored). Reaching
+any limit refuses with `datalog.budget_exhausted`, naming the running rule, and
+returns nothing partial. `validate` bounds each rule's arity, variables and
+body literals. Inputs are deduplicated before work is charged and rules run in
+identifier order, so usage does not depend on fact order, repeats or rule
+order. Joins scan in body order using ordered prefix ranges; there is no query
+planner, so a pack should order its premises from most to least bound. Limits
+and codes are in `docs/platform/datalog-contract.md`.
 
 The executor is the reference semantics, not a replacement for generated
 backends: the checker's inheritance step still runs as generated Ascent code,

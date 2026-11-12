@@ -109,6 +109,36 @@ fn executor_cycles(parents: &[Option<usize>]) -> BTreeSet<usize> {
         ExecBudget::default(),
     )
     .expect("the admitted overlap pack evaluates");
+    // The whole model, not only the cycle relation: `ancestor` must be
+    // exactly the transitive closure of the known parent edges, and the
+    // member rules have no facts to fire on.
+    let mut ancestors = Vec::new();
+    for child in 0..parents.len() {
+        let mut current = child;
+        let mut reached = BTreeSet::new();
+        while let Some(parent) = parents
+            .get(current)
+            .copied()
+            .flatten()
+            .filter(|parent| *parent < parents.len())
+        {
+            if !reached.insert(parent) {
+                break;
+            }
+            current = parent;
+        }
+        ancestors.extend(
+            reached
+                .into_iter()
+                .map(|parent| vec![scope.clone(), name(child), name(parent)]),
+        );
+    }
+    ancestors.sort_by_key(|tuple| format!("{tuple:?}"));
+    let mut derived = result.tuples("ancestor").to_vec();
+    derived.sort_by_key(|tuple| format!("{tuple:?}"));
+    assert_eq!(derived, ancestors, "{parents:?}");
+    assert!(result.tuples("member_collision").is_empty());
+    assert!(result.tuples("cardinality_widening").is_empty());
     let cyclic = result.tuples("inheritance_cycle");
     (0..parents.len())
         .filter(|index| cyclic.contains(&vec![scope.clone(), name(*index)]))

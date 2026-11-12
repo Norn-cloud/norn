@@ -9,13 +9,15 @@ use crate::{Atom, Literal, Program, RelationKind, Rule, Term, Value};
 /// Stable shared refusal codes; callers may render their own diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Code {
-    /// A structural, text, or metered-work ceiling was exceeded.
+    /// A structural, text, or metered-work ceiling was exceeded, in validation
+    /// or in evaluation (input facts, derived facts, result bytes, work).
     #[serde(rename = "datalog.budget_exhausted")]
     BudgetExhausted,
     /// Symbols must be nonempty ASCII identifiers.
     #[serde(rename = "datalog.invalid_symbol")]
     InvalidSymbol,
-    /// Canonical encoding must not collapse distinct constant spellings.
+    /// Canonical encoding must not collapse distinct constant spellings; this
+    /// applies to rule constants and to supplied fact values alike.
     #[serde(rename = "datalog.noncanonical_constant")]
     NoncanonicalConstant,
     /// More than one rule has this identity.
@@ -24,10 +26,11 @@ pub enum Code {
     /// A relation signature was declared more than once.
     #[serde(rename = "datalog.duplicate_predicate")]
     DuplicatePredicate,
-    /// An atom references an undeclared relation, or a derived relation has no rules.
+    /// An atom references an undeclared relation, a derived relation has no
+    /// rules, or facts were supplied for an undeclared relation.
     #[serde(rename = "datalog.undefined_predicate")]
     UndefinedPredicate,
-    /// Atom width disagrees with the declared signature.
+    /// Atom or supplied fact width disagrees with the declared signature.
     #[serde(rename = "datalog.arity_mismatch")]
     ArityMismatch,
     /// Rules cannot write supplied input relations.
@@ -51,6 +54,12 @@ pub enum Code {
     /// Facts were supplied for a relation that rules define.
     #[serde(rename = "datalog.derived_in_input")]
     DerivedInInput,
+    /// A value could not be canonically encoded, so it has no identity.
+    #[serde(rename = "datalog.unencodable_value")]
+    UnencodableValue,
+    /// An evaluator invariant failed; a defect, never an evaluation result.
+    #[serde(rename = "datalog.executor_invariant")]
+    ExecutorInvariant,
 }
 
 /// One deterministic refusal. No partial admission plan is returned.
@@ -92,8 +101,14 @@ pub struct Budget {
     pub max_rules: usize,
     /// Maximum atoms across heads and bodies.
     pub max_atoms: usize,
-    /// Maximum terms across all atoms, and maximum signature arity.
+    /// Maximum terms across all atoms.
     pub max_terms: usize,
+    /// Maximum declared arity of any relation.
+    pub max_arity: usize,
+    /// Maximum distinct variables in one rule.
+    pub max_rule_variables: usize,
+    /// Maximum body literals in one rule.
+    pub max_body_atoms: usize,
     /// Maximum total UTF-8 bytes of identifiers and constants.
     pub max_text_bytes: usize,
     /// Shared metered work ceiling, including graph calls.
@@ -107,6 +122,9 @@ impl Default for Budget {
             max_rules: 512,
             max_atoms: 4_096,
             max_terms: 16_384,
+            max_arity: 16,
+            max_rule_variables: 32,
+            max_body_atoms: 16,
             max_text_bytes: 262_144,
             max_work: 1_000_000,
         }
@@ -239,6 +257,31 @@ pub(crate) fn constant_texts(value: &Value) -> Vec<&str> {
     }
 }
 
+/// One rule's width: body literals and distinct variables, so evaluation
+/// state per rule is bounded before any of it is allocated.
+fn rule_shape(rule: &Rule, budget: Budget, meter: &mut Meter) -> Result<(), Diagnostic> {
+    let too_wide = || refusal(Code::BudgetExhausted, Some(&rule.id), None);
+    if rule.body.len() > budget.max_body_atoms {
+        return Err(too_wide());
+    }
+    let mut variables = BTreeSet::new();
+    for atom in std::iter::once(&rule.head).chain(rule.body.iter().map(Literal::atom)) {
+        if atom.terms.len() > budget.max_arity {
+            return Err(too_wide());
+        }
+        for term in &atom.terms {
+            meter.charge(1)?;
+            if let Term::Variable(name) = term {
+                variables.insert(name.as_str());
+                if variables.len() > budget.max_rule_variables {
+                    return Err(too_wide());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn exhausted() -> Diagnostic {
     refusal(Code::BudgetExhausted, None, None)
 }
@@ -263,12 +306,13 @@ fn preflight(program: &Program, budget: Budget) -> Result<Meter, Diagnostic> {
     };
     for predicate in &program.predicates {
         meter.charge(1)?;
-        check(predicate.arity, budget.max_terms)?;
+        check(predicate.arity, budget.max_arity)?;
         meter.symbol(&predicate.name)?;
     }
     for rule in &program.rules {
         meter.charge(1)?;
         meter.symbol(&rule.id)?;
+        rule_shape(rule, budget, &mut meter)?;
         meter.atom(&rule.head)?;
         for literal in &rule.body {
             meter.charge(1)?;
