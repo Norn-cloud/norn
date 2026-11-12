@@ -8,8 +8,8 @@ use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{PropertyType, RuntimeValue};
 
 use super::{
-    Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, PointLaw, TableSchema,
-    Test, Window,
+    AsOf, Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, PointLaw,
+    TableSchema, Test, Window,
 };
 use crate::CellError;
 
@@ -177,6 +177,34 @@ fn instant_column(plan: &QuestionPlan, id: &str) -> Result<String, CellError> {
     }
 }
 
+/// METRIC-SNAPSHOT-ASOF-1: the periods of a snapshot sum, exactly as the
+/// shared oracle cuts them: the time grouping's civil periods clipped to the
+/// window, or one period ending at the window's end.
+fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
+    let [sum] = plan.sums() else {
+        return Err(refused());
+    };
+    let timed: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .filter(|d| d.grain.is_some())
+        .collect();
+    let periods = match timed.as_slice() {
+        [] => vec![(None, window.end)],
+        [dimension] if dimension.path.property == sum.time_property => {
+            let grain = dimension.grain.ok_or_else(refused)?;
+            norn_checker::metric::compute::contribution::periods(window.start, window.end, grain)
+                .map_err(|_bound| refused())?
+        }
+        _ => return Err(refused()),
+    };
+    Ok(AsOf {
+        column: window.column.clone(),
+        periods,
+    })
+}
+
 /// QUERY-ENGINE-1: the plan as the engine's typed question. Anything outside
 /// the lowered profile refuses with `core.compute.unsupported_engine`; it is
 /// never approximated.
@@ -184,11 +212,6 @@ fn instant_column(plan: &QuestionPlan, id: &str) -> Result<String, CellError> {
 /// # Errors
 /// Unsupported semantics, or a window that is not a pair of timestamps.
 pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
-    // METRIC-SNAPSHOT-ASOF-1 carries values forward per subject; its
-    // lowering is not in this profile yet, so it refuses rather than sum.
-    if plan.as_of() {
-        return Err(refused());
-    }
     let question = plan.question();
     let first = plan.sums().first().ok_or_else(refused)?;
     let time = first.time_property.as_str();
@@ -250,7 +273,13 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
     if !(1..=2).contains(&operands.len()) {
         return Err(refused());
     }
+    let as_of = if plan.as_of() {
+        Some(as_of(plan, &window)?)
+    } else {
+        None
+    };
     Ok(Lowered {
+        as_of,
         filters: question
             .filters
             .iter()

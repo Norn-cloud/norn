@@ -372,6 +372,18 @@ pub struct Operand {
     pub filters: Vec<Filter>,
 }
 
+/// METRIC-SNAPSHOT-ASOF-1: a semi-additive sum reads, per period, each
+/// current subject's last version before the period's end (by valid time,
+/// then version), never summing a subject over time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AsOf {
+    /// The valid-time property the versions are ordered by.
+    pub column: String,
+    /// Each period's label (none without a time grouping) and its exclusive end.
+    pub periods: Vec<(Option<String>, (i64, u32))>,
+}
+
 /// QUERY-ENGINE-1: an admitted keyed sum or ratio, lowered from the shared
 /// plan with the shared projection's semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +398,9 @@ pub struct Lowered {
     pub dimensions: Vec<Dimension>,
     /// One operand, or numerator then denominator.
     pub operands: Vec<Operand>,
+    /// A snapshot sum's periods; its time grouping is the period's label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<AsOf>,
 }
 
 /// Evaluate a lowered question.

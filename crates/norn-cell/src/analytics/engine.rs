@@ -267,6 +267,11 @@ impl Engine {
             }
             let excluded = scope.excluded_present(conn)?;
             let projection = Projection::build(&request.query, &scope)?;
+            if let Some(untimed) = &projection.untimed
+                && query_u64(conn, untimed)? > 0
+            {
+                return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
+            }
             let answered = projection.materialize(conn).and_then(|()| {
                 if query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE refuse"))? > 0 {
                     return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));
@@ -690,6 +695,8 @@ struct Scope {
     all: Frag,
     /// The rows a question reads.
     population: Frag,
+    /// Every version known at the frontier, superseded ones included (mirror only).
+    versions: Option<Frag>,
     excluded: Vec<String>,
 }
 
@@ -723,11 +730,16 @@ impl Scope {
                 } else {
                     Frag::fmt("({} AND \":id\" NOT IN ({}))", &[&all, &id_list(excluded)])
                 };
+                let versions = Frag::fmt(
+                    "(\":w\" = {} AND \":from\" <= {})",
+                    &[&Frag::bind("?", Sql::Text(world.clone())), &at],
+                );
                 Ok(Self {
                     table: mirror_table(table),
                     columns: schema.columns,
                     all,
                     population,
+                    versions: Some(versions),
                     excluded: excluded.clone(),
                 })
             }
@@ -741,6 +753,7 @@ impl Scope {
                     columns: schema.columns,
                     all: Frag::raw("TRUE"),
                     population: Frag::raw("TRUE"),
+                    versions: None,
                     excluded: Vec::new(),
                 })
             }
@@ -795,6 +808,8 @@ fn query_u64(conn: &Connection, sql: &Frag) -> Outcome<u64> {
 /// would refuse on reaching it.
 struct Projection {
     sql: Frag,
+    /// A snapshot's versions without their valid time, which refuse the question.
+    untimed: Option<Frag>,
     arity: usize,
     /// One per dimension, in the question's order (`g{i}`, `r{i}`).
     groups: Vec<GroupKind>,
@@ -827,6 +842,68 @@ impl Projection {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1: per period, each current subject's last version
+/// known at the frontier whose valid time is before the period's end (ties
+/// to the later version), with the period's label as `":label"`; and the
+/// count query of those subjects' versions that have no valid time.
+fn as_of_versions(scope: &Scope, as_of: &super::AsOf) -> Outcome<(Frag, Frag)> {
+    let versions = scope
+        .versions
+        .as_ref()
+        .ok_or_else(|| refusal(UNSUPPORTED, "a snapshot over a dataset"))?;
+    let column = scope.column(&as_of.column)?;
+    if !matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+        return Err(refusal(UNSUPPORTED, "a snapshot's time is not an instant"));
+    }
+    if as_of.periods.is_empty() {
+        return Err(refusal(UNSUPPORTED, "a snapshot without periods"));
+    }
+    let periods = Frag::join(
+        &as_of
+            .periods
+            .iter()
+            .enumerate()
+            .map(|(index, (label, (secs, nanos)))| {
+                Frag::fmt(
+                    &format!("(CAST({{}} AS VARCHAR), {{}}, {{}}, {index})"),
+                    &[
+                        &label.as_ref().map_or_else(
+                            || Frag::raw("NULL"),
+                            |label| Frag::bind("?", Sql::Text(label.clone())),
+                        ),
+                        &Frag::bind("?", Sql::BigInt(*secs)),
+                        &Frag::bind("?", Sql::BigInt(i64::from(*nanos))),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>(),
+        ", ",
+    );
+    let (t, n) = (derived(&as_of.column, "t"), derived(&as_of.column, "n"));
+    let table = &scope.table;
+    let subjects = Frag::fmt(
+        &format!("\":id\" IN (SELECT \":id\" FROM {table} WHERE {{}})"),
+        &[&scope.population],
+    );
+    let pick = Frag::fmt(
+        &format!(
+            "SELECT b.\":label\", v.* FROM (VALUES {{}}) AS b(\":label\", \":et\", \":en\", \":pi\") \
+             JOIN (SELECT * FROM {table} WHERE {{}} AND {{}}) AS v \
+             ON (v.{t} < b.\":et\" OR (v.{t} = b.\":et\" AND v.{n} < b.\":en\")) \
+             QUALIFY row_number() OVER (PARTITION BY b.\":pi\", v.\":id\" ORDER BY v.{t} DESC, v.{n} DESC, v.\":v\" DESC) = 1"
+        ),
+        &[&periods, versions, &subjects],
+    );
+    let untimed = Frag::fmt(
+        &format!(
+            "SELECT count(*) FROM {table} WHERE {{}} AND {{}} AND {} IS NULL",
+            ident(&as_of.column)
+        ),
+        &[versions, &subjects],
+    );
+    Ok((pick, untimed))
 }
 
 /// The first day of `grain`'s UTC period holding the instant `t` (seconds),
@@ -942,35 +1019,52 @@ impl Projection {
         }
         let time = Frag::raw(ident(&window.column));
         let question = filters_sql(scope, &query.filters)?;
-        // The base layer evaluates the question's filters once per row.
-        let base = Frag::fmt(
-            &format!(
-                "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
-                scope.table
-            ),
-            &[&question.holds, &question.refuse, &scope.population],
-        );
         let q = Frag::raw("\":q\"");
-        let reach = Frag::fmt(
-            "({} AND {} IS NOT NULL AND {} AND {})",
-            &[
-                &q,
-                &time,
-                &instant_bound(&window.column, window.start, ">="),
-                &instant_bound(&window.column, window.end, "<"),
-            ],
-        );
+        let (base, reach, mut refusals, untimed) = if let Some(as_of) = &query.as_of {
+            let (pick, untimed) = as_of_versions(scope, as_of)?;
+            // Each picked version is read whatever its own instant: no window.
+            let base = Frag::fmt(
+                "SELECT *, {} AS \":q\", {} AS \":qr\" FROM ({}) AS pk",
+                &[&question.holds, &question.refuse, &pick],
+            );
+            (base, q.clone(), vec![Frag::raw("\":qr\"")], Some(untimed))
+        } else {
+            // The base layer evaluates the question's filters once per row.
+            let base = Frag::fmt(
+                &format!(
+                    "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
+                    scope.table
+                ),
+                &[&question.holds, &question.refuse, &scope.population],
+            );
+            let reach = Frag::fmt(
+                "({} AND {} IS NOT NULL AND {} AND {})",
+                &[
+                    &q,
+                    &time,
+                    &instant_bound(&window.column, window.start, ">="),
+                    &instant_bound(&window.column, window.end, "<"),
+                ],
+            );
+            let refusals = vec![
+                Frag::raw("\":qr\""),
+                Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
+            ];
+            (base, reach, refusals, None)
+        };
         let mut select = vec![
             Frag::raw(format!("{} AS id", ident(":id"))),
             Frag::raw(format!("{} AS v", ident(":v"))),
         ];
-        let mut refusals = vec![
-            Frag::raw("\":qr\""),
-            Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
-        ];
         let mut groups = Vec::new();
         for (i, dimension) in query.dimensions.iter().enumerate() {
             let (group, representative, kind) = match dimension {
+                // A snapshot's time grouping is the period it was read as of.
+                super::Dimension::Period { .. } if query.as_of.is_some() => (
+                    "\":label\"".to_owned(),
+                    "\":label\"".to_owned(),
+                    GroupKind::Text,
+                ),
                 super::Dimension::Period { column, grain } => {
                     if !matches!(
                         scope.column(column)?.kind,
@@ -1069,7 +1163,12 @@ impl Projection {
                 &base,
             ],
         );
-        Ok(Self { sql, arity, groups })
+        Ok(Self {
+            sql,
+            untimed,
+            arity,
+            groups,
+        })
     }
 
     /// The bucket's key from its representatives, read from `index` on.

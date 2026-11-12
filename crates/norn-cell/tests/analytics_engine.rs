@@ -873,3 +873,167 @@ fn bulk_path_measurements() {
         seq as f64 / sync_secs
     );
 }
+
+/// METRIC-SNAPSHOT-ASOF-1 on the engine: a semi-additive stock read as of
+/// each period's end equals the exact engine's snapshot answer, by week,
+/// by week and location, by location alone (as of the window's end), and
+/// ungrouped.
+mod snapshot {
+    use super::{Engine, compare, engine};
+    use norn_cell::compute::QueryContext;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+    use norn_checker::metric::compute::QuestionPlan;
+    use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const TYPE: &str = "demo.Stock";
+    const WORLD: &str = "synthetic-stock";
+    const CLOCK: u64 = 1_792_972_800_000;
+    const INSTANTS: [&str; 10] = [
+        "2026-06-01T00:00:00Z",
+        "2026-07-05T23:59:59Z",
+        "2026-07-06T00:00:00Z",
+        "2026-07-09T12:00:00Z",
+        "2026-07-13T00:00:00Z",
+        "2026-07-19T23:59:59Z",
+        "2026-07-24T08:00:00Z",
+        "2026-07-27T00:00:00Z",
+        "2026-08-05T18:30:00Z",
+        "2026-08-10T00:00:00Z",
+    ];
+
+    fn object_type() -> ObjectTypeDef {
+        serde_json::from_value(json!({"name": TYPE, "properties": [
+            {"id": "quantity", "type": {"kind": "decimal", "scale": 3, "additivity": {"kind": "semi_additive"}}, "constraints": {"nullable": true}},
+            {"id": "observed_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "location", "type": {"kind": "text"}},
+        ]}))
+        .expect("typed model")
+    }
+
+    fn context() -> QueryContext {
+        QueryContext {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            population_pin: "all-stock".into(),
+            authorization_epoch: 1,
+            mapping_pin: "fixture:stock".into(),
+            now_ms: CLOCK + 1_000_000,
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
+        }
+    }
+
+    fn plan(north_only: bool, group_by: &serde_json::Value) -> (CellStore, QuestionPlan) {
+        let artifact: ArtifactEnvelope = serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": "demo.Stock.entity", "kind": "entity", "namespace": "demo",
+            "name": TYPE, "version": "0.1.0", "lifecycle": "active", "scope": {}, "dependencies": [],
+            "provenance": {"source": "system"}, "payload": {"entityVersion": "2.0", "objectType": object_type()},
+        }))
+        .expect("artifact");
+        let space = norn_checker::metric::derive::derive_metric_space(
+            &[artifact],
+            &BTreeSet::new(),
+            &LawRoot::Entity(TYPE.to_owned()),
+        )
+        .expect("derived space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|c| c.definition.name.ends_with(".quantity.as_of_observed_at"))
+            .expect("the snapshot candidate");
+        let filters = if north_only {
+            json!([{"path": {"property": "location"}, "operator": "eq", "value": "north"}])
+        } else {
+            json!([])
+        };
+        let question: QuestionIR = serde_json::from_value(json!({
+            "irVersion": "0.1", "name": "demo.stock_week", "objectSet": TYPE,
+            "aggregate": [{"metric": metric.definition.name}],
+            "groupBy": group_by, "filter": filters,
+            "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+            "freshness": {"kind": "live", "maxAgeMs": 5000},
+        }))
+        .expect("question");
+        let plan = space.admit(&question, 100).expect("admitted snapshot question");
+        assert!(plan.as_of());
+        let model = Model::from_definitions(&[object_type()], &[]).expect("model");
+        (CellStore::open_in_memory(model).expect("cell"), plan)
+    }
+
+    fn put(store: &mut CellStore, tick: u64, key: &str, quantity: Option<i64>, at: &str, location: &str) {
+        let quantity = quantity.map_or(V::Null, |q| V::from(Decimal::parse(&q.to_string()).expect("exact")));
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK + tick,
+                writes: vec![FactWriteRow::Put {
+                    object_type: TYPE.into(),
+                    key: key.into(),
+                    values: BTreeMap::from([
+                        ("quantity".into(), quantity),
+                        ("observed_at".into(), V::from(at)),
+                        ("location".into(), V::from(location)),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("version commits");
+    }
+
+    fn shapes() -> [serde_json::Value; 4] {
+        [
+            json!([{"path": {"property": "observed_at"}, "grain": "week"}]),
+            json!([{"path": {"property": "observed_at"}, "grain": "week"}, {"path": {"property": "location"}}]),
+            json!([{"path": {"property": "location"}}]),
+            json!([]),
+        ]
+    }
+
+    fn check(engine: &Engine, history: &[(usize, Option<i64>, usize, bool)], north_only: bool, shape: &serde_json::Value) {
+        let (mut store, plan) = plan(north_only, shape);
+        for (tick, (subject, quantity, at, north)) in (1u64..).zip(history) {
+            let location = if *north { "north" } else { "south" };
+            put(&mut store, tick, &format!("s{subject}"), *quantity, INSTANTS[*at], location);
+        }
+        compare(&store, engine, &plan, &context());
+    }
+
+    #[test]
+    fn the_scenario_history_matches_the_exact_snapshot_in_every_shape() {
+        let history = [
+            (1, Some(10), 3, true),
+            (1, Some(5), 4, true),
+            (1, Some(7), 5, true),
+            (2, Some(100), 6, true),
+            (1, Some(3), 7, false),
+            (2, Some(50), 5, true),
+            (3, Some(1), 0, true),
+            (3, Some(2), 0, true),
+            (4, None, 3, true),
+        ];
+        for shape in shapes() {
+            for north_only in [false, true] {
+                let (_dir, engine) = engine();
+                check(&engine, &history, north_only, &shape);
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+        /// Generated histories with valid-time ties, nulls, location flips and
+        /// versions before the window and on period boundaries.
+        #[test]
+        fn generated_snapshot_histories_match_the_exact_engine(
+            history in proptest::collection::vec((0usize..3, proptest::option::weighted(0.85, 0i64..1_000), 0usize..10, proptest::bool::ANY), 1..14),
+            north_only in proptest::bool::ANY,
+            shape in 0usize..4,
+        ) {
+            let (_dir, engine) = engine();
+            check(&engine, &history, north_only, &shapes()[shape]);
+        }
+    }
+}
