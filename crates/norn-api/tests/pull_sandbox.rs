@@ -904,6 +904,6 @@ fn a_host_page_size_sets_every_feeds_page() {
                 request.url
             );
         }
-        other => panic!("expected a request, got {other:?}"),
+        other @ (Step::Continue | Step::Done(_)) => panic!("expected a request, got {other:?}"),
     }
 }
