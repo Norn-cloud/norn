@@ -16,9 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_cell::compute::QueryContext;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::metric::derive::derive_metric_space;
-use norn_ir::{
-    ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
-};
+use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -73,7 +71,12 @@ fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::Ques
     let metric = space
         .candidates()
         .iter()
-        .find(|candidate| candidate.definition.name.ends_with(".quantity.as_of_observed_at"))
+        .find(|candidate| {
+            candidate
+                .definition
+                .name
+                .ends_with(".quantity.as_of_observed_at")
+        })
         .expect("the stock's snapshot candidate");
     let filters = if north_only {
         json!([{"path": {"property": "location"}, "operator": "eq", "value": "north"}])
@@ -89,13 +92,22 @@ fn question(north_only: bool) -> (CellStore, norn_checker::metric::compute::Ques
         "freshness": {"kind": "live", "maxAgeMs": 5000},
     }))
     .expect("question");
-    let plan = space.admit(&question, 100).expect("admitted snapshot question");
+    let plan = space
+        .admit(&question, 100)
+        .expect("admitted snapshot question");
     assert!(plan.as_of());
     let model = Model::from_definitions(&[object_type()], &[]).expect("model");
     (CellStore::open_in_memory(model).expect("cell"), plan)
 }
 
-fn commit(store: &mut CellStore, tick: u64, key: &str, quantity: Option<i64>, at: &str, location: &str) {
+fn commit(
+    store: &mut CellStore,
+    tick: u64,
+    key: &str,
+    quantity: Option<i64>,
+    at: &str,
+    location: &str,
+) {
     let quantity = quantity.map_or(V::Null, |q| {
         V::from(Decimal::parse(&format!("{q}")).expect("exact quantity"))
     });
@@ -119,7 +131,10 @@ fn commit(store: &mut CellStore, tick: u64, key: &str, quantity: Option<i64>, at
 }
 
 /// Week key → (total, nulls) of the cell's answer.
-fn answer(store: &CellStore, plan: &norn_checker::metric::compute::QuestionPlan) -> BTreeMap<String, (String, u64)> {
+fn answer(
+    store: &CellStore,
+    plan: &norn_checker::metric::compute::QuestionPlan,
+) -> BTreeMap<String, (String, u64)> {
     let mut context = context();
     context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
     store

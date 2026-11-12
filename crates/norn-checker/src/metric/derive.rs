@@ -267,7 +267,11 @@ fn candidates_at_time(
             | PropertyAdditivity::Ratio { .. } => false,
         };
         if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {}) {
-            let mut generated = candidate(snapshot(object, &property.id, time_path), dimensions, Vec::new());
+            let mut generated = candidate(
+                snapshot(object, &property.id, time_path),
+                dimensions,
+                Vec::new(),
+            );
             generated.unit_partition = unit_partition(object, &[&property.id]);
             candidates.push(generated);
             continue;
@@ -562,7 +566,11 @@ fn sum(
 
 /// METRIC-SNAPSHOT-ASOF-1: a balance's value as of each period's end, summed
 /// across subjects and never over time.
-fn snapshot(object: &EffectiveObjectType, property: &PropertyId, time: &DimensionPath) -> MetricDefinition {
+fn snapshot(
+    object: &EffectiveObjectType,
+    property: &PropertyId,
+    time: &DimensionPath,
+) -> MetricDefinition {
     let mut definition = sum(object, property, time, &[]);
     definition.name = format!(
         "analysis.object_{}.{}.as_of_{}",

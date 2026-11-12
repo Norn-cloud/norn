@@ -133,7 +133,13 @@ pub fn as_of(
     let end = parse(window.end.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
     let mut series = versions
         .iter()
-        .map(|(version, row)| Ok((instant(plan, row, sum.time_property.as_str())?, *version, row)))
+        .map(|(version, row)| {
+            Ok((
+                instant(plan, row, sum.time_property.as_str())?,
+                *version,
+                row,
+            ))
+        })
         .collect::<Result<Vec<_>, &'static str>>()?;
     series.sort_by_key(|(at, version, _)| (*at, *version));
     let grouping = plan.question().dimensions.first();

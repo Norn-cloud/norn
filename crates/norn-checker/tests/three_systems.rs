@@ -543,7 +543,12 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
                 candidate.definition.norn.additivity,
                 norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
             );
-            (model, params.expr.clone().expect("a measure"), time, snapshot)
+            (
+                model,
+                params.expr.clone().expect("a measure"),
+                time,
+                snapshot,
+            )
         })
         .collect();
     let expected = [
@@ -553,7 +558,12 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         ("canon.Holding", "stock_cost", "observed_at", true),
     ]
     .map(|(model, measure, time, snapshot)| {
-        (model.to_owned(), measure.to_owned(), time.to_owned(), snapshot)
+        (
+            model.to_owned(),
+            measure.to_owned(),
+            time.to_owned(),
+            snapshot,
+        )
     });
     assert_eq!(derived, BTreeSet::from(expected));
     // METRIC-UNIT-PARTITION-1: each sum names where its unit is stored.
@@ -563,11 +573,12 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
             .iter()
             .map(|path| path.property.as_str())
             .collect();
-        let expected: &[&str] = if candidate.definition.type_params.expr.as_deref() == Some("quantity") {
-            &["unit", "currency"]
-        } else {
-            &[]
-        };
+        let expected: &[&str] =
+            if candidate.definition.type_params.expr.as_deref() == Some("quantity") {
+                &["unit", "currency"]
+            } else {
+                &[]
+            };
         assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
 }
