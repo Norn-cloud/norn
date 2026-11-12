@@ -524,6 +524,7 @@ fn derivation_fails_closed() {
     let mut model = Model::retail();
     model.property_types[2].property_type = PropertyType::Ref {
         name: norn_ir::PropertyTypeName("commerce.short_note".into()),
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
     };
     assert!(
         derive(&model)

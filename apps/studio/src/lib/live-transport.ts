@@ -130,3 +130,6 @@ export async function cellRead<T>(path: string, what: string, init: RequestInit 
 
 /** Where this page load reads from, for a page that shows something only a connected cell has. */
 export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: false, staleTime: Infinity })
+
+/** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type). */
+export function refreshMode(): void { mode = undefined }

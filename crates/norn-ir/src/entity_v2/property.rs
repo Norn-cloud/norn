@@ -256,15 +256,24 @@ pub enum PropertyType {
     Ref {
         /// The referenced [`PropertyTypeDef`] name.
         name: PropertyTypeName,
+        /// METRIC-ADDITIVITY-REF-1: the aggregation contract at this use
+        /// site. It may only refine a referenced type that declares none, and
+        /// applies only when the ref resolves to an integer or decimal.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
     },
 }
 
 impl PropertyType {
     /// METRIC-ADDITIVITY-1: only an explicit numeric contract admits aggregation.
+    /// For a `ref` this is its use-site declaration only; the effective
+    /// contract of a resolved property is the checker's.
     #[must_use]
     pub const fn additivity(&self) -> &PropertyAdditivity {
         match self {
-            Self::Integer { additivity } | Self::Decimal { additivity, .. } => additivity,
+            Self::Integer { additivity }
+            | Self::Decimal { additivity, .. }
+            | Self::Ref { additivity, .. } => additivity,
             Self::Text { .. }
             | Self::DecimalBinding { .. }
             | Self::Boolean { .. }
@@ -273,8 +282,7 @@ impl PropertyType {
             | Self::Duration { .. }
             | Self::Enum { .. }
             | Self::Record { .. }
-            | Self::JsonExt { .. }
-            | Self::Ref { .. } => &PropertyAdditivity::Undeclared {},
+            | Self::JsonExt { .. } => &PropertyAdditivity::Undeclared {},
         }
     }
 

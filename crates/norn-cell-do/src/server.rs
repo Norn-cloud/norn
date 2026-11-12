@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
+use norn_api::action_catalog::{ActionCatalogQuery, list_actions};
 use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
 use norn_api::authz::Operation;
 use norn_api::definition_routes::{
@@ -103,6 +104,8 @@ macro_rules! routes {
 routes! {
     /// `GET /v1/access`, dispatched by the published host's entry point.
     Access => ("GET", "/v1/access"),
+    /// `GET /v1/actions`.
+    ActionCatalog => ("GET", "/v1/actions"),
     /// `POST /v1/actions/{actionId}`.
     Action => ("POST", "/v1/actions/{actionId}"),
     /// `GET /v1/definitions`.
@@ -145,6 +148,7 @@ impl Route {
     pub fn of(path: &str) -> Option<Self> {
         match path {
             "/v1/access" => return Some(Self::Access),
+            "/v1/actions" => return Some(Self::ActionCatalog),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
@@ -259,6 +263,8 @@ pub fn handle_all<E: SqlEngine>(
         ))
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
+    } else if path == "/v1/actions" {
+        action_catalog(host, actor, method, query)
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
@@ -372,6 +378,30 @@ fn ad_hoc_question<E: SqlEngine>(
 /// body. The shared service authorizes, admits and commits; the cell's
 /// question runtime is its receipt-disclosure authority (D53), so a cell
 /// without one serves no action.
+/// `GET /v1/actions`: the actions the caller may call, by the call's own gate.
+fn action_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the action catalog is read with GET",
+        ));
+    }
+    let mut fields = parse(query, &["orgId", "environmentId", "objectKind"])?;
+    let query = ActionCatalogQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        object_kind: fields.remove("objectKind"),
+    };
+    document_json(&list_actions(host, &query, actor)?)
+}
+
 fn governed_action<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,

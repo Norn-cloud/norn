@@ -88,6 +88,20 @@ test("METRIC-ADDITIVITY-1 decimal authoring retains explicit classes and refuses
   }
 })
 
+test("METRIC-ADDITIVITY-REF-1 a ref carries a use-site class; undeclared is the omitted default", () => {
+  const scope = { orgId: "org_demo", environmentId: "dev" }
+  const authored = (options: string) => compileModule(source("6").replace(/Norn\.rate\(6,.*?\) /, `Norn.ref("core.quantity"${options}) `), scope)
+  const omitted = authored("")
+  const undeclared = authored(', {additivity:{kind:"undeclared"}}')
+  if (!omitted.ok || !undeclared.ok || omitted.artifacts === undefined || undeclared.artifacts === undefined) throw new Error("undeclared ref authoring failed")
+  expect(canonicalJson(undeclared.artifacts)).toBe(canonicalJson(omitted.artifacts))
+  const additive = authored(', {additivity:{kind:"additive"}}')
+  if (!additive.ok || additive.artifacts === undefined) throw new Error(JSON.stringify(additive))
+  const price = JSON.parse(JSON.stringify(additive.artifacts)).flatMap((artifact: { payload: { objectType?: { properties: Array<{ id: string; type: unknown }> } } }) => artifact.payload.objectType?.properties ?? []).find((property: { id: string }) => property.id === "price")
+  expect(price?.type).toEqual({ kind: "ref", name: "core.quantity", additivity: { kind: "additive" } })
+  for (const options of [', {additivity:{kind:"guess"}}', ', {unit:"g"}']) expect(authored(options).ok).toBe(false)
+})
+
 test("METRIC-ADDITIVITY-1 ratio operands must be complete PropertyId values", () => {
   for (const field of ["numerator", "denominator"]) {
     for (const value of ["bad.path", "Uppercase", "", "input\n"]) {

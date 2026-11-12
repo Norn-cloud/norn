@@ -38,6 +38,7 @@ fn property(name: &str) -> EffectiveProperty {
             description: None,
             property_type: PropertyType::Ref {
                 name: PropertyTypeName(format!("core.units.{name}")),
+                additivity: norn_ir::PropertyAdditivity::Undeclared {},
             },
             constraints: PropertyConstraints::default(),
             default: None,
