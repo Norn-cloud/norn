@@ -20,8 +20,9 @@ test("a stage writes the Worker, assets, auth database and secrets as celld read
 test("the cell host and the assistant bind only when configured", () => {
   const config = celldConfig(celldStudio({ ...BASE, STUDIO_DEFAULT_ORG: "org_demo", NORN_HOST_SERVICE: "norn-cell", AI_GATEWAY_URL: "https://gw", AI_GATEWAY_TOKEN: "t" }))
   expect(config.services).toEqual([{ binding: "NORN_HOST", service: "norn-cell" }])
-  expect(config.durable_objects).toEqual({ bindings: [{ name: "AGENT_BUDGET", class_name: "AgentBudget" }] })
-  expect(config.migrations).toEqual([{ tag: "v1", new_sqlite_classes: ["AgentBudget"] }])
+  // The assistant's checker is the cell's own admission and its spend is in D1: no Durable Object, no WASM.
+  expect(config.durable_objects).toBeUndefined()
+  expect(config.migrations).toBeUndefined()
   expect(config.vars).toEqual({ BETTER_AUTH_SECRET: SECRET, BETTER_AUTH_URL: "https://demo.norn.cloud", AUTH_SCRYPT: "js", STUDIO_BUILD: BUILD, STUDIO_DEFAULT_ORG: "org_demo", AI_GATEWAY_URL: "https://gw", AI_GATEWAY_TOKEN: "t" })
 })
 
