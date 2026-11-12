@@ -9290,7 +9290,7 @@ export interface components {
             /** @description The output column name. */
             name: string;
             /**
-             * Format: uint32
+             * Format: uint64
              * @description Rows back or ahead for `lag`/`lead` (default 1).
              */
             offset?: number;
