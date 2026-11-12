@@ -124,6 +124,16 @@ impl Column {
         }
     }
 
+    /// Whether the value may be null, and the name of its non-null type.
+    #[must_use]
+    pub fn describe(&self) -> (bool, String) {
+        if let Type::Optional(inner) = &self.ty {
+            (true, strip(inner).to_string())
+        } else {
+            (false, self.ty.to_string())
+        }
+    }
+
     fn nullable(mut self) -> Self {
         if !matches!(self.ty, Type::Optional(_)) {
             self.ty = Type::Optional(Box::new(self.ty));

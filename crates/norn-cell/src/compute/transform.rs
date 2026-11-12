@@ -47,6 +47,8 @@ pub struct TransformMember {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransformRow {
+    /// The row's stable id: the content hash of its grain values.
+    pub id: String,
     /// The grain values, in grain order.
     pub key: Vec<RuntimeValue>,
     /// Every column value.
@@ -151,26 +153,29 @@ impl<E: SqlEngine> CellStore<E> {
                 .iter()
                 .map(|(alias, scan)| (alias.as_str(), scan.object_type.as_str()))
                 .collect();
-            let rows: Vec<TransformRow> = output
+            let rows = output
                 .rows
                 .into_iter()
-                .map(|row| TransformRow {
-                    key: row.key,
-                    values: row.values,
-                    members: row
-                        .members
-                        .into_iter()
-                        .map(|member| TransformMember {
-                            object_type: types
-                                .get(member.alias.as_str())
-                                .map_or_else(String::new, |t| (*t).to_owned()),
-                            alias: member.alias,
-                            id: member.id,
-                            version: member.version,
-                        })
-                        .collect(),
+                .map(|row| {
+                    Ok(TransformRow {
+                        id: crate::codec::hash_json(&("norn.transform-row/1", &row.key))?,
+                        key: row.key,
+                        values: row.values,
+                        members: row
+                            .members
+                            .into_iter()
+                            .map(|member| TransformMember {
+                                object_type: types
+                                    .get(member.alias.as_str())
+                                    .map_or_else(String::new, |t| (*t).to_owned()),
+                                alias: member.alias,
+                                id: member.id,
+                                version: member.version,
+                            })
+                            .collect(),
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, CellError>>()?;
             let complete = withheld.is_empty() && exclusions.is_empty();
             let lineage_pin =
                 crate::codec::hash_json(&(&plan_pin, &revision, &rows, &withheld, &exclusions))?;
