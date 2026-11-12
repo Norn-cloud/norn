@@ -195,8 +195,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// from another handle costs O(k log n); the cell runtime owns commit order.
     ///
     /// # Errors
+    /// `core.world.fork_evidence_forbidden` in a fork (FORK-EVIDENCE-1).
     /// SQL failures while catching up receipts from another store handle.
     pub fn transparency_checkpoint(&self) -> Result<Checkpoint, CellError> {
+        self.refuse_fork_evidence()?;
         self.refresh_transparency()?;
         Ok(Checkpoint(self.transparency.borrow().root()))
     }
@@ -205,11 +207,13 @@ impl<E: SqlEngine> CellStore<E> {
     /// Returns None for an absent index, including the empty tree.
     ///
     /// # Errors
+    /// `core.world.fork_evidence_forbidden` in a fork (FORK-EVIDENCE-1).
     /// SQL failures while catching up receipts from another store handle.
     pub fn transparency_inclusion(
         &self,
         index: usize,
     ) -> Result<Option<InclusionProof>, CellError> {
+        self.refuse_fork_evidence()?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         Ok(log
@@ -223,11 +227,13 @@ impl<E: SqlEngine> CellStore<E> {
     /// and are refused. Equal-size proofs detect conflicting roots too.
     ///
     /// # Errors
+    /// `core.world.fork_evidence_forbidden` in a fork (FORK-EVIDENCE-1).
     /// SQL failures or a tree too large for this platform.
     pub fn transparency_consistency(
         &self,
         old_size: u64,
     ) -> Result<Option<ConsistencyProof>, CellError> {
+        self.refuse_fork_evidence()?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         if old_size == 0 || old_size > log.len() {

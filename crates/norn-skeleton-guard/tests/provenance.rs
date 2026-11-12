@@ -499,6 +499,9 @@ fn policy_fixture() -> Fixture {
     fixture.add(".github/workflows/core.yml", b"on: pull_request\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
@@ -572,6 +575,9 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
     for path in [
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
     ] {
