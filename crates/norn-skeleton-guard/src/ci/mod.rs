@@ -846,7 +846,8 @@ mod tests {
             .map(|line| line.trim().trim_end_matches(','))
             .collect::<Vec<_>>()
             .join(",");
-        let parsed = serde_json::from_str::<super::BTreeMap<String, String>>(&format!("{{{entries}}}"));
+        let parsed =
+            serde_json::from_str::<super::BTreeMap<String, String>>(&format!("{{{entries}}}"));
         assert!(parsed.is_ok(), "PULL_REQUEST_CONCURRENCY_CASES: {parsed:?}");
         let pinned = parsed.unwrap_or_default();
         assert!(
