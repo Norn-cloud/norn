@@ -348,3 +348,19 @@ fn the_compiled_in_builtins_are_registered() {
     assert!(!norn_cell::builtin_registered("norn.decision", 2));
     assert!(!norn_cell::builtin_registered("tenant.anything", 1));
 }
+
+/// A provisioned tenant cell answers ad-hoc questions over the metrics its
+/// active definitions derive, under its own read policy, keyed by the stage's
+/// lineage key; a caller nobody verified gets the one denial.
+#[test]
+fn a_tenant_cell_lists_and_answers_its_derived_metrics() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("q.sqlite"), &with_policy(&["admin"]));
+    let listed = cell.call("GET", "/v1/questions:metrics", Some(&user("admin")), "");
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed: Value = serde_json::from_str(&listed.body).unwrap();
+    let metrics = listed["metrics"].as_array().unwrap();
+    assert!(!metrics.is_empty(), "{listed}");
+    let anonymous = cell.call("GET", "/v1/questions:metrics", None, "");
+    assert_eq!(anonymous.status, 403, "{}", anonymous.body);
+}
