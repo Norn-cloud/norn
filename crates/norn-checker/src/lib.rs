@@ -79,6 +79,7 @@ pub mod mapping;
 mod markings;
 pub mod metric;
 pub mod metric_interchange;
+mod model;
 #[allow(
     missing_docs,
     clippy::pedantic,

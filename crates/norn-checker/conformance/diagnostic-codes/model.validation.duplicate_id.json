@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.duplicate_id",
+  "message": "a model lists a feature, output or contract id twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
