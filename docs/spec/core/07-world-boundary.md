@@ -113,20 +113,24 @@ consumes a page applies every admitted record and records a finding for every
 refused one; no commit applies part of a record and no page is split across
 commits. A host failure aborts the whole commit and the page is redelivered.
 Redelivery of a page, or of a record inside another page, is idempotent per
-record identity. Records apply in page order exactly as one-by-one delivery
-would: two records with one identity are the earlier and the later delivery (a
-higher `source_version` supersedes; an equal version with a different payload
-digest is a FEED-CONFLICT and is quarantined), and a record that links to a
-target arriving later in the same page is pending until that target applies,
-then resolves inside the same commit. A page is refused whole only for framing
-(page digest, size bound, unknown mapping pin), before anything is captured. K
-is at most 1,000 records and 4 MiB of canonical payload, within the commit
-envelope's `max_events` and the link journal's claim budget; hosts default to
-500. Equivalence scenario: **OBS-PAGE-EQUIV** (consuming a page equals
-consuming its records one by one in page order: same facts, links, findings,
-quarantine and per-record lineage, modulo bundle digests and commit count;
-generated pages mix refusals, repeated identities and intra-page links in
-both orders).
+record identity. A page holds at most one record per identity (connector
+instance, partition, source, source id): the host splits a source batch before
+a repeated identity, so the repeat is the next page and the next commit, and
+the earlier and later deliveries (a higher `source_version` supersedes; an
+equal version with a different payload digest is a FEED-CONFLICT and is
+quarantined) keep exactly the one-by-one versions, events and CAS chain. A
+record that links to a target arriving later in the same page is pending until
+that target applies, then resolves inside the same commit. A page is refused
+whole only for framing (page digest, size bound, unknown mapping pin, or a
+repeated identity inside the page), before anything is captured. K is at most
+1,000 records and 4 MiB of canonical payload, within the commit envelope's
+`max_events` and the link journal's claim budget; hosts default to 500.
+Equivalence scenario: **OBS-PAGE-EQUIV** (consuming a page equals consuming
+its records one by one in page order, over committed end state: the same facts,
+versions, events, links, findings, quarantine and per-record lineage, modulo
+bundle digests and commit count; a transient pending row that never commits is
+not part of the comparison; generated pages mix refusals, identities repeated
+across pages, intra-page links in both orders, and pages refused for framing).
 
 ## Perform and recovery semantics
 
