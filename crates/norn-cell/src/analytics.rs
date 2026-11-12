@@ -112,6 +112,24 @@ pub enum ColumnKind {
     Opaque,
 }
 
+/// A pointwise law a property declares: every present value must satisfy it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "law", content = "v")]
+pub enum PointLaw {
+    /// One of the declared enum values.
+    OneOf(Vec<String>),
+    /// At least this canonical decimal.
+    Min(String),
+    /// At most this canonical decimal.
+    Max(String),
+    /// At least this many Unicode scalar values.
+    MinLength(u64),
+    /// At most this many Unicode scalar values.
+    MaxLength(u64),
+    /// A constraint the engine does not evaluate; a load of the column refuses.
+    Unchecked,
+}
+
 /// One analytical column, named by its property id. (Its kind is
 /// flattened, so unknown fields cannot be denied here.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +142,9 @@ pub struct Column {
     pub kind: ColumnKind,
     /// Whether a value may be absent.
     pub nullable: bool,
+    /// BULK-LOAD-1: the property's declared pointwise laws, checked at load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub laws: Vec<PointLaw>,
 }
 
 /// An object type's analytical table, pinned to the definitions it came from.

@@ -1391,6 +1391,57 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
     }
 }
 
+/// The first declared pointwise law the parsed value `v{i}` breaks, in SQL;
+/// NULL when it keeps them all. An enum value is quoted and compared exactly,
+/// and a bound is a canonical decimal.
+fn law_sql(column: &Column, i: usize) -> Outcome<String> {
+    let v = format!("v{i}");
+    let mut checks = Vec::new();
+    for law in &column.laws {
+        checks.push(match law {
+            super::PointLaw::OneOf(values) => format!(
+                "CASE WHEN {v} IN ({}) THEN NULL ELSE 'bulk.not_in_enum' END",
+                values
+                    .iter()
+                    .map(|value| format!("'{}'", value.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            super::PointLaw::Min(bound) | super::PointLaw::Max(bound) => {
+                let exact = norn_ir::Decimal::parse(bound)
+                    .ok()
+                    .filter(|d| d.canonical() == *bound)
+                    .ok_or_else(|| {
+                        refusal("bulk.unsupported_law", "a bound that is not a canonical decimal")
+                    })?;
+                let (op, code) = if matches!(law, super::PointLaw::Min(_)) {
+                    ("<", "bulk.below_min")
+                } else {
+                    (">", "bulk.above_max")
+                };
+                format!("CASE WHEN {v} {op} {} THEN '{code}' END", exact.canonical())
+            }
+            super::PointLaw::MinLength(n) => {
+                format!("CASE WHEN length({v}) < {n} THEN 'bulk.too_short' END")
+            }
+            super::PointLaw::MaxLength(n) => {
+                format!("CASE WHEN length({v}) > {n} THEN 'bulk.too_long' END")
+            }
+            super::PointLaw::Unchecked => {
+                return Err(refusal(
+                    "bulk.unsupported_law",
+                    format!("{} declares a constraint the engine does not check", column.id),
+                ));
+            }
+        });
+    }
+    Ok(if checks.is_empty() {
+        "NULL".to_owned()
+    } else {
+        format!("coalesce({})", checks.join(", "))
+    })
+}
+
 fn dataset_ddl(table: &TableSchema) -> String {
     let mut columns = vec![
         format!("{} VARCHAR", ident(":id")),
@@ -1455,8 +1506,9 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         } else {
             "'bulk.required'"
         };
+        let laws = law_sql(column, i)?;
         reasons.push(format!(
-            "CASE WHEN c{i} IS NULL THEN {missing} ELSE {reason} END"
+            "CASE WHEN c{i} IS NULL THEN {missing} ELSE coalesce({reason}, {laws}) END"
         ));
     }
     let order = match request.file.format {

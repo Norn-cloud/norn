@@ -8,8 +8,8 @@ use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
 use norn_ir::{PropertyType, RuntimeValue};
 
 use super::{
-    Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, TableSchema, Test,
-    Window,
+    Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, PointLaw, TableSchema,
+    Test, Window,
 };
 use crate::CellError;
 
@@ -40,6 +40,41 @@ pub(crate) fn column_kind(property: &EffectiveProperty) -> Option<ColumnKind> {
     })
 }
 
+/// BULK-LOAD-1: the pointwise laws a property declares (its enum values and
+/// every conjoined constraint set's bounds and lengths). A pattern is not
+/// evaluated by the engine, so it marks the column [`PointLaw::Unchecked`].
+fn point_laws(property: &EffectiveProperty) -> Vec<PointLaw> {
+    let mut laws = Vec::new();
+    if let EffectiveKind::Base(PropertyType::Enum { values }) = &property.kind {
+        laws.push(PointLaw::OneOf(values.iter().map(|v| v.value.clone()).collect()));
+    }
+    for constraints in &property.constraints {
+        let decimal = |literal: &norn_ir::DecimalLiteral| {
+            norn_ir::Decimal::parse(literal.as_str()).map(|d| d.canonical()).ok()
+        };
+        match constraints.min.as_ref().map(decimal) {
+            Some(Some(min)) => laws.push(PointLaw::Min(min)),
+            Some(None) => laws.push(PointLaw::Unchecked),
+            None => {}
+        }
+        match constraints.max.as_ref().map(decimal) {
+            Some(Some(max)) => laws.push(PointLaw::Max(max)),
+            Some(None) => laws.push(PointLaw::Unchecked),
+            None => {}
+        }
+        if let Some(min) = &constraints.min_length {
+            laws.push(PointLaw::MinLength(min.0));
+        }
+        if let Some(max) = &constraints.max_length {
+            laws.push(PointLaw::MaxLength(max.0));
+        }
+        if constraints.pattern.is_some() {
+            laws.push(PointLaw::Unchecked);
+        }
+    }
+    laws
+}
+
 /// The analytical table of `name` with its stored properties, in order, and
 /// a pin over the columns, so a definitions change rebuilds the table.
 ///
@@ -56,6 +91,7 @@ pub fn table_schema(
                 id: property.id.as_str().to_owned(),
                 kind,
                 nullable: property.nullable,
+                laws: point_laws(property),
             })
         })
         .collect();
