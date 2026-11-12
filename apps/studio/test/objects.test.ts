@@ -82,3 +82,23 @@ test("an indented document keeps every number exactly as the server wrote it", (
   const source = '{"a":{"b":[1.10,9007199254740993]},"c":"x","d":[],"e":{}}'
   expect(exactPretty(JSON.parse(source), numberTexts(source), "")).toBe('{\n  "a": {\n    "b": [\n      1.10,\n      9007199254740993\n    ]\n  },\n  "c": "x",\n  "d": [],\n  "e": {}\n}')
 })
+
+test("a decimal shows at its declared scale: zeros are added, no digit is ever rounded or dropped", async () => {
+  const { atScale } = await import("../src/lib/objects.ts")
+  expect(atScale("72", 2)).toBe("72.00")
+  expect(atScale("-0.5", 2)).toBe("-0.50")
+  expect(atScale("19.995", 2)).toBe("19.995")
+  expect(atScale("1e3", 2)).toBe("1e3")
+  expect(atScale("7", undefined)).toBe("7")
+  // Property: for any plain decimal and scale, the result has at least `scale` places and reads as the same number.
+  for (let i = 0; i < 500; i++) {
+    const whole = String(Math.floor(Math.random() * 1e6) * (Math.random() < 0.3 ? -1 : 1))
+    const places = Math.floor(Math.random() * 5)
+    const text = places === 0 ? whole : `${whole}.${String(Math.floor(Math.random() * 10 ** places)).padStart(places, "0")}`
+    const scale = Math.floor(Math.random() * 7)
+    const shown = atScale(text, scale)
+    expect(shown.startsWith(text)).toBe(true)
+    expect(/^0*$/.test(shown.slice(text.length).replace(".", ""))).toBe(true)
+    if (scale > 0) expect((shown.split(".")[1] ?? "").length).toBeGreaterThanOrEqual(scale)
+  }
+})
