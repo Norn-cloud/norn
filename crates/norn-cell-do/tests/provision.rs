@@ -904,6 +904,21 @@ fn environments_of_one_organization_share_principals_and_roles() {
 
 type Faulted = FaultEngine<DoEngine<DoStorageEmulator>>;
 
+/// Remove a SQLite store and its journal files.
+fn remove_store(path: &Path) {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let file = PathBuf::from(format!("{}{suffix}", path.display()));
+        if let Err(error) = std::fs::remove_file(&file) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::NotFound,
+                "{}",
+                file.display()
+            );
+        }
+    }
+}
+
 fn open_faulted(
     path: &Path,
     scope: &CellScope,
@@ -998,6 +1013,10 @@ fn fault_sweep(first: &[u32], later: &[u32]) -> Swept {
                 assert!(cell.tenant.is_provisioned(), "{at}");
             }
             assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
+            drop(cell);
+            // An exhaustive sweep runs tens of thousands of cases: each
+            // case's store goes once it is checked, or the disk fills.
+            remove_store(&path);
             past = !hit;
         }
     }
