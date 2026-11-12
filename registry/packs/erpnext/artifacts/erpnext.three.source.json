@@ -838,6 +838,17 @@
         }
       },
       {
+        "dataset": "Warehouse Lot Balance",
+        "name": "modified",
+        "nativeType": "SyntheticText",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
         "dataset": "Delivery Note Item",
         "name": "posting_state",
         "nativeType": "SyntheticText",
@@ -863,7 +874,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-02T00:00:00Z",
     "rawMetadata": {
-      "sha256": "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4",
+      "sha256": "c6be2331a6bfdb02e41db56d8da20433662b69c972f1e4ee49caecb0ccb29f6c",
       "uri": "registry/packs/erpnext/synthetic.json"
     },
     "source": {

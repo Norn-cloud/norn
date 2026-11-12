@@ -838,6 +838,17 @@
         }
       },
       {
+        "dataset": "stock.quant",
+        "name": "write_date",
+        "nativeType": "SyntheticText",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
         "dataset": "stock.move",
         "name": "posting_state",
         "nativeType": "SyntheticText",
@@ -863,7 +874,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-02T00:00:00Z",
     "rawMetadata": {
-      "sha256": "681adbdf0de776701a4390dd3f94a25cbdfd657501b0f2a2e14398ceb647fb8a",
+      "sha256": "4b8f939a1266c787769606584c57fc3f06e6652e4ac0b7fa05f383a576043d46",
       "uri": "registry/packs/odoo/synthetic.json"
     },
     "source": {

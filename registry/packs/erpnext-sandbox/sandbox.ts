@@ -256,7 +256,7 @@ export const SandboxMapping = Norn.mapping({
   id: "erpnext.sandbox.mapping",
   title: "ERPNext sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "21fcae139208fef42c7e10329a303d80484a1d870ffc169760c1427eb04f1834"},
+  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "90cf3626ae746b1411899cbfbb52e59f489c7119f0d03ec820bbda3bd1e57e98"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [

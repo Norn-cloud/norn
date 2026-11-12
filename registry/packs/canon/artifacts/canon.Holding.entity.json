@@ -100,6 +100,13 @@
           }
         },
         {
+          "id": "observed_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
           "id": "location",
           "type": {
             "kind": "text"

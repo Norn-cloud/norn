@@ -153,6 +153,10 @@
             "value": "input.quantity"
           },
           {
+            "property": "observed_at",
+            "value": "timestamp(join(split(input.write_date, ' '), 'T') + 'Z')"
+          },
+          {
             "property": "unit",
             "value": "input.unit"
           },
@@ -319,7 +323,7 @@
     ],
     "source": {
       "schemaId": "odoo.sandbox.source",
-      "sha256": "d89e002214d8cbb30416fe683653d23b3f23bf95ef6e34d0fdf5baaf79dedd6e",
+      "sha256": "76b16f0b382657832285372b79062ec0b243f00fd212fb6c928c1c4fc65e777d",
       "version": "0.1.0"
     }
   },

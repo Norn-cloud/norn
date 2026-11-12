@@ -306,6 +306,17 @@
         }
       },
       {
+        "dataset": "stock.quant",
+        "name": "write_date",
+        "nativeType": "datetime",
+        "ordinal": 12,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
         "dataset": "res.partner",
         "name": "id",
         "nativeType": "integer",

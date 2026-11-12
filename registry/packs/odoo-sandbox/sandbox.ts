@@ -297,7 +297,7 @@ export const SandboxMapping = Norn.mapping({
   id: "odoo.sandbox.mapping",
   title: "Odoo sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "d89e002214d8cbb30416fe683653d23b3f23bf95ef6e34d0fdf5baaf79dedd6e"},
+  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "76b16f0b382657832285372b79062ec0b243f00fd212fb6c928c1c4fc65e777d"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [
