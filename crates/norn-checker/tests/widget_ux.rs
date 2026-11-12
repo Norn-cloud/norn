@@ -4099,60 +4099,12 @@ fn machine_widget(machine: Value) -> Value {
 }
 
 /// The approve flow on the orders page: every outcome of the call is handled, errors recover, a
-/// cancel is a request whose outcome follows.
+/// cancel is a request whose outcome follows. The same document drives `@norn/demo-ui`'s machine tests.
 fn approve_machine() -> Value {
-    let transition = |id: &str, from: &str, on: &str, target: &str| json!({ "transitionId": id, "from": from, "on": on, "target": target });
-    let start = json!([{ "kind": "start", "call": { "kind": "action", "bindingId": "approve" } }]);
-    let outcome = |id: &str, outcome: &str| json!({ "eventId": id, "source": { "kind": "outcome", "outcome": outcome } });
-    let mut approve = transition("approve", "browsing", "approve", "approving");
-    approve["effects"] = start.clone();
-    let mut retry_refused = transition("retry-refused", "refused", "approve", "approving");
-    retry_refused["effects"] = start.clone();
-    let mut retry_failed = transition("retry-failed", "failed", "approve", "approving");
-    retry_failed["effects"] = start;
-    let mut cancel = transition("cancel", "approving", "cancel", "approving");
-    cancel["effects"] = json!([{ "kind": "cancel" }]);
-    let mut refused = transition("on-refused", "approving", "refused", "refused");
-    refused["assign"] = json!({ "lastCode": "input.event.code" });
-    json!({
-        "machineVersion": "0.1",
-        "initialStateId": "browsing",
-        "fields": [{ "fieldId": "lastCode", "type": "text", "required": false }],
-        "events": [
-            { "eventId": "approve", "source": { "kind": "user", "nodeId": "approve-action-node" } },
-            { "eventId": "cancel", "source": { "kind": "user", "nodeId": "approve-action-node" } },
-            { "eventId": "dismiss", "source": { "kind": "user", "nodeId": "orders-list-node" } },
-            outcome("accepted", "accepted"),
-            outcome("refused", "refused"),
-            outcome("approval", "pending_approval"),
-            outcome("network", "network_failure"),
-            outcome("timeout", "timeout"),
-            outcome("cancelled", "cancelled")
-        ],
-        "states": [
-            { "stateId": "browsing", "role": "idle" },
-            { "stateId": "approving", "role": "pending", "deadlineMs": 15000,
-              "awaits": { "kind": "action", "bindingId": "approve" } },
-            { "stateId": "awaiting-approval", "role": "idle" },
-            { "stateId": "refused", "role": "error" },
-            { "stateId": "failed", "role": "error" }
-        ],
-        "transitions": [
-            approve,
-            cancel,
-            transition("on-accepted", "approving", "accepted", "browsing"),
-            refused,
-            transition("on-approval", "approving", "approval", "awaiting-approval"),
-            transition("on-network", "approving", "network", "failed"),
-            transition("on-timeout", "approving", "timeout", "failed"),
-            transition("on-cancelled", "approving", "cancelled", "browsing"),
-            transition("approval-seen", "awaiting-approval", "dismiss", "browsing"),
-            retry_refused,
-            retry_failed,
-            transition("dismiss-refused", "refused", "dismiss", "browsing"),
-            transition("dismiss-failed", "failed", "dismiss", "browsing")
-        ]
-    })
+    serde_json::from_str(include_str!(
+        "../../../fixtures/ui/orders-approve.machine.json"
+    ))
+    .expect("machine fixture should be JSON")
 }
 
 fn ui_codes(widget: Value) -> Vec<(String, String)> {

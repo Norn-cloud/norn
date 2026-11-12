@@ -46,7 +46,11 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
                     .action_bindings
                     .iter()
                     .any(|binding| &binding.action == action),
-                _ => true,
+                WidgetViewSubject::Question { .. }
+                | WidgetViewSubject::Transform { .. }
+                | WidgetViewSubject::Dashboard { .. }
+                | WidgetViewSubject::Flow { .. }
+                | WidgetViewSubject::Decisions => true,
             };
             if !bound {
                 findings.push((
@@ -122,7 +126,12 @@ fn behavior_fits(behavior: WidgetBehavior, component: &WidgetComponent) -> bool 
 
 fn behaviors(node: &WidgetNode, pointer: &str, findings: &mut Vec<(&'static str, String, String)>) {
     for (index, behavior) in node.behaviors.iter().enumerate() {
-        if !behavior_fits(*behavior, &node.component) || node.behaviors[..index].contains(behavior)
+        if !behavior_fits(*behavior, &node.component)
+            || node
+                .behaviors
+                .iter()
+                .take(index)
+                .any(|earlier| earlier == behavior)
         {
             findings.push((
                 BEHAVIOR_UNFIT,

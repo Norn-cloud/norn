@@ -360,15 +360,12 @@ impl WidgetUx {
     #[must_use]
     pub fn renderer_capabilities(&self) -> std::collections::BTreeSet<String> {
         fn name<T: Serialize>(value: &T) -> String {
-            match serde_json::to_value(value) {
-                Ok(serde_json::Value::String(name)) => name,
-                Ok(serde_json::Value::Object(object)) => object
-                    .get("kind")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                _ => String::new(),
-            }
+            let value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+            value
+                .as_str()
+                .or_else(|| value.get("kind").and_then(serde_json::Value::as_str))
+                .unwrap_or_default()
+                .to_owned()
         }
         fn walk(node: &WidgetNode, out: &mut std::collections::BTreeSet<String>) {
             out.insert(format!("component:{}", name(&node.component)));
@@ -397,10 +394,11 @@ impl WidgetUx {
             for transition in &machine.transitions {
                 for effect in &transition.effects {
                     match effect {
-                        WidgetMachineEffect::Start { call } => {
+                        WidgetMachineEffect::Start { call, .. } => {
                             out.insert(format!("effect:start:{}", name(call)));
                         }
-                        other => {
+                        other @ (WidgetMachineEffect::Cancel
+                        | WidgetMachineEffect::Navigate { .. }) => {
                             out.insert(format!("effect:{}", name(other)));
                         }
                     }
@@ -648,7 +646,13 @@ pub struct WidgetMachineTransition {
 )]
 pub enum WidgetMachineEffect {
     /// Start the call or read; its outcome arrives as an `outcome` event.
-    Start { call: WidgetMachineCall },
+    Start {
+        call: WidgetMachineCall,
+        /// Request members, each a ZEN expression over `input.fields` and
+        /// `input.event`. An action binding maps its own inputs and takes none.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        input: BTreeMap<String, ZenExpression>,
+    },
     /// Cancel the awaited call; its outcome arrives as `cancelled`.
     Cancel,
     /// Navigate to a declared navigation item.

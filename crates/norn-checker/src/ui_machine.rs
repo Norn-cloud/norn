@@ -13,21 +13,23 @@
 //! - every `error` state has a recovery a person or a deadline drives;
 //! - no cycle runs on timers alone (`input_free_cycle`): a loop needs an input;
 //! - for one state and one event, at most one unguarded transition fires (`nondeterministic`);
-//! - guards and assignments type-check against the field record and the event payload.
+//! - guards, assignments and request members type-check against the field record and the event
+//!   payload.
 //!
 //! What this establishes is **structural**, like the lifecycle checks: a guarded transition can be
 //! disabled at run time, so coverage counts only unguarded transitions, and reachability treats
 //! every guard as satisfiable (an over-approximation). Guarded reachability is a model-checking
-//! question that goes to the obligations path, not here. The laws read the document only and add no
+//! question for the obligations path, not this pass. The laws read the document only and add no
 //! client-side authority.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use norn_expr::{EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_ir::{
-    ArtifactEnvelope, JsonValue, WidgetCallOutcome, WidgetMachine, WidgetMachineCall,
-    WidgetMachineEffect, WidgetMachineEventSource, WidgetMachineField, WidgetMachineState,
-    WidgetNode, WidgetPage, WidgetRefusalCategory, WidgetStateRole, WidgetUx, WidgetValueType,
+    ArtifactEnvelope, JsonValue, RuntimeValue, WidgetCallOutcome, WidgetMachine, WidgetMachineCall,
+    WidgetMachineEffect, WidgetMachineEvent, WidgetMachineEventSource, WidgetMachineField,
+    WidgetMachineState, WidgetNode, WidgetPage, WidgetRefusalCategory, WidgetStateRole, WidgetUx,
+    WidgetValueType,
 };
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
@@ -56,7 +58,7 @@ const ERROR_WITHOUT_RECOVERY: &str = "widget.machine.error_without_recovery";
 const INPUT_FREE_CYCLE: &str = "widget.machine.input_free_cycle";
 const NONDETERMINISTIC: &str = "widget.machine.nondeterministic";
 
-/// Every code these laws can emit, for registry tests.
+/// Every code these laws can emit.
 pub const CODES: [&str; 23] = [
     DUPLICATE_ID,
     UNKNOWN_REFERENCE,
@@ -96,6 +98,12 @@ const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
 /// One concrete way an awaited call ends: an outcome, and for `refused` its category.
 type OutcomeValue = (WidgetCallOutcome, Option<WidgetRefusalCategory>);
 
+/// State graph keyed by state id.
+type Graph<'m> = BTreeMap<&'m str, BTreeSet<&'m str>>;
+
+/// The field record and the event payload an expression sees.
+type Env<'e> = (&'e BTreeMap<String, Type>, &'e BTreeMap<String, Type>);
+
 struct Finding {
     code: &'static str,
     pointer: String,
@@ -109,7 +117,13 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
     for (index, page) in ux.pages.iter().enumerate() {
         if let Some(machine) = &page.machine {
             let base = format!("/payload/ux/pages/{index}/machine");
-            findings.extend(check_machine(ux, page, machine, &base));
+            let checker = MachineChecker {
+                ux,
+                machine,
+                base: &base,
+                findings: Vec::new(),
+            };
+            findings.extend(checker.run(page));
         }
     }
     findings
@@ -164,10 +178,10 @@ fn matched_outcomes(
             .iter()
             .map(|category| (WidgetCallOutcome::Refused, Some(*category)))
             .collect(),
-        (WidgetCallOutcome::Refused, Some(category)) => {
-            vec![(WidgetCallOutcome::Refused, Some(category))]
-        }
-        (outcome, _) => vec![(outcome, None)],
+        (outcome, category) => vec![(
+            outcome,
+            category.filter(|_| outcome == WidgetCallOutcome::Refused),
+        )],
     }
 }
 
@@ -204,17 +218,44 @@ fn show_outcome((outcome, category): &OutcomeValue) -> String {
 
 /// The fixed payload an outcome event carries.
 fn outcome_payload(outcome: WidgetCallOutcome) -> BTreeMap<String, Type> {
-    let text = |name: &str| (name.to_owned(), Type::text());
     match outcome {
-        WidgetCallOutcome::Refused => {
-            BTreeMap::from([text("code"), ("retryable".to_owned(), Type::Bool)])
+        WidgetCallOutcome::Refused => BTreeMap::from([
+            ("code".to_owned(), Type::text()),
+            ("retryable".to_owned(), Type::Bool),
+        ]),
+        WidgetCallOutcome::PendingApproval => {
+            BTreeMap::from([("decisionId".to_owned(), Type::text())])
         }
-        WidgetCallOutcome::PendingApproval => BTreeMap::from([text("decisionId")]),
-        WidgetCallOutcome::AnswerMoved => BTreeMap::from([text("code")]),
+        WidgetCallOutcome::AnswerMoved => BTreeMap::from([("code".to_owned(), Type::text())]),
         WidgetCallOutcome::Accepted
         | WidgetCallOutcome::NetworkFailure
         | WidgetCallOutcome::Timeout
         | WidgetCallOutcome::Cancelled => BTreeMap::new(),
+    }
+}
+
+/// The payload record an event's guards and assignments see.
+fn event_payload(event: &WidgetMachineEvent) -> BTreeMap<String, Type> {
+    match &event.source {
+        WidgetMachineEventSource::Outcome { outcome, .. } => outcome_payload(*outcome),
+        WidgetMachineEventSource::PageOpened
+        | WidgetMachineEventSource::User { .. }
+        | WidgetMachineEventSource::Subscription { .. }
+        | WidgetMachineEventSource::Timer { .. } => event
+            .payload
+            .iter()
+            .map(|member| (member.field_id.clone(), field_type(member)))
+            .collect(),
+    }
+}
+
+fn outcome_of(event: &WidgetMachineEvent) -> Option<OutcomeValue> {
+    match &event.source {
+        WidgetMachineEventSource::Outcome { outcome, category } => Some((*outcome, *category)),
+        WidgetMachineEventSource::PageOpened
+        | WidgetMachineEventSource::User { .. }
+        | WidgetMachineEventSource::Subscription { .. }
+        | WidgetMachineEventSource::Timer { .. } => None,
     }
 }
 
@@ -225,17 +266,20 @@ fn field_type(field: &WidgetMachineField) -> Type {
 fn initial_fits(value: &JsonValue, value_type: WidgetValueType, required: bool) -> bool {
     match (value, value_type) {
         (JsonValue::Null, _) => !required,
-        (_, WidgetValueType::Json) => true,
-        (JsonValue::Bool(_), WidgetValueType::Boolean) => true,
-        (JsonValue::Number(number), WidgetValueType::Integer) => number.fract() == 0.0,
-        (JsonValue::Number(_), WidgetValueType::Number) => true,
-        (
+        (_, WidgetValueType::Json)
+        | (JsonValue::Bool(_), WidgetValueType::Boolean)
+        | (JsonValue::Number(_), WidgetValueType::Number)
+        | (
             JsonValue::String(_),
             WidgetValueType::Text
             | WidgetValueType::Date
             | WidgetValueType::Timestamp
             | WidgetValueType::Duration,
         ) => true,
+        (JsonValue::Number(_), WidgetValueType::Integer) => matches!(
+            RuntimeValue::from_ir(value),
+            Ok(RuntimeValue::Number(number)) if number.is_integer()
+        ),
         _ => false,
     }
 }
@@ -247,87 +291,77 @@ fn collect_nodes<'n>(node: &'n WidgetNode, out: &mut BTreeSet<&'n str>) {
     }
 }
 
-fn reachable(seeds: impl IntoIterator<Item = usize>, edges: &[BTreeSet<usize>]) -> Vec<bool> {
-    let mut seen = vec![false; edges.len()];
-    let mut queue: VecDeque<usize> = VecDeque::new();
+/// Every state reachable from `seeds` along `graph`, the seeds included.
+fn reachable<'m>(seeds: impl IntoIterator<Item = &'m str>, graph: &Graph<'m>) -> BTreeSet<&'m str> {
+    let mut seen: BTreeSet<&'m str> = BTreeSet::new();
+    let mut queue: VecDeque<&'m str> = VecDeque::new();
     for seed in seeds {
-        if !seen[seed] {
-            seen[seed] = true;
+        if seen.insert(seed) {
             queue.push_back(seed);
         }
     }
     while let Some(state) = queue.pop_front() {
-        for next in &edges[state] {
-            if !seen[*next] {
-                seen[*next] = true;
-                queue.push_back(*next);
+        for next in graph.get(state).into_iter().flatten() {
+            if seen.insert(next) {
+                queue.push_back(next);
             }
         }
     }
     seen
 }
 
-/// States that lie on a cycle of `edges` (Tarjan's strongly connected components; a singleton
-/// counts only with a self-loop).
-fn on_cycle(edges: &[BTreeSet<usize>]) -> BTreeSet<usize> {
-    struct Tarjan<'e> {
-        edges: &'e [BTreeSet<usize>],
-        index: Vec<Option<usize>>,
-        low: Vec<usize>,
-        stack: Vec<usize>,
-        on_stack: Vec<bool>,
-        next: usize,
-        cyclic: BTreeSet<usize>,
-    }
-    impl Tarjan<'_> {
-        fn visit(&mut self, state: usize) {
-            self.index[state] = Some(self.next);
-            self.low[state] = self.next;
-            self.next += 1;
-            self.stack.push(state);
-            self.on_stack[state] = true;
-            for &next in self.edges[state].iter() {
-                match self.index[next] {
-                    None => {
-                        self.visit(next);
-                        self.low[state] = self.low[state].min(self.low[next]);
-                    }
-                    Some(index) if self.on_stack[next] => {
-                        self.low[state] = self.low[state].min(index);
-                    }
-                    Some(_) => {}
-                }
-            }
-            if Some(self.low[state]) == self.index[state] {
-                let mut component = Vec::new();
-                while let Some(member) = self.stack.pop() {
-                    self.on_stack[member] = false;
-                    component.push(member);
-                    if member == state {
-                        break;
-                    }
-                }
-                if component.len() > 1 || self.edges[state].contains(&state) {
-                    self.cyclic.extend(component);
-                }
-            }
+/// States that lie on a cycle of `graph`: a state is on one when its successors reach it again.
+fn on_cycle<'m>(graph: &Graph<'m>) -> BTreeSet<&'m str> {
+    graph
+        .iter()
+        .filter(|(state, successors)| {
+            reachable(successors.iter().copied(), graph).contains(**state)
+        })
+        .map(|(state, _)| *state)
+        .collect()
+}
+
+fn reverse<'m>(graph: &Graph<'m>) -> Graph<'m> {
+    let mut reversed: Graph<'m> = BTreeMap::new();
+    for (from, targets) in graph {
+        for target in targets {
+            reversed.entry(target).or_default().insert(from);
         }
     }
-    let mut tarjan = Tarjan {
-        edges,
-        index: vec![None; edges.len()],
-        low: vec![0; edges.len()],
-        stack: Vec::new(),
-        on_stack: vec![false; edges.len()],
-        next: 0,
-        cyclic: BTreeSet::new(),
-    };
-    for state in 0..edges.len() {
-        if tarjan.index[state].is_none() {
-            tarjan.visit(state);
-        }
-    }
-    tarjan.cyclic
+    reversed
+}
+
+fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
+    ZenTypeEnv::input_only_with_records(
+        BTreeMap::from([
+            ("machine.fields".to_owned(), env.0.clone()),
+            ("machine.event".to_owned(), env.1.clone()),
+        ]),
+        BTreeMap::from([
+            (
+                "fields".to_owned(),
+                Type::Record("machine.fields".to_owned()),
+            ),
+            ("event".to_owned(), Type::Record("machine.event".to_owned())),
+        ]),
+        EnvOptions::default(),
+    )
+    .map_err(|error| format!("{error:?}"))
+}
+
+/// Per-transition facts gathered for the graph laws.
+#[derive(Default)]
+struct Facts<'m> {
+    edges: Graph<'m>,
+    timer_edges: Graph<'m>,
+    /// States with an exit a person or a timer drives.
+    recovers: BTreeSet<&'m str>,
+    /// Pending states that offer a cancel.
+    cancellable: BTreeSet<&'m str>,
+    /// `(state, event)` to unguarded transition indexes, for non-outcome events.
+    unguarded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
+    /// `state` to outcome value to unguarded transition indexes.
+    covered: BTreeMap<&'m str, BTreeMap<OutcomeValue, Vec<usize>>>,
 }
 
 struct MachineChecker<'m> {
@@ -337,7 +371,7 @@ struct MachineChecker<'m> {
     findings: Vec<Finding>,
 }
 
-impl MachineChecker<'_> {
+impl<'m> MachineChecker<'m> {
     fn push(&mut self, code: &'static str, pointer: String, message: String) {
         self.findings.push(Finding {
             code,
@@ -346,25 +380,31 @@ impl MachineChecker<'_> {
         });
     }
 
-    fn unique<'i>(
-        &mut self,
-        ids: impl IntoIterator<Item = &'i str>,
-        list: &str,
-        member: &str,
-    ) -> BTreeMap<&'i str, usize> {
-        let mut seen = BTreeMap::new();
+    fn unique<'i>(&mut self, ids: impl IntoIterator<Item = &'i str>, list: &str, member: &str) {
+        let mut seen = BTreeSet::new();
         for (index, id) in ids.into_iter().enumerate() {
-            if seen.contains_key(id) {
+            if !seen.insert(id) {
                 self.push(
                     DUPLICATE_ID,
                     format!("{}/{list}/{index}/{member}", self.base),
                     format!("{list} id `{id}` is declared twice"),
                 );
-            } else {
-                seen.insert(id, index);
             }
         }
-        seen
+    }
+
+    fn state(&self, id: &str) -> Option<&'m WidgetMachineState> {
+        self.machine
+            .states
+            .iter()
+            .find(|state| state.state_id == id)
+    }
+
+    fn event(&self, id: &str) -> Option<&'m WidgetMachineEvent> {
+        self.machine
+            .events
+            .iter()
+            .find(|event| event.event_id == id)
     }
 
     fn check_call(&mut self, call: &WidgetMachineCall, pointer: &str) {
@@ -422,40 +462,19 @@ impl MachineChecker<'_> {
                         ),
                     );
                 }
-                _ => {}
+                (Some(_) | None, false) | (None, true) => {}
             }
         }
     }
 
-    fn check_expression(
-        &mut self,
-        source: &str,
-        fields: &BTreeMap<String, Type>,
-        event: &BTreeMap<String, Type>,
-        expected: &Type,
-        pointer: String,
-    ) {
-        let env = ZenTypeEnv::input_only_with_records(
-            BTreeMap::from([
-                ("machine.fields".to_owned(), fields.clone()),
-                ("machine.event".to_owned(), event.clone()),
-            ]),
-            BTreeMap::from([
-                (
-                    "fields".to_owned(),
-                    Type::Record("machine.fields".to_owned()),
-                ),
-                ("event".to_owned(), Type::Record("machine.event".to_owned())),
-            ]),
-            EnvOptions::default(),
-        );
-        let env = match env {
+    fn check_expression(&mut self, source: &str, env: Env<'_>, expected: &Type, pointer: String) {
+        let env = match machine_env(env) {
             Ok(env) => env,
             Err(error) => {
                 self.push(
                     INVALID_EXPRESSION,
                     pointer,
-                    format!("expression environment is invalid: {error:?}"),
+                    format!("expression environment is invalid: {error}"),
                 );
                 return;
             }
@@ -482,24 +501,19 @@ impl MachineChecker<'_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "One pass over the declared machine; each law is a short, commented block."
-    )]
     fn run(mut self, page: &WidgetPage) -> Vec<Finding> {
         let machine = self.machine;
-        let base = self.base;
         self.unique(
             machine.fields.iter().map(|f| f.field_id.as_str()),
             "fields",
             "fieldId",
         );
-        let events = self.unique(
+        self.unique(
             machine.events.iter().map(|e| e.event_id.as_str()),
             "events",
             "eventId",
         );
-        let states = self.unique(
+        self.unique(
             machine.states.iter().map(|s| s.state_id.as_str()),
             "states",
             "stateId",
@@ -510,39 +524,40 @@ impl MachineChecker<'_> {
             "transitionId",
         );
         self.check_fields(&machine.fields, "fields", false);
-        let field_types: BTreeMap<String, Type> = machine
-            .fields
-            .iter()
-            .map(|field| (field.field_id.clone(), field_type(field)))
-            .collect();
+        self.check_initial();
+        self.check_events(page);
+        self.check_states();
+        let facts = self.check_transitions();
+        self.check_determinism(&facts);
+        self.check_coverage(&facts);
+        self.check_graph(&facts);
+        self.findings
+    }
 
-        // Initial state: known and idle.
-        match states.get(machine.initial_state_id.as_str()) {
+    fn check_initial(&mut self) {
+        let base = self.base;
+        let initial = &self.machine.initial_state_id;
+        match self.state(initial) {
             None => self.push(
                 UNKNOWN_REFERENCE,
                 format!("{base}/initialStateId"),
-                format!(
-                    "initial state `{}` is not declared",
-                    machine.initial_state_id
-                ),
+                format!("initial state `{initial}` is not declared"),
             ),
-            Some(index) if machine.states[*index].role != WidgetStateRole::Idle => self.push(
+            Some(state) if state.role != WidgetStateRole::Idle => self.push(
                 INITIAL_NOT_IDLE,
                 format!("{base}/initialStateId"),
-                format!(
-                    "initial state `{}` must have the idle role",
-                    machine.initial_state_id
-                ),
+                format!("initial state `{initial}` must have the idle role"),
             ),
             Some(_) => {}
         }
+    }
 
-        // Events: sources name declared things; payloads only where the source carries one.
+    /// Events: sources name declared things; payloads only where the source carries one.
+    fn check_events(&mut self, page: &WidgetPage) {
         let mut nodes = BTreeSet::new();
         collect_nodes(&page.root, &mut nodes);
-        let mut event_payloads: BTreeMap<&str, BTreeMap<String, Type>> = BTreeMap::new();
-        for (index, event) in machine.events.iter().enumerate() {
-            let pointer = format!("{base}/events/{index}");
+        for (index, event) in self.machine.events.iter().enumerate() {
+            let pointer = format!("{}/events/{index}", self.base);
             let carries_payload = match &event.source {
                 WidgetMachineEventSource::User { node_id } => {
                     if !nodes.contains(node_id.as_str()) {
@@ -599,20 +614,13 @@ impl MachineChecker<'_> {
                 );
             }
             self.check_fields(&event.payload, &format!("events/{index}/payload"), true);
-            let payload = match &event.source {
-                WidgetMachineEventSource::Outcome { outcome, .. } => outcome_payload(*outcome),
-                _ => event
-                    .payload
-                    .iter()
-                    .map(|member| (member.field_id.clone(), field_type(member)))
-                    .collect(),
-            };
-            event_payloads.insert(event.event_id.as_str(), payload);
         }
+    }
 
-        // States: only pending states await, and each one awaits one call under a deadline.
-        for (index, state) in machine.states.iter().enumerate() {
-            let pointer = format!("{base}/states/{index}");
+    /// States: only pending states await, and each one awaits one call under a deadline.
+    fn check_states(&mut self) {
+        for (index, state) in self.machine.states.iter().enumerate() {
+            let pointer = format!("{}/states/{index}", self.base);
             if state.role == WidgetStateRole::Pending {
                 match &state.awaits {
                     None => self.push(
@@ -646,26 +654,73 @@ impl MachineChecker<'_> {
                 );
             }
         }
+    }
 
-        // Transitions.
-        let count = machine.states.len();
-        let mut edges: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); count];
-        let mut timer_edges: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); count];
-        let mut recovers: BTreeSet<usize> = BTreeSet::new();
-        let mut cancellable: BTreeSet<usize> = BTreeSet::new();
-        // (state, event) and (state, outcome value) -> unguarded transition indexes.
-        let mut unguarded_events: BTreeMap<(usize, &str), Vec<usize>> = BTreeMap::new();
-        let mut covered: BTreeMap<usize, BTreeMap<OutcomeValue, Vec<usize>>> = BTreeMap::new();
+    fn check_effects(&mut self, effects: &[WidgetMachineEffect], env: Env<'_>, pointer: &str) {
+        for (index, effect) in effects.iter().enumerate() {
+            let at = format!("{pointer}/effects/{index}");
+            match effect {
+                WidgetMachineEffect::Start { call, input } => {
+                    self.check_call(call, &format!("{at}/call"));
+                    if !input.is_empty() && matches!(call, WidgetMachineCall::Action { .. }) {
+                        self.push(
+                            INVALID_EXPRESSION,
+                            format!("{at}/input"),
+                            "an action binding maps its own inputs; start it without input"
+                                .to_owned(),
+                        );
+                    }
+                    for (member, expression) in input {
+                        // Any type fits here; the operation's request schema judges the value and
+                        // the server refuses a body that does not fit it.
+                        self.check_expression(
+                            expression.as_str(),
+                            env,
+                            &Type::Json,
+                            format!("{at}/input/{member}"),
+                        );
+                    }
+                }
+                WidgetMachineEffect::Navigate { item_id } => {
+                    if !self
+                        .ux
+                        .navigation_items
+                        .iter()
+                        .any(|item| &item.item_id == item_id)
+                    {
+                        self.push(
+                            UNKNOWN_REFERENCE,
+                            format!("{at}/itemId"),
+                            format!("navigation item `{item_id}` is not declared"),
+                        );
+                    }
+                }
+                WidgetMachineEffect::Cancel => {}
+            }
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One pass over the declared transitions; each law is a short, commented block."
+    )]
+    fn check_transitions(&mut self) -> Facts<'m> {
+        let machine = self.machine;
+        let base = self.base;
+        let field_types: BTreeMap<String, Type> = machine
+            .fields
+            .iter()
+            .map(|field| (field.field_id.clone(), field_type(field)))
+            .collect();
+        let mut facts = Facts::default();
         for (index, transition) in machine.transitions.iter().enumerate() {
             let pointer = format!("{base}/transitions/{index}");
-            let from = states.get(transition.from.as_str()).copied();
-            let target = states.get(transition.target.as_str()).copied();
-            let event = events
-                .get(transition.on.as_str())
-                .map(|event| &machine.events[*event]);
+            let from_state = self.state(&transition.from);
+            let target_state = self.state(&transition.target);
+            let event = self.event(&transition.on);
             for (member, id, known) in [
-                ("from", &transition.from, from.is_some()),
-                ("target", &transition.target, target.is_some()),
+                ("from", &transition.from, from_state.is_some()),
+                ("target", &transition.target, target_state.is_some()),
                 ("on", &transition.on, event.is_some()),
             ] {
                 if !known {
@@ -676,19 +731,10 @@ impl MachineChecker<'_> {
                     );
                 }
             }
-            let empty = BTreeMap::new();
-            let payload = event_payloads
-                .get(transition.on.as_str())
-                .unwrap_or(&empty)
-                .clone();
+            let payload = event.map(event_payload).unwrap_or_default();
+            let env = (&field_types, &payload);
             if let Some(guard) = &transition.guard {
-                self.check_expression(
-                    guard.as_str(),
-                    &field_types,
-                    &payload,
-                    &Type::Bool,
-                    format!("{pointer}/guard"),
-                );
+                self.check_expression(guard.as_str(), env, &Type::Bool, format!("{pointer}/guard"));
             }
             for (field, expression) in &transition.assign {
                 match field_types.get(field) {
@@ -699,113 +745,89 @@ impl MachineChecker<'_> {
                     ),
                     Some(expected) => self.check_expression(
                         expression.as_str(),
-                        &field_types,
-                        &payload,
+                        env,
                         expected,
                         format!("{pointer}/assign/{field}"),
                     ),
                 }
             }
-            for (effect_index, effect) in transition.effects.iter().enumerate() {
-                match effect {
-                    WidgetMachineEffect::Start { call } => {
-                        self.check_call(call, &format!("{pointer}/effects/{effect_index}/call"))
-                    }
-                    WidgetMachineEffect::Navigate { item_id } => {
-                        if !self
-                            .ux
-                            .navigation_items
-                            .iter()
-                            .any(|item| &item.item_id == item_id)
-                        {
-                            self.push(
-                                UNKNOWN_REFERENCE,
-                                format!("{pointer}/effects/{effect_index}/itemId"),
-                                format!("navigation item `{item_id}` is not declared"),
-                            );
-                        }
-                    }
-                    WidgetMachineEffect::Cancel => {}
-                }
-            }
-            let (Some(from), Some(target), Some(event)) = (from, target, event) else {
+            self.check_effects(&transition.effects, env, &pointer);
+            let (Some(from_state), Some(target_state), Some(event)) =
+                (from_state, target_state, event)
+            else {
                 continue;
             };
-            let from_state: &WidgetMachineState = &machine.states[from];
-            let target_state: &WidgetMachineState = &machine.states[target];
+            let from = from_state.state_id.as_str();
+            let target = target_state.state_id.as_str();
             if from_state.role == WidgetStateRole::Terminal {
                 self.push(
                     TERMINAL_HAS_TRANSITION,
                     format!("{pointer}/from"),
-                    format!("terminal state `{}` cannot be left", from_state.state_id),
+                    format!("terminal state `{from}` cannot be left"),
                 );
                 continue;
             }
-            edges[from].insert(target);
-            let outcome = match &event.source {
-                WidgetMachineEventSource::Outcome { outcome, category } => {
-                    Some((*outcome, *category))
-                }
-                _ => None,
-            };
+            facts.edges.entry(from).or_default().insert(target);
+            let outcome = outcome_of(event);
             match &event.source {
                 WidgetMachineEventSource::Timer { .. } => {
-                    timer_edges[from].insert(target);
-                    recovers.insert(from);
+                    facts.timer_edges.entry(from).or_default().insert(target);
+                    facts.recovers.insert(from);
                 }
                 WidgetMachineEventSource::User { .. } => {
-                    recovers.insert(from);
+                    facts.recovers.insert(from);
                 }
-                WidgetMachineEventSource::PageOpened
-                    if transition.from != machine.initial_state_id =>
-                {
+                WidgetMachineEventSource::PageOpened if from != machine.initial_state_id => {
                     self.push(
                         INVALID_EVENT,
                         format!("{pointer}/on"),
                         "page_opened fires once, in the initial state".to_owned(),
                     );
                 }
-                _ => {}
+                WidgetMachineEventSource::PageOpened
+                | WidgetMachineEventSource::Outcome { .. }
+                | WidgetMachineEventSource::Subscription { .. } => {}
             }
 
             // Outcome events belong to pending states, and only to outcomes their call can have.
             if let Some((outcome, category)) = outcome {
-                match (&from_state.role, &from_state.awaits) {
+                match (from_state.role, &from_state.awaits) {
                     (WidgetStateRole::Pending, Some(call)) => {
                         let possible = possible_outcomes(call, true);
-                        if matched_outcomes(outcome, category)
-                            .iter()
-                            .all(|value| !possible.contains(value))
-                        {
+                        let matched = matched_outcomes(outcome, category);
+                        if matched.iter().all(|value| !possible.contains(value)) {
                             self.push(
                                 OUTCOME_IMPOSSIBLE,
                                 format!("{pointer}/on"),
                                 format!(
-                                    "the call `{}` awaits cannot end `{}`",
-                                    from_state.state_id,
+                                    "the call `{from}` awaits cannot end `{}`",
                                     outcome_name(outcome)
                                 ),
                             );
                         } else if transition.guard.is_none() {
-                            let slot = covered.entry(from).or_default();
-                            for value in matched_outcomes(outcome, category) {
+                            let slot = facts.covered.entry(from).or_default();
+                            for value in matched {
                                 slot.entry(value).or_default().push(index);
                             }
                         }
                     }
                     (WidgetStateRole::Pending, None) => {}
-                    _ => self.push(
+                    (
+                        WidgetStateRole::Idle | WidgetStateRole::Error | WidgetStateRole::Terminal,
+                        _,
+                    ) => self.push(
                         OUTCOME_OUTSIDE_PENDING,
                         format!("{pointer}/on"),
                         format!(
-                            "outcome event `{}` can only fire in a pending state; `{}` is not pending",
-                            event.event_id, from_state.state_id
+                            "outcome event `{}` can only fire in a pending state; `{from}` is not pending",
+                            event.event_id
                         ),
                     ),
                 }
             } else if transition.guard.is_none() {
-                unguarded_events
-                    .entry((from, transition.on.as_str()))
+                facts
+                    .unguarded
+                    .entry((from, event.event_id.as_str()))
                     .or_default()
                     .push(index);
             }
@@ -816,8 +838,8 @@ impl MachineChecker<'_> {
                     PENDING_ABANDONED,
                     pointer.clone(),
                     format!(
-                        "leaving pending state `{}` on `{}` abandons the call in flight; cancel it and handle the outcome",
-                        from_state.state_id, event.event_id
+                        "leaving pending state `{from}` on `{}` abandons the call in flight; cancel it and handle the outcome",
+                        event.event_id
                     ),
                 );
             }
@@ -827,21 +849,23 @@ impl MachineChecker<'_> {
                 .effects
                 .iter()
                 .filter_map(|effect| match effect {
-                    WidgetMachineEffect::Start { call } => Some(call),
-                    _ => None,
+                    WidgetMachineEffect::Start { call, .. } => Some(call),
+                    WidgetMachineEffect::Cancel | WidgetMachineEffect::Navigate { .. } => None,
                 })
                 .collect();
             let enters_pending = target_state.role == WidgetStateRole::Pending
                 && (from != target || outcome.is_some());
             if enters_pending {
-                let awaited = target_state.awaits.as_ref();
-                if starts.len() != 1 || awaited.is_none_or(|call| starts[0] != call) {
+                let starts_awaited = match (starts.as_slice(), &target_state.awaits) {
+                    ([started], Some(awaited)) => *started == awaited,
+                    _ => false,
+                };
+                if !starts_awaited {
                     self.push(
                         PENDING_ENTERED_WITHOUT_START,
                         format!("{pointer}/effects"),
                         format!(
-                            "entering pending state `{}` must start exactly the call it awaits",
-                            target_state.state_id
+                            "entering pending state `{target}` must start exactly the call it awaits"
                         ),
                     );
                 }
@@ -850,15 +874,9 @@ impl MachineChecker<'_> {
                     START_WITHOUT_PENDING,
                     format!("{pointer}/effects"),
                     if target_state.role == WidgetStateRole::Pending {
-                        format!(
-                            "pending state `{}` already has its call in flight",
-                            target_state.state_id
-                        )
+                        format!("pending state `{target}` already has its call in flight")
                     } else {
-                        format!(
-                            "a started call must be awaited, but `{}` is not pending",
-                            target_state.state_id
-                        )
+                        format!("a started call must be awaited, but `{target}` is not pending")
                     },
                 );
             }
@@ -871,7 +889,7 @@ impl MachineChecker<'_> {
                     && from == target
                     && outcome.is_none()
                 {
-                    cancellable.insert(from);
+                    facts.cancellable.insert(from);
                 } else {
                     self.push(
                         CANCEL_OUTSIDE_PENDING,
@@ -881,30 +899,32 @@ impl MachineChecker<'_> {
                 }
             }
         }
+        facts
+    }
 
-        // Determinism: one unguarded transition per state and event or outcome value.
-        for ((from, event), indexes) in &unguarded_events {
-            if indexes.len() > 1 {
+    /// One unguarded transition per state and event or outcome value.
+    fn check_determinism(&mut self, facts: &Facts<'m>) {
+        let base = self.base;
+        for ((from, event), indexes) in &facts.unguarded {
+            if let Some(second) = indexes.get(1) {
                 self.push(
                     NONDETERMINISTIC,
-                    format!("{base}/transitions/{}", indexes[1]),
+                    format!("{base}/transitions/{second}"),
                     format!(
-                        "state `{}` has {} unguarded transitions on `{event}`",
-                        machine.states[*from].state_id,
+                        "state `{from}` has {} unguarded transitions on `{event}`",
                         indexes.len()
                     ),
                 );
             }
         }
-        for (from, values) in &covered {
+        for (from, values) in &facts.covered {
             for (value, indexes) in values {
-                if indexes.len() > 1 {
+                if let Some(second) = indexes.get(1) {
                     self.push(
                         NONDETERMINISTIC,
-                        format!("{base}/transitions/{}", indexes[1]),
+                        format!("{base}/transitions/{second}"),
                         format!(
-                            "state `{}` has {} unguarded transitions on outcome `{}`",
-                            machine.states[*from].state_id,
+                            "state `{from}` has {} unguarded transitions on outcome `{}`",
                             indexes.len(),
                             show_outcome(value)
                         ),
@@ -912,14 +932,17 @@ impl MachineChecker<'_> {
                 }
             }
         }
+    }
 
-        // Coverage: every outcome the awaited call can have has an unguarded exit.
-        for (index, state) in machine.states.iter().enumerate() {
+    /// Every outcome the awaited call can have has an unguarded exit.
+    fn check_coverage(&mut self, facts: &Facts<'m>) {
+        for (index, state) in self.machine.states.iter().enumerate() {
             let (WidgetStateRole::Pending, Some(call)) = (state.role, &state.awaits) else {
                 continue;
             };
-            let have = covered.get(&index);
-            let missing: Vec<String> = possible_outcomes(call, cancellable.contains(&index))
+            let id = state.state_id.as_str();
+            let have = facts.covered.get(id);
+            let missing: Vec<String> = possible_outcomes(call, facts.cancellable.contains(id))
                 .iter()
                 .filter(|value| have.is_none_or(|have| !have.contains_key(*value)))
                 .map(show_outcome)
@@ -927,21 +950,23 @@ impl MachineChecker<'_> {
             if !missing.is_empty() {
                 self.push(
                     PENDING_OUTCOME_UNCOVERED,
-                    format!("{base}/states/{index}"),
+                    format!("{}/states/{index}", self.base),
                     format!(
-                        "pending state `{}` has no unguarded transition for: {}",
-                        state.state_id,
+                        "pending state `{id}` has no unguarded transition for: {}",
                         missing.join(", ")
                     ),
                 );
             }
         }
+    }
 
-        // Graph laws.
-        if let Some(&initial) = states.get(machine.initial_state_id.as_str()) {
-            let seen = reachable([initial], &edges);
+    fn check_graph(&mut self, facts: &Facts<'m>) {
+        let machine = self.machine;
+        let base = self.base;
+        if self.state(&machine.initial_state_id).is_some() {
+            let seen = reachable([machine.initial_state_id.as_str()], &facts.edges);
             for (index, state) in machine.states.iter().enumerate() {
-                if !seen[index] && states.get(state.state_id.as_str()) == Some(&index) {
+                if !seen.contains(state.state_id.as_str()) {
                     self.push(
                         UNREACHABLE_STATE,
                         format!("{base}/states/{index}"),
@@ -953,84 +978,62 @@ impl MachineChecker<'_> {
                 }
             }
         }
-        let mut reverse: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); count];
-        for (from, targets) in edges.iter().enumerate() {
-            for target in targets {
-                reverse[*target].insert(from);
-            }
-        }
         let settled = reachable(
             machine
                 .states
                 .iter()
-                .enumerate()
-                .filter(|(_, state)| {
+                .filter(|state| {
                     matches!(
                         state.role,
                         WidgetStateRole::Idle | WidgetStateRole::Terminal
                     )
                 })
-                .map(|(index, _)| index),
-            &reverse,
+                .map(|state| state.state_id.as_str()),
+            &reverse(&facts.edges),
         );
         for (index, state) in machine.states.iter().enumerate() {
             if state.role == WidgetStateRole::Terminal {
                 continue;
             }
+            let id = state.state_id.as_str();
             let pointer = format!("{base}/states/{index}");
-            if edges[index].iter().all(|target| *target == index) {
+            let exits = facts
+                .edges
+                .get(id)
+                .is_some_and(|targets| targets.iter().any(|target| *target != id));
+            if !exits {
                 self.push(
                     ABSORBING_STATE,
                     pointer,
-                    format!("non-terminal state `{}` has no exit", state.state_id),
+                    format!("non-terminal state `{id}` has no exit"),
                 );
-            } else if !settled[index] {
+            } else if !settled.contains(id) {
                 self.push(
                     TRAP_REGION,
                     pointer,
-                    format!(
-                        "no idle or terminal state is reachable from `{}`",
-                        state.state_id
-                    ),
+                    format!("no idle or terminal state is reachable from `{id}`"),
                 );
-            } else if state.role == WidgetStateRole::Error && !recovers.contains(&index) {
+            } else if state.role == WidgetStateRole::Error && !facts.recovers.contains(id) {
                 self.push(
                     ERROR_WITHOUT_RECOVERY,
                     pointer,
-                    format!(
-                        "error state `{}` has no transition a person or a timer drives",
-                        state.state_id
-                    ),
+                    format!("error state `{id}` has no transition a person or a timer drives"),
                 );
             }
         }
-        for index in on_cycle(&timer_edges) {
+        for id in on_cycle(&facts.timer_edges) {
+            let index = machine
+                .states
+                .iter()
+                .position(|state| state.state_id == id)
+                .unwrap_or_default();
             self.push(
                 INPUT_FREE_CYCLE,
                 format!("{base}/states/{index}"),
-                format!(
-                    "state `{}` is on a cycle that runs on timers alone",
-                    machine.states[index].state_id
-                ),
+                format!("state `{id}` is on a cycle that runs on timers alone"),
             );
         }
-        self.findings
     }
-}
-
-fn check_machine(
-    ux: &WidgetUx,
-    page: &WidgetPage,
-    machine: &WidgetMachine,
-    base: &str,
-) -> Vec<Finding> {
-    MachineChecker {
-        ux,
-        machine,
-        base,
-        findings: Vec::new(),
-    }
-    .run(page)
 }
 
 #[cfg(test)]
@@ -1039,14 +1042,13 @@ mod tests {
 
     #[test]
     fn a_cycle_needs_two_states_or_a_self_loop() {
-        let edges = vec![
-            BTreeSet::from([1]),
-            BTreeSet::from([0]),
-            BTreeSet::from([2]),
-            BTreeSet::from([0]),
-        ];
-        assert_eq!(on_cycle(&edges), BTreeSet::from([0, 1, 2]));
-        assert!(on_cycle(&[BTreeSet::from([1]), BTreeSet::new()]).is_empty());
+        let graph: Graph<'_> = BTreeMap::from([
+            ("a", BTreeSet::from(["b"])),
+            ("b", BTreeSet::from(["a"])),
+            ("c", BTreeSet::from(["c"])),
+            ("d", BTreeSet::from(["a"])),
+        ]);
+        assert_eq!(on_cycle(&graph), BTreeSet::from(["a", "b", "c"]));
     }
 
     #[test]
