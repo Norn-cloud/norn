@@ -428,18 +428,18 @@ fn is_iso_currency(property: &EffectiveProperty) -> bool {
 fn is_scalar(property: &EffectiveProperty) -> bool {
     is_iso_currency(property)
         || matches!(
-        property.kind,
-        EffectiveKind::Base(
-            PropertyType::Text { .. }
-                | PropertyType::Integer { .. }
-                | PropertyType::Decimal { .. }
-                | PropertyType::Boolean {}
-                | PropertyType::Timestamp { .. }
-                | PropertyType::Date {}
-                | PropertyType::Duration {}
-                | PropertyType::Enum { .. }
+            property.kind,
+            EffectiveKind::Base(
+                PropertyType::Text { .. }
+                    | PropertyType::Integer { .. }
+                    | PropertyType::Decimal { .. }
+                    | PropertyType::Boolean {}
+                    | PropertyType::Timestamp { .. }
+                    | PropertyType::Date {}
+                    | PropertyType::Duration {}
+                    | PropertyType::Enum { .. }
+            )
         )
-    )
 }
 
 fn valid_utc(text: &str) -> bool {
@@ -1329,8 +1329,10 @@ impl<'a> Checker<'a> {
             property,
         } = &metric.measure
         {
-            let paths =
-                self.unit_paths(metric, (object_type.as_str(), *aggregate, property.as_ref()));
+            let paths = self.unit_paths(
+                metric,
+                (object_type.as_str(), *aggregate, property.as_ref()),
+            );
             for (index, axis) in rollup.across.iter().enumerate() {
                 if let Some((_, code)) = paths.iter().find(|(path, _)| path == axis) {
                     self.reject(code, &format!("{at}/across/{index}"));

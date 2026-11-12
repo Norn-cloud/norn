@@ -373,9 +373,11 @@ fn a_tenant_cell_lists_and_answers_its_derived_metrics() {
     let metrics = listed["metrics"].as_array().unwrap();
     // Each metric says how it aggregates, so a client never totals a stock.
     assert!(
-        metrics.iter().any(|metric| metric["objectType"] == "shop.Sale"
-            && metric["expression"] == "amount"
-            && metric["additivity"] == json!({"kind": "additive"})),
+        metrics
+            .iter()
+            .any(|metric| metric["objectType"] == "shop.Sale"
+                && metric["expression"] == "amount"
+                && metric["additivity"] == json!({"kind": "additive"})),
         "{listed}"
     );
     let anonymous = cell.call("GET", "/v1/questions:metrics", None, "");
