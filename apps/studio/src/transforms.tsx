@@ -107,7 +107,7 @@ function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>;
                     {exactValue(read, `/rows/${index}/values/${member(column.name)}`, row.values[column.name], scaleOf(column.type))}
                   </TableCell>
                 ))}
-                <TableCell><Button variant="ghost" size="sm" onClick={() => onTrace(row.rowId)}>{row.memberCount} records</Button></TableCell>
+                <TableCell><Button variant="ghost" size="sm" onClick={() => onTrace(row.rowId)}>{row.memberCount} {row.memberCount === 1 ? "record" : "records"}</Button></TableCell>
               </TableRow>
             ))}
           </TableBody>
