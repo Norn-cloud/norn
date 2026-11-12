@@ -235,7 +235,8 @@ impl Connect {
             .filter_map(|store| self.store(store))
             .find_map(|s3| {
                 let key = uri.strip_prefix(&format!("s3://{}/", s3.bucket))?;
-                (!key.is_empty() && !key.contains("..")).then(|| s3.presign("GET", key, now_ms, seconds))
+                (!key.is_empty() && !key.contains(".."))
+                    .then(|| s3.presign("GET", key, now_ms, seconds))
             })
     }
 
@@ -406,8 +407,8 @@ impl Connect {
                 store,
                 key,
                 file_name: begin.file_name,
-            content_type: begin.content_type.clone(),
-            columns: Vec::new(),
+                content_type: begin.content_type.clone(),
+                columns: Vec::new(),
                 uri: uri.clone(),
                 completed: None,
             },
