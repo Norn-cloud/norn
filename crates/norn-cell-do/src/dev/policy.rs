@@ -387,11 +387,15 @@ mod tests {
             &json!({"question": question(&amount), "lineageRef": answer["lineageRef"], "bucket": bucket}),
         );
         assert_eq!(status, 200, "{trace}");
-        let text = trace.to_string();
-        assert!(
-            text.contains("s1") && text.contains("s2") && !text.contains("\"s3\""),
-            "{trace}"
-        );
+        // Exactly the bucket's facts contributed; the result it echoes still
+        // names every bucket.
+        let contributed: Vec<&str> = trace["contributions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["fact"]["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(contributed, ["s1", "s2"], "{trace}");
     }
 
     /// A ratio is governed by its operands' type only when both operands sum
