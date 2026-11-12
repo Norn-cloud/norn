@@ -497,16 +497,85 @@ mod tests {
             admit(10_000_000).unwrap().evidence,
             PreservationClass::Certified
         );
-        // Enough to read the input, with one unit left for the search.
+        // Ample for reading the input, with a few units left for the search:
+        // the refusal comes from the certificate path, not input metering.
         let input = serde_json::to_vec(&(&source, &target, &mapping))
             .unwrap()
             .len();
-        let refused = admit(input.saturating_add(1)).unwrap_err();
+        work_refusal(&admit(input.saturating_add(16)).unwrap_err());
+    }
+
+    /// Exactly one refusal, from the exhausted admission work allowance.
+    fn work_refusal(findings: &[crate::Diagnostic]) {
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let refusal = findings.first().unwrap();
+        assert_eq!(refusal.code.as_str(), codes::CHASE_REFUSED);
         assert!(
-            refused
-                .iter()
-                .all(|finding| finding.code.as_str() == codes::CHASE_REFUSED),
-            "{refused:?}"
+            refusal
+                .message
+                .starts_with("the chase exceeded its whole-admission work budget"),
+            "{refusal:?}"
+        );
+    }
+
+    /// One 128-atom target equation over a self-link whose image is the empty
+    /// path, beside a 64-link image that widens every rule: the single case
+    /// starts with both ends already merged, so the chase is free and nearly
+    /// all the work is setting the case up (256 merges over 8,449 classes,
+    /// done by the search and again by the check). That setup is charged, so
+    /// an allowance well under its cost refuses instead of doing it unmetered.
+    #[test]
+    fn case_setup_is_charged_to_admission_work() {
+        let node = |ns: &str, equations: serde_json::Value| -> Vec<ArtifactEnvelope> {
+            let link = |id: &str| {
+                json!({"id": id, "target": format!("{ns}.Node"),
+                    "cardinality": {"to": "one", "from": "many", "required": true}})
+            };
+            let mut payload = json!({"entityVersion": "2.0", "objectType": {
+                "name": format!("{ns}.Node"), "links": [link("next"), link("far")]}});
+            if !equations.is_null() {
+                payload["extensions"] = json!({"norn.path-equations/1.0.0": equations});
+            }
+            vec![
+                serde_json::from_value(json!({
+                    "irVersion": "0.1", "artifactId": format!("{ns}.Node.entity"),
+                    "kind": "entity", "namespace": ns, "name": "Node", "version": "0.1.0",
+                    "lifecycle": "draft", "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                    "dependencies": [],
+                    "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                    "payload": payload
+                }))
+                .unwrap(),
+            ]
+        };
+        let long = vec!["next"; 64];
+        let source = node("s", serde_json::Value::Null);
+        let target = node("t", json!([{"id": "loop", "left": long, "right": long}]));
+        let mapping: PathMapping = serde_json::from_value(json!({
+            "id": "collapse", "objects": {"t.Node": "s.Node"},
+            "links": [{"concept": "t.Node", "link": "next", "path": []},
+                      {"concept": "t.Node", "link": "far", "path": long}]
+        }))
+        .unwrap();
+        let admit = |steps: usize| {
+            admit_with_work(
+                &source,
+                &target,
+                &mapping,
+                &BTreeSet::new(),
+                ChaseBudget::default(),
+                &AdmissionWork::new(steps),
+            )
+        };
+        let input = serde_json::to_vec(&(&source, &target, &mapping))
+            .unwrap()
+            .len();
+        // The setup alone costs over four million iterations.
+        work_refusal(&admit(input.saturating_add(1_000_000)).unwrap_err());
+        // With the work to do it, the same mapping is certified.
+        assert_eq!(
+            admit(1_000_000_000).unwrap().evidence,
+            PreservationClass::Certified
         );
     }
 }

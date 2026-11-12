@@ -241,7 +241,9 @@ functional EGDs for every reachable to-one link, source totality TGDs for
 required links, and one TGD per object and link image into an `Exchange`. It
 first looks for a chase certificate for every target dependency and accepts it
 only through the proved check (#718 U7); otherwise it runs the existing
-schema-compatibility search. Both are charged to one admission work
+schema-compatibility search. A certified return validates the exchange but
+skips the search's compatibility chase, so its facts budget does not apply to
+it. Both are charged to one admission work
 allowance, and exhausting it refuses (`consistency.chase.refused`). Ill-typed images and overlapping
 catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
 refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
