@@ -520,8 +520,7 @@ fn integrity_codes_carry_no_generic_fix() {
 /// The one sentence a code carries when no specific guidance is written for it
 /// yet. It is a marker, not advice: exact, used only as `no_fix`, and no other
 /// guidance may read like it, so a reviewed `no_fix` and the marker cannot blur.
-const NO_GUIDANCE_YET: &str =
-    "No specific guidance is recorded for this code yet; the message and the reported path say what was refused.";
+const NO_GUIDANCE_YET: &str = "No specific guidance is recorded for this code yet; the message and the reported path say what was refused.";
 
 #[test]
 fn the_no_guidance_marker_is_one_exact_sentence() {
