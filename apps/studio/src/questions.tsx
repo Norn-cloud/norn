@@ -26,13 +26,14 @@ import { AnswerView, RefusedNote } from "./answer-view.tsx"
 import { RunQuestion } from "./run.tsx"
 import type { QuestionCatalog } from "./builder.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricQuestion, readMetrics, windowOf, type MetricSummary } from "./lib/metrics.ts"
+import { metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { readProfile } from "./lib/profile.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
 /** One metric the cell derives, asked per day or week over every date its records carry. */
 function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const [conditions, setConditions] = useState<readonly Condition[]>([])
   const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false })
   const window = profile.data && metric.timeProperty !== null ? windowOf(profile.data.document, metric.timeProperty) : undefined
   // The answer is read with the type's own declaration, as the cell admitted it.
@@ -51,10 +52,39 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         {profile.data && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <p className="text-meta text-muted-foreground">Per {window.grain}, {window.start.slice(0, 10)} to {window.end.slice(0, 10)}: every date its records carry.</p>
-          <RunQuestion question={metricQuestion(metric, window)} catalog={declarations} label="Ask the cell" />
+          <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={setConditions} />
+          <RunQuestion key={JSON.stringify(conditions)} question={metricQuestion(metric, window, conditions)} catalog={declarations} label="Ask the cell" />
         </>}
       </Well>
     </Panel>
+  )
+}
+
+/**
+ * "Only where" conditions on a metric's question: a field equal to a value, or empty. The cell
+ * checks the question as asked; a sum it will not add up across (mixed units, say) comes back as
+ * its refusal, in its own words.
+ */
+function Conditions({ fields, conditions, onChange }: { readonly fields: readonly string[]; readonly conditions: readonly Condition[]; readonly onChange: (next: readonly Condition[]) => void }) {
+  const set = (index: number, next: Partial<Condition>) => onChange(conditions.map((condition, at) => at === index ? { ...condition, ...next } : condition))
+  return (
+    <div className="space-y-2">
+      {conditions.map((condition, index) => (
+        <div key={index} className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">{index === 0 ? "Only where" : "and"}</span>
+          <select aria-label={`Field of condition ${index + 1}`} className="h-8 rounded-md border bg-background px-2" value={condition.property} onChange={(event) => set(index, { property: event.target.value })}>
+            {fields.map((field) => <option key={field} value={field}>{field.replaceAll("_", " ")}</option>)}
+          </select>
+          <span className="text-muted-foreground">is</span>
+          {condition.value === null
+            ? <span className="rounded-md border px-2 py-1 text-muted-foreground">empty</span>
+            : <input aria-label={`Value of condition ${index + 1}`} className="h-8 w-32 rounded-md border bg-background px-2" value={condition.value} onChange={(event) => set(index, { value: event.target.value })} />}
+          <label className="flex items-center gap-1 text-muted-foreground"><input type="checkbox" checked={condition.value === null} onChange={(event) => set(index, { value: event.target.checked ? null : "" })} />empty</label>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(conditions.filter((_, at) => at !== index))}>Remove</Button>
+        </div>
+      ))}
+      {fields.length > 0 && <Button type="button" variant="outline" size="sm" onClick={() => onChange([...conditions, { property: fields[0] ?? "", value: "" }])}><Plus />Only where…</Button>}
+    </div>
   )
 }
 
