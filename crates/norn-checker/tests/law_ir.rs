@@ -887,7 +887,7 @@ fn law_link_reads_admit_one_to_one_hop_only() {
     let unguarded = check(Some("self.status == 'approved'"), "self.order.paid == true");
     assert!(refused(&unguarded, codes::PREDICATE_TYPE), "{unguarded:?}");
     // A to-many link and a second hop refuse admission.
-    let many = check(None, "count(self.requests) == 0");
+    let many = check(None, "len(self.requests) == 0");
     assert!(refused(&many, codes::UNKNOWN_BINDING), "{many:?}");
     let second = check(
         Some("self.order != null"),
