@@ -289,13 +289,26 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
         let model = CommitModel::new(&catalog);
-        // A plan changes only links touching this commit's objects or this bundle's claims.
+        // A plan changes only links touching this commit's objects or this
+        // bundle's claims. A claim's target joins the scope only when the
+        // link admits one source per target (`from: one`): there another
+        // source's claim to the same target competes with this one. For a
+        // `from: many` link, standings are decided per (source, role) group
+        // (`standings`), this bundle adds claims only to its own sources'
+        // groups, and a group pulled in through the shared target alone has
+        // no change in standing or endpoint presence, so it writes no link and
+        // is never sealed: leaving it out changes no plan, while reading it
+        // made each claim cost time linear in the target's other claims.
         let scope: BTreeSet<String> = bundle
             .records
             .iter()
             .map(|record| record.key.clone())
             .chain(bundle.link_claims()?.into_iter().flat_map(|claim| {
-                std::iter::once(claim.source_key).chain(claim.target.map(|t| t.key))
+                let exclusive = model
+                    .link(&claim.source_type, claim.role.as_str())
+                    .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+                std::iter::once(claim.source_key)
+                    .chain(claim.target.filter(|_| exclusive).map(|t| t.key))
             }))
             .collect();
         let entries = self.claim_journal(Some(bundle), Some(&scope))?;
