@@ -143,8 +143,14 @@ mod tests {
     #[test]
     fn selftest_names_the_running_binary_and_honours_the_interpreter_override() {
         let own = PathBuf::from("/opt/norn");
-        let (python, command) =
-            invocation(Tool::Selftest, Some(home()), Some("py".into()), Some(own), &[]).unwrap();
+        let (python, command) = invocation(
+            Tool::Selftest,
+            Some(home()),
+            Some("py".into()),
+            Some(own),
+            &[],
+        )
+        .unwrap();
         assert_eq!(python, "py");
         assert_eq!(strings(&command)[1..], ["--norn", "/opt/norn"]);
         assert!(invocation(Tool::Selftest, Some(home()), None, None, &[]).is_err());
