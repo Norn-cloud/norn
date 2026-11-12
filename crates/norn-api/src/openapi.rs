@@ -193,16 +193,15 @@ mod free_form_contract_tests {
                         Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "object"),
                         _ => false,
                     };
-                    let described = [
-                        "properties",
-                        "additionalProperties",
-                        "oneOf",
-                        "anyOf",
-                        "allOf",
-                        "$ref",
-                    ]
-                    .iter()
-                    .any(|key| members.contains_key(*key));
+                    // `properties: {}` alone names no member either.
+                    let named = members
+                        .get("properties")
+                        .and_then(Value::as_object)
+                        .is_some_and(|properties| !properties.is_empty());
+                    let described = named
+                        || ["additionalProperties", "oneOf", "anyOf", "allOf", "$ref"]
+                            .iter()
+                            .any(|key| members.contains_key(*key));
                     if object && !described {
                         bare.push(at.to_owned());
                     }

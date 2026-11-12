@@ -1057,10 +1057,10 @@ export interface components {
             }[];
             /** @description Read-only base artifact identities. */
             baseArtifactIds: string[];
-            /** @description Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on. */
+            /** @description Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member. */
             diagnostics: null;
             layout: components["schemas"]["LayoutSidecar"];
-            /** @description Always null: layout diagnostics are not retained with a revision, and this read does not re-run the checker. Kept for the shape readers already rely on. */
+            /** @description Always null: layout diagnostics are not retained with a revision, and this read does not re-run the checker. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member. */
             layoutDiagnostics: null;
             /**
              * Format: int64

@@ -82,9 +82,13 @@ test("the canvas names a decision without a question, options or deciders, and a
   expect(lower(bare, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.no_decider", "canvas.decision.no_question", "canvas.decision.option_leads_nowhere", "canvas.decision.option_without_effect"])
 })
 
-// The real checker over what an automation with decisions lowers to (built into worker/checker or src/checker on Boat).
+// The real checker over what an automation with decisions lowers to (built into worker/checker or src/checker).
+// CI's browser phase builds the package and sets NORN_CHECKER_WASM_REQUIRED=1, so there a missing
+// package fails this case instead of skipping it; the cheap phase builds no WASM and skips it.
 const pkg = [join(import.meta.dir, "../worker/checker"), join(import.meta.dir, "../src/checker")].find((dir) => existsSync(join(dir, "norn_checker_wasm_bg.wasm")))
-test.skipIf(!pkg)("the checker admits what a drawn decision lowers to", async () => {
+const required = process.env.NORN_CHECKER_WASM_REQUIRED === "1"
+test.skipIf(!pkg && !required)("the checker admits what a drawn decision lowers to", async () => {
+  expect(pkg, "checker WASM package (crates/norn-checker-wasm/scripts/build-pkg.sh)").toBeDefined()
   const wasm = await import(join(pkg!, "norn_checker_wasm.js")) as { initSync: (input: { module: BufferSource }) => unknown; checkArtifactSet: (a: string, c: string) => string }
   wasm.initSync({ module: readFileSync(join(pkg!, "norn_checker_wasm_bg.wasm")) })
   const artifacts = lower(graph, tools, meta, scope).lowered?.artifacts ?? []
