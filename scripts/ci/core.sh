@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Python children never see the script directory or cwd on sys.path (#513): older Pythons
-# ignore the variable, so the next line refuses to run where it has no effect.
+# Python isolation (#513): no script directory or cwd on sys.path, and no bytecode read or
+# written next to any source. Older Pythons ignore these variables, so the assertion refuses
+# to run where they have no effect. scripts/ci/python_isolation.py pins these lines.
 export PYTHONSAFEPATH=1
-python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path else 1)' || { echo "PYTHONSAFEPATH not honoured" >&2; exit 1; }
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-pycache.XXXXXX")"
+python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its

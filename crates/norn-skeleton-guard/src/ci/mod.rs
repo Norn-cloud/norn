@@ -279,10 +279,14 @@ fn gate_directory_contract(
 /// `-Z`: `include`, `paths`, `[patch]`, `[source]`, wrappers, linkers and runners are refused.
 fn gate_entry_errors(root: &Path, current: &[String]) -> Vec<String> {
     let mut errors = Vec::new();
+    // Every component, not only the last: `scripts/ci` as a symlink redirects `core.sh`.
     let symlink = |path: &str| {
-        root.join(path)
-            .symlink_metadata()
-            .is_ok_and(|metadata| metadata.is_symlink())
+        let mut at = root.to_path_buf();
+        Path::new(path).components().any(|component| {
+            at.push(component);
+            at.symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_symlink())
+        })
     };
     for directory in GATE_DIRECTORIES {
         if symlink(directory.trim_end_matches('/')) {
@@ -1084,6 +1088,22 @@ mod tests {
             "scripts/ci/core.sh",
             ".github/workflows/core.yml",
         ] {
+            if path == "scripts/ci/core.sh" {
+                // A symlinked parent directory, the file itself real.
+                let real = linked.path().join("real-ci");
+                std::fs::create_dir_all(&real).expect("mkdir");
+                std::fs::write(real.join("core.sh"), b"x").expect("write");
+                std::fs::create_dir_all(linked.path().join("scripts")).expect("mkdir");
+                symlink(&real, linked.path().join("scripts/ci")).expect("symlink");
+                let errors = run(&linked, &[path]);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                    "parent {path}: {errors:?}"
+                );
+                continue;
+            }
             std::fs::create_dir_all(linked.path().join(path).parent().expect("parent"))
                 .expect("mkdir");
             symlink(linked.path().join("target.txt"), linked.path().join(path)).expect("symlink");
