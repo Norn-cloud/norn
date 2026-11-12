@@ -926,6 +926,106 @@
         ]
       }
     },
+    "/v1/mcp": {
+      "post": {
+        "tags": [
+          "crate::mcp"
+        ],
+        "summary": "`POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over\nstateless Streamable HTTP; `tools/list` is the caller's tool catalog.",
+        "description": "# Errors\nSerialization failure; protocol and backend refusals stay on the wire.",
+        "operationId": "post_message",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpReply"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "A notification was accepted; there is no body."
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/objects/{type}": {
       "get": {
         "tags": [
@@ -2657,6 +2757,97 @@
           }
         },
         "additionalProperties": false
+      },
+      "McpError": {
+        "type": "object",
+        "description": "A JSON-RPC protocol error, carrying the shared refusal as its data.",
+        "required": [
+          "code",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The JSON-RPC error code."
+          },
+          "data": {
+            "$ref": "#/components/schemas/Refusal",
+            "description": "The refusal."
+          },
+          "message": {
+            "type": "string",
+            "description": "The refusal's message."
+          }
+        }
+      },
+      "McpMessage": {
+        "type": "object",
+        "description": "`POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,\nover its stateless Streamable HTTP transport. The tool catalog is not\nlisted here: `tools/list` returns it, projected from what the cell declares.",
+        "required": [
+          "jsonrpc",
+          "method"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
+          },
+          "jsonrpc": {
+            "type": "string",
+            "description": "Always `2.0`."
+          },
+          "method": {
+            "type": "string",
+            "description": "`initialize`, `ping`, `tools/list`, `tools/call` or a notification."
+          },
+          "params": {
+            "type": "object",
+            "description": "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "McpReply": {
+        "type": "object",
+        "description": "The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id.",
+        "required": [
+          "jsonrpc",
+          "id"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/McpError",
+                "description": "A protocol error: malformed message, unknown method or tool."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
+          },
+          "jsonrpc": {
+            "type": "string",
+            "description": "Always `2.0`."
+          },
+          "result": {
+            "type": "object",
+            "description": "The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal.",
+            "additionalProperties": true
+          }
+        }
       },
       "NornActionActionDerivedValue": {
         "type": "object",

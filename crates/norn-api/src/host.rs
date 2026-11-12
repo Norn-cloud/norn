@@ -108,6 +108,21 @@ impl<E: SqlEngine> DevHost<E> {
         self.cell.lock().map_err(Refusal::host)
     }
 
+    /// The cell model's object type names, in model order: the types a catalog
+    /// (an agent's tool schema) may offer. Naming a type grants nothing; every
+    /// read of it is still authorized.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn object_type_names(&self) -> Result<Vec<String>, Refusal> {
+        let cell = self.cell()?;
+        Ok(cell
+            .store()
+            .model()
+            .object_types()
+            .map(|object_type| object_type.name.as_str().to_owned())
+            .collect())
+    }
+
     /// The active definitions revision, read under the definition epoch, or
     /// `None` for a cell with nothing installed. Never writes.
     /// # Errors
