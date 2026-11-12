@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::authz::ReadCapability;
-use norn_api::decisions::{DecideRequest, DecisionsQuery, decide, list_decisions};
+use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery, decide, list_decisions};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::refusal::Refusal;
@@ -192,7 +192,14 @@ fn decisions<E: SqlEngine>(
                     collection_access(&scope, &subject, capability, object_type)
                 }
             };
-            match decide(host, &scope, actor, &id, &body, &reads, runtime, now) {
+            let call = DecideCall {
+                scope: &scope,
+                actor,
+                id: &id,
+                body: &body,
+                now,
+            };
+            match decide(host, &call, &reads, runtime) {
                 Ok(decided) => Ok((StatusCode::OK, document_json(&decided)?)),
                 // A refusal carries who resolved the decision first, when
                 // someone did.

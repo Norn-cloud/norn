@@ -698,14 +698,17 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 #[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn decide<E: SqlEngine>(
     host: &DevHost<E>,
-    scope: &ScopeQuery,
-    actor: Option<&str>,
-    id: &str,
-    body: &DecideRequest,
+    request: &DecideCall<'_>,
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
-    now: LogicalTime,
 ) -> Result<Decided, Box<DecideRefusal>> {
+    let DecideCall {
+        scope,
+        actor,
+        id,
+        body,
+        now,
+    } = *request;
     let _epoch = host.definition_read()?;
     let key = handle_key(disclosure)?;
     let reader = Reader {
@@ -740,14 +743,39 @@ pub fn decide<E: SqlEngine>(
             "its deadline passed before anyone decided",
         )));
     }
+    check_answer(&decision, body)?;
+    if !record(&mut cell, &decision, body, actor, now)? {
+        return resolved_answer(&reader, &cell, id, body);
+    }
+    Ok(answer(&reader, &cell, id, body, DecideOutcome::Decided)?)
+}
+
+/// One decide call: scope, the verified caller, the decision and the answer.
+#[derive(Debug, Clone, Copy)]
+pub struct DecideCall<'a> {
+    /// The request's explicit scope.
+    pub scope: &'a ScopeQuery,
+    /// The verified caller, if any.
+    pub actor: Option<&'a str>,
+    /// The decision id.
+    pub id: &'a str,
+    /// The answer.
+    pub body: &'a DecideRequest,
+    /// The host's clock.
+    pub now: LogicalTime,
+}
+
+/// The answer's own refusals, in the contract's order: an unevaluable
+/// decider law, an unknown choice, a long note, a bad idempotency key.
+fn check_answer(decision: &OpenDecision, body: &DecideRequest) -> Result<(), Refusal> {
     if decision.request.decider.law.is_some() {
         // No decider law is evaluated on this host yet: fail closed.
-        return Err(Box::from(Refusal::new(
+        return Err(Refusal::new(
             StatusCode::FORBIDDEN,
             decision_codes::LAW_NOT_SATISFIED,
             "the decider law is not satisfied",
             "this decision names a law the cell cannot evaluate for the caller",
-        )));
+        ));
     }
     if !decision
         .request
@@ -755,32 +783,46 @@ pub fn decide<E: SqlEngine>(
         .iter()
         .any(|option| option.id == body.choice)
     {
-        return Err(Box::from(at(
+        return Err(at(
             decision_codes::UNKNOWN_CHOICE,
             "/choice",
             "choice names no option of this decision",
-        )));
+        ));
     }
     if body
         .note
         .as_deref()
         .is_some_and(|note| note.chars().count() > MAX_TEXT_CHARS)
     {
-        return Err(Box::from(at(
+        return Err(at(
             decision_codes::NOTE_TOO_LONG,
             "/note",
             "the note is longer than 500 characters",
-        )));
+        ));
     }
     if body.idempotency_key.trim().is_empty()
         || body.idempotency_key.len() > MAX_IDEMPOTENCY_KEY_BYTES
     {
-        return Err(Box::from(at(
+        return Err(at(
             codes::INVALID_REQUEST,
             "/idempotencyKey",
             "idempotencyKey must be 1-128 bytes",
-        )));
+        ));
     }
+    Ok(())
+}
+
+/// Record `actor`'s answer and move the run: the flow's result turn is
+/// checked first, then the answer is recorded as the parked command's result
+/// and the result turn commits with the decision's resolution. `false` when
+/// another call recorded an answer first.
+fn record<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision: &OpenDecision,
+    body: &DecideRequest,
+    actor: &str,
+    now: LogicalTime,
+) -> Result<bool, Refusal> {
     let row = cell
         .store()
         .read()
@@ -805,7 +847,7 @@ pub fn decide<E: SqlEngine>(
     };
     // The flow must accept the answer before anything is recorded.
     result_turn(
-        &cell,
+        cell,
         &flow,
         delivery(StepOutcome::Output(output.clone())),
         now,
@@ -815,9 +857,9 @@ pub fn decide<E: SqlEngine>(
         .map_err(Refusal::host)?
         .is_none()
     {
-        return resolved_answer(&reader, &cell, id, body);
+        return Ok(false);
     }
-    let commit = result_turn(&cell, &flow, delivery(StepOutcome::Output(output)), now)?;
+    let commit = result_turn(cell, &flow, delivery(StepOutcome::Output(output)), now)?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
@@ -853,7 +895,7 @@ pub fn decide<E: SqlEngine>(
             }
             Refusal::host(host_error)
         })?;
-    Ok(answer(&reader, &cell, id, body, DecideOutcome::Decided)?)
+    Ok(true)
 }
 
 /// DECISION-TERMINAL-1: resolve a decision past its deadline as expired. The
