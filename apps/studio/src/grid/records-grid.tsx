@@ -162,7 +162,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   }
 
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
-  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not available yet.</EmptyState></Shell>
+  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
   const refused = data?.kind === "refused" ? data : undefined
   const sortProblems = refused ? diagnosticsAt(refused.diagnostics, "/sort") : []

@@ -1,15 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { useRouterState } from "@tanstack/react-router"
-import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, ShieldCheck } from "lucide-react"
+import { Link, useRouterState } from "@tanstack/react-router"
+import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/panel"
+import { useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
+import { LawsPanel } from "./laws.tsx"
+import { useCatalog } from "./sources.tsx"
 
 const TITLE: Readonly<Record<string, string>> = {
   original: "As declared",
@@ -190,11 +193,44 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
 
 /** The recorded guarantee documents, for the submenu island. */
 export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
+  const recorded = useMode().data?.kind === "recorded"
+  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees, enabled: recorded })
   return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
 }
 
+/** A connected cell's laws, every type's together: what each must keep and how the cell holds it. */
+function LiveLaws() {
+  const { read, catalog } = useCatalog()
+  if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
+  if (read.isError) return <p className="text-destructive">{read.error.message}</p>
+  const governed = catalog?.concepts.filter(({ laws, definition }) => laws.length > 0 && definition === "object type") ?? []
+  return (
+    <div className="space-y-6">
+      {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
+      {governed.map((concept) => <div key={concept.name} className="space-y-2">
+        <h2 className="text-section font-medium"><Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link></h2>
+        <LawsPanel concept={concept} />
+      </div>)}
+      <p className="text-meta text-muted-foreground">Model-checked guarantees (bounded proofs over each law) are not served by this cell yet; the laws above are enforced on every write regardless.</p>
+    </div>
+  )
+}
+
 export function GuaranteesPage() {
+  const mode = useMode()
+  if (mode.data?.kind === "live") return (
+    <section className="space-y-8">
+      <div className="space-y-2">
+        <h1 className="text-title font-medium">Rules</h1>
+        <p className="max-w-2xl text-muted-foreground">The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law.</p>
+      </div>
+      <LiveLaws />
+    </section>
+  )
+  return <RecordedGuarantees />
+}
+
+function RecordedGuarantees() {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
   const document = (name: string) => read.data?.find((entry) => entry.name === name)?.read.document
   const declared = document("original")

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
@@ -20,7 +21,8 @@ const questions: Section = { path: "/questions", label: "Questions", icon: Chart
 async function at(pathname: string, node: () => ReactNode) {
   const router = createRouter({ routeTree: createRootRoute({ component: node }), history: createMemoryHistory({ initialEntries: [pathname] }) })
   await router.load()
-  return renderToStaticMarkup(<RouterProvider router={router} />)
+  // The shell reads the session and the cell's mode as queries, as the app's root provides them.
+  return renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>)
 }
 
 test("the open section lists its entries under their heading, the open entry marked", async () => {

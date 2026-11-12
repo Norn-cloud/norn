@@ -233,7 +233,7 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
   )
 }
 
-function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
+function WorkflowCard({ workflow, recorded }: { readonly workflow: Workflow; readonly recorded: boolean }) {
   const { lifecycle } = workflow
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [pinned, setPinned] = useState<string>()
@@ -246,7 +246,7 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-section font-medium">{words(workflow.objectType)}: {words(lifecycle.property).toLowerCase()}</h2>
-          <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>
+          {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <p className="text-meta text-muted-foreground">
           {[workflow.description,
@@ -307,7 +307,7 @@ export function WorkflowsPage() {
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
       {definitions.data && workflows(definitions.data.map(({ document }) => document)).map((workflow) => (
-        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} />
+        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
       ))}
     </section>
   )
