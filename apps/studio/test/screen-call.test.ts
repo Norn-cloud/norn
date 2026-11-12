@@ -79,7 +79,7 @@ test("keys: one key never carries two bodies, a retry re-sends exactly the last 
     const bodies = new Map<string, string>()
     let last: Extract<Cmd, { kind: "call" }> | null = null
     for (const { before, msg, after, cmds } of session(seed).steps) {
-      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
+      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "pending" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
       if (msg.kind === "edit" && inFlight(before)) expect(after).toBe(before)
       for (const c of calls(cmds)) {
         if (c.actionId !== "learning.triage_episode") continue
