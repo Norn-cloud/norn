@@ -263,6 +263,17 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
                                  {k: v for k, v in self.full.items() if k != "reason"})
 
+    def test_an_affected_rust_change_plans_rest_shards(self):
+        # Only a plan that reaches no package drops its rest shards; a Rust change keeps them.
+        for path in ("crates/norn-ir/src/lib.rs", "crates/norn-cli/src/main.rs"):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertTrue([shard for shard in plan["shard"] if shard.startswith("rest-")], plan["shard"])
+                self.assertTrue(plan["packages"])
+
     def test_markdown_only_keeps_policy_and_provenance(self):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)

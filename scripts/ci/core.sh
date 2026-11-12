@@ -27,13 +27,14 @@ rest_shards=3
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
 # The skeleton guard is its own Cargo workspace (D95): its manifest and lockfile are in the
-# gated crate directory. Every guard command names it and shares the root target directory.
+# gated crate directory. Every guard command names it and shares the root target directory;
+# tool installs (`cargo install`) build in their own directory under $upstream instead.
 guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 # The pinned nextest, installed like the other tools when absent.
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
-    || cargo install --locked cargo-nextest --version 0.9.150
+    || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-nextest --version 0.9.150
 }
 # Fails unless each named test of binary $2 ran and passed in nextest's JUnit report $1:
 # absent (renamed, deleted, ignored, cfg'd out), skipped, failed or an unreadable report fails.
@@ -215,14 +216,14 @@ PY
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
-      cargo install --locked cargo-public-api --version 0.52.0
+      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-public-api --version 0.52.0
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
       use_jsonschema
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       ensure_nextest
       python3 scripts/check_demo_scenarios.py
-      cargo install --locked cargo-deny --version 0.19.0
+      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
       cargo deny --locked "${guard[@]}" check --config deny.toml
       cargo xtask ci policy
@@ -233,7 +234,7 @@ PY
     integration)
       cargo build --locked -p norn-cli
       cargo build --locked -p norn-cell-do --bin norn-dev-host
-      cargo install --locked wasm-bindgen-cli --version 0.2.129
+      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
@@ -274,7 +275,7 @@ PY
         printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
         exit 1
       fi
-      cargo install --locked wasm-bindgen-cli --version 0.2.129
+      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
       (
         cd apps/studio

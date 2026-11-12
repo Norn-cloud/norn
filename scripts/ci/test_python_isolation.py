@@ -107,7 +107,13 @@ class Runner(unittest.TestCase):
                 ("a second interpreter", text + "\nOTHER = [sys.executable, 'x.py']\n"),
                 ("a literal interpreter", text + "\nOTHER = ['python3', 'x.py']\n"),
                 ("no child assertion", text.replace('[*PYTHON, "-c", ISOLATED]', '[*PYTHON, "-c", "pass"]')),
-                ("a weaker assertion", text.replace("sys.flags.isolated and ", ""))):
+                ("a weaker assertion", text.replace("sys.flags.isolated and ", "")),
+                ("the result ignored", text.replace('    if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:\n'
+                                                    '        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)\n'
+                                                    '        return 1\n',
+                                                    '    subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env)\n')),
+                ("not first", text.replace('    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n',
+                                           '    env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}\n    subprocess.run(["true"])\n'))):
             self.assertTrue(isolation.runner_errors(mutated), label)
 
 
@@ -134,9 +140,11 @@ class ShellGates(unittest.TestCase):
                          "declare +x PYTHONDONTWRITEBYTECODE", "typeset +x PYTHONSAFEPATH",
                          "local PYTHONPYCACHEPREFIX", "PYTHONPYCACHEPREFIX=/tmp/shared python3 x.py",
                          "python3 -E x.py", '"$upstream/venv/bin/python" -Es x.py',
-                         "readonly PYTHONSAFEPATH=0", "unset ${!PYTHON@}", 'export -n "$name"',
+                         "unset ${!PYTHON@}", 'export -n "$name"', "unset `compgen -v PYTHON`",
                          "python3 -X pycache_prefix= x.py", 'python3 -X pycache_prefix="" x.py',
-                         'python3 - <<< "$code"', 'python3 -c "import coverage_manifest"'):
+                         "python3 -X 'pycache_prefix=' x.py", 'python3 -X "pycache_prefix=" x.py',
+                         'python3 - <<< "$code"', 'python3 - 0<<<"$code"', 'python3 -c "import coverage_manifest"',
+                         "python3 -I x.py", "python3 -IB x.py", '"$v/bin/python" -I -m pip', "python3 -B -I x.py"):
                 self.assertTrue(self.errors(path, text + line + "\n"), line)
             for body in ("import sys\nsys.path.insert(0, 'scripts')\n", "import coverage_manifest\n"):
                 tabbed = body.replace("\n", "\n\t")
@@ -146,6 +154,13 @@ class ShellGates(unittest.TestCase):
                                 f"python3 - <<'PY'\n{body}PY"):
                     self.assertTrue(self.errors(path, text + heredoc), heredoc)
             self.assertTrue(any("never terminates" in e for e in self.errors(path, text + "python3 - <<'PY'\nimport json\n")))
+            # `readonly` alone (no assignment) is refused by its own pattern.
+            self.assertTrue(any("shadowing" in e for e in self.errors(path, text + "readonly PYTHONSAFEPATH\n")))
+            # Every heredoc form the line-based reader's predecessor read is still read.
+            for body in ("import coverage_manifest\n",):
+                for heredoc in (f"python3 - 0<<'PY'\n{body}PY\n", f'"${{PYTHON:-python3}}" - <<\'PY\'\n{body}PY\n',
+                                f"PY=python3; $PY - <<'PY'\n{body}PY\n"):
+                    self.assertTrue(any("neither standard library" in e for e in self.errors(path, text + heredoc)), heredoc)
             # A heredoc fed to anything else is not read as Python, and its body is skipped.
             self.assertEqual(self.errors(path, text + "cat <<'TXT'\nimport coverage_manifest\nTXT\n"), [])
             self.assertTrue(self.errors(path, text + "python3 -c 'import sys; sys.path.append(\"x\")'\n"))
@@ -223,6 +238,18 @@ class GatedPython(unittest.TestCase):
                 ("import importlib\nM = importlib.import_module('ungated')\n", "dynamic import machinery"),
                 ("M = __import__('ungated')\n", "dynamic import machinery"),
                 ("_sibling = lambda name: None\n", "only be bound by the pinned"),
+                ("from runpy import run_path as rp\n", "under another name"),
+                ("import runpy\nr = runpy.run_path\n", "may only be called directly"),
+                ("from importlib.util import spec_from_file_location as s\n", "under another name"),
+                ("import runpy\nlist(map(runpy.run_path, ['x']))\n", "may only be called directly"),
+                ("import importlib\nf = getattr(importlib, 'import_' + 'module')\n", "`getattr` on `importlib`"),
+                ("import runpy\nf = getattr(runpy, 'run_path')\n", "`getattr` on `runpy`"),
+                ("import pkgutil\npkgutil.get_importer('x')\n", "dynamic import machinery"),
+                ("from importlib.machinery import PathFinder\nPathFinder.find_spec('x')\n", "dynamic import machinery"),
+                ("code = 'x = 1'\nexec(code)\n", "of anything but a string literal"),
+                ("eval(input())\n", "of anything but a string literal"),
+                ("globals()['x'] = 1\n", "writing through `globals()`"),
+                ("locals().update(x=1)\n", "writing through `locals()`"),
                 ("from json import loads as _sibling\n", "only be bound by the pinned")):
             self.assertTrue(any(wanted in e for e in self.errors(body)), (body, wanted, self.errors(body)))
 
@@ -238,16 +265,15 @@ class SiblingLoader(unittest.TestCase):
             planted.write_text("VALUE = 'bytecode'\n", encoding="utf-8")
             py_compile.compile(str(planted), cfile=str(cache),
                                invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
-            # The pinned loader text itself, run on a directory of its own.
-            pinned: dict = {}
-            exec(isolation.SIBLING_HELPER, pinned)
-            sys.modules["norn_sibling_probe"] = types.ModuleType("norn_sibling_probe")
-            try:
-                module = pinned["_sibling"]("norn_sibling_probe", folder)
-                self.assertEqual(module.VALUE, "source")
-                self.assertIs(pinned["_sibling"]("norn_sibling_probe", folder), module)
-            finally:
-                sys.modules.pop("norn_sibling_probe", None)
+            # The pinned loader text itself, run in a fresh interpreter on a directory of its own,
+            # with a same-named module already registered.
+            probe = isolation.SIBLING_HELPER + (
+                "\nimport sys, types\n"
+                "sys.modules['norn_sibling_probe'] = types.ModuleType('norn_sibling_probe')\n"
+                "first = _sibling('norn_sibling_probe', pathlib.Path(sys.argv[1]))\n"
+                "print(first.VALUE, _sibling('norn_sibling_probe', pathlib.Path(sys.argv[1])) is first)\n")
+            result = run_python(["-c", "import pathlib\n" + probe, str(folder)])
+            self.assertEqual(result.strip(), "source True", result)
 
 
 class PlantedModules(unittest.TestCase):

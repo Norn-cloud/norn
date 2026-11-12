@@ -8,6 +8,9 @@ The crate is its own Cargo workspace (D95): its `Cargo.toml` and `Cargo.lock` ar
 in this gated directory, outside the root workspace, so the root manifest and
 lockfile never change what the trusted lane builds.
 
+Run `cargo xtask` from the repository root: the alias names the guard's manifest by a
+relative path.
+
 `cargo test --locked --manifest-path crates/norn-skeleton-guard/Cargo.toml` runs the boundary and negative
 provenance regressions. `cargo xtask ci provenance` checks the candidate;
 `cargo xtask ci provenance --root PATH --distribution --base-root BASE` checks a

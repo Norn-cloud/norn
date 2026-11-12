@@ -43,6 +43,9 @@ def main() -> int:
     parser.add_argument("--maintainer-evidence", help="API evidence of an admin approval of the exact head")
     args = parser.parse_args()
     env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}
+    if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:
+        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)
+        return 1
     subprocess.run(["rustup", "toolchain", "install", TOOLCHAIN, "--profile", "minimal", "--no-self-update"], check=True, env=env)
     if args.root is None:
         command = ["cargo", "xtask", "ci", "policy"]
@@ -55,9 +58,6 @@ def main() -> int:
                    "--root", str(Path(args.root).resolve()), "--base-root", str(REPO)]
         if args.maintainer_evidence is not None:
             command += ["--maintainer-evidence", str(Path(args.maintainer_evidence).resolve())]
-    if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:
-        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)
-        return 1
     result = subprocess.run(command, cwd=REPO, env=env).returncode
     # Base-owned Python isolation (#513).
     root = str(Path(args.root).resolve()) if args.root is not None else str(REPO)

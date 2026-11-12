@@ -59,6 +59,11 @@ RUNNER_PYTHON = ('PYTHON = [sys.executable, "-I", "-B", "-X", '
                  'f"pycache_prefix={tempfile.mkdtemp(prefix=\'norn-pycache-\')}"]')
 RUNNER_ISOLATED = ('ISOLATED = "import sys; sys.exit(0 if sys.flags.isolated and sys.dont_write_bytecode '
                    'and sys.pycache_prefix else 1)"')
+# The assertion gates everything after it: it is the first statement of `main` that runs a
+# command (before rustup), and a failure returns before any other command starts.
+RUNNER_GATE = ('if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:\n'
+               '    print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)\n'
+               '    return 1')
 # Third-party packages gated Python may import; the CI venv pins their versions (core.sh).
 THIRD_PARTY = frozenset({"jsonschema", "yaml", "_yaml"})
 IMPORTABLE_SUFFIXES = frozenset({"py", "pyc", "pyo", "pyw", "pyd", "so"})
@@ -98,14 +103,19 @@ ENV_DROPS = (
      "unsetting, unexporting or shadowing an isolation variable"),
     (re.compile(rf"\b(?:{_VARIABLES})="), "reassigning an isolation variable"),
     (re.compile(r"(?:^|[\s;&|(\"'])(?:[\w./${}-]*/)?python3?(?:\.\d+)?\"?\s+-[A-Za-z]*E"), "`python -E`"),
-    (re.compile(r"\b(?:unset|export\s+-n)\b[^#\n]*\$"), "unsetting or unexporting a computed name (`${!PYTHON@}`)"),
-    (re.compile(r"-X\s*pycache_prefix"), "a `-X pycache_prefix` override (an empty one turns the prefix off)"),
-    (re.compile(r"python3?\b[^#\n]*(?<![<\d])<<<"), "a here-string as Python's input (not read by this check)"),
+    (re.compile(r"\b(?:unset|export\s+-n)\b[^#\n]*[$`]"), "unsetting or unexporting a computed name (`${!PYTHON@}`)"),
+    (re.compile(r"-X\s*['\"]?pycache_prefix"), "a `-X pycache_prefix` override (an empty one turns the prefix off)"),
+    (re.compile(r"python3?\b[^#\n]*(?:(?<![<\d])|(?<![\w])0)<<<"), "a here-string as Python's input (not read by this check)"),
+    (re.compile(r"python3?(?:\.\d+)?[\"'}]*\s+(?:-\w+\s+)*-[A-Za-z]*I"),
+     "`python -I` in a gated script (it ignores PYTHONPYCACHEPREFIX, so bytecode beside sources is read)"),
     (re.compile(r"python3?(?:\.\d+)?\s+(?:-\w+\s+)*-c\s*\""), "a double-quoted `python -c` body (not read by this check)"),
 )
 WORKFLOW_PYTHON = re.compile(r"(?:^|[\s;&|(\"'`])((?:[\w./${}-]*/)?python3?(?:\.\d+)?)\"?(?=\s|$)[ \t]*(\S*)")
-HEREDOC_OPERATOR = re.compile(r"(?<![<\d])<<(-?)\s*(['\"]?)(\w+)\2")
-PYTHON_WORD = re.compile(r"(?:^|[\s;&|(\"'`/])python3?(?:\.\d+)?(?=[\s\"';|)]|$)")
+HEREDOC_OPERATOR = re.compile(r"(?<!<)\d*<<(?!<)(-?)\s*(['\"]?)(\w+)\2")
+PYTHON_WORD = re.compile(r"(?<![\w])python3?(?:\.\d+)?(?![\w])")
+# The matcher before the line-based reader, kept so the two together read a superset of what
+# either reads: `python` anywhere before `<<` on the command, continued over `\` lines.
+HEREDOC = re.compile(r"python3?\b(?:[^\n]*\\\n)*[^\n]*<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\2\n", re.S)
 DASH_C = re.compile(r"python3?\s+-c\s+'([^']*)'")
 
 
@@ -149,7 +159,7 @@ def workflow_errors(path: str, text: str) -> list[str]:
         for match in WORKFLOW_PYTHON.finditer(line):
             if match.group(2) != "-I":
                 errors.append(f"{path}:{number}: `{match.group(1)}` runs without `-I`")
-        if re.search(r"-X\s*pycache_prefix", line) and line.strip() != f"run: {TRUSTED_WORKFLOW_RUN}":
+        if re.search(r"-X\s*['\"]?pycache_prefix", line) and line.strip() != f"run: {TRUSTED_WORKFLOW_RUN}":
             errors.append(f"{path}:{number}: a `-X pycache_prefix` outside the pinned trusted run is refused")
     if path in TRUSTED_WORKFLOWS:
         runs = [line.strip() for line in lines if "validate-runner-policy.py" in line and not line.lstrip().startswith("#")]
@@ -170,8 +180,14 @@ def runner_errors(text: str) -> list[str]:
                 and ast.unparse(node) == ast.unparse(ast.parse(RUNNER_ISOLATED).body[0])]
     checks = [node for node in ast.walk(tree) if isinstance(node, ast.List) and len(node.elts) == 3
               and ast.unparse(node) == '[*PYTHON, \'-c\', ISOLATED]']
-    if len(asserted) != 1 or len(checks) != 1:
-        errors.append(f"{RUNNER}: must assert `{RUNNER_ISOLATED}` with `[*PYTHON, \"-c\", ISOLATED]` before any child")
+    gate = ast.unparse(ast.parse(RUNNER_GATE).body[0])
+    main = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"), None)
+    runs = [statement for statement in (main.body if main else [])
+            if any(isinstance(n, ast.Call) and ast.unparse(n.func) == "subprocess.run" for n in ast.walk(statement))]
+    gated = bool(runs) and ast.unparse(runs[0]) == gate
+    if len(asserted) != 1 or len(checks) != 1 or not gated:
+        errors.append(f"{RUNNER}: the first command `main` runs must be the pinned isolation assertion, "
+                      "returning 1 before anything else when it fails")
     for node in ast.walk(tree):
         if (isinstance(node, ast.List) and node.elts and isinstance(node.elts[0], ast.Constant)
                 and re.fullmatch(r"(?:.*/)?python3?(?:\.\d+)?", str(node.elts[0].value))):
@@ -195,7 +211,10 @@ def shell_errors(root: Path, path: str, text: str, files: set[str], directories:
         for pattern, label in ENV_DROPS:
             if pattern.search(line):
                 errors.append(f"{path}:{number}: {label} would drop Python isolation")
-    for number, body in python_heredocs(path, lines, errors):
+    bodies = dict((body, number) for number, body in python_heredocs(path, lines, errors))
+    for match in HEREDOC.finditer(text):
+        bodies.setdefault(match.group(3), text.count("\n", 0, match.start(3)) + 1)
+    for body, number in bodies.items():
         errors += python_errors(root, f"{path}:{number}", body, PurePosixPath("."),
                                 files, directories, present)
     for match in DASH_C.finditer(text):
@@ -308,7 +327,13 @@ class Paths:
 
 
 DYNAMIC_IMPORTS = frozenset({"SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "__import__",
-                             "import_module", "run_module", "zipimporter"})
+                             "import_module", "run_module", "zipimporter", "get_importer", "iter_importers",
+                             "PathFinder", "FileFinder", "find_spec", "find_loader", "path_hooks",
+                             "path_importer_cache", "meta_path"})
+# Loaders this check follows: they may only be called directly, never aliased, rebound,
+# passed or reached through `getattr`, so every call is one the follower sees.
+LOADERS = frozenset({"_sibling", "spec_from_file_location", "run_path", *PATH_WRAPPERS})
+LOADER_MODULES = frozenset({"importlib", "importlib.util", "importlib.machinery", "runpy", "pkgutil", "sys.modules"})
 FILE_READS = frozenset({"open", "read_text", "read_bytes", "read"})
 
 
@@ -359,6 +384,32 @@ def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files
         elif not is_gated(str(target), files, directories):
             errors.append(f"{path}:{line}: loads {target}, which is not a gate file")
 
+    parents: dict[ast.AST, ast.AST] = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        line = getattr(node, "lineno", 0)
+        named = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+        parent = parents.get(node)
+        if named in LOADERS and not (isinstance(parent, ast.Call) and parent.func is node) \
+                and not (isinstance(parent, ast.FunctionDef) or (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                                                              and named == "_sibling")):
+            errors.append(f"{path}:{line}: `{named}` may only be called directly (no alias, rebinding or passing)")
+        if isinstance(node, ast.alias) and node.name.rsplit(".", 1)[-1] in LOADERS and node.asname:
+            errors.append(f"{path}:{line}: `{node.name}` may not be imported under another name")
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "getattr" and node.args \
+                and ast.unparse(node.args[0]) in LOADER_MODULES:
+            errors.append(f"{path}:{line}: `getattr` on `{ast.unparse(node.args[0])}` is refused")
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") in ("exec", "eval") and not (
+                node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            function = parents.get(node)
+            while function is not None and not isinstance(function, ast.FunctionDef):
+                function = parents.get(function)
+            if not (function and function.name == "_sibling" and ast.unparse(function) == canonical):
+                errors.append(f"{path}:{line}: `{node.func.id}` of anything but a string literal is refused")
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") in ("globals", "locals", "vars"):
+            use = parents.get(node)
+            if (isinstance(use, ast.Subscript) and isinstance(use.ctx, (ast.Store, ast.Del))) or \
+                    (isinstance(use, ast.Attribute) and use.attr in ("update", "setdefault", "__setitem__")):
+                errors.append(f"{path}:{line}: writing through `{node.func.id}()` is refused")
     enclosing: dict[ast.AST, ast.AST] = {}
     for function in ast.walk(tree):
         if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
