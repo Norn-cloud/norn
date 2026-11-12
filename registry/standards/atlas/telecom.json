@@ -1,0 +1,147 @@
+{
+  "atlasVersion": 1,
+  "domain": "telecom",
+  "entries": [
+    {
+      "id": "tmforum-openapi-tmf620",
+      "name": "TM Forum Open APIs: TMF620 Product Catalog Management",
+      "publisher": "TM Forum",
+      "kind": "protocol",
+      "domains": [
+        "telecom"
+      ],
+      "version": "5.0.0",
+      "versionDate": "2025-11-07",
+      "versionBasis": "Selected API info.version 5.0.0; GitHub release v5.0.0 published_at 2025-11-07T10:04:26Z. Each TMF API has its own version, not one suite latest.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (TMF620 repository)",
+        "status": "verified",
+        "basis": "Repository LICENSE is Apache-2.0; preserve licence/notices and identify changes. This grant is not generalized to SID or other independently published APIs.",
+        "termsUrl": "https://raw.githubusercontent.com/tmforum-apis/TMF620_ProductCatalog/v5.0.0/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/tmforum-apis/TMF620_ProductCatalog/v5.0.0/TMF620-Product_Catalog_Management-v5.0.0.oas.yaml",
+      "evidenceUrls": [
+        "https://www.tmforum.org/oda/open-apis/",
+        "https://github.com/tmforum-apis/TMF620_ProductCatalog/releases/tag/v5.0.0",
+        "https://raw.githubusercontent.com/tmforum-apis/TMF620_ProductCatalog/v5.0.0/TMF620-Product_Catalog_Management-v5.0.0.oas.yaml",
+        "https://raw.githubusercontent.com/tmforum-apis/TMF620_ProductCatalog/v5.0.0/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Product specifications, offerings, prices, categories and notifications; source contracts, not automatic equivalent Core concepts.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Concrete verified OpenAPI representative; not a completeness claim over TM Forum's independently versioned API directory or shared JSON Schema corpus. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "tmforum-shared-api-data-model",
+      "name": "TM Forum shared Open API data-model schemas",
+      "publisher": "TM Forum",
+      "kind": "standard",
+      "domains": [
+        "telecom"
+      ],
+      "version": "git:cf5770b2ecafb2c8ae15a931ae8351fa04db467e",
+      "versionDate": "2023-04-28",
+      "versionBasis": "Repository snapshot commit timestamp 2023-04-28T08:10:34Z; not a current SID release or a common version for all Open APIs.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Root contents list README, apis and schemas with no root LICENSE; selected Address schema supplies no licence notice. Separate TMF620 Apache grant is not generalized to this corpus.",
+        "termsUrl": "https://github.com/tmforum-apis/Open_Api_And_Data_Model",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON",
+        "API"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/tmforum-apis/Open_Api_And_Data_Model/cf5770b2ecafb2c8ae15a931ae8351fa04db467e/schemas/Common/Address.schema.json",
+      "evidenceUrls": [
+        "https://www.tmforum.org/oda/open-apis/",
+        "https://github.com/tmforum-apis/Open_Api_And_Data_Model",
+        "https://api.github.com/repos/tmforum-apis/Open_Api_And_Data_Model/commits/cf5770b2ecafb2c8ae15a931ae8351fa04db467e",
+        "https://raw.githubusercontent.com/tmforum-apis/Open_Api_And_Data_Model/cf5770b2ecafb2c8ae15a931ae8351fa04db467e/schemas/Common/Address.schema.json"
+      ],
+      "norn": {
+        "overlap": "Common, customer, party, product, service, resource and IoT shapes; SID correspondence remains provenance, not a claim of semantic equivalence.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Directory evidence establishes additional API families (including TMF621/622/629/632/633), not full measured coverage. No generated names or schema payloads are copied into Norn. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "tmforum-sid",
+      "name": "TM Forum SID Information Framework models",
+      "publisher": "TM Forum",
+      "kind": "standard",
+      "domains": [
+        "telecom"
+      ],
+      "version": "24.5.0 (historical verified suite)",
+      "versionDate": "2025-01-10",
+      "versionBasis": "Suite lists Team Approved Date 10-Jan-2025 for XMI and Excel. Page marks this suite archived and links a newer production suite; no latest-release assertion.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Member download entitlement and OpenAPI Apache licences do not establish redistribution rights over the full SID XMI/Excel corpus.",
+        "termsUrl": "https://www.tmforum.org/resources/collection/gb922-information-framework-models-suite-v24-5/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.tmforum.org/resources/collection/gb922-information-framework-models-suite-v24-5/",
+      "evidenceUrls": [
+        "https://www.tmforum.org/oda/information-systems/information-framework-sid/",
+        "https://www.tmforum.org/resources/collection/gb922-information-framework-models-suite-v24-5/"
+      ],
+      "norn": {
+        "overlap": "Telecom party, customer, product, service and resource concepts require evidence-linked correspondence rather than direct Core adoption.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

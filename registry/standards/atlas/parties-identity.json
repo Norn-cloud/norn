@@ -1,0 +1,643 @@
+{
+  "atlasVersion": 1,
+  "domain": "parties-identity",
+  "entries": [
+    {
+      "id": "jcard-rfc7095",
+      "name": "jCard: The JSON Format for vCard (RFC 7095)",
+      "publisher": "IETF",
+      "kind": "data-model",
+      "domains": [
+        "parties-identity"
+      ],
+      "version": "RFC 7095",
+      "versionDate": "2014-01",
+      "versionBasis": "rfc-editor.org RFC 7095 text and metadata: January 2014, Proposed Standard, not obsoleted or updated.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-TLP AND BSD-3-Clause",
+        "text": "IETF Trust Legal Provisions; code components under the Revised BSD licence",
+        "status": "verified",
+        "basis": "Read the RFC 7095 copyright notice (Copyright (c) 2014 IETF Trust, code components under BSD per TLP 4.e) and the IETF Trust TLP page, which says the code-component licence is the Revised BSD License (earlier boilerplate's 'Simplified BSD' was a misnomer, corrected 2021-09-21).",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON",
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc7095",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc7095.txt",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/"
+      ],
+      "norn": {
+        "overlap": "contact cards (names, addresses, phones, emails) as JSON",
+        "concepts": [
+          "canon.Party",
+          "core.Agent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Code components (ABNF, examples) may be reused under BSD-3-Clause; the RFC prose may not be modified outside the IETF process. JSContact (RFC 9553, May 2024) is the newer JSON contact model used by JMAP Contacts.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "jscontact-rfc9553",
+      "name": "JSContact RFC 9553: IANA contact property/type registries",
+      "publisher": "IANA / IETF",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity"
+      ],
+      "version": "IANA registry updated 2026-09-22",
+      "versionDate": "2026-09-22",
+      "versionBasis": "Actual IANA XML updated element. Normative RFC 9553 is published 2024-05; later registry versions/extensions are not automatically part of its base profile.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0 (IANA/IETF protocol-registry rights)",
+        "status": "verified",
+        "basis": "IANA/IETF protocol-registry statement grants CC0 within rights owned/sublicensable. RFC XML/prose is a separate TLP artifact, not covered by registry CC0.",
+        "termsUrl": "https://www.iana.org/help/licensing-terms",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iana.org/assignments/jscontact/jscontact.xml",
+      "evidenceUrls": [
+        "https://www.iana.org/assignments/jscontact/jscontact.xml",
+        "https://www.iana.org/help/licensing-terms",
+        "https://www.rfc-editor.org/rfc/rfc9553",
+        "https://www.rfc-editor.org/rfc/rfc9553.xml"
+      ],
+      "norn": {
+        "overlap": "Names, organizations, addresses and contact channels; JSON contact interoperability, never Core Party authority.",
+        "concepts": [
+          "canon.Party",
+          "core.Agent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Structured registry metadata, not substituted documentation or a complete validator. Keep Since/Until Version fields. RFC 9554/9555 cover vCard extensions/conversion separately; independent model differences must survive future mapping. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "libaddressinput-code",
+      "name": "libaddressinput address-handling library source",
+      "publisher": "Google libaddressinput maintainers",
+      "kind": "standard",
+      "domains": [
+        "parties-identity"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Moving repository; no immutable code release selected.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (code)",
+        "status": "verified",
+        "basis": "Apache-2.0 source licence requires licence, notices and change notices where applicable; data service is CC-BY-4.0, separately catalogued.",
+        "termsUrl": "https://raw.githubusercontent.com/google/libaddressinput/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/google/libaddressinput",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/google/libaddressinput/master/README.md",
+        "https://raw.githubusercontent.com/google/libaddressinput/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Adoption candidate for address handling; executable library is not the address-data schema or Core definition.",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "libaddressinput-eg-data",
+      "name": "libaddressinput Egypt address metadata",
+      "publisher": "Google libaddressinput / Address Data Service",
+      "kind": "standard",
+      "domains": [
+        "parties-identity"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Live data/EG response verified; no immutable release/date field exposed. Observed payload is not an invented release.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0 (data)",
+        "status": "verified",
+        "basis": "Upstream README explicitly separates Apache-2.0 source code from CC-BY-4.0 data; retain Google/source attribution, licence link and modification notice. Data is not Apache-2.0.",
+        "termsUrl": "https://raw.githubusercontent.com/google/libaddressinput/master/README.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://chromium-i18n.appspot.com/ssl-address/data/EG",
+      "evidenceUrls": [
+        "https://chromium-i18n.appspot.com/ssl-address/data/EG",
+        "https://raw.githubusercontent.com/google/libaddressinput/master/README.md",
+        "https://github.com/google/libaddressinput/wiki/AddressValidationMetadata"
+      ],
+      "norn": {
+        "overlap": "Postal field layout, Arabic names, governorate keys and postal validation metadata; not deliverability proof or a universal Party model.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Address formats for Egypt."
+      },
+      "notes": "Observed Arabic field format and 27 governorate sub_keys/sub_isoids. Never transplant the code repository's Apache licence to these data; live data must be pinned/hashed before admission. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oidc-core-reference",
+      "name": "OpenID Connect Core 1.0, errata set 2",
+      "publisher": "OpenID Foundation",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity",
+        "infra-it"
+      ],
+      "version": "1.0 errata 2",
+      "versionDate": "2023-12-15",
+      "versionBasis": "Dated Final document header; this is the source date, not a guessed current/latest protocol date.",
+      "licence": {
+        "spdx": "LicenseRef-OpenID-Foundation-specification-copyright-licenc",
+        "text": "OpenID Foundation specification copyright licence (purpose-limited)",
+        "status": "verified",
+        "basis": "Appendix copyright grants reproduction, derivatives and distribution solely for developing specifications and implementing them, with OIDF attribution and no endorsement. Not a general open-data grant.",
+        "termsUrl": "https://openid.net/specs/openid-connect-core-1_0-errata2.html#Copyright",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON",
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://openid.net/specs/openid-connect-core-1_0-errata2.html",
+      "evidenceUrls": [
+        "https://openid.net/specs/openid-connect-core-1_0-errata2.html",
+        "https://openid.net/specs/openid-connect-core-1_0-errata2.html#Copyright"
+      ],
+      "norn": {
+        "overlap": "Trusted identity and claim ingress; server permissions remain authoritative.",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "JSON examples and an HTML claims table are not a full normative machine-readable ontology. IANA claim registry is catalogued separately under different terms. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "oidc-jwt-registered-claims",
+      "name": "IANA JWT claims registry (includes OIDC claims)",
+      "publisher": "IANA / IETF",
+      "kind": "code-list",
+      "domains": [
+        "parties-identity",
+        "infra-it"
+      ],
+      "version": "registry updated 2026-07-20",
+      "versionDate": "2026-07-20",
+      "versionBasis": "IANA JWT registry Last Updated value observed; CSV is a moving endpoint, not an immutable release.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "IANA protocol registries public-domain dedication / CC0-1.0",
+        "status": "verified",
+        "basis": "IANA licensing page dedicates protocol registry rights to public domain with CC0 fallback to extent permitted; third-party specification texts referenced by rows retain their own terms.",
+        "termsUrl": "https://www.iana.org/help/licensing-terms",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "CSV"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.iana.org/assignments/jwt/claims.csv",
+      "evidenceUrls": [
+        "https://www.iana.org/assignments/jwt/claims.csv",
+        "https://www.iana.org/help/licensing-terms",
+        "https://www.iana.org/assignments/jwt/jwt.xhtml"
+      ],
+      "norn": {
+        "overlap": "Registered claim identifiers/descriptions only; not a replacement for OIDC validation/security requirements.",
+        "concepts": [
+          "core.Agent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Includes non-OIDC JWT claims. Do not map claim names directly to Norn Party or privilege semantics. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "saml-2-0",
+      "name": "Security Assertion Markup Language (SAML) V2.0 (core, metadata and XSDs)",
+      "publisher": "OASIS",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity",
+        "infra-it"
+      ],
+      "version": "2.0 (OASIS Standard; Errata 05)",
+      "versionDate": "2005-03",
+      "versionBasis": "docs.oasis-open.org/security/saml/v2.0/ lists the 2.0 OS documents dated March 2005, XSDs dated September 2005 and errata05/os (OASIS Standard, May 2012).",
+      "licence": {
+        "spdx": "LicenseRef-OASIS-IPR-Policy",
+        "text": "OASIS copyright notice: may be copied and implementing/explanatory derivative works distributed with the notice; the document itself may not be modified",
+        "status": "verified",
+        "basis": "Read the OASIS Notices section in saml-v2.0-errata05-os.html (copy and derivative works that assist implementation allowed with the notice retained; document itself not modifiable); the XSD files carry no licence header.",
+        "termsUrl": "https://docs.oasis-open.org/security/saml/v2.0/errata05/os/saml-v2.0-errata05-os.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "spec-PDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://docs.oasis-open.org/security/saml/v2.0/",
+      "evidenceUrls": [
+        "https://docs.oasis-open.org/security/saml/v2.0/",
+        "https://docs.oasis-open.org/security/saml/v2.0/saml-schema-metadata-2.0.xsd",
+        "https://docs.oasis-open.org/security/saml/v2.0/errata05/os/saml-v2.0-errata05-os.html"
+      ],
+      "norn": {
+        "overlap": "federated sign-in, identity provider/service provider metadata, assertions and attributes",
+        "concepts": [
+          "core.Agent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Vendor the XSDs unmodified, with the OASIS notice. The OASIS policy does not let us edit the originals, so put extensions in separate files. Reuse: OASIS permits implementation derivatives but not modification of the specification documents, so vocabulary-only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "schema-org-person-organization",
+      "name": "Schema.org vocabulary: Person, Organization, PostalAddress",
+      "publisher": "Schema.org (sponsor community)",
+      "kind": "ontology",
+      "domains": [
+        "parties-identity",
+        "social-marketing"
+      ],
+      "version": "30.1",
+      "versionDate": "2026-09-16",
+      "versionBasis": "schema.org releases page top entry reads '30.1 2026-09-16'; the GitHub release v30.1 is dated 2026-09-15.",
+      "licence": {
+        "spdx": "CC-BY-SA-3.0",
+        "text": "Creative Commons Attribution-ShareAlike 3.0 for the schemas; site/tooling repo code Apache-2.0",
+        "status": "verified",
+        "basis": "Read the schema.org Terms of Service, which license the sponsors' copyrights in the schema under CC BY-SA 3.0 (patents under W3C RF terms); GitHub licence metadata reports Apache-2.0 for the schemaorg/schemaorg repo code.",
+        "termsUrl": "https://schema.org/docs/terms.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "JSON-LD",
+        "CSV",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://schema.org/docs/developers.html",
+      "evidenceUrls": [
+        "https://schema.org/docs/terms.html",
+        "https://schema.org/docs/releases.html",
+        "https://github.com/schemaorg/schemaorg"
+      ],
+      "norn": {
+        "overlap": "people, organisations, postal addresses, contact points, identifiers",
+        "concepts": [
+          "core.Agent",
+          "canon.Party",
+          "canon.PartyRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "registry/packs/canon/artifacts/norn.ontology-pack.canon.json"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Interop ids (sameAs) for parties."
+      },
+      "notes": "Using the type and property names is fine, but copying or adapting the schema definitions triggers ShareAlike, so do not vendor them into an Apache-2.0 tree. The download formats and the developers page were not opened today.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "scim-core-schema",
+      "name": "SCIM 2.0 core resource schemas (RFC 7643)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity",
+        "infra-it"
+      ],
+      "version": "2.0 / RFC 7643",
+      "versionDate": null,
+      "versionBasis": "RFC header says August 2015; day unverified. JSON representations in section 8 are embedded schema resources, not JSON Schema.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions-Simplified",
+        "text": "IETF Trust Legal Provisions; Simplified BSD for extracted Code Components",
+        "status": "verified",
+        "basis": "RFC copyright explicitly requires Simplified BSD licence text for extracted Code Components; retain IETF notices. Do not apply the code grant indiscriminately to the entire prose document.",
+        "termsUrl": "https://www.rfc-editor.org/rfc/rfc7643#copyright",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc7643.txt",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc7643.txt",
+        "https://www.rfc-editor.org/rfc/rfc7643#copyright"
+      ],
+      "norn": {
+        "overlap": "Identity User/Group provisioning shapes; external IdP evidence does not grant Norn authorization.",
+        "concepts": [
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "User and group provisioning for the dogfood identity module."
+      },
+      "notes": "SCIM resource schemas express attribute metadata; they are not JSON Schema validation documents. No schema extraction or provisioning is implemented here. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "scim-protocol-reference",
+      "name": "SCIM 2.0 protocol reference (RFC 7644)",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity",
+        "infra-it"
+      ],
+      "version": "2.0 / RFC 7644",
+      "versionDate": null,
+      "versionBasis": "RFC header says August 2015; no independent normative machine schema identified.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions",
+        "text": "IETF Trust Legal Provisions",
+        "status": "verified",
+        "basis": "RFC copyright distinguishes prose under IETF Trust terms from extracted Code Components under Simplified BSD terms. Preserve notices.",
+        "termsUrl": "https://www.rfc-editor.org/rfc/rfc7644#copyright",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc7644.txt",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc7644.txt",
+        "https://www.rfc-editor.org/rfc/rfc7644#copyright"
+      ],
+      "norn": {
+        "overlap": "Provisioning/filter/patch/bulk semantics are boundary behaviour, not Core business authority.",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "No claim JSON examples alone constitute a complete executable protocol contract. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "vcard-rfc6350",
+      "name": "vCard 4.0 contact interchange",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "parties-identity"
+      ],
+      "version": "RFC 6350 / vCard 4.0",
+      "versionDate": "2011-08",
+      "versionBasis": "RFC header; Editor lists RFC 6868, 9554 and 9555 updates.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions-BCP",
+        "text": "IETF Trust Legal Provisions / BCP 78",
+        "status": "verified",
+        "basis": "RFC copyright notice invokes BCP 78 and the Trust Legal Provisions in effect at publication. Preserve document notices; extracted Code Components use the specified BSD terms. Not a blanket BSD licence on prose. This artifact explicitly reserves rights in pre-10-November-2008 material: outside the IETF Standards Process, document modifications/derivatives may require additional permission except RFC formatting and translation. Unchanged document redistribution and Code Component terms must be distinguished from permission to modify the grammar or document.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc6350",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc6350",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/"
+      ],
+      "norn": {
+        "overlap": "Contact-card source representation; retain multiplicity, parameters and localized names; no Core semantic promotion.",
+        "concepts": [
+          "canon.Party",
+          "core.Agent"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "w3c-org-vocabulary",
+      "name": "W3C Organization Ontology",
+      "publisher": "W3C Government Linked Data Working Group",
+      "kind": "ontology",
+      "domains": [
+        "parties-identity",
+        "upper-ontology"
+      ],
+      "version": "0.8",
+      "versionDate": "2014-04-12",
+      "versionBasis": "Source owl:versionInfo 0.8 and final dct:modified 2014-04-12. Not substituted with Recommendation publication date.",
+      "licence": {
+        "spdx": "PDDL-1.0",
+        "text": "ODC-PDDL-1.0",
+        "status": "verified",
+        "basis": "Artifact explicitly declares dct:license ODC Public Domain Dedication and Licence 1.0. Other imported vocabularies retain separate rights.",
+        "termsUrl": "https://www.w3.org/ns/org.ttl",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/org.ttl",
+      "evidenceUrls": [
+        "https://www.w3.org/ns/org.ttl"
+      ],
+      "norn": {
+        "overlap": "Modular organization, membership, post and role alignment; no Core authority promotion.",
+        "concepts": [
+          "canon.Party",
+          "canon.PartyRole",
+          "core.Agent",
+          "core.AgentRole"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "ContactPoint",
+          "PostalAddress"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Every document hangs on parties and identity."
+      },
+      "notes": "Preserve membership versus role/post versus legal entity distinctions. Source graph includes later errata/translations than its Recommendation date. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}
