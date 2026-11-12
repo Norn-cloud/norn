@@ -84,7 +84,9 @@ docs/**
 !docs/showcase/**
 !docs/reference/
 !docs/reference/index.md
-# The alpha tutorial is public; the rest of docs/authoring/ stays personal.
+# docs/** keeps personal notes out of the public repository. A file in docs/authoring/ is
+# tracked only if it is listed here or was added before this rule (README.md, dx-spec.md,
+# runnable/); anything new there stays ignored unless listed. The alpha tutorial is public.
 !docs/authoring/
 !docs/authoring/tutorial.md
 legacy/docs/platform-docs-archive-2026-06-01/local-ignored/

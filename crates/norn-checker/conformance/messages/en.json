@@ -258,7 +258,7 @@
       "message": "The checker WASM package is unavailable; build it and set NORN_CHECKER_WASM_PKG."
     },
     "cli.setup.host_unavailable": {
-      "message": "No native Norn host; build norn-dev-host from the Norn repository at the commit `norn --version` prints, and set NORN_DEV_HOST_BIN to it."
+      "message": "No native Norn host; build norn-dev-host from the Norn repository (for a released CLI, at the commit `norn --version` prints) and set NORN_DEV_HOST_BIN to its absolute path."
     },
     "cli.setup.unpublished": {
       "message": "Published distribution is unavailable; run init from the repository."

@@ -100,9 +100,12 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
  * commit may not match this CLI's compile worker.
  */
 function unavailable(detail: string, build: BuildInfo | undefined): ProjectError {
-  const at = build ? ` at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain})` : " at the commit `norn --version` prints"
-  return new ProjectError("cli.setup.host_unavailable",
-    `No native Norn host: ${detail} Build it from a clone of the Norn repository${at} with \`cargo build --release -p norn-cell-do --bin norn-dev-host\`, and set NORN_DEV_HOST_BIN to target/release/norn-dev-host.`, 3)
+  const command = "`cargo build --release -p norn-cell-do --bin norn-dev-host`"
+  // A checkout knows where its own build lands; a release names the commit to build from.
+  const how = build
+    ? `Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
+    : `Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
+  return new ProjectError("cli.setup.host_unavailable", `No native Norn host: ${detail} ${how}`, 3)
 }
 
 /** A release asset is fetched over https; plain http only from this machine (a local dry run). */
@@ -123,8 +126,11 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   const packaged = lookup.packageDir(packageName)
   if (packaged && existsSync(join(packaged, "bin", "norn-dev-host"))) {
     const binary = join(packaged, "bin", "norn-dev-host")
-    // An installed host runs only if it is the one this release records.
-    if (asset && sha256(readFileSync(binary)) !== asset.sha256) {
+    // An installed host runs only if it is the one this release records: no record, no run.
+    if (!asset) {
+      throw unavailable(`${packageName} is installed at ${packaged}, but ${build ? `this release records no host for ${lookup.platform}` : "a checkout records no host digest"}, so it is not run.`, build)
+    }
+    if (sha256(readFileSync(binary)) !== asset.sha256) {
       throw unavailable(`the installed ${packageName} at ${packaged} is not the host this release records (sha256 ${asset.sha256}); reinstall @norn/cli.`, build)
     }
     return binary

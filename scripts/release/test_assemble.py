@@ -72,16 +72,24 @@ class Release(unittest.TestCase):
         return subprocess.run([sys.executable, str(SCRIPT), command, "--commit", self.commit, "--repo", str(self.repo),
                                "--out", str(self.out), *extra], capture_output=True, text=True)
 
+    BASE_URL = "https://example.invalid/releases/v0.1.0-alpha.3"
+
+    def inputs(self, channel="tarball", base_url=None):
+        """The release inputs a caller passes; verify takes them from the caller, not from the files."""
+        url = self.BASE_URL if channel == "tarball" and base_url is None else (base_url or "")
+        return ["--channel", channel, "--toolchain", "1.98.0", *(["--base-url", url] if url else [])]
+
     def build(self, channel="tarball"):
-        extra = ["--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                 "--channel", channel, "--toolchain", "1.98.0"]
-        if channel == "tarball":
-            extra += ["--base-url", "https://example.invalid/releases/v0.1.0-alpha.3"]
-        result = self.run_script("build", *extra)
+        self.channel = channel
+        result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts),
+                                 "--third-party", str(self.licenses), *self.inputs(channel))
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def refused(self, why):
-        result = self.run_script("verify")
+    def verify(self, *inputs):
+        return self.run_script("verify", *(inputs or self.inputs(self.channel)))
+
+    def refused(self, why, *inputs):
+        result = self.verify(*inputs)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn(why, result.stderr)
 
@@ -115,7 +123,7 @@ class Release(unittest.TestCase):
             "norn-dev-host-linux-arm64-0.1.0-alpha.3.tgz", "norn-dev-host-linux-x64", "norn-dev-host-linux-x64-0.1.0-alpha.3.tgz"]))
         self.assertEqual(info["hosts"]["linux-x64"]["sha256"], released["files"]["norn-dev-host-linux-x64"]["sha256"])
         # Verifying again, alone, passes; and building twice gives the same bytes.
-        self.assertEqual(self.run_script("verify").returncode, 0)
+        self.assertEqual(self.verify().returncode, 0)
         first = (self.out / "release/SHA256SUMS").read_text()
         self.build()
         self.assertEqual((self.out / "release/SHA256SUMS").read_text(), first)
@@ -203,8 +211,62 @@ class Release(unittest.TestCase):
         self.assertNotEqual(recompressed, tarball.read_bytes())
         tarball.write_bytes(recompressed)
         self.reseal()
-        result = self.run_script("verify")
+        result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def rewrite(self, path, change):
+        data = json.loads(path.read_text())
+        change(data)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+    def test_canary_the_base_url_changed_in_both_manifest_and_build_json(self):
+        self.build()
+        elsewhere = "https://elsewhere.invalid/releases/v0.1.0-alpha.3"
+        def point(info):
+            info["packages"] = {name: url.replace(self.BASE_URL, elsewhere) for name, url in info["packages"].items()}
+            for host in info["hosts"].values():
+                host["url"] = host["url"].replace(self.BASE_URL, elsewhere)
+        self.rewrite(self.package("@norn/cli") / "generated/build.json", point)
+        self.repack("@norn/cli")
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(baseUrl=elsewhere))
+        self.reseal()
+        # Consistent with itself, and still refused: the address is the caller's, not the manifest's.
+        self.refused("release/manifest.json is not for this release: baseUrl differ")
+        # The same files pass only for a caller that asked for that address.
+        self.assertEqual(self.verify(*self.inputs("tarball", elsewhere)).returncode, 0)
+
+    def test_canary_a_version_changed_everywhere_the_release_states_it(self):
+        self.build()
+        other = "0.1.0-alpha.9"
+        for name in ("@norn/cli", "@norn/authoring"):
+            self.rewrite(self.package(name) / "package.json", lambda m: m.update(version=other))
+        self.rewrite(self.package("@norn/cli") / "generated/build.json", lambda i: i.update(version=other))
+        for name in ("@norn/cli", "@norn/authoring"):
+            self.repack(name)
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(version=other))
+        self.reseal()
+        # The version is the commit's: nothing in the release can restate it.
+        self.refused("version differ")
+
+    def test_canary_a_channel_flip(self):
+        self.build()
+        # Tarball files presented as the registry release.
+        self.refused("baseUrl, channel differ", *self.inputs("registry"))
+        # And the manifest rewritten to say registry, checked against the caller's tarball inputs.
+        self.rewrite(self.out / "release/manifest.json", lambda m: m.update(channel="registry", baseUrl=""))
+        self.reseal()
+        self.refused("baseUrl, channel differ")
+
+    def test_verify_refuses_inputs_it_cannot_build(self):
+        self.build()
+        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.98.0", "--base-url", self.BASE_URL)
+        self.refused("is not an exact Rust version", *self.inputs()[:2], "--toolchain", "stable", "--base-url", self.BASE_URL)
+
+    def test_canary_a_release_tarball_that_is_not_gzip(self):
+        self.build()
+        (self.out / "release" / assemble.tarball_name("@norn/authoring", "0.1.0-alpha.3")).write_bytes(b"not a gzip stream")
+        self.reseal()
+        self.refused("release/norn-authoring-0.1.0-alpha.3.tgz is not a gzip stream")
 
     def test_a_release_address_is_https_or_this_machine(self):
         for url in ("http://example.invalid/r", "ftp://x/y", "https://x/y/"):

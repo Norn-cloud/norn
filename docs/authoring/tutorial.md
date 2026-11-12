@@ -9,7 +9,7 @@ Norn is in alpha. Read "What works where" first.
 - **Bun 1.3.x** is required (`bun --version`). The CLI runs on Bun; Node cannot run it yet.
 - **Linux x64:** fully supported. The release carries a prebuilt dev host.
 - **Linux arm64:** the release carries a prebuilt dev host that no one has run yet. Tell us if it works.
-- **macOS:** `norn check`, `norn explain` and `norn fmt` work. `norn dev` needs a dev host you build from source; the CLI prints the exact commands when it cannot find one.
+- **macOS:** `norn check`, `norn explain` and `norn fmt` are expected to work, but nobody has run them on macOS yet. `norn dev` needs a dev host you build from source; the CLI prints the exact commands when it cannot find one.
 - **Windows:** use WSL (Linux x64) and follow the Linux path.
 
 ## 1. Download and verify
@@ -34,7 +34,7 @@ gh attestation verify "norn-cli-$VERSION.tgz" --repo Norn-cloud/norn   # on rele
 What these prove:
 - **`sha256sum`:** the file is the one the release lists.
 - **`gh attestation verify`:** the file was built by Norn's release workflow from the tagged commit. It needs the GitHub CLI, and only releases built by that workflow carry an attestation; a release without one says so in its notes.
-- **Where the trust comes from:** every source file in the packages is byte-identical to the repository at that commit. The built files (checker WASM, dev hosts, licence texts, manifests) come only from that workflow run.
+- **Where the trust comes from:** every source file in the packages is byte-identical to the repository at that commit. Once Norn's release workflow exists, the built files (checker WASM, dev hosts, licence texts, manifests) will come only from a run of it, and its attestation will say which run. Until then, a release's notes say how it was built.
 - **What it covers:** these checks cover the files you download yourself. When `norn dev` first runs, it fetches the dev host for your platform and runs it only if its sha256 is the one this release records.
 
 Your project's `bun.lock` pins the exact tarballs you installed. Commit it. Until it exists, nothing pins what `norn init` installed: the first install trusts the release URL, so run `norn init` only from a release you verified.

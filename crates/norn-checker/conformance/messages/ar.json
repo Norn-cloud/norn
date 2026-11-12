@@ -343,7 +343,7 @@
       "review": "needs_review"
     },
     "cli.setup.host_unavailable": {
-      "message": "لا يوجد مضيف Norn محلي؛ ابنِ norn-dev-host من مستودع Norn عند الإيداع الذي يطبعه `norn --version`، واضبط NORN_DEV_HOST_BIN عليه.",
+      "message": "لا يوجد مضيف Norn محلي؛ ابنِ norn-dev-host من مستودع Norn (لواجهة سطر أوامر منشورة: عند الإيداع الذي يطبعه `norn --version`) واضبط NORN_DEV_HOST_BIN على مساره المطلق.",
       "review": "needs_review"
     },
     "cli.setup.unpublished": {
