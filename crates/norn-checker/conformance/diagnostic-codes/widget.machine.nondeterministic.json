@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.nondeterministic",
+  "message": "a page machine state has more than one unguarded transition on one event or outcome: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

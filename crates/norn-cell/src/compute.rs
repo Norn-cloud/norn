@@ -11,6 +11,8 @@ mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
+/// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
+pub mod transform;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -130,7 +132,7 @@ pub struct Member {
 
 impl Member {
     /// A member whose amounts the evaluation discloses.
-    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+    pub(crate) const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
         Self {
             version,
             amounts: Some(amounts),
@@ -139,14 +141,20 @@ impl Member {
     }
 }
 
+/// D102: the identity a host's row gate is asked for when it decides every
+/// row of a type alike; a bucket whose members are not listed is gated by it.
+pub const ALL_MEMBERS: &str = ":all";
+
 impl QueryRow {
     /// DATA-VALUES-1 (D52/D53): mark `restricted` members and, if any, withhold
     /// every member's amounts in this bucket, so no hidden amount follows from
     /// the totals. For such a reader the bucket aggregate is disclosed only
     /// when the bucket has at least `min_disclosed` members; a smaller bucket
     /// keeps its membership but is `suppressed`: no totals and a null value.
+    /// A bucket whose members are not listed (D102) is restricted when
+    /// [`ALL_MEMBERS`] is, and counts its `member_count`.
     pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool, min_disclosed: usize) {
-        let mut any = false;
+        let mut any = self.member_count.is_some() && restricted(ALL_MEMBERS);
         for (id, member) in &mut self.members {
             member.restricted = restricted(id);
             any |= member.restricted;
@@ -155,7 +163,10 @@ impl QueryRow {
             for member in self.members.values_mut() {
                 member.amounts = None;
             }
-            if self.members.len() < min_disclosed {
+            let members = self.member_count.map_or(self.members.len(), |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            });
+            if members < min_disclosed {
                 self.totals.clear();
                 self.null_counts.clear();
                 self.value = None;
@@ -186,6 +197,14 @@ pub struct QueryRow {
     /// and when the bucket is `suppressed`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub null_counts: Vec<u64>,
+    /// D102: contributing members, when `members` is not inlined because the
+    /// population exceeds the plan's bound (the analytics engine answered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<u64>,
+    /// MEMBERSHIP-DIGEST-1 over the members in identity order, present with
+    /// `member_count`; the trace pages the members it commits to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_digest: Option<String>,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,10 +240,10 @@ pub struct QueryResult {
 }
 
 #[derive(Serialize)]
-struct FindingEvidence<'a> {
+pub(crate) struct FindingEvidence<'a> {
     #[serde(flatten)]
-    context: &'a QueryContext,
-    exclusions: &'a BTreeMap<String, String>,
+    pub(crate) context: &'a QueryContext,
+    pub(crate) exclusions: &'a BTreeMap<String, String>,
 }
 
 pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
@@ -275,16 +294,16 @@ fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
     let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
     Some((seconds, u32::try_from(nanos).ok()?))
 }
-fn refused(code: &'static str) -> CellError {
+pub(crate) fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
-fn decimal(n: i128) -> Result<Decimal, CellError> {
+pub(crate) fn decimal(n: i128) -> Result<Decimal, CellError> {
     Decimal::parse(&format!("{n}e-6")).map_err(CellError::Value)
 }
 
 impl<E: SqlEngine> CellStore<E> {
     /// QUERY-FRESH-1: the bound scope must agree even for an empty population.
-    fn check_question_scope(&self, scope: &str) -> Result<(), CellError> {
+    pub(crate) fn check_question_scope(&self, scope: &str) -> Result<(), CellError> {
         let bound = self.conn.query_optional(
             r#"SELECT "value" FROM "_norn_meta" WHERE "key"='binding:scope'"#,
             &[],
@@ -454,7 +473,7 @@ impl<E: SqlEngine> CellStore<E> {
             )
         })
     }
-    fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
+    pub(crate) fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
         let model = self.model().query_contract(plan.grain().as_str())?;
         if plan.properties().iter().any(|p| {
             model
@@ -465,7 +484,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         usize::try_from(plan.max_items()).map_err(|_bound| refused("core.compute.bound_exceeded"))
     }
-    fn question_pins(
+    pub(crate) fn question_pins(
         &self,
         plan: &QuestionPlan,
         cutoff: Option<crate::KnowledgeCutoff>,
@@ -574,7 +593,7 @@ fn entries(contributions: &Contributions) -> impl Iterator<Item = (&String, &(u6
         .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
 }
 
-fn bucket_key(value: &Contribution) -> Result<String, CellError> {
+pub(crate) fn bucket_key(value: &Contribution) -> Result<String, CellError> {
     String::from_utf8(value.bucket.canonical_json()?)
         .map_err(|e| CellError::Encoding(e.to_string()))
 }
@@ -602,6 +621,10 @@ pub(crate) fn materialize(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one envelope: buckets, ratios, null counts, coverage and lineage"
+)]
 pub(crate) fn finish(
     plan: &QuestionPlan,
     population: QuestionPopulation,
@@ -653,6 +676,8 @@ pub(crate) fn finish(
                     members,
                     suppressed: false,
                     null_counts,
+                    member_count: None,
+                    membership_digest: None,
                 },
             ))
         })

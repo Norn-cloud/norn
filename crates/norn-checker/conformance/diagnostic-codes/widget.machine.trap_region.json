@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.trap_region",
+  "message": "no idle or terminal state is reachable from a page machine state: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

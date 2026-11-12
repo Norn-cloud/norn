@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.start_without_pending",
+  "message": "a page machine starts a call that no pending state awaits, or one already in flight: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

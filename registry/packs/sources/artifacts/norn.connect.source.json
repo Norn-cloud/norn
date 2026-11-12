@@ -102,6 +102,34 @@
             "value": "failed"
           }
         ]
+      },
+      {
+        "dataset": "upload",
+        "field": "store",
+        "id": "upload_store",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "uploads"
+          },
+          {
+            "value": "documents"
+          }
+        ]
+      },
+      {
+        "dataset": "upload",
+        "field": "format",
+        "id": "upload_format",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "csv"
+          },
+          {
+            "value": "other"
+          }
+        ]
       }
     ],
     "constraints": [
@@ -122,6 +150,15 @@
         "id": "sync_run_id",
         "kind": "primary_key",
         "origin": "declared"
+      },
+      {
+        "dataset": "upload",
+        "fields": [
+          "id"
+        ],
+        "id": "upload_id",
+        "kind": "primary_key",
+        "origin": "declared"
       }
     ],
     "datasets": [
@@ -134,6 +171,11 @@
         "id": "sync_run",
         "kind": "document",
         "nativeName": "Sync run report"
+      },
+      {
+        "id": "upload",
+        "kind": "document",
+        "nativeName": "Completed upload record"
       }
     ],
     "fields": [
@@ -510,12 +552,144 @@
           "origin": "declared",
           "type": "string"
         }
+      },
+      {
+        "dataset": "upload",
+        "name": "id",
+        "nativeType": "text",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "upload_id",
+        "nativeType": "text",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "store",
+        "nativeType": "text",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "uri",
+        "nativeType": "text",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "sha256",
+        "nativeType": "text",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "size",
+        "nativeType": "count",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "integer"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "content_type",
+        "nativeType": "text",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "file_name",
+        "nativeType": "text",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "format",
+        "nativeType": "text",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "columns",
+        "nativeType": "json",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "owner",
+        "nativeType": "text",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "upload",
+        "name": "completed_at",
+        "nativeType": "rfc3339",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
       }
     ],
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-12T00:00:00Z",
     "rawMetadata": {
-      "sha256": "d35c28b304e8f7be251f1b8201f023a5dddb04bdf393774ab3309c28b6b9fecd",
+      "sha256": "0522e67830bda54566f0999587a445b7a5d99af5285c9d0348f0089611d9f7e6",
       "uri": "registry/packs/sources/report.json"
     },
     "source": {

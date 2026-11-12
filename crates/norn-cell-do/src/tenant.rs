@@ -205,6 +205,8 @@ pub struct Tenant<E: SqlEngine> {
     /// Ad-hoc questions over the metrics the cell's active definitions
     /// derive, keyed by the stage's lineage key; none without one.
     derived: Option<DerivedQuestions>,
+    /// D102: the link to the tenant analytics engine, once the host has one.
+    engine: Option<crate::olap::Exchange>,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -236,6 +238,7 @@ impl<E: SqlEngine> Tenant<E> {
             state,
             handles: handles(handle_key)?,
             derived,
+            engine: None,
         })
     }
 
@@ -262,6 +265,7 @@ impl<E: SqlEngine> Tenant<E> {
             state: State::Serving(Box::new(serving)),
             handles: None,
             derived: None,
+            engine: None,
         })
     }
 
@@ -313,6 +317,44 @@ impl<E: SqlEngine> Tenant<E> {
         self.base.sha256()
     }
 
+    /// D102: answer questions, loads and exports on the tenant analytics
+    /// engine the host reaches; without it the cell has no analytics.
+    pub fn enable_analytics(&mut self) {
+        self.engine
+            .get_or_insert_with(crate::olap::Exchange::default);
+    }
+
+    /// Re-enter with the engine's answer to the call the last request ended with.
+    pub fn resume_engine(&self, answer: norn_api::analytics_routes::EngineAnswer) {
+        if let Some(engine) = &self.engine {
+            engine.resume(answer);
+        }
+    }
+
+    /// The engine call the last request ended with, if any; taken once.
+    #[must_use]
+    pub fn take_engine_call(&self) -> Option<norn_api::analytics_routes::EngineCall> {
+        self.engine
+            .as_ref()
+            .and_then(crate::olap::Exchange::take_pending)
+    }
+
+    /// D102: a load or an export on a served cell with an engine, reading
+    /// `uploads` for loads; `None` for any other request.
+    pub fn handle_analytics(
+        &self,
+        principals: &dyn PrincipalResolver,
+        uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        match (&self.state, &self.engine) {
+            (State::Serving(serving), Some(engine)) => {
+                server::analytics(&serving.host, principals, engine, uploads, request)
+            }
+            (State::Serving(_) | State::Vacant, _) => None,
+        }
+    }
+
     /// Serve one request; every outcome is a status and a JSON document.
     pub fn handle(
         &mut self,
@@ -334,6 +376,12 @@ impl<E: SqlEngine> Tenant<E> {
                 request,
             ),
             State::Serving(serving) => {
+                if let Some(engine) = &self.engine
+                    && let Some(response) =
+                        server::analytics(&serving.host, principals, engine, None, request)
+                {
+                    return response;
+                }
                 // A cell that publishes no questions answers ad-hoc questions
                 // over its derived metrics; a revision whose metrics do not
                 // derive serves receipt handles only.
@@ -355,6 +403,20 @@ impl<E: SqlEngine> Tenant<E> {
                             .as_ref()
                             .map(|handles| -> &dyn AdHocQuestions<E> { handles })
                     });
+                let on_engine = match (questions, &self.engine) {
+                    (Some(inner), Some(engine)) => {
+                        Some(norn_api::analytics_routes::EngineQuestions::new(
+                            inner,
+                            engine,
+                            &self.scope,
+                        ))
+                    }
+                    (Some(_) | None, _) => None,
+                };
+                let questions = on_engine
+                    .as_ref()
+                    .map(|wrapped| -> &dyn AdHocQuestions<E> { wrapped })
+                    .or(questions);
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
             State::Vacant => self.vacant(principals, request),

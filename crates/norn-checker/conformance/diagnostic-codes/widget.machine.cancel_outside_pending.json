@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.cancel_outside_pending",
+  "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

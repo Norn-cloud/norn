@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.pending_entered_without_start",
+  "message": "a transition enters a pending page machine state without starting exactly the call it awaits: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

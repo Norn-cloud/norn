@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod analytics;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;

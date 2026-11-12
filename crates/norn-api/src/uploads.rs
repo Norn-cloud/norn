@@ -317,7 +317,7 @@ impl ColumnKind {
 }
 
 /// One profiled column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Column {
     /// The header as written.
@@ -578,8 +578,8 @@ pub struct LoadRequest {
     /// column, and no two rows share the tuple (UPLOAD-KEY-1). Empty: no key.
     #[serde(default)]
     pub key: Vec<String>,
-    /// The SHA-256 `:complete` returned; a cell that no longer remembers the
-    /// upload checks the object against it (UPLOAD-DIGEST-1).
+    /// The SHA-256 `:complete` returned, as an expectation: the load is
+    /// refused when it differs from the digest the cell kept (UPLOAD-DIGEST-1).
     #[serde(default)]
     pub sha256: Option<String>,
 }
@@ -894,9 +894,13 @@ pub fn install<E: SqlEngine>(
                 crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
             }
         })?;
+    // HOST-REOPEN-1: the model the cell reopens under, never the bare kernel
+    // model (which lacks the kernel's action tables).
+    let model = crate::kernel_set::retained_artifacts(&admitted.canonical_set)
+        .and_then(|set| crate::kernel_set::serving_model(&set))?;
     let installed = host
         .install_definitions(
-            admitted.model,
+            model,
             norn_cell::InstalledDefinitionInput {
                 canonical_set: admitted.canonical_set,
                 registry: vec![],

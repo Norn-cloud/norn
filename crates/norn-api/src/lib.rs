@@ -5,6 +5,8 @@ pub mod action_admission;
 pub mod action_catalog;
 /// HOST-ACTION-1: the one governed action service shared by transports.
 pub mod actions;
+/// D102: questions, loads and exports on the tenant analytics engine.
+pub mod analytics_routes;
 /// Typed-question answer documents.
 pub mod answers;
 /// The `approval` retained-definition kind (APPROVAL-1).
@@ -62,6 +64,8 @@ pub mod run_routes;
 pub mod sources;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
+/// Typed transform reads (`ViewIR` v1): rows, row lineage and the admitted plan.
+pub mod transform_routes;
 /// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
 pub mod uploads;
 
