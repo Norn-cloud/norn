@@ -760,6 +760,9 @@ fn key_of(
     key: &[String],
     measures: &BTreeSet<&str>,
 ) -> Result<Vec<String>, String> {
+    if key.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut positions = Vec::with_capacity(key.len());
     let mut named = BTreeSet::new();
     for id in key {
@@ -1202,6 +1205,8 @@ mod tests {
         let reason = generate(&duplicated, &request(vec![], vec!["sku"]), "u", &sha, "t")
             .expect_err("refused");
         assert_eq!(reason, "rows 1 and 3 share the key");
+        // No key: rows are told apart by their row ids alone.
+        assert!(generate(&duplicated, &request(vec![], vec![]), "u", &sha, "t").is_ok());
     }
 
     #[test]
