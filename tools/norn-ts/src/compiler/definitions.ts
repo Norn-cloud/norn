@@ -768,7 +768,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -829,8 +829,23 @@ class DefinitionCompiler {
       ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
+      ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       at: this.at(call),
     })
+  }
+
+  /** ActionIR `access`: a Norn.access reference, or `{ artifactId, version? }`. */
+  private accessRef(input: ts.Expression): NonNullable<A.ActionDef["access"]> {
+    const e = this.deref(input)
+    if (ts.isCallExpression(e)) {
+      const { call, members } = this.referenced(input, new Set([ACCESS]), "a Norn.access definition (or { artifactId, version? })")
+      return { artifactId: `${this.string(this.member(members, "id", call))}.policy`, version: this.string(this.member(members, "version", call)) }
+    }
+    const m = this.closedRecord(input, ["artifactId", "version"], ["artifactId"])
+    const artifactId = this.string(m.get("artifactId")!)
+    if (!artifactId.endsWith(".policy")) throw new CompileError("NORN-FLOW-LITERAL", "access names a policy artifact: <policy id>.policy", m.get("artifactId")!)
+    const version = m.get("version")
+    return { artifactId, ...(version ? { version: this.string(version) } : {}) }
   }
 
   private zenAt(input: ts.Expression, artifactId: string, pointer: string, root = "input"): string {
