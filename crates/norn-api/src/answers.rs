@@ -138,6 +138,12 @@ pub struct NornQueryRow {
     #[serde(default)]
     #[schema(required = false)]
     pub suppressed: bool,
+    /// Per operand, in `totals` order: how many members' measured value was
+    /// null. A null is skipped by the sum, never read as 0. Absent when no
+    /// value was null, and when the bucket is suppressed.
+    #[serde(default, rename = "nullCounts")]
+    #[schema(required = false)]
+    pub null_counts: Vec<u64>,
 }
 
 /// One object version's contribution to a bucket.
