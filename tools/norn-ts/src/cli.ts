@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
-import { checkPack, compilePack, finalizeFlowSourceMap } from "./pack.ts"
+import { admit, compilePack } from "./pack.ts"
 
 if (process.argv[2] === "--version" || process.argv[2] === "-V") {
   const { versionLine } = await import("./build-info.ts")
@@ -21,6 +21,10 @@ if (process.argv[2] === "fmt") {
     process.stdout.write(`${JSON.stringify(error.diagnostic)}\n`)
     process.exit(error.exitCode)
   }
+}
+if (process.argv[2] === "explain") {
+  const { explain } = await import("./explain.ts")
+  process.exit(await explain(process.argv.slice(3)))
 }
 if (process.argv[2] === "dev") {
   const { dev } = await import("./dev.ts")
@@ -93,9 +97,7 @@ if (command === "compile") {
     process.stderr.write(`NORN-CHECKER-WASM-SETUP: ${String(error)}\nExpected norn-checker-abi/1 built from this checkout. From the repository root, run:\n  bash crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/target/norn-checker-wasm/pkg"\n  export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"\nThen rerun this check.\n`)
     process.exit(2)
   }
-  const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
-  const flowSourceMap = pack.flowSourceMap ? finalizeFlowSourceMap(pack.flowSourceMap, pack.flows, checked.receipt) : undefined
-  const report = flowSourceMap ? checkPack(checker, pack.artifacts, pack.baseArtifacts, flowSourceMap) : checked
+  const { report } = admit(checker, pack)
   const diagnostics = [...pack.warnings, ...sourceMappedDiagnostics(report.diagnostics.diagnostics, pack.sourceMap)]
   process.stdout.write(`${JSON.stringify({ ...report, diagnostics })}\n`)
   process.exit(report.admitted ? 0 : 1)

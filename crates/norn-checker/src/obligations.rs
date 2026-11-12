@@ -51,6 +51,46 @@ const INTERPRETATION_GOAL_KINDS: [&str; 6] = [
     "mapping_law_preservation",
 ];
 
+/// Reuse the production induction generator for a read-only explanation.
+/// This supplies no approval, solver evidence or activation authority.
+/// Returns the generator's law order (artifact ids) with its goals.
+/// # Errors
+/// Refuses incomplete or oversized writer relations.
+pub(crate) fn explain_induction(
+    pool: &[ArtifactEnvelope],
+    writers: &BTreeSet<crate::verification::LawWriter>,
+    boundaries: &BTreeSet<String>,
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+) -> Result<(Vec<String>, Vec<Value>), ChallengeError> {
+    let law_count = pool
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+        .count();
+    if law_count.saturating_mul(
+        writers
+            .len()
+            .saturating_add(boundaries.len())
+            .saturating_add(3),
+    ) > 16_384
+    {
+        return Err(ChallengeError::Limit);
+    }
+    let laws = pool
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+        .map(|artifact| {
+            exact_artifact_digest(artifact).map(|digest| (artifact.artifact_id.clone(), digest))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    preflight_goal_bytes(&laws, writers, boundaries)?;
+    // A goal's `law` is an index into this order: every law artifact of the pool, by id.
+    let order = laws.keys().cloned().collect();
+    Ok((
+        order,
+        induction::build(pool, &laws, writers, boundaries, registry)?.goals,
+    ))
+}
+
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeError {
@@ -1105,5 +1145,28 @@ mod exact_identity_tests {
             digest(b"definition-source", &[b"[]", b"[ ]"]),
             digest(b"definition-source", &[b"[ ]", b"[]"])
         );
+    }
+}
+
+#[cfg(test)]
+mod explain_budget_tests {
+    use super::*;
+
+    #[test]
+    fn explain_goal_bytes_refuse_amplified_writer_before_generation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pool: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json"))?;
+        let writers = BTreeSet::from([crate::verification::LawWriter::Artifact {
+            artifact_id: "w".repeat(1_500_000),
+        }]);
+        assert!(matches!(
+            explain_induction(&pool, &writers, &BTreeSet::new(), &BTreeSet::new()),
+            Err(ChallengeError::Limit)
+        ));
+        assert!(
+            explain_induction(&pool, &BTreeSet::new(), &BTreeSet::new(), &BTreeSet::new()).is_ok()
+        );
+        Ok(())
     }
 }

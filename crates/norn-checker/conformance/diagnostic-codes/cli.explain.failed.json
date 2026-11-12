@@ -1,0 +1,7 @@
+{
+  "code": "cli.explain.failed",
+  "message": "norn explain could not complete: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}
