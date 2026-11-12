@@ -141,9 +141,12 @@ that waits on a step opens it, the next state closes it, and `completed` or
 `decision`, an `executor` or a `timer`; that is a state, not an error. An install
 that changes the model tells the host's authorizer under the definitions write
 epoch (`Authorizer::model_changed`), so the DO cell's read rules cover a flow's
-Run type before any request sees it. Named scenarios
-(`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**, **RUN-START-REFUSE**,
-**RUN-READ-GATED**.
+Run type before any request sees it. `GET /v1/definitions:list?kind=flow`
+carries, per flow, `canStart`: whether the caller may start it now, decided by
+exactly the gate `POST /v1/runs` applies (an active flow and `StartRun`), so a
+client offers only the starts the cell allows and the cell still decides at the
+call. Named scenarios (`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**,
+**RUN-START-REFUSE**, **RUN-READ-GATED**, **RUN-CAN-START**.
 
 ### DECISIONS-1 — deciding what a run waits on
 
@@ -197,6 +200,39 @@ verified at start, so a role revoked later still holds for the run until it ends
 a waiting run is bounded by its decisions' seven-day expiry. Named scenarios
 (`crates/norn-cell-do/tests/action_steps.rs`): **STEP-AS-STARTER**,
 **STEP-NO-LAUNDERING**.
+
+### APPROVAL-1 — approval-gated action calls
+
+An `approval` retained definition (`{action, decider: {roles, law?}, question,
+risk, expiresInMs?}`) makes every call of one admitted action wait for a person.
+At most one active approval gates an action; its decider roles are roles of the
+cell's declared role table; installing or revising one changes who may complete
+an action, so it is installed only by signing the server's restatement (D59), as
+a flow is. While it is active, the shared action dispatch (every surface: HTTP,
+MCP's loopback, a flow's action step) runs the kernel's action pipeline for the
+call against a host that serves every read and stops at the commit point. A call
+the kernel would refuse is refused exactly as it would be ungated (the same
+opaque denial for permission and visibility) and parks nothing. A call that
+reaches the commit point parks: one `norn.decision@1` command carrying the
+admitted call (action, input, idempotency key) and the requester's verified
+principal, committed alone, answered `202 {outcome: "pending", decision: {id,
+expiresAtMs}}`; a host with no verified principal for the caller denies it. The
+decision's identity binds the action, the input, the key and the requester, so
+the same call parks once and an approval approves exactly the call it was asked
+about. `GET /v1/decisions` lists it with its `call` to holders of a decider role,
+never to its requester, who cannot decide it either (#618). Deciding records the
+resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
+record the dispatch consults: an approved call commits through the same dispatch
+under the requester's own authority, with everything (including the laws the
+cell checks at commit) decided again there; the approver's decide commits it by
+calling it as the requester, and reports `call: {committed, code?}`; the
+requester's retry replays it. A rejected call's retry refuses
+`approval.rejected` (409), an expired one's `approval.expired` (410); neither
+ever commits. A flow step's call parks the same way; the step waits, and the
+decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs`):
+**APPROVAL-NO-RIGHT-NO-PARK**, **APPROVAL-COMMITS-AS-REQUESTER**,
+**APPROVAL-BINDS-INPUT**, **APPROVAL-REJECTED**, **APPROVAL-EXPIRED**,
+**APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**.
 
 ### DECISION-LEDGER-1 — resolved decisions
 

@@ -21,7 +21,7 @@ use norn_kernel::{
 use norn_cell::flow_run::RunStarter;
 use norn_kernel::flow_turn::StepOutcome;
 
-use crate::actions::ActionReceipt;
+use crate::actions::ActionAnswer;
 use crate::host::{ActionCell, DevHost};
 use crate::question_routes::QuestionRuntime;
 use crate::refusal::Refusal;
@@ -114,34 +114,62 @@ pub(crate) fn result_turn<E: SqlEngine>(
     .map_err(|refusal| refused(refusal.code(), "the flow's result turn was refused"))
 }
 
-/// The run's state after a commit, from the run ledger.
-///
-/// # Errors
-/// A host failure, or a run without a ledger row.
-pub(crate) fn run_state<E: SqlEngine>(
-    cell: &ActionCell<E>,
-    run_id: &str,
-) -> Result<Option<String>, Refusal> {
-    cell.store()
-        .read()
-        .flow_run(MAIN_WORLD, run_id)
-        .map_err(Refusal::host)?
-        .map(|row| row.state)
-        .ok_or_else(|| Refusal::host("a run lost its ledger row"))
-}
-
 /// The most action steps one [`drive_run`] executes; a run whose steps
 /// keep dispatching more continues on its next drive.
 pub const MAX_ACTION_STEPS: usize = 64;
 
-/// How the host runs one action step under the run starter's authority: it
-/// makes `starter` the verified principal its policy decides for, runs
-/// `call`, and restores the request's own principal on every path. `None`
-/// when the host cannot act as that starter, which denies the step.
+/// How the host runs one action call under a recorded principal's authority
+/// (a run's starter for its action steps, a parked call's requester once it
+/// is approved): it makes `principal` the verified principal its policy
+/// decides for, runs `call`, and restores the request's own principal on
+/// every path. `None` when the host cannot act as that principal, which
+/// denies the call.
 pub type AsStarter<'a> = &'a dyn Fn(
     &RunStarter,
-    &mut dyn FnMut() -> Result<ActionReceipt, Refusal>,
-) -> Option<Result<ActionReceipt, Refusal>>;
+    &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+) -> Option<Result<ActionAnswer, Refusal>>;
+
+/// The idempotency key of a step attempt's action call: one per attempt,
+/// bounded, so a re-drive replays the same call instead of calling twice.
+fn step_call_key(step_key: &str, attempt: &RuntimeValue) -> Result<String, Refusal> {
+    let key = norn_ir::canonical::domain_hash_hex(b"norn.action.step/1\0", &(step_key, attempt))
+        .map_err(Refusal::host)?;
+    Ok(format!("step-{}", key.get(..48).unwrap_or(&key)))
+}
+
+/// The run whose pending action step makes the call keyed `idempotency_key`,
+/// if a step does: an approval of that call moves that run (APPROVAL-1).
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn run_waiting_on<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    idempotency_key: &str,
+) -> Result<Option<String>, Refusal> {
+    if !idempotency_key.starts_with("step-") {
+        return Ok(None);
+    }
+    for pending in store.read().parked_commands().map_err(Refusal::host)? {
+        let Some(payload) = pending.command.command.get("payload") else {
+            continue;
+        };
+        let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
+        let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run), Some(step), Some(attempt)) = (
+            text("function"),
+            text("runId"),
+            text("step"),
+            payload.get("attempt"),
+        ) else {
+            continue;
+        };
+        if pending.result.is_none()
+            && step_call_key(text("idempotencyKey").unwrap_or(step), attempt)? == idempotency_key
+        {
+            return Ok(Some(run.to_owned()));
+        }
+    }
+    Ok(None)
+}
 
 /// A pending `norn.action@1` step of `run_id`: its delivery coordinates and
 /// its step input.
@@ -250,16 +278,9 @@ pub fn drive_run<E: SqlEngine>(
                     environment_id: Some(host.scope().environment_id.clone()),
                     version: None,
                 };
-                // One key per step attempt, bounded: a re-drive replays the
-                // same call instead of calling the action twice.
-                let key = norn_ir::canonical::domain_hash_hex(
-                    b"norn.action.step/1\0",
-                    &(&step.idempotency_key, &step.attempt),
-                )
-                .map_err(Refusal::host)?;
                 let request = crate::actions::ActionRequest {
                     input: RuntimeValue::Object(action.input),
-                    idempotency_key: format!("step-{}", key.get(..48).unwrap_or(&key)),
+                    idempotency_key: step_call_key(&step.idempotency_key, &step.attempt)?,
                 };
                 let mut call = || {
                     crate::actions::call_action(
@@ -274,20 +295,26 @@ pub fn drive_run<E: SqlEngine>(
                 };
                 match as_starter(&starter, &mut call) {
                     None => failure("Denied", None),
-                    Some(Ok(receipt)) => StepOutcome::Output(std::collections::BTreeMap::from([
-                        (
-                            "objectType".to_owned(),
-                            RuntimeValue::String(receipt.object_type),
-                        ),
-                        (
-                            "objectId".to_owned(),
-                            RuntimeValue::String(receipt.object_id),
-                        ),
-                        (
-                            "version".to_owned(),
-                            norn_ir::runtime::encode(&receipt.version).map_err(Refusal::host)?,
-                        ),
-                    ])),
+                    // An approval gates the action: the step waits on its
+                    // decision, and the run moves once someone decides.
+                    Some(Ok(ActionAnswer::Pending(_))) => return Ok(()),
+                    Some(Ok(ActionAnswer::Receipt(receipt))) => {
+                        StepOutcome::Output(std::collections::BTreeMap::from([
+                            (
+                                "objectType".to_owned(),
+                                RuntimeValue::String(receipt.object_type),
+                            ),
+                            (
+                                "objectId".to_owned(),
+                                RuntimeValue::String(receipt.object_id),
+                            ),
+                            (
+                                "version".to_owned(),
+                                norn_ir::runtime::encode(&receipt.version)
+                                    .map_err(Refusal::host)?,
+                            ),
+                        ]))
+                    }
                     Some(Err(refused)) => match refused.category {
                         crate::refusal::RefusalCategory::Internal => return Err(refused),
                         crate::refusal::RefusalCategory::Permission

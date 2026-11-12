@@ -15,7 +15,7 @@
         "tags": [
           "crate::actions"
         ],
-        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant. A\nrefusal commits nothing.",
+        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt. While an\napproval gates the action (APPROVAL-1), a call that would commit parks\ninstead, as one open decision, and answers 202 with it; a call that would\nbe refused is refused exactly as it would be ungated, and parks nothing.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant;\nfor a gated call whose decision was resolved, 409 `approval.rejected` or\n410 `approval.expired`. A refusal commits nothing.",
         "operationId": "call_action",
         "parameters": [
           {
@@ -78,6 +78,16 @@
               }
             }
           },
+          "202": {
+            "description": "An approval gates the action: the call waits for a person's decision, and nothing was committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingAction"
+                }
+              }
+            }
+          },
           "400": {
             "description": "The request was refused as invalid.",
             "content": {
@@ -99,7 +109,17 @@
             }
           },
           "409": {
-            "description": "The request was refused: a stale pin or a conflicting retry.",
+            "description": "The request was refused: a stale pin, a conflicting retry, or a rejected approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The approval the call waited on expired.",
             "content": {
               "application/json": {
                 "schema": {
@@ -277,7 +297,7 @@
           "crate::decisions"
         ],
         "summary": "`POST /v1/decisions/{id}:decide`.",
-        "description": "# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then commits through the shared action\ndispatch as its requester ([`AsStarter`] makes the requester the host's\nverified caller for that one call), its authority decided again there.\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
         "operationId": "decide",
         "parameters": [
           {
@@ -2611,6 +2631,17 @@
           "run"
         ],
         "properties": {
+          "call": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; absent otherwise and on a replay."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "decision": {
             "$ref": "#/components/schemas/DecidedDecision",
             "description": "The decision."
@@ -2625,7 +2656,27 @@
           },
           "run": {
             "$ref": "#/components/schemas/DecidedRun",
-            "description": "The run."
+            "description": "The run, or for an approval of a direct action call the parked call's\nid with no state."
+          }
+        }
+      },
+      "DecidedCall": {
+        "type": "object",
+        "description": "What committing an approved call as its requester answered (APPROVAL-1).\nThe approval stands either way: the requester's own retry of the call\ncommits it.",
+        "required": [
+          "committed"
+        ],
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The requester's refusal code when it did not."
+          },
+          "committed": {
+            "type": "boolean",
+            "description": "Whether the call committed."
           }
         }
       },
@@ -2713,6 +2764,33 @@
           }
         }
       },
+      "DecisionCall": {
+        "type": "object",
+        "description": "The parked action call an approval decides (APPROVAL-1).",
+        "required": [
+          "action",
+          "definition",
+          "input"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action called."
+          },
+          "definition": {
+            "type": "string",
+            "description": "The approval definition that gates it."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's admitted input, as its requester sent it.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "DecisionContext": {
         "type": "object",
         "description": "What the decision is about. Empty in this version.",
@@ -2751,6 +2829,17 @@
               "null"
             ],
             "description": "An agent's recommended option id; a recommendation, never a decision."
+          },
+          "call": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecisionCall",
+                "description": "For the approval of a parked action call (APPROVAL-1), the call\nwaiting on it; absent for a flow's ask."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "context": {
             "$ref": "#/components/schemas/DecisionContext",
@@ -3179,6 +3268,13 @@
           "updatedAtMs"
         ],
         "properties": {
+          "canStart": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "For a flow: whether the caller may start a run of it now, decided by\nexactly the gate `POST /v1/runs` applies (an active flow and the host's\n`StartRun` decision). Absent for other kinds."
+          },
           "id": {
             "type": "string",
             "description": "The definition id."
@@ -26624,6 +26720,44 @@
           }
         ],
         "description": "An execution world."
+      },
+      "PendingAction": {
+        "type": "object",
+        "description": "`202`: the call waits for a person's approval; nothing was committed.",
+        "required": [
+          "outcome",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/PendingDecision",
+            "description": "The decision it waits on."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Always `pending`."
+          }
+        }
+      },
+      "PendingDecision": {
+        "type": "object",
+        "description": "The decision a parked call waits on.",
+        "required": [
+          "id",
+          "expiresAtMs"
+        ],
+        "properties": {
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
       },
       "Refusal": {
         "allOf": [
