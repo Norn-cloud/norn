@@ -1596,6 +1596,10 @@
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {
+    "code": "object_type.validation.additivity_not_refined",
+    "fix": "Declare the same additivity the requirement or overridden property declares, or none; declare a different one only where the requirement declares none."
+  },
+  {
     "code": "object_type.validation.computed_key_component",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -2022,6 +2026,14 @@
   {
     "code": "property_type.validation.inverted_range",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "property_type.validation.ref_additivity_conflict",
+    "fix": "Remove the use-site additivity so the referenced type's declaration applies, or reference a type that declares none and state the additivity here."
+  },
+  {
+    "code": "property_type.validation.ref_additivity_not_numeric",
+    "fix": "Remove additivity from this ref, or reference an integer or decimal property type; additivity describes how numbers aggregate."
   },
   {
     "code": "property_type.validation.ref_cycle",

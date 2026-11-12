@@ -147,6 +147,10 @@ pub mod codes {
     /// required type or a narrowing of it.
     pub const INTERFACE_PROPERTY_TYPE_MISMATCH: &str =
         "object_type.validation.interface_property_type_mismatch";
+    /// METRIC-ADDITIVITY-REF-1: a member changes the declared additivity of
+    /// the `ref` it must narrow (an interface requirement, an overridden
+    /// property or a parent interface's member).
+    pub const ADDITIVITY_NOT_REFINED: &str = "object_type.validation.additivity_not_refined";
     /// The property satisfying an interface requirement is nullable where the
     /// requirement is not.
     pub const INTERFACE_PROPERTY_WIDENS_NULLABILITY: &str =
@@ -425,8 +429,9 @@ pub(crate) fn check_property_shape(
     }
     check_type_members(pointer, &property.property_type, out);
     property_types::check_record_refs(pointer, &property.property_type, catalog, registry, out);
+    property_types::check_ref_additivity(pointer, &property.property_type, catalog, registry, out);
     let resolved = resolve_type(&property.property_type, catalog, registry);
-    if let (PropertyType::Ref { name }, TypeResolution::Unresolved { direct: true }) =
+    if let (PropertyType::Ref { name, .. }, TypeResolution::Unresolved { direct: true }) =
         (&property.property_type, &resolved.resolution)
     {
         out.push(error(

@@ -459,6 +459,10 @@
           "description": "The shared property type (local or registry) with this name.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "METRIC-ADDITIVITY-REF-1: the aggregation contract at this use\nsite. It may only refine a referenced type that declares none, and\napplies only when the ref resolves to an integer or decimal.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "ref"

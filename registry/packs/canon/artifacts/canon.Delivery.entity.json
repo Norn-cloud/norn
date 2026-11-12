@@ -89,6 +89,9 @@
         {
           "id": "quantity",
           "type": {
+            "additivity": {
+              "kind": "additive"
+            },
             "kind": "ref",
             "name": "core.quantity"
           }

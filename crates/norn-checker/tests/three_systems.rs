@@ -504,3 +504,46 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
         );
     }
 }
+
+/// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
+/// their own time property; stocks (`Holding`) derive nothing, and the amounts
+/// without a time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
+#[test]
+fn three_systems_derive_exactly_the_canon_flow_sums() {
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &artifacts(),
+        &BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
+    )
+    .unwrap_or_else(|d| panic!("{d:#?}"));
+    let derived: BTreeSet<(String, String, String)> = space
+        .candidates()
+        .iter()
+        .map(|candidate| {
+            let params = &candidate.definition.type_params;
+            let model = params
+                .metric_aggregation_params
+                .as_ref()
+                .expect("a derived sum")
+                .semantic_model
+                .as_str()
+                .to_owned();
+            let time = candidate
+                .definition
+                .norn
+                .time_dimension
+                .as_ref()
+                .expect("a time grain")
+                .property
+                .as_str()
+                .to_owned();
+            (model, params.expr.clone().expect("a measure"), time)
+        })
+        .collect();
+    let expected = [
+        ("canon.Delivery", "quantity", "occurred_at"),
+        ("canon.OrderLine", "quantity", "due_at"),
+    ]
+    .map(|(model, measure, time)| (model.to_owned(), measure.to_owned(), time.to_owned()));
+    assert_eq!(derived, BTreeSet::from(expected));
+}

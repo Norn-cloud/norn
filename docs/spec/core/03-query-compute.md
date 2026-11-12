@@ -39,6 +39,35 @@ restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
 provenance use the following checked derivation contract.
 
+**METRIC-ADDITIVITY-REF-1:** a `ref` may declare `additivity` at its use site,
+so a flow and a stock can share one value type (an event quantity is additive;
+a holding of the same quantity type is semi-additive). Omission means
+`undeclared`, and an undeclared `ref` serializes exactly as before. A
+property's effective additivity is the first one declared along its `ref`
+chain, the use site first, else the base numeric type's own. Use-site
+additivity requires a `ref` that resolves to a local `integer` or `decimal`;
+any other resolved kind refuses
+`property_type.validation.ref_additivity_not_numeric`. A registry `ref`'s kind
+belongs to the registry, and its use-site additivity authorizes nothing until it
+resolves to a local base. Where the referenced type already declares additivity,
+the use site must equal it, else
+`property_type.validation.ref_additivity_conflict`. Against an interface
+requirement, overridden property or parent-interface member declared as a `ref`,
+a member's effective additivity refines the requirement's: undeclared may become
+any declared class, and a declared class is kept exactly, else
+`object_type.validation.additivity_not_refined`. A requirement declared inline
+keeps METRIC-ADDITIVITY-1's exact match. Metric admission, action sums, the
+model diff and METRIC-DERIVE-1 read the effective additivity exactly as they
+read an inline one; `semi_additive` never yields a sum over time.
+
+Named scenarios: **METRIC-REF-FLOW-DERIVES** (a flow `ref` declared additive
+derives one sum per direct time property, and a semi-additive stock of the same
+value type derives none), **METRIC-REF-REFINES** (every requirement × member
+class pair is admitted exactly when the requirement is undeclared or equal),
+**METRIC-REF-NUMERIC** and **METRIC-REF-CONFLICT** (use-site additivity on a
+non-numeric type, or against a declared one, refuses), and
+**METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
+
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
 Candidates are uncertified; deriving one does not declare a governed KPI or
