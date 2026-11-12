@@ -128,10 +128,10 @@ impl NornCell {
                     .map_err(|refusal| JsValue::from_str(&refusal.code))?,
             ),
             #[cfg(feature = "fixtures")]
-            (None, None) => Principals::Fixtures(crate::principal::FixturePrincipals::new(
-                crate::principal::DEMO_FIXTURES,
-                slot,
-            )),
+            (None, None) => Principals::Fixtures(
+                crate::principal::FixturePrincipals::new(crate::principal::DEMO_FIXTURES, slot)
+                    .of_org(crate::principal::FIXTURE_ORG, &scope),
+            ),
             _ => {
                 return Err(JsValue::from_str(
                     "the token issuer and its JWKS are required",

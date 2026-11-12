@@ -396,7 +396,7 @@ impl<E: SqlEngine> Tenant<E> {
                 actor,
             )?,
         }
-        let admitted = provision::admit_submission(&self.base, request.body)?;
+        let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
         if matches!(self.state, State::Vacant) {
             // A model this host could not serve is refused before anything
             // is written, never provisioned and then left unopenable.

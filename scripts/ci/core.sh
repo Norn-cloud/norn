@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Python isolation (#513): no script directory or cwd on sys.path, and no bytecode read or
+# written next to any source. Older Pythons ignore these variables, so the assertion refuses
+# to run where they have no effect. scripts/ci/python_isolation.py pins these lines.
+export PYTHONSAFEPATH=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-pycache.XXXXXX")"
+python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
@@ -23,6 +30,21 @@ nextest=(cargo nextest --profile ci)
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
     || cargo install --locked cargo-nextest --version 0.9.150
+}
+# Fails unless each named test of binary $2 ran and passed in nextest's JUnit report $1:
+# absent (renamed, deleted, ignored, cfg'd out), skipped, failed or an unreadable report fails.
+require_passed() {
+  python3 - "$@" << 'PY'
+import sys
+import xml.etree.ElementTree as ET
+report, binary, *names = sys.argv[1:]
+cases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")
+         if suite.get("name") == binary for case in suite.iter("testcase")}
+bad = [name for name in names if name not in cases or any(
+    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]
+if not names or bad:
+    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or 'none named'}")
+PY
 }
 list_shards() {
   local index
@@ -81,6 +103,8 @@ run_phase() {
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       python3 scripts/ci/frontier.py self-test
+      python3 scripts/ci/python_isolation.py
+      python3 scripts/ci/test_python_isolation.py
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/ci/test_implementation_receipts.py
@@ -93,6 +117,13 @@ run_phase() {
       python3 scripts/metrics/test_metrics.py
       cargo xtask ci policy
       cargo xtask ci provenance
+      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
+      # plan selects, and its two named tests must have run and passed.
+      ensure_nextest
+      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/nextest/ci/junit.xml"
+      rm -f "$parity_report"
+      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
       ;;
     test)
       select_shard "${2:-all}"
@@ -229,6 +260,12 @@ PY
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
+        # The checker-admission case needs the WASM package built above, so it runs here,
+        # not in the cheap phase, and is required: a missing package fails it, never skips.
+        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\n' "$decision"; exit 1; }
+        printf '%s\n' "$decision"
+        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.
+        grep -qxE '\(pass\) the checker admits what a drawn decision lowers to \[[0-9.]+m?s\]' <<< "$decision" || { printf 'browser: the checker-admission case did not run and pass\n' >&2; exit 1; }
         bun run build
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
@@ -401,7 +438,7 @@ gate_source = (root / "crates/norn-skeleton-guard/src/ci/mod.rs").read_text()
 gate_block = gate_source.split("const GATE_FILES:", 1)[1].split("];", 1)[0]
 gates = set(re.findall(r'"([^"]+)"', gate_block))
 for path in changed:
-    if (path in gates or path.startswith((".github/workflows/", "crates/norn-skeleton-guard/"))
+    if (path in gates or path.startswith((".github/workflows/", ".cargo/", "crates/norn-skeleton-guard/"))
             or Path(path).name in {"Cargo.lock", "Cargo.toml", "rust-toolchain", "rust-toolchain.toml", "lean-toolchain"}):
         full(f"gate, dependency or toolchain changed: {path}")
 try:

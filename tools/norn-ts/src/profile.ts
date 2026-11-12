@@ -4,11 +4,25 @@
  * admitted/rejected symbol tables and the stable `NORN-FLOW-*` codes; the
  * checker and the corpus tests read it, nothing duplicates it in code.
  */
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 export const TOOL_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
+
+/**
+ * The directory of a pinned dependency (`effect`, `typescript`), wherever the
+ * package manager put it: nested under this package in a checkout, or hoisted
+ * next to it when this package is installed into a project. Found the way
+ * module resolution finds it, walking up from this package.
+ */
+export function dependencyDir(name: string): string {
+  for (let dir = TOOL_ROOT; ; dir = dirname(dir)) {
+    const candidate = join(dir, "node_modules", name)
+    if (existsSync(join(candidate, "package.json"))) return candidate
+    if (dirname(dir) === dir) return join(TOOL_ROOT, "node_modules", name)
+  }
+}
 export const PROFILE_PATH = join(TOOL_ROOT, "profile", "norn-effect-1.json")
 export const INTRINSICS_PATH = join(TOOL_ROOT, "profile", "norn-authoring.d.ts")
 

@@ -59,6 +59,9 @@ pub mod codes {
     pub const RESERVED_ARTIFACT: &str = "cell.reserved_artifact";
     /// The submission was authored against another trusted base.
     pub const BASE_MISMATCH: &str = "cell.base_mismatch";
+    /// A submitted artifact is scoped outside the cell being provisioned
+    /// (a diagnostic of `cell.provision_refused`).
+    pub const SCOPE_CONFLICT: &str = "cell.scope_conflict";
 }
 
 /// The trusted base a host compiles in: the only artifacts a provisioned
@@ -237,8 +240,11 @@ pub fn unservable(detail: impl Into<String>) -> Refusal {
 }
 
 /// The submission's own artifacts, decoded from their exact text: none in a
-/// reserved namespace, each an artifact envelope.
-fn tenant_artifacts(sources: &[Box<RawValue>]) -> Result<Vec<ArtifactEnvelope>, Refusal> {
+/// reserved namespace, each an artifact envelope scoped inside `cell`.
+fn tenant_artifacts(
+    cell: &CellScope,
+    sources: &[Box<RawValue>],
+) -> Result<Vec<ArtifactEnvelope>, Refusal> {
     let mut reserved = Vec::new();
     let mut malformed = Vec::new();
     let mut tenant = Vec::with_capacity(sources.len());
@@ -288,6 +294,29 @@ fn tenant_artifacts(sources: &[Box<RawValue>]) -> Result<Vec<ArtifactEnvelope>, 
         refusal.diagnostics = malformed;
         return Err(refusal);
     }
+    // An artifact scoped outside the cell would be refused by every later
+    // read of the retained set: refuse it now, before anything is written,
+    // as a flow install does.
+    let outside: Vec<RefusalDiagnostic> = tenant
+        .iter()
+        .enumerate()
+        .filter(|(_, artifact)| {
+            norn_checker::scope_conflict(&cell.as_scope_ref(), &artifact.scope).is_some()
+        })
+        .map(|(index, artifact)| {
+            RefusalDiagnostic::error(
+                codes::SCOPE_CONFLICT,
+                format!(
+                    "{} is scoped outside the cell being provisioned",
+                    artifact.artifact_id
+                ),
+                format!("/artifacts/{index}/scope"),
+            )
+        })
+        .collect();
+    if !outside.is_empty() {
+        return Err(refused(outside));
+    }
     // The decoded ids are checked again: the base is exactly the host's.
     if tenant
         .iter()
@@ -300,16 +329,22 @@ fn tenant_artifacts(sources: &[Box<RawValue>]) -> Result<Vec<ArtifactEnvelope>, 
     Ok(tenant)
 }
 
-/// Bound, decode and admit one provisioning body against `base`. Call only
-/// after [`authorize`]: the findings describe the caller's own submission.
+/// Bound, decode and admit one provisioning body for the cell `cell` against
+/// `base`. Call only after [`authorize`]: the findings describe the caller's
+/// own submission.
 ///
 /// # Errors
 /// `request.too_large` (413) above [`MAX_PROVISION_BYTES`]; `request.invalid`
 /// (400) for a body that is not a submission; `cell.base_mismatch` (409) for
 /// another base digest, stating the host's; `cell.reserved_artifact` (400)
 /// for any artifact in a reserved namespace, before admission;
-/// `cell.provision_refused` (422) with the checker's findings.
-pub fn admit_submission(base: &TrustedBase, body: &str) -> Result<AdmittedSet, Refusal> {
+/// `cell.provision_refused` (422) with `cell.scope_conflict` findings for
+/// artifacts scoped outside `cell`, or with the checker's findings.
+pub fn admit_submission(
+    base: &TrustedBase,
+    cell: &CellScope,
+    body: &str,
+) -> Result<AdmittedSet, Refusal> {
     if body.len() > MAX_PROVISION_BYTES {
         return Err(Refusal::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -334,7 +369,7 @@ pub fn admit_submission(base: &TrustedBase, body: &str) -> Result<AdmittedSet, R
             ),
         ));
     }
-    let tenant = tenant_artifacts(&request.artifacts)?;
+    let tenant = tenant_artifacts(cell, &request.artifacts)?;
     let position = |id: &str| {
         tenant
             .iter()
@@ -410,19 +445,19 @@ fn receipt<E: SqlEngine>(
     })
 }
 
-/// Provision the cell for `scope` on a fresh `engine` from an admitted
-/// submission, in one engine transaction (HOST-PROVISION-ATOMIC): the store
-/// schema, the scope binding, a fresh cell identity, the definitions, their
-/// receipt and the ledger commit together, or nothing.
+/// Provision the scope's cell from the caller's definitions (owner only).
 ///
-/// The caller has already passed [`authorize`]; `now_ms` is the host clock
-/// (Unix milliseconds), recorded as the install time.
+/// One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the
+/// scope binding, a fresh cell identity, the definitions, their receipt and
+/// the ledger commit together, or nothing. The host calls this on a fresh
+/// engine after [`authorize`] and [`admit_submission`]; `now_ms` is the host
+/// clock (Unix milliseconds), recorded as the install time.
 ///
 /// # Errors
 /// `cell.provision_conflict` (409) when the engine already holds a cell
 /// provisioned from something else; `host.error` (500) for a storage failure,
 /// which leaves the engine as it was.
-#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn provision_cell<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
@@ -482,6 +517,13 @@ mod tests {
 
     const UNITS: &str = include_str!("../../../registry/core/artifacts/core.units.json");
 
+    fn cell() -> CellScope {
+        CellScope {
+            org_id: "org_a".into(),
+            environment_id: "prod".into(),
+        }
+    }
+
     #[test]
     fn a_base_holds_only_reserved_ids_once_and_its_digest_ignores_order() {
         let std_types =
@@ -508,7 +550,7 @@ mod tests {
                 "artifacts": [{ "artifactId": "tenant.ok" }, { "artifactId": id, "forged": true }],
             })
             .to_string();
-            let refusal = admit_submission(&base, &body).expect_err("reserved");
+            let refusal = admit_submission(&base, &cell(), &body).expect_err("reserved");
             assert_eq!(refusal.code, codes::RESERVED_ARTIFACT, "{id}");
             assert_eq!(refusal.status, 400);
             assert_eq!(
@@ -522,7 +564,7 @@ mod tests {
     fn another_base_digest_refuses_and_states_the_hosts() {
         let base = TrustedBase::from_sources(&[UNITS]).unwrap();
         let body = serde_json::json!({ "baseSha256": "0".repeat(64), "artifacts": [] }).to_string();
-        let refusal = admit_submission(&base, &body).expect_err("mismatch");
+        let refusal = admit_submission(&base, &cell(), &body).expect_err("mismatch");
         assert_eq!(refusal.code, codes::BASE_MISMATCH);
         assert_eq!(refusal.status, 409);
         assert!(refusal.explanation.contains(base.sha256()));
@@ -533,7 +575,9 @@ mod tests {
         let base = TrustedBase::from_sources(&[UNITS]).unwrap();
         let large = " ".repeat(MAX_PROVISION_BYTES + 1);
         assert_eq!(
-            admit_submission(&base, &large).expect_err("large").status,
+            admit_submission(&base, &cell(), &large)
+                .expect_err("large")
+                .status,
             413
         );
         for body in [
@@ -543,7 +587,9 @@ mod tests {
             r#"{"baseSha256":"x","artifacts":[],"more":1}"#,
         ] {
             assert_eq!(
-                admit_submission(&base, body).expect_err("shape").status,
+                admit_submission(&base, &cell(), body)
+                    .expect_err("shape")
+                    .status,
                 400,
                 "{body}"
             );
@@ -551,7 +597,7 @@ mod tests {
         let nameless =
             serde_json::json!({ "baseSha256": base.sha256(), "artifacts": [{}] }).to_string();
         assert_eq!(
-            admit_submission(&base, &nameless)
+            admit_submission(&base, &cell(), &nameless)
                 .expect_err("nameless")
                 .status,
             400

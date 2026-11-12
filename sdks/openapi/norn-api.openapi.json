@@ -148,7 +148,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/cell:provision": {
@@ -156,8 +161,8 @@
         "tags": [
           "crate::provision"
         ],
-        "summary": "Provision the cell for `scope` on a fresh `engine` from an admitted\nsubmission, in one engine transaction (HOST-PROVISION-ATOMIC): the store\nschema, the scope binding, a fresh cell identity, the definitions, their\nreceipt and the ledger commit together, or nothing.",
-        "description": "The caller has already passed [`authorize`]; `now_ms` is the host clock\n(Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
+        "summary": "Provision the scope's cell from the caller's definitions (owner only).",
+        "description": "One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the\nscope binding, a fresh cell identity, the definitions, their receipt and\nthe ledger commit together, or nothing. The host calls this on a fresh\nengine after [`authorize`] and [`admit_submission`]; `now_ms` is the host\nclock (Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
         "operationId": "provision_cell",
         "parameters": [
           {
@@ -220,6 +225,16 @@
               }
             }
           },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
           "409": {
             "description": "The request was refused: the cell holds other definitions, or the submission names another trusted base.",
             "content": {
@@ -260,7 +275,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}": {
@@ -361,7 +381,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}:retire": {
@@ -481,7 +506,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:admit": {
@@ -582,7 +612,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:install": {
@@ -693,7 +728,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions:list": {
@@ -811,7 +851,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/answer": {
@@ -920,7 +965,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions/{question}/trace": {
@@ -1047,7 +1097,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:evaluate": {
@@ -1148,7 +1203,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/questions:trace": {
@@ -1249,7 +1309,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     }
   },
@@ -25012,6 +25077,13 @@
           }
         },
         "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "hostToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The cell host's own credential, sent to the cell host directly as `Authorization: Bearer <token>`. A published host accepts only a token signed (EdDSA) by the identity service it is configured to trust, issued for at most five minutes and bound to the cell's organization; the token is not bound to an environment. The local development host accepts the session token it writes to the owner-only file `.norn/dev.token`. A caller that reaches the cell through a fronting application (for example Studio's proxy) authenticates to that application by its own means and does not present this token. Without a valid token no route serves: a route that reaches authorization refuses with 403 `authz.denied`, and an unknown route, a wrong method or a malformed query can refuse before that."
       }
     }
   }

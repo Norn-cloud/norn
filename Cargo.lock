@@ -2467,6 +2467,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2 0.10.9",

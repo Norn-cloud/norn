@@ -50,5 +50,9 @@ pub const SOURCES: [&str; 20] = [
 /// # Errors
 /// A compiled-in source is not a reserved-namespace artifact envelope.
 pub fn trusted_base() -> Result<TrustedBase, SeedError> {
-    TrustedBase::from_sources(&SOURCES).map_err(|error| SeedError(format!("trusted base: {error}")))
+    // Parsed and hashed once per process: every cell open needs it.
+    static BASE: std::sync::OnceLock<Result<TrustedBase, String>> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| TrustedBase::from_sources(&SOURCES))
+        .clone()
+        .map_err(|error| SeedError(format!("trusted base: {error}")))
 }

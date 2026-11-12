@@ -9,8 +9,33 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 /// The only repository whose own branches may change workflows or gate files.
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
-/// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 15] = [
+/// Directories pinned to the trusted base, besides every workflow: the set of tracked files
+/// under each, and every such file's type, mode and bytes. The guard crate is one: it is the
+/// trusted lane's own source (rule, wiring, manifest, tests), so no file in it, present or
+/// added, changes without `/approve-gates`. `.cargo/` is the other: Cargo reads its config
+/// from the working directory and every parent whatever `--manifest-path` says, so a
+/// `linker`, `rustc-wrapper` or `[env]` entry there would apply to the trusted build.
+/// [`gate_source_errors`] keeps the guard's sources from reaching outside.
+const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
+
+/// Gate files pinned to the trusted base, besides every workflow and [`GATE_DIRECTORIES`].
+/// A gate file absent from the base must stay absent. The toolchain files are gates although
+/// none exists, as defence in depth: rustup reads them from the working directory, but the
+/// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
+const GATE_FILES: [&str; 26] = [
+    // Python isolation (#513): the base-owned check and its canaries, and every file a gated
+    // Python file loads by explicit path, so none of them can change what a gate decides.
+    "scripts/ci/python_isolation.py",
+    "scripts/ci/test_python_isolation.py",
+    "scripts/verification_attestation.py",
+    "scripts/quint_apalache.py",
+    "scripts/write-verification-result.py",
+    "verification/coverage-v1/validate_result.py",
+    "scripts/importers/erpnext_runtime.py",
+    "verification/kernel-v2/validate.py",
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
@@ -218,6 +243,313 @@ fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
 const MAX_MERGE_GROUP: usize = 64;
 
 /// Validate every workflow using only candidate data, plus exact provenance.
+/// Each [`GATE_DIRECTORIES`] entry whose tracked-file set, or any file's bytes, differs from
+/// the trusted base.
+fn gate_directory_contract(
+    root: &Path,
+    base: &Path,
+    previous: &[String],
+    current: &[String],
+) -> Vec<String> {
+    let mut contract = Vec::new();
+    for directory in GATE_DIRECTORIES {
+        let inside = |path: &&String| path.starts_with(directory);
+        let old: BTreeSet<_> = previous.iter().filter(inside).collect();
+        let new: BTreeSet<_> = current.iter().filter(inside).collect();
+        if old != new {
+            contract.push(format!(
+                "{directory}: gate inventory differs from the trusted base"
+            ));
+        }
+        for path in old.intersection(&new) {
+            if !same_entry(&base.join(path), &root.join(path)) {
+                contract.push(format!(
+                    "{path}: gate contract differs from the trusted base"
+                ));
+            }
+        }
+    }
+    contract
+}
+
+/// Refusals no approval lifts (#513): a symlink anywhere in a gate (a workflow, a gate file, a
+/// gate directory or a file under one) points the trusted lane at bytes outside it, and so
+/// does Cargo configuration that names another file. The trusted build's `.cargo/config.toml`
+/// (or legacy `.cargo/config`) may hold only `[alias]`, and no alias may pass `--config` or
+/// `-Z`: `include`, `paths`, `[patch]`, `[source]`, wrappers, linkers and runners are refused.
+fn gate_entry_errors(root: &Path, current: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    // Every component, not only the last: `scripts/ci` as a symlink redirects `core.sh`.
+    let symlink = |path: &str| {
+        let mut at = root.to_path_buf();
+        Path::new(path).components().any(|component| {
+            at.push(component);
+            at.symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_symlink())
+        })
+    };
+    for directory in GATE_DIRECTORIES {
+        if symlink(directory.trim_end_matches('/')) {
+            errors.push(format!(
+                "{directory}: a gate directory that is a symlink is refused, even with approval"
+            ));
+        }
+    }
+    for path in current.iter().filter(|path| {
+        path.starts_with(".github/workflows/")
+            || GATE_FILES.contains(&path.as_str())
+            || GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory))
+    }) {
+        if symlink(path) {
+            errors.push(format!(
+                "{path}: a symlink in a gate is refused, even with approval"
+            ));
+        }
+    }
+    for path in [".cargo/config.toml", ".cargo/config"] {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        match toml::from_str::<toml::Table>(&text) {
+            Err(error) => errors.push(format!("{path}: Cargo config does not parse: {error}")),
+            Ok(table) => {
+                for key in table.keys().filter(|key| key.as_str() != "alias") {
+                    errors.push(format!(
+                        "{path}: `{key}` is refused in the trusted build's Cargo config, even with approval; only `[alias]` is admitted"
+                    ));
+                }
+                let aliases = table.get("alias").and_then(toml::Value::as_table);
+                for (name, value) in aliases.into_iter().flatten() {
+                    let words: Vec<&str> = match value {
+                        toml::Value::String(text) => text.split_whitespace().collect(),
+                        toml::Value::Array(items) => {
+                            items.iter().filter_map(toml::Value::as_str).collect()
+                        }
+                        toml::Value::Integer(_)
+                        | toml::Value::Float(_)
+                        | toml::Value::Boolean(_)
+                        | toml::Value::Datetime(_)
+                        | toml::Value::Table(_) => vec!["--config"],
+                    };
+                    if words
+                        .iter()
+                        .any(|word| word.starts_with("--config") || word.starts_with("-Z"))
+                    {
+                        errors.push(format!(
+                            "{path}: alias `{name}` passes `--config` or `-Z`, refused even with approval"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    errors
+}
+
+/// Whether `before` and `after` are the same entry: both absent, or both regular files with the
+/// same executable bit and bytes, or both symlinks with the same target. A symlink to identical
+/// content, an exec-bit flip, or a file appearing or disappearing is a difference, as in the
+/// merge-group check's git tree comparison.
+fn same_entry(before: &Path, after: &Path) -> bool {
+    use std::io::ErrorKind;
+    match (before.symlink_metadata(), after.symlink_metadata()) {
+        (Err(old), Err(new)) => {
+            old.kind() == ErrorKind::NotFound && new.kind() == ErrorKind::NotFound
+        }
+        (Ok(old), Ok(new)) if old.is_symlink() && new.is_symlink() => {
+            matches!((std::fs::read_link(before), std::fs::read_link(after)), (Ok(a), Ok(b)) if a == b)
+        }
+        (Ok(old), Ok(new)) if old.is_file() && new.is_file() => {
+            executable(&old) == executable(&new)
+                && matches!((std::fs::read(before), std::fs::read(after)), (Ok(a), Ok(b)) if a == b)
+        }
+        _ => false,
+    }
+}
+
+#[cfg(unix)]
+fn executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// A gated Rust source reaches outside its gate directory only through a direct `include!`,
+/// `include_str!` or `include_bytes!` of one string literal naming a file in a gate directory
+/// or [`GATE_FILES`] that is tracked. Any `path` attribute (`#[path]`, also inside `cfg_attr`),
+/// any other use of an include macro (a `use` rename, a macro-built argument) and a file that
+/// does not tokenize are refused; raw identifiers (`r#include!`, `#[r#path]`) count as the
+/// plain ones. Every `include!` target is scanned too, whatever its extension, since it
+/// compiles as Rust. A macro that builds an attribute (say `#[$m]` with `path = ...`) has to
+/// be defined in a gated file, which is a gated edit, or come from a dependency, which
+/// resolves through the root lockfile: that is the remaining build-closure gap (D95, #513).
+fn gate_source_errors(root: &Path, files: &[String]) -> Vec<String> {
+    let tracked: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let mut errors = Vec::new();
+    let mut queue: Vec<String> = files
+        .iter()
+        .filter(|path| {
+            Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+                && GATE_DIRECTORIES
+                    .iter()
+                    .any(|directory| path.starts_with(directory))
+        })
+        .cloned()
+        .collect();
+    let mut scanned = BTreeSet::new();
+    while let Some(path) = queue.pop() {
+        if !scanned.insert(path.clone()) {
+            continue;
+        }
+        match std::fs::read_to_string(root.join(&path))
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                text.parse::<proc_macro2::TokenStream>()
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(tokens) => {
+                let mut scan = Scan {
+                    path: &path,
+                    tracked: &tracked,
+                    errors: &mut errors,
+                    included: Vec::new(),
+                };
+                scan.tokens(tokens, false);
+                queue.extend(scan.included);
+            }
+            Err(error) => errors.push(format!("{path}: gated source does not tokenize: {error}")),
+        }
+    }
+    errors
+}
+
+/// One gated source's token walk: refusals go to `errors`, `include!` targets to `included`.
+struct Scan<'a> {
+    path: &'a str,
+    tracked: &'a BTreeSet<&'a str>,
+    errors: &'a mut Vec<String>,
+    included: Vec<String>,
+}
+
+impl Scan<'_> {
+    fn tokens(&mut self, tokens: proc_macro2::TokenStream, in_attribute: bool) {
+        use proc_macro2::{Delimiter, TokenTree};
+        let path = self.path;
+        let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+        for (index, token) in tokens.iter().enumerate() {
+            let next = tokens.get(index.saturating_add(1));
+            let name = match token {
+                TokenTree::Ident(ident) => {
+                    let text = ident.to_string();
+                    text.strip_prefix("r#")
+                        .map_or_else(|| text.clone(), str::to_owned)
+                }
+                TokenTree::Group(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => String::new(),
+            };
+            match token {
+                TokenTree::Ident(_) if in_attribute && name == "path" => {
+                    if matches!(next, Some(TokenTree::Punct(punct)) if punct.as_char() == '=') {
+                        self.errors.push(format!(
+                            "{path}: a `path` attribute is refused in a gated source"
+                        ));
+                    }
+                }
+                TokenTree::Ident(_)
+                    if ["include", "include_str", "include_bytes"].contains(&name.as_str()) =>
+                {
+                    let ident = &name;
+                    let argument = match (next, tokens.get(index.saturating_add(2))) {
+                        (Some(TokenTree::Punct(bang)), Some(TokenTree::Group(group)))
+                            if bang.as_char() == '!' =>
+                        {
+                            let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+                            match inner.as_slice() {
+                                [TokenTree::Literal(literal)] => {
+                                    syn::parse_str::<syn::LitStr>(&literal.to_string())
+                                        .ok()
+                                        .map(|literal| literal.value())
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    match argument.map(|target| included_path(path, &target)) {
+                        Some(Some(target)) if is_gated(&target, self.tracked) => {
+                            if ident == "include" {
+                                self.included.push(target);
+                            }
+                        }
+                        Some(Some(target)) => self.errors.push(format!(
+                            "{path}: `{ident}!` of {target}, untracked or outside every gate, is refused"
+                        )),
+                        _ => self.errors.push(format!(
+                            "{path}: `{ident}` is used other than as a direct `{ident}!(\"<gated file>\")`"
+                        )),
+                    }
+                }
+                TokenTree::Group(group) => {
+                    // `#[...]`, or `#![...]`: the bracket group right after `#` or `#!`.
+                    let punct = |offset: usize, wanted: char| {
+                        index
+                            .checked_sub(offset)
+                            .and_then(|at| tokens.get(at))
+                            .is_some_and(|token| {
+                                matches!(token, TokenTree::Punct(punct) if punct.as_char() == wanted)
+                            })
+                    };
+                    let attribute = matches!(group.delimiter(), Delimiter::Bracket)
+                        && (punct(1, '#') || (punct(1, '!') && punct(2, '#')));
+                    self.tokens(group.stream(), in_attribute || attribute);
+                }
+                TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+            }
+        }
+    }
+}
+
+/// `target`, as `include*!` in `source` resolves it, relative to the repository root; `None`
+/// for an absolute path or one that climbs above the root.
+fn included_path(source: &str, target: &str) -> Option<String> {
+    use std::path::Component;
+    if Path::new(target).is_absolute() {
+        return None;
+    }
+    let mut parts: Vec<String> = Path::new(source)
+        .parent()?
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    for component in Path::new(target).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// A tracked file in [`GATE_FILES`] or a gate directory.
+fn is_gated(path: &str, tracked: &BTreeSet<&str>) -> bool {
+    tracked.contains(path)
+        && (GATE_FILES.contains(&path)
+            || GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory)))
+}
+
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
 pub fn run(root: &Path, base: &Path) -> Vec<String> {
@@ -257,27 +589,24 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
         contract.push("workflow inventory differs from the trusted base".to_owned());
     }
     for path in old.intersection(&new) {
-        match (
-            std::fs::read(base.join(path)),
-            std::fs::read(root.join(path)),
-        ) {
-            (Ok(before), Ok(after)) if before == after => {}
-            _ => contract.push(format!(
+        if !same_entry(&base.join(path), &root.join(path)) {
+            contract.push(format!(
                 "{path}: workflow contract differs from the trusted base"
-            )),
+            ));
         }
     }
+    // A gate file absent from the base must stay absent (and untracked bytes count: the
+    // trusted build reads the working tree, not the index).
     for path in GATE_FILES {
-        match (
-            std::fs::read(base.join(path)),
-            std::fs::read(root.join(path)),
-        ) {
-            (Ok(before), Ok(after)) if before == after => {}
-            _ => contract.push(format!(
+        if !same_entry(&base.join(path), &root.join(path)) {
+            contract.push(format!(
                 "{path}: gate contract differs from the trusted base"
-            )),
+            ));
         }
     }
+    contract.extend(gate_directory_contract(root, base, &previous, &current));
+    errors.extend(gate_source_errors(root, &current));
+    errors.extend(gate_entry_errors(root, &current));
     let approval = evidence
         .filter(|_| !contract.is_empty())
         .map(|path| approval_of(path, root));
@@ -400,6 +729,7 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         .ok_or("merge group evidence has no pull requests")?;
     let gates: Vec<&str> = [".github/workflows"]
         .into_iter()
+        .chain(GATE_DIRECTORIES)
         .chain(GATE_FILES)
         .collect();
     let mut approvers = Vec::new();
@@ -701,6 +1031,134 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Symlinks in a gate and Cargo config indirection are refused whatever the approval.
+    #[cfg(unix)]
+    #[test]
+    fn gate_entries_refuse_symlinks_and_cargo_indirection() {
+        use std::os::unix::fs::symlink;
+        let tree = |config: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir_all(dir.path().join(".cargo")).expect("mkdir");
+            std::fs::write(dir.path().join(".cargo/config.toml"), config).expect("write");
+            dir
+        };
+        let run = |dir: &tempfile::TempDir, current: &[&str]| {
+            let current: Vec<String> = current.iter().map(|path| (*path).to_owned()).collect();
+            super::gate_entry_errors(dir.path(), &current)
+        };
+        let plain = tree("[alias]\nxtask = \"run --locked --bin xtask --\"\n");
+        assert_eq!(run(&plain, &[".cargo/config.toml"]), Vec::<String>::new());
+        for (config, wanted) in [
+            ("include = \"other.toml\"\n", "`include` is refused"),
+            (
+                "[[include]]\npath = \"other.toml\"\n",
+                "`include` is refused",
+            ),
+            ("paths = [\"../syn\"]\n", "`paths` is refused"),
+            (
+                "[patch.crates-io]\nsyn = { path = \"x\" }\n",
+                "`patch` is refused",
+            ),
+            (
+                "[build]\nrustc-wrapper = \"/tmp/w\"\n",
+                "`build` is refused",
+            ),
+            ("[env]\nPATH = \"/tmp\"\n", "`env` is refused"),
+            (
+                "[alias]\nxtask = \"run --config other.toml\"\n",
+                "alias `xtask` passes",
+            ),
+            (
+                "[alias]\nxtask = [\"run\", \"-Zunstable-options\"]\n",
+                "alias `xtask` passes",
+            ),
+        ] {
+            let errors = run(&tree(config), &[".cargo/config.toml"]);
+            assert!(
+                errors.iter().any(|error| error.contains(wanted)),
+                "{config}: {errors:?}"
+            );
+        }
+        // A symlink as a file in a gate directory, as a gate file, as a workflow, and as the
+        // gate directory itself.
+        let linked = tree("[alias]\n");
+        std::fs::write(linked.path().join("target.txt"), b"x").expect("write");
+        for path in [
+            ".cargo/linked.toml",
+            "scripts/ci/core.sh",
+            ".github/workflows/core.yml",
+        ] {
+            if path == "scripts/ci/core.sh" {
+                // A symlinked parent directory, the file itself real.
+                let real = linked.path().join("real-ci");
+                std::fs::create_dir_all(&real).expect("mkdir");
+                std::fs::write(real.join("core.sh"), b"x").expect("write");
+                std::fs::create_dir_all(linked.path().join("scripts")).expect("mkdir");
+                symlink(&real, linked.path().join("scripts/ci")).expect("symlink");
+                let errors = run(&linked, &[path]);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                    "parent {path}: {errors:?}"
+                );
+                continue;
+            }
+            std::fs::create_dir_all(linked.path().join(path).parent().expect("parent"))
+                .expect("mkdir");
+            symlink(linked.path().join("target.txt"), linked.path().join(path)).expect("symlink");
+            let errors = run(&linked, &[path]);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                "{path}: {errors:?}"
+            );
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(directory.path().join("real")).expect("mkdir");
+        symlink(
+            directory.path().join("real"),
+            directory.path().join(".cargo"),
+        )
+        .expect("symlink");
+        let errors = super::gate_entry_errors(directory.path(), &[]);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(".cargo/: a gate directory that is a symlink")),
+            "{errors:?}"
+        );
+    }
+
+    /// An entry is the same only with the same type, exec bit and bytes, or link target;
+    /// both absent is the same, one absent is not.
+    #[cfg(unix)]
+    #[test]
+    fn same_entry_compares_type_mode_and_bytes() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let at = |name: &str| dir.path().join(name);
+        std::fs::write(at("a"), b"x").expect("write");
+        std::fs::write(at("b"), b"x").expect("write");
+        std::fs::write(at("c"), b"y").expect("write");
+        std::fs::write(at("x"), b"x").expect("write");
+        std::fs::set_permissions(at("x"), std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        symlink(at("a"), at("l")).expect("symlink");
+        symlink(at("a"), at("m")).expect("symlink");
+        assert!(super::same_entry(&at("a"), &at("b")));
+        assert!(super::same_entry(&at("l"), &at("m")));
+        assert!(super::same_entry(&at("absent"), &at("gone")));
+        assert!(!super::same_entry(&at("a"), &at("c")), "bytes");
+        assert!(!super::same_entry(&at("a"), &at("x")), "exec bit");
+        assert!(
+            !super::same_entry(&at("a"), &at("l")),
+            "symlink to identical bytes"
+        );
+        assert!(!super::same_entry(&at("absent"), &at("a")), "appears");
+        assert!(!super::same_entry(&at("a"), &at("absent")), "disappears");
+    }
+
     #[test]
     fn runner_routing_rejects_superseded_runner_contracts() {
         let path = ".github/workflows/ci-policy.yml";
@@ -826,18 +1284,153 @@ mod tests {
     }
 
     /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
-    /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is not a
-    /// gate file on purpose: flipping a verdict in it fails both tests unless the gate-pinned
-    /// rule changes too, and that change needs `/approve-gates`.
+    /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is a gate
+    /// file, so any edit to it needs `/approve-gates`; `validate.py`'s gate-pinned
+    /// `PULL_REQUEST_CONCURRENCY_CASES` also stops an approved edit losing a case, flipping a
+    /// verdict or changing a case's input without that list changing too. This file is in
+    /// a gate directory, and `core.sh`'s cheap phase requires both parity tests to run and pass.
     const CONCURRENCY_CASES: &str =
         include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
+    const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");
+
+    /// `validate.py`'s `PULL_REQUEST_CONCURRENCY_CASES`, one `"name": ["verdict", "sha256"],`
+    /// per line: name to (verdict, input digest).
+    fn pinned_concurrency_cases() -> super::BTreeMap<String, (String, String)> {
+        let block = VALIDATOR
+            .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
+            .and_then(|(_, rest)| rest.split_once("\n}\n"))
+            .map(|(block, _)| block)
+            .unwrap_or_default();
+        let entries = block
+            .lines()
+            .map(|line| line.trim().trim_end_matches(','))
+            .collect::<Vec<_>>();
+        let parsed = serde_json::from_str::<super::BTreeMap<String, (String, String)>>(&format!(
+            "{{{}}}",
+            entries.join(",")
+        ));
+        assert!(parsed.is_ok(), "PULL_REQUEST_CONCURRENCY_CASES: {parsed:?}");
+        let pinned = parsed.unwrap_or_default();
+        // One entry per line, no duplicate names: the parsed pin is the whole block.
+        assert!(
+            !pinned.is_empty() && pinned.len() == entries.len(),
+            "PULL_REQUEST_CONCURRENCY_CASES: {} entries parsed from {} lines",
+            pinned.len(),
+            entries.len()
+        );
+        pinned
+    }
+
+    /// `validate.py`'s `concurrency_case_digest`: sha256 of compact JSON
+    /// `[on, concurrency, source]`, null when absent.
+    fn concurrency_case_digest(case: &Value) -> String {
+        use sha2::{Digest, Sha256};
+        let input = Value::Array(vec![
+            case["on"].clone(),
+            case["concurrency"].clone(),
+            case["source"].clone(),
+        ])
+        .to_string();
+        format!("{:x}", Sha256::digest(input.as_bytes()))
+    }
+
+    /// Each gate-pinned case the fixture lost, flipped or changed, as `"<name>: <problem>"`.
+    /// Every copy of a pinned name must match; unpinned cases are free.
+    fn pinned_case_problems(cases: &[Value]) -> Vec<String> {
+        pinned_concurrency_cases()
+            .into_iter()
+            .filter_map(|(name, (expect, digest))| {
+                let found = cases
+                    .iter()
+                    .filter(|case| case["name"].as_str() == Some(name.as_str()))
+                    .collect::<Vec<_>>();
+                let problem = if found.is_empty() {
+                    "lost"
+                } else if found.iter().any(|case| case["expect"] != expect.as_str()) {
+                    "flipped"
+                } else if found
+                    .iter()
+                    .any(|case| concurrency_case_digest(case) != digest)
+                {
+                    "input changed"
+                } else {
+                    return None;
+                };
+                Some(format!("{name}: {problem}"))
+            })
+            .collect()
+    }
+
+    fn fixture_cases() -> Vec<Value> {
+        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
+        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
+        parsed.unwrap_or_default()["cases"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_parity_fixture_keeps_every_gate_pinned_case() {
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
+        // The fixture may gain correct, unpinned cases first and last; every canary below
+        // runs on that grown list too, choosing its case by name, never by position.
+        let mut extra = cases.first().cloned().unwrap_or_default();
+        extra["name"] = Value::from("an unpinned case added later");
+        let mut grown = vec![extra.clone()];
+        grown.extend(cases.iter().cloned());
+        grown.push(extra);
+        assert_eq!(pinned_case_problems(&grown), Vec::<String>::new());
+        for list in [&cases, &grown] {
+            for name in pinned_concurrency_cases().into_keys() {
+                let named = |case: &Value| case["name"].as_str() == Some(name.as_str());
+                let deleted = list
+                    .iter()
+                    .filter(|case| !named(case))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    pinned_case_problems(&deleted),
+                    vec![format!("{name}: lost")]
+                );
+                let mut flipped = list.clone();
+                for case in flipped.iter_mut().filter(|case| named(case)) {
+                    let other = if case["expect"] == "accept" {
+                        "reject"
+                    } else {
+                        "accept"
+                    };
+                    case["expect"] = Value::from(other);
+                }
+                assert_eq!(
+                    pinned_case_problems(&flipped),
+                    vec![format!("{name}: flipped")]
+                );
+                // Changing any part of the input (dropping `source` included) is caught.
+                for field in ["on", "concurrency", "source"] {
+                    let mut changed = list.clone();
+                    for case in changed.iter_mut().filter(|case| named(case)) {
+                        case[field] = if case[field].is_null() {
+                            Value::from("changed\n")
+                        } else {
+                            Value::Null
+                        };
+                    }
+                    assert_eq!(
+                        pinned_case_problems(&changed),
+                        vec![format!("{name}: input changed")],
+                        "{field}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn pull_request_concurrency_matches_the_shared_parity_fixture() {
-        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
-        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
-        let fixture = parsed.unwrap_or_default();
-        let cases = fixture["cases"].as_array().cloned().unwrap_or_default();
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
         let mut verdicts = std::collections::BTreeSet::new();
         for case in &cases {
             let text = |key: &str| case[key].as_str().unwrap_or_default().to_owned();
