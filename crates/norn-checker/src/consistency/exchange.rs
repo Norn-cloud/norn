@@ -36,7 +36,7 @@ impl Exchange<'_> {
         join(&[self.source, self.mapping, self.target], |_| true)
     }
 
-    fn validate(&self) -> Result<(), ChaseError> {
+    pub(crate) fn validate(&self) -> Result<(), ChaseError> {
         if let Some(egd) = self
             .mapping
             .dependencies

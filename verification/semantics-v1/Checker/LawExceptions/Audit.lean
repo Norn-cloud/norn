@@ -7,3 +7,4 @@ import Checker.LawExceptions.Proof
 #print axioms Norn.Checker.LawExceptions.check_shape_sound
 #print axioms Norn.Checker.LawExceptions.lifted_correct
 #print axioms Norn.Checker.LawExceptions.lifted_sound
+#print axioms Norn.Checker.LawExceptions.applied_sound

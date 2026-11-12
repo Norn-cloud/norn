@@ -1,0 +1,14 @@
+Norn.Checker.Preservation.check_correct : ∀ (theory : Aeneas.Std.Slice norn_checker_preservation.Dep)
+  (rules : Aeneas.Std.Slice norn_checker_preservation.Rule) (body : Aeneas.Std.Slice norn_checker_preservation.Atom)
+  (l r : Aeneas.Std.Usize) (traces : Aeneas.Std.Slice (Aeneas.Std.alloc.vec.Vec norn_checker_preservation.Step)),
+  norn_checker_preservation.check theory rules body l r traces = Aeneas.Std.Result.ok true →
+    Norn.Sem.Exchange.check (List.map Norn.Checker.Preservation.depSem ↑theory)
+        (List.map Norn.Checker.Preservation.ruleSem ↑rules) (Norn.Checker.Preservation.atomsSem ↑body) (↑l) (↑r)
+        (List.map Norn.Checker.Preservation.traceSem ↑traces) =
+      true
+Norn.Checker.Preservation.check_sound : ∀ (theory : Aeneas.Std.Slice norn_checker_preservation.Dep)
+  (rules : Aeneas.Std.Slice norn_checker_preservation.Rule) (body : Aeneas.Std.Slice norn_checker_preservation.Atom)
+  (l r : Aeneas.Std.Usize) (traces : Aeneas.Std.Slice (Aeneas.Std.alloc.vec.Vec norn_checker_preservation.Step)),
+  norn_checker_preservation.check theory rules body l r traces = Aeneas.Std.Result.ok true →
+    Norn.Sem.Exchange.Preserves (List.map Norn.Checker.Preservation.depSem ↑theory)
+      (List.map Norn.Checker.Preservation.ruleSem ↑rules) (Norn.Checker.Preservation.atomsSem ↑body) ↑l ↑r

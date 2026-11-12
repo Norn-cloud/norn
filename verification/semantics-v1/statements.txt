@@ -1,0 +1,60 @@
+@Norn.Sem.Exact.Dec.canonical_unique : ∀ {d₁ d₂ : Norn.Sem.Exact.Dec},
+  d₁.Canonical → d₂.Canonical → d₁.val = d₂.val → d₁ = d₂
+Norn.Sem.Exact.Dec.exists_canonical : ∀ (s : ℕ) (m : ℤ),
+  ∃ c, c.Canonical ∧ c.val = { mantissa := m, scale := s }.val ∧ |c.mantissa| ≤ |m| ∧ c.scale ≤ s
+Norn.Sem.Exact.Dec.canonical_in_range : ∀ (d : Norn.Sem.Exact.Dec),
+  d.InRange → ∃ c, c.Canonical ∧ c.val = d.val ∧ c.InRange
+@Norn.Sem.Exact.IsExact.existsUnique_canonical : ∀ {q : ℚ},
+  Norn.Sem.Exact.IsExact q → ∃! c, c.Canonical ∧ c.val = q ∧ c.InRange
+@Norn.Sem.Exact.exactly_eq_some : ∀ {q r : ℚ}, Norn.Sem.Exact.exactly q = some r ↔ Norn.Sem.Exact.IsExact q ∧ r = q
+@Norn.Sem.Value.field_eq_some : ∀ {fields : List (String × Norn.Sem.Value)},
+  (Norn.Sem.Value.object fields).WF →
+    ∀ {k : String} {v : Norn.Sem.Value}, (Norn.Sem.Value.object fields).field k = some v ↔ (k, v) ∈ fields
+@Norn.Sem.Law.Tree.ReachesIn.unique : ∀ {Id σ : Type} {T : Norn.Sem.Law.Tree Id σ},
+  T.ids.Nodup → T.root ∉ T.ids → ∀ {i : Id} {k₁ k₂ : ℕ}, T.ReachesIn i k₁ → T.ReachesIn i k₂ → k₁ = k₂
+@Norn.Sem.Law.Tree.ReachesIn.le_length : ∀ {Id σ : Type} [DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.ids.Nodup → T.root ∉ T.ids → ∀ {i : Id} {k : ℕ}, T.ReachesIn i k → k ≤ T.nodes.length
+@Norn.Sem.Law.Tree.lifts_stable : ∀ {Id σ : Type} [inst : DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.WellFormed →
+    ∀ (x : σ) (j : ℕ) (v : Id) (d : ℕ),
+      T.ReachesIn v d → T.nodes.length ≤ d + j → ∀ (f : ℕ), j ≤ f → T.lifts x f v = T.lifts x j v
+@Norn.Sem.Law.Tree.stable_exists : ∀ {Id σ : Type} [DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.WellFormed → ∀ (x : σ), ∃ A, T.Stable x A
+@Norn.Sem.Law.Tree.stable_unique : ∀ {Id σ : Type} [DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.WellFormed → ∀ {x : σ} {A B : Id → Prop}, T.Stable x A → T.Stable x B → ∀ e ∈ T.nodes, A e.id ↔ B e.id
+@Norn.Sem.Law.Tree.lifted_iff : ∀ {Id σ : Type} [inst : DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.WellFormed → ∀ {x : σ} {A : Id → Prop}, T.Stable x A → (T.LiftedBy A ↔ T.lifts x (T.nodes.length + 1) T.root = true)
+@Norn.Sem.Law.Tree.lifts_needs_top_condition : ∀ {Id σ : Type} [inst : DecidableEq Id] (T : Norn.Sem.Law.Tree Id σ)
+  (x : σ) (f : ℕ), T.lifts x f T.root = true → ∃ c ∈ T.nodes, c.overrides = T.root ∧ c.condition x = true
+Norn.Sem.Law.Tree.nested_exception_can_lift : ∃ T T',
+  T.WellFormed ∧
+    T'.WellFormed ∧
+      T'.root = T.root ∧
+        (∀ e ∈ T.nodes, e ∈ T'.nodes) ∧
+          T.lifts () (T.nodes.length + 1) T.root = false ∧ T'.lifts () (T'.nodes.length + 1) T'.root = true
+@Norn.Sem.Law.Tree.AboveHolds.inv : ∀ {Id σ : Type} {T : Norn.Sem.Law.Tree Id σ} {x : σ} {i : Id},
+  T.AboveHolds x i →
+    (∃ e ∈ T.nodes, e.id = i ∧ e.overrides = T.root) ∨
+      ∃ e ∈ T.nodes, ∃ c ∈ T.nodes, e.id = i ∧ e.overrides = c.id ∧ c.condition x = true ∧ T.AboveHolds x c.id
+@Norn.Sem.Law.binds_bare : ∀ {Id σ : Type} [inst : DecidableEq Id] (L : Norn.Sem.Law Id σ) (x : σ),
+  L.binds x = true → L.bare.binds x = true
+@Norn.Sem.Law.holdsOn_of_bare : ∀ {Id σ : Type} [inst : DecidableEq Id] (L : Norn.Sem.Law Id σ) (tr : ℕ → σ),
+  L.bare.holdsOn tr → L.holdsOn tr
+Norn.Sem.Obligation.Evidence.admits_iff : ∀ (e : Norn.Sem.Obligation.Evidence),
+  e.admits = true ↔ e = Norn.Sem.Obligation.Evidence.proved ∨ e = Norn.Sem.Obligation.Evidence.exhaustiveFinite
+Norn.Sem.Obligation.admitAll_sound : ∀ (os : List Norn.Sem.Obligation.Instance),
+  (∀ o ∈ os, o.family.Sound) → Norn.Sem.Obligation.admitAll os = true → ∀ o ∈ os, o.family.Holds o.input
+@Norn.Sem.Law.Tree.WellFormed.unambiguous : ∀ {Id σ : Type} [inst : DecidableEq Id] {T : Norn.Sem.Law.Tree Id σ},
+  T.WellFormed → T.Unambiguous
+@Norn.Sem.Obligation.exceptionTrees_sound : ∀ {Id σ : Type} [inst : DecidableEq Id]
+  (check : Norn.Sem.Law.Tree Id σ → Bool),
+  (∀ (T : Norn.Sem.Law.Tree Id σ), check T = true → T.WellFormed) →
+    (Norn.Sem.Obligation.exceptionTrees Id σ check).Sound
+Norn.Sem.Exchange.check_sound : ∀ (theory : List Norn.Sem.Exchange.Dep) (rules : List Norn.Sem.Exchange.Rule)
+  (body : List Norn.Sem.Exchange.Atom) (l r : ℕ) (traces : List (List Norn.Sem.Exchange.Step)),
+  Norn.Sem.Exchange.check theory rules body l r traces = true → Norn.Sem.Exchange.Preserves theory rules body l r
+Norn.Sem.Exchange.check_accepts_copy : Norn.Sem.Exchange.check
+    [Norn.Sem.Exchange.Dep.egd [{ rel := 0, args := [0, 1] }] 0 1]
+    [{ body := [{ rel := 0, args := [0, 1] }], head := { rel := 1, args := [0, 1] } }] [{ rel := 1, args := [0, 1] }] 0
+    1 [[{ dep := 0, asg := [2, 3] }]] =
+  true

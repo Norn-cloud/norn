@@ -53,7 +53,10 @@
     "verification/kernel-proof-v1/Decider/Reference.lean": "scripts/verify-kernel-decider-aeneas.sh",
     "verification/kernel-proof-v1/Decider/FoldProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
     "verification/kernel-proof-v1/Decider/StepProof.lean": "scripts/verify-kernel-decider-aeneas.sh",
-    "verification/kernel-proof-v1/Decider/Probe.lean": "scripts/verify-kernel-decider-aeneas.sh"
+    "verification/kernel-proof-v1/Decider/Probe.lean": "scripts/verify-kernel-decider-aeneas.sh",
+    "verification/semantics-v1/Checker/Preservation/Audit.lean": "scripts/verify-preservation-aeneas.sh",
+    "verification/semantics-v1/Checker/Preservation/Proof.lean": "scripts/verify-preservation-aeneas.sh",
+    "verification/semantics-v1/NornSem/Exchange.lean": "scripts/verify-semantics-lean.sh"
   },
   "claimPolicy": "Only implementation_proved means correspondence to production code. Reference proofs, bounded models, static projections, and tests remain separately named evidence.",
   "statusVocabulary": [
