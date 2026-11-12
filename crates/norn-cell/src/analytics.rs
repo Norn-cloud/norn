@@ -772,6 +772,9 @@ pub struct PageRequest {
     pub filters: Vec<PageClause>,
     /// The order before the identity tie-break.
     pub sort: Vec<PageKey>,
+    /// Only these identities, when any are named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
     /// Rows skipped in that order.
     pub offset: u64,
     /// Rows returned at most.

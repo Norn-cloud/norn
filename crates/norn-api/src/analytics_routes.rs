@@ -636,9 +636,7 @@ pub fn page_objects<E: SqlEngine>(
     transport: &dyn Transport,
 ) -> Result<crate::objects::NornObjectQueryPage, Refusal> {
     use crate::object_query::{self, Cursor};
-    use crate::objects::{
-        NornAppliedQuery, NornObjectQueryPage, NornQueriedRecord, NornQueryTotal,
-    };
+    use crate::objects::{NornAppliedQuery, NornObjectQueryPage, NornQueryTotal};
     use norn_cell::analytics::{PageKey, PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let actor = actor.unwrap_or_default();
@@ -707,6 +705,7 @@ pub fn page_objects<E: SqlEngine>(
                 source: source.clone(),
                 filters,
                 sort,
+                ids: Vec::new(),
                 offset,
                 limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
             },
@@ -745,28 +744,7 @@ pub fn page_objects<E: SqlEngine>(
     let records = page
         .rows
         .into_iter()
-        .map(|row| {
-            let read = if values {
-                Some(
-                    row.values
-                        .iter()
-                        .map(|(id, value)| Ok((id.clone(), runtime_value(value)?)))
-                        .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
-                        .map_err(Refusal::host)?,
-                )
-            } else {
-                None
-            };
-            Ok(NornQueriedRecord {
-                object_type: object_type.to_owned(),
-                id: row.id,
-                scope: scope_key.clone(),
-                version: read.as_ref().map(|_| row.version),
-                withheld: read.is_none(),
-                values: read,
-                withheld_properties: Vec::new(),
-            })
-        })
+        .map(|row| queried(object_type, &scope_key, row, values))
         .collect::<Result<Vec<_>, Refusal>>()?;
     Ok(NornObjectQueryPage {
         object_type: object_type.to_owned(),
@@ -782,6 +760,85 @@ pub fn page_objects<E: SqlEngine>(
             approximate: false,
         }),
     })
+}
+
+/// One dataset row as the grid shows it: withheld (no values, no version)
+/// for a caller without Values.
+fn queried(
+    object_type: &str,
+    scope_key: &str,
+    row: norn_cell::analytics::PageRow,
+    values: bool,
+) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+    let read = if values {
+        Some(
+            row.values
+                .iter()
+                .map(|(id, value)| Ok((id.clone(), runtime_value(value)?)))
+                .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
+                .map_err(Refusal::host)?,
+        )
+    } else {
+        None
+    };
+    Ok(crate::objects::NornQueriedRecord {
+        object_type: object_type.to_owned(),
+        id: row.id,
+        scope: scope_key.to_owned(),
+        version: read.as_ref().map(|_| row.version),
+        withheld: read.is_none(),
+        values: read,
+        withheld_properties: Vec::new(),
+    })
+}
+
+/// HOST-READ-3 over a loaded dataset: one row by identity, as
+/// `GET /v1/objects/{type}/{id}` shows it, from the tenant's engine.
+///
+/// # Errors
+/// A denied gate (one opaque 403), an absent row (404, as an absent object),
+/// or an unreachable engine.
+pub fn record_object<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    (object_type, id): (&str, &str),
+    access: &dyn ObjectAccess,
+    transport: &dyn Transport,
+) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+    use norn_cell::analytics::{PageRequest, PageResponse};
+    let values = uniform_gate(host, scope, actor, object_type, access)?;
+    let guard = host.cell()?;
+    let store = guard.store();
+    let (source, _snapshot) = store
+        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
+        .map_err(engine_failure)?;
+    let tenant = TenantId::of_scope(&host.scope().key());
+    let call = EngineCall::new(
+        "page",
+        &PageRequest {
+            tenant: tenant.clone(),
+            source: source.clone(),
+            filters: Vec::new(),
+            sort: Vec::new(),
+            ids: vec![id.to_owned()],
+            offset: 0,
+            limit: 1,
+        },
+    )
+    .map_err(engine_failure)?;
+    let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
+        .map_err(engine_failure)?;
+    if answer.status != 200 {
+        return Err(engine_failure(refused(&answer.body)));
+    }
+    let page: PageResponse = decode(&answer.body).map_err(engine_failure)?;
+    let row = page
+        .rows
+        .into_iter()
+        .next()
+        .ok_or_else(crate::object_routes::not_found)?;
+    queried(object_type, &host.scope().key(), row, values)
 }
 
 /// One parsed grid clause as the engine evaluates it: the same operator,

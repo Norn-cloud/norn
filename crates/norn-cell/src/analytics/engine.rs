@@ -363,6 +363,9 @@ impl Engine {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
             let mut conditions = vec![scope.population.clone()];
+            if !request.ids.is_empty() {
+                conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
+            }
             for clause in &request.filters {
                 conditions.push(page_clause(scope.column(&clause.column)?, clause)?);
             }

@@ -1389,6 +1389,7 @@ mod sources_pack {
                 source: source.clone(),
                 filters: Vec::new(),
                 sort: Vec::new(),
+                ids: Vec::new(),
                 offset: 0,
                 limit: 10,
             })
@@ -1535,6 +1536,7 @@ mod alias_names {
                         column: id.clone(),
                         descending: true,
                     }],
+                    ids: vec!["k1".into(), "k0".into(), "k2".into()],
                     offset: 1,
                     limit: 1,
                 })
@@ -1552,6 +1554,7 @@ mod alias_names {
                     operands: vec![PageOperand::Text("label-2".into())],
                 }],
                 sort: Vec::new(),
+                ids: Vec::new(),
                 offset: 0,
                 limit: 10,
             })

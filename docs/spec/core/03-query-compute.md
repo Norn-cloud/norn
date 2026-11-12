@@ -237,7 +237,8 @@ property tests run both at the same frontier.
   row withheld and no clause matches. A cursor is an offset bound to the
   load, the query, the scope and the caller; a reload since it is
   `object.snapshot_moved`. A sort or filter has no scan bound, and the total
-  is exact (named scenario
+  is exact. `GET /v1/objects/{type}/{id}` reads one dataset row the same way
+  (named scenario
   `a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows`).
 - **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
   sha256)`; every row is numbered from its file, so each number traces to

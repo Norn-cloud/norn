@@ -1201,6 +1201,38 @@ pub fn analytics<E: SqlEngine>(
             request.query,
         )));
     }
+    // One dataset row by identity; a row's links, history and findings stay
+    // the cell's, which has none for it.
+    let row = request
+        .path
+        .strip_prefix("/v1/objects/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(kind, id)| {
+            request.method == "GET"
+                && !kind.is_empty()
+                && !id.is_empty()
+                && !id.contains('/')
+                && !kind.contains(':')
+                && decoded(kind).is_ok_and(|kind| {
+                    norn_api::analytics_routes::serves_records(host, &kind).unwrap_or(false)
+                })
+        });
+    if let Some((kind, id)) = row {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        let answer = scope_of(request.query).and_then(|scope| {
+            let (kind, id) = (decoded(kind)?, decoded(id)?);
+            document_json(&norn_api::analytics_routes::record_object(
+                host,
+                &scope,
+                actor.as_deref(),
+                (&kind, &id),
+                &CellObjectAccess,
+                transport,
+            )?)
+        });
+        return Some(respond(answer));
+    }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }

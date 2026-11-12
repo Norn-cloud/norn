@@ -373,6 +373,42 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
                 }
             }
         }
+        // A row of the grid reads alone by its identity; an absent one is 404.
+        let listed: Value = serde_json::from_str(
+            &get(
+                &host,
+                &principals,
+                &transport,
+                ADMIN,
+                &path,
+                &query(None, None),
+            )
+            .0
+            .body,
+        )
+        .unwrap();
+        let first = &listed["records"][0];
+        let (one, routed) = get(
+            &host,
+            &principals,
+            &transport,
+            ADMIN,
+            &format!("{path}/{}", encode(first["id"].as_str().unwrap())),
+            SCOPE,
+        );
+        assert!(routed, "{name}: a dataset row is read from the engine");
+        assert_eq!(one.status, 200, "{name}: {}", one.body);
+        let alone: Value = serde_json::from_str(&one.body).unwrap();
+        assert_eq!(alone["values"], first["values"], "{name}");
+        let (absent, _) = get(
+            &host,
+            &principals,
+            &transport,
+            ADMIN,
+            &format!("{path}/0"),
+            SCOPE,
+        );
+        assert_eq!(absent.status, 404, "{name}: {}", absent.body);
         let (_, viewer_total, viewer_withheld) = rows(&viewer_before);
         let (_, engine_total, engine_withheld) = rows(
             &get(
