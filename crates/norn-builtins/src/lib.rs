@@ -129,11 +129,11 @@ pub fn registered_decision() -> Result<Registered, RegistryError> {
     Registered::new(host_manifest(&HostFunction {
         id: decision::FUNCTION_ID,
         version: decision::VERSION,
-        schemas: (
-            decision::INPUT_SCHEMA,
-            decision::OUTPUT_SCHEMA,
-            decision::ERROR_SCHEMA,
-        ),
+        schemas: [
+            ("norn.decision.input", decision::INPUT_SCHEMA),
+            ("norn.decision.output", decision::OUTPUT_SCHEMA),
+            ("norn.decision.error", decision::ERROR_SCHEMA),
+        ],
         max_input_bytes: decision::MAX_REQUEST_BYTES,
     })?)
 }
@@ -146,21 +146,21 @@ pub fn registered_action() -> Result<Registered, RegistryError> {
     Registered::new(host_manifest(&HostFunction {
         id: action::FUNCTION_ID,
         version: action::VERSION,
-        schemas: (
-            action::INPUT_SCHEMA,
-            action::OUTPUT_SCHEMA,
-            action::ERROR_SCHEMA,
-        ),
+        schemas: [
+            ("norn.action.input", action::INPUT_SCHEMA),
+            ("norn.action.output", action::OUTPUT_SCHEMA),
+            ("norn.action.error", action::ERROR_SCHEMA),
+        ],
         max_input_bytes: action::MAX_INPUT_BYTES,
     })?)
 }
 
 /// A compiled-in host Function: its identity, its input, output and error
-/// schema documents, and its input bound.
+/// schemas (each its id and document), and its input bound.
 struct HostFunction {
     id: &'static str,
     version: u32,
-    schemas: (&'static str, &'static str, &'static str),
+    schemas: [(&'static str, &'static str); 3],
     max_input_bytes: u64,
 }
 
@@ -172,7 +172,7 @@ struct HostFunction {
 /// # Errors
 /// A [`RegistryError`].
 fn host_manifest(function: &HostFunction) -> Result<FunctionManifest, RegistryError> {
-    let (input, output, error) = function.schemas;
+    let [input, output, error] = function.schemas;
     let tree = source_tree_pin()?;
     let closure = DependencyClosure {
         digest: Digest(String::new()),
@@ -188,9 +188,9 @@ fn host_manifest(function: &HostFunction) -> Result<FunctionManifest, RegistryEr
         abi: FUNCTION_ABI_V1.to_owned(),
         function_id: function.id.to_owned(),
         version: function.version,
-        input_schema: schema(&format!("{}.input", function.id), input)?,
-        output_schema: schema(&format!("{}.output", function.id), output)?,
-        error_schema: schema(&format!("{}.error", function.id), error)?,
+        input_schema: schema(input.0, input.1)?,
+        output_schema: schema(output.0, output.1)?,
+        error_schema: schema(error.0, error.1)?,
         implementation: Implementation {
             format: ImplementationFormat::Host,
             digest: tree.clone(),
