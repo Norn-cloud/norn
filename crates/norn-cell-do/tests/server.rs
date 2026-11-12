@@ -279,7 +279,7 @@ fn object_links_and_lineage_routes_dispatch() {
     );
     let (status, other) = get(
         &demo,
-        "/v1/objects/canon.Party/SYN-PARTY-01/history",
+        "/v1/objects/canon.Party/SYN-PARTY-01/audit",
         SCOPE,
         VIEWER,
     );
@@ -415,7 +415,7 @@ fn every_served_route_is_documented_or_named_as_undocumented() {
         "/v1/nothing",
         "/v1/access",
         "/v1/objects",
-        "/v1/objects/x/x/history",
+        "/v1/objects/x/x/audit",
     ] {
         let (status, body) = get(&demo, path, SCOPE, VIEWER);
         assert_eq!(

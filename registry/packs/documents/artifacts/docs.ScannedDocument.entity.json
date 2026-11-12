@@ -1,0 +1,179 @@
+{
+  "artifactId": "docs.ScannedDocument.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Scanned document",
+  "namespace": "docs",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A scanned receipt, invoice or expense report as its extractor read it. `lines_total` is the mapping's sum of the printed line amounts (null when the document prints no lines). A correction is a governed patch that records its reason, its evidence and the verified actor.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "docs.SourceDocument"
+      ],
+      "name": "docs.ScannedDocument",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "doc_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "receipt"
+              },
+              {
+                "value": "invoice"
+              },
+              {
+                "value": "expense_report"
+              }
+            ]
+          }
+        },
+        {
+          "id": "vendor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "issued_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "USD"
+              }
+            ]
+          }
+        },
+        {
+          "id": "total",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "lines_total",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          }
+        },
+        {
+          "id": "line_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "correction_reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "corrected_by",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "correction_evidence",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.ScannedDocument.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
