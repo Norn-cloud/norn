@@ -242,6 +242,384 @@
         ]
       }
     },
+    "/v1/cell:provision": {
+      "post": {
+        "tags": [
+          "crate::provision"
+        ],
+        "summary": "Provision the scope's cell from the caller's definitions (owner only).",
+        "description": "One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the\nscope binding, a fresh cell identity, the definitions, their receipt and\nthe ledger commit together, or nothing. The host calls this on a fresh\nengine after [`authorize`] and [`admit_submission`]; `now_ms` is the host\nclock (Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
+        "operationId": "provision_cell",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The cell was provisioned, or already holds exactly this submission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid, or carries an artifact in a reserved namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the cell holds other definitions, or the submission names another trusted base.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused: the definitions are not admissible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions": {
+      "get": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`GET /v1/decisions?state=pending`: the open decisions the caller may\ndecide, soonest deadline first, ties to the oldest request, then id.",
+        "description": "# Errors\nMissing or foreign scope; a missing caller (one opaque 403); an invalid\nstate, limit or cursor; a host failure.",
+        "operationId": "list_decisions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`pending` (required): only open decisions are listed.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "flow",
+            "in": "query",
+            "description": "Only decisions of runs of this flow (its definition id).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `nextCursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 0 to 200 (default 50); 0 returns only the count.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the open decisions the caller may decide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions/{id}:decide": {
+      "post": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`POST /v1/decisions/{id}:decide`.",
+        "description": "# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The decision id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decided, or replayed an identical earlier call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decided"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope denied, or the decider law is not satisfied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such open decision waits on the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Someone resolved it first, or the key was used for another answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideRefusal"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The decision expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The choice or note was refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/definitions": {
       "get": {
         "tags": [
@@ -3129,6 +3507,498 @@
             ],
             "description": "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
             "additionalProperties": true
+          }
+        }
+      },
+      "DecideOutcome": {
+        "type": "string",
+        "description": "Whether this call decided, or replayed an identical earlier call.",
+        "enum": [
+          "decided",
+          "replayed"
+        ]
+      },
+      "DecideRefusal": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Refusal",
+            "description": "The refusal."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "resolution": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DecisionResolution",
+                    "description": "Who resolved the decision first; on `decision.resolved` only."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A refused decide call: the shared refusal, and on `decision.resolved` who\nresolved the decision first."
+      },
+      "DecideRequest": {
+        "type": "object",
+        "description": "`POST /v1/decisions/{id}:decide` body.",
+        "required": [
+          "choice",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "One of the decision's option ids."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's retry key: the same key and body replays the decision."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A note, at most 500 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Decided": {
+        "type": "object",
+        "description": "`POST /v1/decisions/{id}:decide` response.",
+        "required": [
+          "outcome",
+          "decision",
+          "receipt",
+          "run"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DecidedDecision",
+            "description": "The decision."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DecideOutcome",
+            "description": "Decided now, or replayed."
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/DecidedReceipt",
+            "description": "Its commit."
+          },
+          "run": {
+            "$ref": "#/components/schemas/DecidedRun",
+            "description": "The run."
+          }
+        }
+      },
+      "DecidedDecision": {
+        "type": "object",
+        "description": "The decision as decided.",
+        "required": [
+          "id",
+          "choice",
+          "decidedBy",
+          "decidedAtMs"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "The chosen option id."
+          },
+          "decidedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When (logical milliseconds).",
+            "minimum": 0
+          },
+          "decidedBy": {
+            "type": "string",
+            "description": "Who decided, in display words, never an id."
+          },
+          "id": {
+            "type": "string",
+            "description": "The decision id."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The note."
+          }
+        }
+      },
+      "DecidedReceipt": {
+        "type": "object",
+        "description": "The commit that recorded the decision.",
+        "required": [
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash, or its keyed handle (D53)."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was recorded (logical milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "DecidedRun": {
+        "type": "object",
+        "description": "The run after the decision.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state."
+          }
+        }
+      },
+      "DecisionContext": {
+        "type": "object",
+        "description": "What the decision is about. Empty in this version.",
+        "required": [
+          "subjects"
+        ],
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionSubject"
+            },
+            "description": "The objects the decision concerns."
+          }
+        }
+      },
+      "DecisionDocument": {
+        "type": "object",
+        "description": "One open decision.",
+        "required": [
+          "id",
+          "run",
+          "flow",
+          "step",
+          "question",
+          "risk",
+          "options",
+          "requestedAtMs",
+          "expiresAtMs",
+          "context"
+        ],
+        "properties": {
+          "agentPick": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An agent's recommended option id; a recommendation, never a decision."
+          },
+          "context": {
+            "$ref": "#/components/schemas/DecisionContext",
+            "description": "What it is about."
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the decision expires (logical milliseconds), at most seven days\nafter it was asked.",
+            "minimum": 0
+          },
+          "flow": {
+            "$ref": "#/components/schemas/DecisionFlow",
+            "description": "The run's flow."
+          },
+          "id": {
+            "type": "string",
+            "description": "The opaque decision id."
+          },
+          "inputSchema": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Reserved; always `null` in this version.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionOptionDocument"
+            },
+            "description": "The options."
+          },
+          "question": {
+            "type": "string",
+            "description": "The question."
+          },
+          "requestedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the run asked (logical milliseconds).",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/DecisionRisk",
+            "description": "How much is at stake."
+          },
+          "run": {
+            "$ref": "#/components/schemas/DecisionRun",
+            "description": "The run waiting on it."
+          },
+          "step": {
+            "$ref": "#/components/schemas/DecisionStep",
+            "description": "The step that asks."
+          }
+        }
+      },
+      "DecisionFlow": {
+        "type": "object",
+        "description": "The flow a decision belongs to.",
+        "required": [
+          "ruleId",
+          "version"
+        ],
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "description": "The flow's `decide` rule artifact id."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The flow's display title."
+          },
+          "version": {
+            "type": "string",
+            "description": "The rule version the run is pinned to."
+          }
+        }
+      },
+      "DecisionOptionDocument": {
+        "type": "object",
+        "description": "One option a decider may choose.",
+        "required": [
+          "id",
+          "label",
+          "scope",
+          "effect"
+        ],
+        "properties": {
+          "effect": {
+            "$ref": "#/components/schemas/DecisionOptionEffect",
+            "description": "What it does."
+          },
+          "id": {
+            "type": "string",
+            "description": "The option id `choice` names."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the decider reads."
+          },
+          "scope": {
+            "type": "string",
+            "description": "How far it reaches, in the decider's words."
+          }
+        }
+      },
+      "DecisionOptionEffect": {
+        "type": "object",
+        "description": "What choosing an option does: exactly one of an action or a binding.",
+        "properties": {
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action the option starts."
+          },
+          "binding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The binding the option sets."
+          }
+        }
+      },
+      "DecisionResolution": {
+        "type": "object",
+        "description": "Who resolved a decision first (409 `decision.resolved`).",
+        "required": [
+          "resolution",
+          "atMs"
+        ],
+        "properties": {
+          "atMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When (logical milliseconds).",
+            "minimum": 0
+          },
+          "by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who, in display words, never an id."
+          },
+          "choice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chosen option, only for a reader who may read the run."
+          },
+          "resolution": {
+            "type": "string",
+            "description": "How it was resolved."
+          }
+        }
+      },
+      "DecisionRisk": {
+        "type": "string",
+        "description": "How much is at stake.",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "DecisionRun": {
+        "type": "object",
+        "description": "The run a decision belongs to.",
+        "required": [
+          "id",
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state."
+          }
+        }
+      },
+      "DecisionStep": {
+        "type": "object",
+        "description": "The step that asks.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The step id."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its display label."
+          }
+        }
+      },
+      "DecisionSubject": {
+        "type": "object",
+        "description": "One object a decision concerns.",
+        "required": [
+          "objectType",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Its id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Its object type."
+          }
+        }
+      },
+      "DecisionsPage": {
+        "type": "object",
+        "description": "One page of open decisions.",
+        "required": [
+          "items",
+          "total",
+          "serverNowMs"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionDocument"
+            },
+            "description": "The decisions, soonest deadline first, ties to the oldest request."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; `null` on the last page."
+          },
+          "serverNowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cell's clock when the page was read (logical milliseconds).",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many open decisions the caller may decide.",
+            "minimum": 0
+          },
+          "totalCapped": {
+            "type": "boolean",
+            "description": "`total` is a lower bound: more were not examined."
           }
         }
       },
@@ -27577,6 +28447,71 @@
         ],
         "description": "An execution world."
       },
+      "ProvisionOutcome": {
+        "type": "string",
+        "description": "Whether the call provisioned the cell or found it provisioned.",
+        "enum": [
+          "provisioned",
+          "replayed"
+        ]
+      },
+      "ProvisionReceipt": {
+        "type": "object",
+        "description": "The provisioned cell.",
+        "required": [
+          "outcome",
+          "cellId",
+          "definitionsVersion",
+          "receiptSha256",
+          "baseSha256"
+        ],
+        "properties": {
+          "baseSha256": {
+            "type": "string",
+            "description": "The trusted base the set was admitted against."
+          },
+          "cellId": {
+            "type": "string",
+            "description": "The cell's logical identity, bound when it was created."
+          },
+          "definitionsVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The definitions version the submission was installed as.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ProvisionOutcome",
+            "description": "Whether this call created the cell."
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "The checker's admission receipt digest for the installed set."
+          }
+        }
+      },
+      "ProvisionRequest": {
+        "type": "object",
+        "description": "`POST /v1/cell:provision`.",
+        "required": [
+          "baseSha256",
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornArtifactEnvelope"
+            },
+            "description": "The tenant's artifact envelopes; none in a reserved namespace (core., std.)."
+          },
+          "baseSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the trusted base the artifacts were\nauthored against; it must be the host's."
+          }
+        },
+        "additionalProperties": false
+      },
       "QuestionCatalog": {
         "type": "object",
         "description": "`GET /v1/questions:catalog`: what this caller may build an ad-hoc question\nfrom, and what this cell's engine admits. Every metric and object type\nlisted is one the caller may read the population of (D67): a ratio only\nwhen both its operands are, a type only when it is a readable metric's\npopulation. Nothing listed is a promise: `:evaluate` still admits.",
@@ -27818,6 +28753,26 @@
         },
         "additionalProperties": false
       },
+      "RunDecision": {
+        "type": "object",
+        "description": "The open decision a run waits on.",
+        "required": [
+          "id",
+          "expiresAtMs"
+        ],
+        "properties": {
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
       "RunDocument": {
         "type": "object",
         "description": "One run, as the routes return it.",
@@ -27846,6 +28801,17 @@
             "format": "int64",
             "description": "The starting commit.",
             "minimum": 0
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunDecision",
+                "description": "The open decision the run waits on, when the caller may decide it;\n`null` otherwise."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "flow": {
             "$ref": "#/components/schemas/RunFlow",

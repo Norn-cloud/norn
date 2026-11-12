@@ -1,0 +1,353 @@
+//! One scope's cell on this host: vacant until it is provisioned, then
+//! served. Portable Rust; the Durable Object binding is thin glue over it and
+//! the native tests drive the same code.
+//!
+//! - A **vacant** scope holds no store and writes nothing. A verified member
+//!   of its organization is told `cell.not_provisioned` (404); anyone else
+//!   gets exactly what a provisioned cell answers a caller nobody verified
+//!   ([`server::outside`]), so an outsider cannot tell the two apart.
+//! - `POST /v1/cell:provision` (`norn_api::provision`, HOST-PROVISION-1)
+//!   creates the cell in one engine transaction when the host grant table's
+//!   provisioner role asks ([`crate::policy::Provisioners`]). On a cell that
+//!   already exists the same submission replays and any other refuses.
+//! - A restarted host reopens the cell at its active definitions
+//!   (HOST-REOPEN-1): the model is rebuilt from the retained set and nothing
+//!   is written.
+
+use std::sync::Arc;
+
+use http::StatusCode;
+use norn_api::authz::Operation;
+use norn_api::definition_routes::{self, DefinitionKinds};
+use norn_api::host::DevHost;
+use norn_api::provision::{self, PROVISION_PATH, TrustedBase};
+use norn_api::question_routes::AdHocQuestions;
+use norn_api::refusal::Refusal;
+use norn_api::scope::{CellScope, ScopeQuery};
+use norn_cell::CellStore;
+use norn_cell::engine::SqlEngine;
+
+use crate::analytics::DemoQuestions;
+use crate::policy::{CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::principal::{PrincipalResolver, RequestScope};
+use crate::seed::SeedError;
+use crate::server::{self, Request, Response};
+
+/// Opens this scope's storage engine: once when the host starts, and again
+/// for a provisioning attempt (a refused attempt consumes its engine).
+pub type OpenEngine<E> = Box<dyn Fn() -> Result<E, String>>;
+
+/// The retained-definition kinds every cell of this host admits.
+#[must_use]
+pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
+    // Dashboards are built in; agents wait for lane CANVAS's checker.
+    DefinitionKinds::default()
+        // Sign-offs verify against the checker's words, as Studio shows
+        // them; D59: a flow is installed by signing the server's words for it.
+        .with_restater(definition_routes::checker_restatement)
+        // A binding runs as a role of the cell's declared grant table.
+        .with_roles(table.entries.iter().map(|(role, _)| *role))
+        // A flow's performs may name a registered built-in.
+        .with_builtins(norn_cell::builtin_registered)
+}
+
+/// One opened cell and what its requests are served with.
+struct Serving<E: SqlEngine> {
+    host: DevHost<E>,
+    /// The cell's admitted questions, when it publishes any.
+    questions: Option<DemoQuestions>,
+    /// The cell's collections, for `GET /v1/access`.
+    object_types: Vec<String>,
+}
+
+impl<E: SqlEngine> Serving<E> {
+    /// Serve `store` under the read policy compiled against its own model.
+    fn from_store(
+        store: CellStore<E>,
+        scope: &CellScope,
+        table: &'static GrantTable,
+        caller: &Arc<CallerSlot>,
+        questions: Option<DemoQuestions>,
+    ) -> Result<Self, SeedError> {
+        // Data reads are decided by the kernel PDP over this cell's own model.
+        let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
+            .with_caller(Arc::clone(caller));
+        let object_types = store
+            .model()
+            .object_types()
+            .map(|object_type| object_type.name.as_str().to_owned())
+            .collect();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .map_err(|refusal| SeedError(refusal.code))?
+            .with_authorizer(policy);
+        Ok(Self {
+            host,
+            questions,
+            object_types,
+        })
+    }
+}
+
+enum State<E: SqlEngine> {
+    Vacant,
+    Serving(Box<Serving<E>>),
+}
+
+/// The cell of one scope: vacant, or provisioned and served.
+pub struct Tenant<E: SqlEngine> {
+    scope: CellScope,
+    base: TrustedBase,
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
+    kinds: DefinitionKinds,
+    open: OpenEngine<E>,
+    state: State<E>,
+}
+
+impl<E: SqlEngine> Tenant<E> {
+    /// The cell of `scope` over the engine `open` yields: served when the
+    /// engine holds a provisioned cell, else vacant. Nothing is written.
+    ///
+    /// # Errors
+    /// The engine does not open, holds a cell bound to another scope, or
+    /// holds definitions this host cannot serve.
+    pub fn open(
+        scope: CellScope,
+        table: &'static GrantTable,
+        open: OpenEngine<E>,
+    ) -> Result<Self, SeedError> {
+        let caller = Arc::<CallerSlot>::default();
+        let engine = open().map_err(SeedError)?;
+        let state = reopen(engine, &scope, table, &caller)?;
+        Ok(Self {
+            base: crate::base::trusted_base()?,
+            kinds: host_kinds(table),
+            scope,
+            table,
+            caller,
+            open,
+            state,
+        })
+    }
+
+    /// A cell this build seeds itself (the demo cells), already opened as
+    /// `store`.
+    ///
+    /// # Errors
+    /// The read policy does not compile against the store's model.
+    pub fn seeded(
+        scope: CellScope,
+        table: &'static GrantTable,
+        store: CellStore<E>,
+        questions: Option<DemoQuestions>,
+    ) -> Result<Self, SeedError> {
+        let caller = Arc::<CallerSlot>::default();
+        let serving = Serving::from_store(store, &scope, table, &caller, questions)?;
+        Ok(Self {
+            base: crate::base::trusted_base()?,
+            kinds: host_kinds(table),
+            scope,
+            table,
+            caller,
+            open: Box::new(|| Err("a seeded cell is never provisioned again".to_owned())),
+            state: State::Serving(Box::new(serving)),
+        })
+    }
+
+    /// The slot the cell's policy reads the request's verified principal
+    /// from; the cell's [`PrincipalResolver`] records into it.
+    #[must_use]
+    pub fn caller(&self) -> Arc<CallerSlot> {
+        Arc::clone(&self.caller)
+    }
+
+    /// The scope this cell serves.
+    #[must_use]
+    pub const fn scope(&self) -> &CellScope {
+        &self.scope
+    }
+
+    /// Whether the scope has a cell.
+    #[must_use]
+    pub const fn is_provisioned(&self) -> bool {
+        matches!(self.state, State::Serving(_))
+    }
+
+    /// The digest a submission must name: this host's trusted base.
+    #[must_use]
+    pub fn base_sha256(&self) -> &str {
+        self.base.sha256()
+    }
+
+    /// Serve one request; every outcome is a status and a JSON document.
+    pub fn handle(
+        &mut self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Response {
+        if request.path == PROVISION_PATH {
+            return server::respond(self.provision(principals, request));
+        }
+        match &self.state {
+            State::Serving(serving) if request.path == "/v1/access" => server::access(
+                &serving.host,
+                principals,
+                &self.caller,
+                &serving.object_types,
+                request,
+            ),
+            State::Serving(serving) => {
+                let questions = serving
+                    .questions
+                    .as_ref()
+                    .map(|questions| -> &dyn AdHocQuestions<E> { questions });
+                server::handle_all(&serving.host, principals, questions, &self.kinds, request)
+            }
+            State::Vacant => self.vacant(principals, request),
+        }
+    }
+
+    /// A request to a scope with no cell.
+    fn vacant(&self, principals: &dyn PrincipalResolver, request: &Request<'_>) -> Response {
+        let member = {
+            // The verified principal lives exactly as long as this decision.
+            let _request = RequestScope::new(principals);
+            principals
+                .resolve(request.authorization, request.now)
+                .is_some_and(|subject| {
+                    self.caller
+                        .current()
+                        .filter(|caller| caller.subject_id == subject)
+                        .is_some_and(|caller| !self.table.capabilities(&caller.roles).is_empty())
+                })
+        };
+        if member && self.names_this_scope(request.query) {
+            server::respond(Err(provision::not_provisioned()))
+        } else if request.path == "/v1/access" {
+            server::access_outside::<E>(principals, request)
+        } else {
+            server::outside::<E>(request)
+        }
+    }
+
+    /// Whether the query names exactly this cell's scope, each part once.
+    fn names_this_scope(&self, query: &str) -> bool {
+        let (mut org, mut environment) = (Vec::new(), Vec::new());
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match &*key {
+                "orgId" => org.push(value),
+                "environmentId" => environment.push(value),
+                _ => {}
+            }
+        }
+        let ([org], [environment]) = (org.as_slice(), environment.as_slice()) else {
+            return false;
+        };
+        self.scope.admit(Some(&**org), Some(&**environment)).is_ok()
+    }
+
+    /// `POST /v1/cell:provision`: authorized, with its explicit scope, before
+    /// its body is read or storage is touched.
+    fn provision(
+        &mut self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Result<String, Refusal> {
+        // The verified principal lives exactly as long as this request.
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        let actor = actor.as_deref();
+        if request.method != "POST" {
+            return Err(Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "a cell is provisioned with POST",
+            ));
+        }
+        let mut fields = server::parse(request.query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.remove("orgId"),
+            environment_id: fields.remove("environmentId"),
+        };
+        match &self.state {
+            State::Serving(serving) => {
+                definition_routes::authorize(
+                    &serving.host,
+                    &scope,
+                    actor,
+                    Operation::ProvisionCell,
+                )?;
+            }
+            State::Vacant => provision::authorize(
+                &Provisioners::new(self.table, Arc::clone(&self.caller)),
+                &self.scope,
+                &scope,
+                actor,
+            )?,
+        }
+        let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
+        if matches!(self.state, State::Vacant) {
+            // A model this host could not serve is refused before anything
+            // is written, never provisioned and then left unopenable.
+            ReadPolicy::compile(admitted.model.object_types(), &self.scope, self.table)
+                .map_err(|error| provision::unservable(error.to_string()))?;
+            let engine = (self.open)().map_err(Refusal::host)?;
+            if CellStore::read_active_definitions(&engine)
+                .map_err(Refusal::host)?
+                .is_some()
+            {
+                // Provisioned since this host last looked (a reply it lost):
+                // serve it and answer from its first revision.
+                self.state =
+                    reopen(engine, &self.scope, self.table, &self.caller).map_err(Refusal::host)?;
+            } else {
+                let (store, receipt) = provision::provision_cell(
+                    engine,
+                    &self.scope,
+                    &self.base,
+                    admitted,
+                    request.now.saturating_mul(1000),
+                )?;
+                let serving =
+                    Serving::from_store(store, &self.scope, self.table, &self.caller, None)
+                        .map_err(Refusal::host)?;
+                self.state = State::Serving(Box::new(serving));
+                return server::document_json(&receipt);
+            }
+        }
+        let State::Serving(serving) = &self.state else {
+            return Err(Refusal::host("the provisioned cell did not open"));
+        };
+        server::document_json(&provision::replay(&serving.host, &self.base, &admitted)?)
+    }
+}
+
+/// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with
+/// the model rebuilt from the retained set; vacant when it holds none.
+fn reopen<E: SqlEngine>(
+    engine: E,
+    scope: &CellScope,
+    table: &'static GrantTable,
+    caller: &Arc<CallerSlot>,
+) -> Result<State<E>, SeedError> {
+    let fail =
+        |context: &str, error: &dyn std::fmt::Display| SeedError(format!("{context}: {error}"));
+    let Some(active) =
+        CellStore::read_active_definitions(&engine).map_err(|e| fail("definitions", &e))?
+    else {
+        return Ok(State::Vacant);
+    };
+    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
+        .map_err(|e| fail("active definitions", &e))?;
+    let model = norn_api::kernel_set::kernel_model(&artifacts)
+        .map_err(|refusal| SeedError(format!("active definitions: {refusal:?}")))?;
+    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
+    // A store bound to another scope is never served under this one.
+    store
+        .bind("scope", &scope.key())
+        .map_err(|e| fail("scope", &e))?;
+    Ok(State::Serving(Box::new(Serving::from_store(
+        store, scope, table, caller, None,
+    )?)))
+}
