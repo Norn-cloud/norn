@@ -15,6 +15,7 @@ project="${1:?usage: setup.sh PROJECT_DIR}"
 [ -e "$project" ] && { echo "$project exists; choose a new directory" >&2; exit 2; }
 bun "$repo/tools/norn-ts/src/cli.ts" init "$project" --no-install > /dev/null
 rm -f "$project/src/product.ts"
+cp "$repo/demo/three-systems/src/"*.ts "$project/src/"
 for d in core packs/canon packs/erpnext packs/shopify packs/odoo packs/locale-ar; do
   mkdir -p "$project/definitions/$d"
   cp "$repo/registry/$d/artifacts/"*.json "$project/definitions/$d/"
