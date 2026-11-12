@@ -59,11 +59,9 @@ fn the_extractor_golden_decodes_and_every_gap_is_typed() {
     for code in codes {
         assert!(code.is_known(), "{}", code.as_str());
     }
-    assert!(
-        graph.facts.iter().any(|fact| {
-            fact.diagnostic.as_ref().map(Diagnostic::as_str) == Some(Diagnostic::UNKNOWN_ENTITY)
-        })
-    );
+    assert!(graph.facts.iter().any(|fact| {
+        fact.diagnostic.as_ref().map(Diagnostic::as_str) == Some(Diagnostic::UNKNOWN_ENTITY)
+    }));
 }
 
 #[test]

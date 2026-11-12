@@ -170,9 +170,7 @@ fn exit_code(status: ExitStatus) -> u8 {
 
 fn run(args: &PortArgs) -> Result<u8, String> {
     // Resolving links first keeps a symlinked `norn` from moving the lookup.
-    let binary = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .ok();
+    let binary = std::env::current_exe().and_then(std::fs::canonicalize).ok();
     let home = home(std::env::var_os(HOME), binary.as_deref())?;
     let python = interpreter(
         std::env::var_os(PYTHON),
