@@ -850,6 +850,50 @@ fn law_types_and_absent_bindings_fail_closed() {
     law["payload"]["modality"] = json!({"kind":"next"});
     assert!(run(vec![law], &entities()).contains(&codes::INVALID_DOCUMENT.to_owned()));
 }
+/// LAW-LINK-ADMISSION: a law reads one declared to-one forward link of its
+/// subject and that target's properties, typed under its condition.
+#[test]
+fn law_link_reads_admit_one_to_one_hop_only() {
+    let mut values: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+            .expect("entities");
+    let link = |id: &str, target: &str, to: &str| json!({"id": id, "target": target, "cardinality": {"from": "many", "to": to}});
+    values[0]["payload"]["objectType"]["links"] =
+        json!([link("request", "erpnext.Request", "one")]);
+    values[1]["payload"]["objectType"]["links"] = json!([
+        link("order", "erpnext.SalesOrder", "one"),
+        link("requests", "erpnext.Request", "many"),
+    ]);
+    let base: Vec<ArtifactEnvelope> = values
+        .into_iter()
+        .map(|value| serde_json::from_value(value).expect("entity"))
+        .collect();
+    let check = |condition: Option<&str>, expression: &str| {
+        let mut law = laws()[1].clone();
+        let payload = law["payload"].as_object_mut().expect("payload");
+        match condition {
+            Some(condition) => payload.insert("condition".into(), json!(condition)),
+            None => payload.remove("condition"),
+        };
+        law["payload"]["response"]["expression"] = json!(expression);
+        run(vec![law], &base)
+    };
+    let refused = |found: &[String], code: &str| found.iter().any(|found| found == code);
+    let admitted = check(Some("self.order != null"), "self.order.paid == true");
+    assert!(
+        !refused(&admitted, codes::UNKNOWN_BINDING) && !refused(&admitted, codes::PREDICATE_TYPE),
+        "{admitted:?}"
+    );
+    // Unguarded, the target may be absent.
+    let unguarded = check(Some("self.status == 'approved'"), "self.order.paid == true");
+    assert!(refused(&unguarded, codes::PREDICATE_TYPE), "{unguarded:?}");
+    // A to-many link and a second hop refuse admission.
+    let many = check(None, "count(self.requests) == 0");
+    assert!(refused(&many, codes::UNKNOWN_BINDING), "{many:?}");
+    let second = check(Some("self.order != null"), "self.order.request == null");
+    assert!(refused(&second, codes::UNKNOWN_BINDING), "{second:?}");
+}
+
 #[test]
 fn unsupported_temporal_combinations_are_stable_errors() {
     let mut law = laws()[0].clone();

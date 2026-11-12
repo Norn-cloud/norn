@@ -444,10 +444,16 @@ def command_export(args) -> None:
     """The stored rows as a recorded snapshot in the shape `norn dev --load`
     reads, for a cell without a pull connector (a laptop demo)."""
     rows = [line for line in Store(Path(args.store)).path.read_text().splitlines() if line.strip()]
-    records = ",".join('{"dataset":"Scanned Document","record":' + line + "}" for line in rows)
+    # Journal entries first: a document's link law reads the entry it is booked to.
+    ledger = []
+    if args.ledger:
+        text = re.sub(r'"amount": (-?[0-9.]+)', r'"amount": "__D__\1"', Path(args.ledger).read_text())
+        ledger = [dumps(entry) for entry in json.loads(text)["rows"]]
+    records = ",".join(['{"dataset":"Journal Entry","record":' + entry + "}" for entry in ledger]
+                       + ['{"dataset":"Scanned Document","record":' + line + "}" for line in rows])
     Path(args.out).write_text('{"profile":"synthetic-scans/1","source":"synthetic-scans","mapping":"docs.scans.mapping",'
                               '"connectorInstance":"demo","snapshot":[' + records + "]}\n")
-    print(json.dumps({"exported": len(rows)}))
+    print(json.dumps({"exported": len(rows), "ledger": len(ledger)}))
 
 
 def command_serve(args) -> None:
@@ -503,6 +509,7 @@ def main() -> None:
     export = sub.add_parser("export")
     export.add_argument("--store", required=True)
     export.add_argument("out")
+    export.add_argument("--ledger", help="ledger.rows.json from generate.py: journal entries the documents are booked to")
     serve = sub.add_parser("serve")
     serve.add_argument("--store", required=True)
     serve.add_argument("--port", type=int, default=8080)

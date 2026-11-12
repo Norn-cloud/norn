@@ -168,6 +168,15 @@ pub enum DataQualityOutcome {
         /// Concise reason that omits property values.
         detail: String,
     },
+    /// LAW-LINK-1: a law that reads its subject's to-one links failed. `links`
+    /// pins the exact version of each target it read, by link id (a link with
+    /// no target is absent), so the evaluation can be replayed exactly.
+    Linked {
+        /// The targets read, by link id.
+        links: std::collections::BTreeMap<String, crate::FactRef>,
+        /// The law's own outcome.
+        outcome: Box<DataQualityOutcome>,
+    },
 }
 
 /// How serious a data quality finding is.

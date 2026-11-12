@@ -1,0 +1,59 @@
+{
+  "artifactId": "docs.BookedEntry.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Booked journal entry",
+  "namespace": "docs",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "The journal entry a document was booked to, as the ledger reports it: one signed amount, positive for a debit.",
+      "name": "docs.BookedEntry",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entry_number",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "USD"
+              }
+            ]
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.BookedEntry.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

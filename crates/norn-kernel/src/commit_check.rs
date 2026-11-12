@@ -326,6 +326,21 @@ pub trait CommitView {
     ///
     /// The host's read failure.
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Self::Error>;
+
+    /// LAW-LINK-1: the current values of a live object, for a governing law
+    /// that reads a link to it. `None` when the object is absent or this host
+    /// cannot prove its values; such a law then refuses rather than guess.
+    ///
+    /// # Errors
+    ///
+    /// The host's read failure.
+    fn object_values(
+        &self,
+        key: &FactKey,
+    ) -> Result<Option<crate::cell_host::JsonObject>, Self::Error> {
+        let _ = key;
+        Ok(None)
+    }
 }
 
 /// The admission check every host runs before applying a commit.
@@ -545,9 +560,9 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             CommitStage::Cardinality => check_cardinality(commit, model, view, &self.links),
             CommitStage::RequiredLinks => check_required_links(commit, model, view, authorization),
             CommitStage::Acyclic => check_acyclic_links(commit, model, view),
-            CommitStage::Invariants => check_invariants(commit, model.catalog, authorization)
+            CommitStage::Invariants => check_invariants(commit, model, view, authorization)
                 .map_err(InvariantAdmissionError::into_commit_error),
-            CommitStage::Laws => check_governing_laws(commit, model, authorization),
+            CommitStage::Laws => check_governing_laws(commit, model, view, authorization),
         }
     }
 }
@@ -622,30 +637,362 @@ fn check_link_values<E, C, T, V: CommitView + ?Sized>(
     Ok(())
 }
 
-fn check_governing_laws<E, C, T, X>(
+/// LAW-LINK-1 bound: most subjects one written target re-checks in a commit.
+pub(crate) const MAX_LINK_LAW_SUBJECTS: usize = 4096;
+
+/// The live links touching `object` once the commit applies.
+fn links_after_commit<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
+    view: &V,
+    object: &FactKey,
+) -> Result<BTreeSet<LinkKey>, CommitError<V::Error>> {
+    let mut live: BTreeSet<LinkKey> = view
+        .links_of(object)
+        .map_err(CommitError::Host)?
+        .iter()
+        .map(|link| model.canonical_link(link))
+        .filter(|link| link.source == *object || link.target == *object)
+        .collect();
+    for write in &commit.links {
+        let key = model.canonical_link(&write.key);
+        if key.source != *object && key.target != *object {
+            continue;
+        }
+        match write.mutation {
+            LinkMutation::Add { .. } => {
+                live.insert(key);
+            }
+            LinkMutation::Remove => {
+                live.remove(&key);
+            }
+        }
+    }
+    Ok(live)
+}
+
+/// The values an object has once the commit applies; `None` when it is
+/// deleted, absent, or unprovable by this host.
+fn values_after_commit<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    object: &FactKey,
+) -> Result<Option<crate::cell_host::JsonObject>, CommitError<V::Error>> {
+    if let Some(write) = commit
+        .writes
+        .iter()
+        .rev()
+        .find(|write| model.canonical(&write.key) == *object)
+    {
+        return Ok(match &write.mutation {
+            FactMutation::Put { values } => Some(values.clone()),
+            FactMutation::Delete => None,
+        });
+    }
+    view.object_values(object).map_err(CommitError::Host)
+}
+
+/// LAW-LINK-1: a subject's link targets as the commit leaves them, read
+/// through the host's view.
+pub(crate) struct CommitLinks<'r, 'a, E, C, T, V: CommitView + ?Sized> {
+    commit: &'r CellCommit<E, C, T>,
+    model: CommitModel<'r, 'a>,
+    view: &'r V,
+    subject: FactKey,
+    host: Option<V::Error>,
+}
+
+impl<'r, 'a, E, C, T, V: CommitView + ?Sized> CommitLinks<'r, 'a, E, C, T, V> {
+    /// The links of `subject` once `commit` applies over `view`.
+    #[must_use]
+    pub(crate) fn new(
+        commit: &'r CellCommit<E, C, T>,
+        model: CommitModel<'r, 'a>,
+        view: &'r V,
+        subject: &FactKey,
+    ) -> Self {
+        Self {
+            commit,
+            model,
+            view,
+            subject: model.canonical(subject),
+            host: None,
+        }
+    }
+
+    /// The host failure a read hit, if any; the caller reports it as such.
+    pub(crate) fn take_host_error(&mut self) -> Option<V::Error> {
+        self.host.take()
+    }
+}
+
+impl<E, C, T, V: CommitView + ?Sized> crate::governing_laws::LinkTargets
+    for CommitLinks<'_, '_, E, C, T, V>
+{
+    fn target(
+        &mut self,
+        link: &str,
+    ) -> Result<
+        Option<crate::governing_laws::LinkedTarget>,
+        crate::governing_laws::LawEvaluationError,
+    > {
+        let unreadable = || {
+            crate::governing_laws::LawEvaluationError::Unsupported(format!(
+                "LAW-LINK-1: the target of {link} cannot be read"
+            ))
+        };
+        let (commit, model, view) = (self.commit, self.model, self.view);
+        let resolved = (|| -> Result<Option<(FactKey, u64, crate::cell_host::JsonObject)>, CommitError<V::Error>> {
+            let live = links_after_commit(commit, model, view, &self.subject)?;
+            let mut targets = live
+                .into_iter()
+                .filter(|key| key.source == self.subject && key.link == link)
+                .map(|key| key.target);
+            let Some(target) = targets.next() else {
+                return Ok(None);
+            };
+            if targets.next().is_some() {
+                return Err(CommitError::Law {
+                    key: self.subject.clone(),
+                    reason: unreadable(),
+                });
+            }
+            let Some(values) = values_after_commit(commit, model, view, &target)? else {
+                return Err(CommitError::Law {
+                    key: target,
+                    reason: unreadable(),
+                });
+            };
+            let concrete = view
+                .concrete(&target)
+                .map_err(CommitError::Host)?
+                .unwrap_or_else(|| target.object_type.clone());
+            let version = match commit
+                .writes
+                .iter()
+                .rev()
+                .find(|write| model.canonical(&write.key) == target)
+            {
+                Some(write) => write.expected.0.saturating_add(1),
+                None => view.version(&target).map_err(CommitError::Host)?.0,
+            };
+            Ok(Some((
+                FactKey::new(concrete.as_str(), target.key),
+                version,
+                values,
+            )))
+        })();
+        let (key, version, values) = match resolved {
+            Ok(Some(found)) => found,
+            Ok(None) => return Ok(None),
+            Err(CommitError::Host(error)) => {
+                self.host = Some(error);
+                return Err(unreadable());
+            }
+            Err(_) => return Err(unreadable()),
+        };
+        Ok(Some(crate::governing_laws::LinkedTarget {
+            key,
+            version,
+            values,
+        }))
+    }
+}
+
+/// LAW-LINK-1: the live subjects whose governing law reads a link to the
+/// object `written`, once `commit` applies, other than those in `skip`. More
+/// than [`MAX_LINK_LAW_SUBJECTS`] on one target refuses the commit
+/// (`core.compute.bound_exceeded`); it is never checked partially.
+pub(crate) fn linked_subjects<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    index: &[(ObjectTypeName, String, ObjectTypeName)],
+    written: &FactKey,
+    skip: &BTreeSet<FactKey>,
+    out: &mut BTreeSet<FactKey>,
+) -> Result<(), CommitError<V::Error>> {
+    let target = model.canonical(written);
+    let concrete = view
+        .concrete(&target)
+        .map_err(CommitError::Host)?
+        .unwrap_or_else(|| written.object_type.clone());
+    let readers: Vec<_> = index
+        .iter()
+        .filter(|(_, _, declared)| {
+            crate::governing_laws::reaches(model.catalog, &concrete, declared)
+        })
+        .collect();
+    if readers.is_empty() {
+        return Ok(());
+    }
+    let mut count = 0_usize;
+    for link in links_after_commit(commit, model, view, &target)? {
+        if link.target != target || skip.contains(&link.source) {
+            continue;
+        }
+        let source = view
+            .concrete(&link.source)
+            .map_err(CommitError::Host)?
+            .map_or_else(
+                || link.source.clone(),
+                |ty| FactKey::new(ty.as_str(), link.source.key.clone()),
+            );
+        if readers
+            .iter()
+            .any(|(subject, id, _)| *id == link.link && model.is_a(&source.object_type, subject))
+        {
+            count = count.saturating_add(1);
+            if count > MAX_LINK_LAW_SUBJECTS {
+                return Err(CommitError::Law {
+                    key: written.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::LinkFanOutExceeded {
+                        target: format!("{}/{}", concrete.as_str(), target.key),
+                        limit: MAX_LINK_LAW_SUBJECTS,
+                    },
+                });
+            }
+            out.insert(source);
+        }
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one stage checks written subjects, re-linked subjects and the subjects of written targets"
+)]
+fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
     authorization: Option<&ObservationAuthorization>,
-) -> Result<(), CommitError<X>> {
+) -> Result<(), CommitError<V::Error>> {
     let mut remaining = EvaluationBudget::default().units();
+    let evaluate = |on: &CellCommit<E, C, T>,
+                    key: &FactKey,
+                    values: &crate::cell_host::JsonObject,
+                    remaining: &mut u64|
+     -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
+        let mut links = CommitLinks::new(on, model, view, key);
+        let evaluated = crate::governing_laws::evaluate_linked(
+            model.catalog,
+            key,
+            values,
+            &mut links,
+            remaining,
+        );
+        if let Some(error) = links.take_host_error() {
+            return Err(CommitError::Host(error));
+        }
+        evaluated.map_err(|reason| CommitError::Law {
+            key: key.clone(),
+            reason,
+        })
+    };
+    let violated = |key: &FactKey, failure: crate::governing_laws::LawFailure| CommitError::Law {
+        key: key.clone(),
+        reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
+    };
+    let mut checked = BTreeSet::new();
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
             continue;
         };
-        let failures =
-            crate::governing_laws::evaluate(model.catalog, &write.key, values, &mut remaining)
-                .map_err(|reason| CommitError::Law {
-                    key: write.key.clone(),
-                    reason,
-                })?;
+        checked.insert(model.canonical(&write.key));
+        let failures = evaluate(commit, &write.key, values, &mut remaining)?;
         if authorization.is_some_and(|authority| authority.authorizes_write(write)) {
             continue;
         }
         if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
-            return Err(CommitError::Law {
-                key: write.key.clone(),
-                reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
-            });
+            return Err(violated(&write.key, failure));
+        }
+    }
+    // LAW-LINK-1: only a native commit refuses for its subjects; an observed
+    // commit's linked subjects are re-checked by the observation path.
+    if authorization.is_some() {
+        return Ok(());
+    }
+    let index = crate::governing_laws::link_law_index(model.catalog).map_err(|reason| {
+        CommitError::Law {
+            key: commit.writes.first().map_or_else(
+                || FactKey::new("norn.Commit", ""),
+                |write| write.key.clone(),
+            ),
+            reason,
+        }
+    })?;
+    if index.is_empty() {
+        return Ok(());
+    }
+    // A subject whose link changed is a changed subject.
+    let mut relinked = BTreeSet::new();
+    for write in &commit.links {
+        let key = model.canonical_link(&write.key);
+        if checked.contains(&key.source) {
+            continue;
+        }
+        let source = view
+            .concrete(&key.source)
+            .map_err(CommitError::Host)?
+            .map_or_else(
+                || key.source.clone(),
+                |ty| FactKey::new(ty.as_str(), key.source.key.clone()),
+            );
+        if index
+            .iter()
+            .any(|(subject, link, _)| *link == key.link && model.is_a(&source.object_type, subject))
+        {
+            relinked.insert(source);
+        }
+    }
+    let mut of_targets = BTreeSet::new();
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            linked_subjects(
+                commit,
+                model,
+                view,
+                &index,
+                &write.key,
+                &checked,
+                &mut of_targets,
+            )?;
+        }
+    }
+    let unreadable = |subject: &FactKey| CommitError::Law {
+        key: subject.clone(),
+        reason: crate::governing_laws::LawEvaluationError::Unsupported(
+            "LAW-LINK-1: a linked subject's values cannot be read".into(),
+        ),
+    };
+    for subject in &relinked {
+        let values = values_after_commit(commit, model, view, subject)?
+            .ok_or_else(|| unreadable(subject))?;
+        if let Some(failure) = evaluate(commit, subject, &values, &mut remaining)?
+            .into_iter()
+            .find(|failure| failure.refuses_native)
+        {
+            return Err(violated(subject, failure));
+        }
+    }
+    // A target write refuses when it breaks a law a linked subject satisfied;
+    // a subject already in violation (a quarantined observation) does not
+    // freeze its target.
+    let before = CellCommit::<E, C, T>::empty();
+    for subject in of_targets.difference(&relinked) {
+        let values = values_after_commit(commit, model, view, subject)?
+            .ok_or_else(|| unreadable(subject))?;
+        let after = evaluate(commit, subject, &values, &mut remaining)?;
+        if !after.iter().any(|failure| failure.refuses_native) {
+            continue;
+        }
+        let held = evaluate(&before, subject, &values, &mut remaining)?;
+        if let Some(failure) = after.into_iter().find(|failure| {
+            failure.refuses_native && !held.iter().any(|prior| prior.rule_ref == failure.rule_ref)
+        }) {
+            return Err(violated(subject, failure));
         }
     }
     Ok(())
@@ -1249,6 +1596,17 @@ impl InvariantAdmissionError {
     }
 }
 
+/// LAW-LINK-1: the observed-write invariant failures admission recomputes,
+/// for a finding refresh that must match it exactly.
+pub(crate) fn observed_invariant_failures(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+) -> Option<Vec<InvariantFailure>> {
+    evaluate_commit_invariants(catalog, key, values, remaining, true).ok()
+}
+
 fn evaluate_commit_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1281,11 +1639,13 @@ fn evaluate_commit_invariants(
     })
 }
 
-fn check_invariants<E, C, T>(
+fn check_invariants<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
-    catalog: &TypeCatalog<'_>,
+    model: CommitModel<'_, '_>,
+    view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), InvariantAdmissionError> {
+    let catalog = model.catalog;
     let mut remaining = EvaluationBudget::default().units();
     for write in &commit.writes {
         let crate::cell_host::FactMutation::Put { values } = &write.mutation else {
@@ -1300,9 +1660,13 @@ fn check_invariants<E, C, T>(
             &mut remaining,
             has_observation_authority,
         )?;
-        if let Some((actual, expected)) =
-            authorization.and_then(|value| value.findings_for_write(catalog, write, &failures))
+        let mut links = CommitLinks::new(commit, model, view, &write.key);
+        if let Some((actual, expected)) = authorization
+            .and_then(|value| value.findings_for_write(catalog, write, &failures, &mut links))
         {
+            if links.take_host_error().is_some() {
+                return Err(InvariantAdmissionError::ObservationAuthorization);
+            }
             if !actual.is_ok_and(|actual| actual.as_slice() == expected) {
                 return Err(InvariantAdmissionError::ObservationAuthorization);
             }
@@ -1373,8 +1737,12 @@ fn check_invariants<E, C, T>(
                     .push((authorized.values.clone(), failures.clone()));
                 failures
             };
-            if !ObservationAuthorization::findings_for_read(catalog, authorized, &failures)
-                .is_ok_and(|actual| actual.as_slice() == authorized.findings.as_slice())
+            let mut links = CommitLinks::new(commit, model, view, &authorized.key);
+            if !ObservationAuthorization::findings_for_read(
+                catalog, authorized, &failures, &mut links,
+            )
+            .is_ok_and(|actual| actual.as_slice() == authorized.findings.as_slice())
+                || links.take_host_error().is_some()
             {
                 return Err(InvariantAdmissionError::ObservationAuthorization);
             }

@@ -26,7 +26,19 @@
       "version": "0.1.0"
     },
     {
+      "artifactId": "docs.BookedEntry.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
       "artifactId": "docs.ScannedDocument.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "docs.LedgerEntry.entity",
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
@@ -59,19 +71,23 @@
     "interfaces": [
       "docs.SourceDocument.interface",
       "docs.SourceDocumentLine.interface",
-      "norn.SourceEvidence.interface"
+      "norn.SourceEvidence.interface",
+      "docs.BookedEntry.interface"
     ],
     "maps": [
       {
         "id": "document",
         "ignoredFields": [
           {
-            "field": "ledger_ref",
-            "reason": "The linked ledger entry is checked by LAW B (#343), a later unit; until then the reference stays in the source document only."
-          },
-          {
             "field": "evidence",
             "reason": "Mapped row by row by the evidence map."
+          }
+        ],
+        "links": [
+          {
+            "key": "input.ledger_ref",
+            "link": "ledger_entry",
+            "targetMap": "ledger_entry"
           }
         ],
         "properties": [
@@ -152,6 +168,44 @@
         "target": {
           "entity": "docs.ScannedDocument.entity",
           "interface": "docs.SourceDocument.interface"
+        }
+      },
+      {
+        "id": "ledger_entry",
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.name"
+          },
+          {
+            "property": "entry_number",
+            "value": "input.entry_number"
+          },
+          {
+            "property": "account_code",
+            "value": "input.account_code"
+          },
+          {
+            "property": "currency",
+            "value": "input.currency"
+          },
+          {
+            "property": "amount",
+            "value": "input.amount"
+          },
+          {
+            "property": "posted_on",
+            "value": "input.posted_on"
+          }
+        ],
+        "source": {
+          "dataset": "Journal Entry"
+        },
+        "sourceRecord": "'synthetic-scans/ledger/' + input.entry_number",
+        "subject": "input.name",
+        "target": {
+          "entity": "docs.LedgerEntry.entity",
+          "interface": "docs.BookedEntry.interface"
         }
       },
       {
@@ -283,7 +337,7 @@
     ],
     "source": {
       "schemaId": "docs.scans.source",
-      "sha256": "92a09d31598c15246cdd783553e772a9196c4bc9de9a6bca75751c0bf96c8181",
+      "sha256": "1a06e7d02947180bcec0cb7b3f2440473679db263fe5516c526b33e0b2e1abd7",
       "version": "0.1.0"
     }
   },
