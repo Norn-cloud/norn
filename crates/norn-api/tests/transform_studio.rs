@@ -70,7 +70,9 @@ impl ObjectAccess for Mapping {
             capability: format!("fixture.{capability:?}"),
             action_id: "norn.read".into(),
             resource: ResourceInput {
-                object_type: row.map_or(object_type, |row| row.object_type.as_str()).into(),
+                object_type: row
+                    .map_or(object_type, |row| row.object_type.as_str())
+                    .into(),
                 id: row.map_or(object_type, |row| row.id.as_str()).into(),
                 scope: key,
                 attributes: BTreeMap::new(),
@@ -109,12 +111,22 @@ fn artifact(id: &str, kind: &str, title: &str, dependencies: Value, payload: Val
 fn definitions() -> Vec<Value> {
     let [order, customer] = types();
     let pin = |id: &str| json!({"artifactId": id, "kind": "entity", "version": "0.1.0", "required": true});
-    let input = |id: &str, alias: &str| {
-        json!({"artifactId": id, "kind": "entity", "version": "0.1.0", "alias": alias})
-    };
+    let input = |id: &str, alias: &str| json!({"artifactId": id, "kind": "entity", "version": "0.1.0", "alias": alias});
     vec![
-        artifact("shop.Order.entity", "entity", "Order", json!([]), json!({"entityVersion": "2.0", "objectType": order})),
-        artifact("shop.Customer.entity", "entity", "Customer", json!([]), json!({"entityVersion": "2.0", "objectType": customer})),
+        artifact(
+            "shop.Order.entity",
+            "entity",
+            "Order",
+            json!([]),
+            json!({"entityVersion": "2.0", "objectType": order}),
+        ),
+        artifact(
+            "shop.Customer.entity",
+            "entity",
+            "Customer",
+            json!([]),
+            json!({"entityVersion": "2.0", "objectType": customer}),
+        ),
         artifact(
             TRANSFORM,
             "derived",
@@ -155,7 +167,10 @@ fn put(object_type: &str, key: &str, values: &[(&str, V)]) -> FactWriteRow {
     FactWriteRow::Put {
         object_type: object_type.into(),
         key: key.into(),
-        values: values.iter().map(|(n, v)| ((*n).to_owned(), v.clone())).collect(),
+        values: values
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), v.clone()))
+            .collect(),
     }
 }
 
@@ -182,12 +197,30 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
         ("o-1001", "c-amal", "120.00", "2026-10-26T09:10:00Z", "web"),
         ("o-1002", "c-badr", "75.50", "2026-10-27T11:00:00Z", "store"),
         ("o-1003", "c-cairo", "240.00", "2026-10-28T14:30:00Z", "web"),
-        ("o-1004", "c-delta", "18.25", "2026-10-29T08:45:00Z", "store"),
+        (
+            "o-1004",
+            "c-delta",
+            "18.25",
+            "2026-10-29T08:45:00Z",
+            "store",
+        ),
         ("o-1005", "c-amal", "60.00", "2026-11-02T10:00:00Z", "web"),
-        ("o-1006", "c-cairo", "310.40", "2026-11-03T16:20:00Z", "store"),
+        (
+            "o-1006",
+            "c-cairo",
+            "310.40",
+            "2026-11-03T16:20:00Z",
+            "store",
+        ),
         ("o-1007", "c-cairo", "95.00", "2026-11-05T12:00:00Z", "web"),
         ("o-1008", "c-badr", "142.75", "2026-11-09T09:30:00Z", "web"),
-        ("o-1009", "c-delta", "66.00", "2026-11-10T15:00:00Z", "store"),
+        (
+            "o-1009",
+            "c-delta",
+            "66.00",
+            "2026-11-10T15:00:00Z",
+            "store",
+        ),
         ("o-1010", "c-amal", "205.00", "2026-11-11T17:45:00Z", "web"),
         ("o-1011", "", "40.00", "2026-11-11T18:05:00Z", "store"),
         ("o-1012", "c-cairo", "0.00", "2026-11-12T08:00:00Z", "web"),
@@ -215,16 +248,24 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
         let mut writes: Vec<FactWriteRow> = customers
             .iter()
             .map(|(id, name, region)| {
-                put("shop.Customer", id, &[("name", V::from(*name)), ("region", V::from(*region))])
+                put(
+                    "shop.Customer",
+                    id,
+                    &[("name", V::from(*name)), ("region", V::from(*region))],
+                )
             })
             .collect();
         let mut links = Vec::new();
         for (id, customer, amount, at, channel) in orders {
-            writes.push(put("shop.Order", id, &[
-                ("amount", V::from(Decimal::parse(amount).unwrap())),
-                ("placed_at", V::from(at)),
-                ("channel", V::from(channel)),
-            ]));
+            writes.push(put(
+                "shop.Order",
+                id,
+                &[
+                    ("amount", V::from(Decimal::parse(amount).unwrap())),
+                    ("placed_at", V::from(at)),
+                    ("channel", V::from(channel)),
+                ],
+            ));
             if !customer.is_empty() {
                 links.push(LinkChange::Add {
                     object_type: "shop.Order".into(),
