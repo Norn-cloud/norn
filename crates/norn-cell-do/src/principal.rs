@@ -310,9 +310,9 @@ pub const FIXTURE_ROLES: &str = "fixtures/1";
 /// The organization the demo fixtures belong to.
 pub const FIXTURE_ORG: &str = "org_demo";
 
-/// The fixture principals: `viewer@demo` holds `admin`, `guest@demo` `viewer`.
+/// The fixture principals: `admin@demo` holds `admin`, `guest@demo` `viewer`.
 pub const DEMO_FIXTURES: &[(&str, &[&str])] =
-    &[("viewer@demo", &["admin"]), ("guest@demo", &["viewer"])];
+    &[("admin@demo", &["admin"]), ("guest@demo", &["viewer"])];
 
 impl FixturePrincipals {
     /// Fixture principals recording into `slot`.

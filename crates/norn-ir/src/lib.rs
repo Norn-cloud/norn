@@ -49,7 +49,9 @@ pub use defined_concept::DefinedConceptRoot;
 pub mod labels;
 pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
 pub mod model;
-pub use model::{ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelRoot};
+pub use model::{
+    ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelPredictions, ModelRoot,
+};
 pub mod trust;
 pub use trust::TrustLevel;
 pub mod decision_question;
@@ -1526,7 +1528,8 @@ define_payload_root!(
         }
         optional {
             target => "target" as PropertyId,
-            contracts => "contracts" as Vec<ModelContract>
+            contracts => "contracts" as Vec<ModelContract>,
+            predictions => "predictions" as ModelPredictions
         }
     }
 );

@@ -12,7 +12,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::Value;
 
-const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
 /// The demo cell with its fixture principals recording into its policy.
@@ -91,8 +91,8 @@ fn anonymous_foreign_and_unknown_principals_get_one_denial() {
     let denied = call(&host, "GET", "/v1/definitions", SCOPE, None);
     assert_eq!(denied.status, 403);
     for (query, auth) in [
-        (SCOPE, Some("Bearer fixture:admin@demo")),
-        (SCOPE, Some("Bearer viewer@demo")),
+        (SCOPE, Some("Bearer fixture:nobody@demo")),
+        (SCOPE, Some("Bearer admin@demo")),
         ("orgId=foreign&environmentId=dev", VIEWER),
         ("orgId=org_demo", VIEWER),
     ] {

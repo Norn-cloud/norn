@@ -18917,6 +18917,10 @@
             },
             "description": "Prediction columns; non-empty, ids unique."
           },
+          "predictions": {
+            "$ref": "#/components/schemas/NornIrModelPredictions",
+            "description": "The typed object type predictions are written to; omitted when the\nmodel names none."
+          },
           "target": {
             "type": "string",
             "description": "The supervised target property; omitted for a scoring-only model.",
@@ -18955,6 +18959,21 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrModelPredictions": {
+        "type": "object",
+        "description": "Where a model's predictions are written (#1171 M4): one object per scored\ninput object, of a typed object type.\n\nAdmission (`norn-checker`, over a set): the type resolves in the candidate\nset or the installed base; it has a text property `subject` (the scored\ninput object's id) and a text property `model_version` (the\n`ml.ModelVersion` id that produced it); and every output of the model is a\nproperty of it with the same id, the same type (a decimal's scale and unit,\nan enum's values as a superset) and the same nullability.",
+        "required": [
+          "objectType"
+        ],
+        "properties": {
+          "objectType": {
+            "type": "string",
+            "description": "The predictions object type, by qualified name (`sales.ChurnPrediction`).",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrMultiplicity": {
         "type": "string",
