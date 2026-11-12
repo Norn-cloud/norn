@@ -201,6 +201,12 @@ export const CorrectScannedDocument = Norn.action({
   id: "docs.scanned_document.correct", title: "Correct an extracted total", version: "0.1.0",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: CorrectionInput, output: Schema.Struct({ id: Schema.String }),
+  inputLabels: {
+    id: { title: "Document", description: "The scanned document to correct." },
+    total: { title: "Corrected total", description: "The total as printed on the scanned page. It must still equal the sum of the printed lines." },
+    correction_reason: { title: "Reason", description: "Why the imported value is wrong, kept with the correction." },
+    correction_evidence: { title: "Evidence", description: "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value." },
+  },
   slice: [{ name: "document", type: ScannedDocument, key: { property: { from: "input", property: "id" } } }],
   derive: [{ field: "corrected_by", inputRequired: false,
     expression: Norn.expression(Schema.Struct({ actor: Schema.Struct({ subjectId: Schema.String }) }), context => context.actor.subjectId, { root: "context" }) }],

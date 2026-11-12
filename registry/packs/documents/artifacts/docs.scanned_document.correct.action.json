@@ -33,9 +33,13 @@
           "type": "string"
         },
         "correction_evidence": {
+          "description": "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value.",
+          "title": "Evidence",
           "type": "string"
         },
         "correction_reason": {
+          "description": "Why the imported value is wrong, kept with the correction.",
+          "title": "Reason",
           "type": "string"
         },
         "currency": {
@@ -45,9 +49,12 @@
           "type": "string"
         },
         "id": {
+          "description": "The scanned document to correct.",
+          "title": "Document",
           "type": "string"
         },
         "total": {
+          "description": "The total as printed on the scanned page. It must still equal the sum of the printed lines.",
           "nornType": {
             "currencySource": {
               "links": [],
@@ -56,6 +63,7 @@
             "kind": "decimal",
             "scale": 2
           },
+          "title": "Corrected total",
           "type": "number"
         }
       },

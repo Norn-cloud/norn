@@ -457,9 +457,29 @@ fn quarantined<E: SqlEngine>(
     )?)
 }
 
-/// HOST-READ-4/6: an object's `/lineage` (optionally `?version=`),
-/// `/findings` and `/history`, scoped by the query string.
+/// HOST-READ-4/6: the review reads, when the path names one: a type's
+/// `:quarantined` ids, or an object's `/lineage` (optionally `?version=`),
+/// `/findings` and `/history`.
 fn review<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
+    query: &str,
+) -> Option<Result<String, Refusal>> {
+    match (object_type.strip_suffix(":quarantined"), id, leaf) {
+        (Some(kind), None, _) => Some(quarantined(host, actor, kind, query)),
+        (None, Some(id), Some(leaf @ ("findings" | "history" | "lineage"))) => Some(
+            percent_encoding::percent_decode_str(id)
+                .decode_utf8()
+                .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
+                .and_then(|id| reviewed(host, actor, (object_type, &id, leaf), query)),
+        ),
+        _ => None,
+    }
+}
+
+/// One object's review read, scoped by the query string.
+fn reviewed<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, &str, &str),
@@ -566,11 +586,8 @@ fn objects<E: SqlEngine>(
             &CellObjectAccess,
         )?);
     }
-    if let (None, Some(kind)) = (id, object_type.strip_suffix(":quarantined")) {
-        return quarantined(host, actor, kind, query);
-    }
-    if let (Some(id), Some(leaf @ ("findings" | "history" | "lineage"))) = (id, leaf) {
-        return review(host, actor, (&object_type, &decoded(id)?, leaf), query);
+    if let Some(reviewed) = review(host, actor, (&object_type, id, leaf), query) {
+        return reviewed;
     }
     if let Some(id) = id {
         let fields = parse(query, &["orgId", "environmentId"])?;
