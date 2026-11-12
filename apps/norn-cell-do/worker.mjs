@@ -17,6 +17,10 @@ const JWKS_TIMEOUT_MS = 5000;
 const OPEN_RETRY_MS = 60_000;
 /** The largest submission a cell accepts (an ad-hoc QuestionIR), in UTF-16 units. */
 const MAX_BODY = 65536;
+// D102: engine steps one request may take (frontier, sync batches, the question).
+const ENGINE_STEPS = 64;
+// A hung engine call must not hold the object.
+const ENGINE_TIMEOUT_MS = 120_000;
 
 export class Cell {
   constructor(ctx, env) {
@@ -52,6 +56,8 @@ export class Cell {
       // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
       // analytics cell refuses to open without one of at least 32 bytes.
       this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks, this.env.NORN_LINEAGE_KEY, Date.now());
+      // D102: questions are answered on the tenant analytics engine when the Worker has one.
+      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -63,6 +69,38 @@ export class Cell {
   serve(request, body) {
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
+  }
+  /**
+   * D102: perform one engine call the cell asked for. The engine trusts only
+   * this Worker's token; the cell decided the call and checks the answer.
+   */
+  async engine(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      return { status: response.status, body: await response.text() };
+    } catch (error) {
+      console.error(`analytics engine call failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "core.analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /** Run the cell's engine calls until it answers; each re-entry is decided afresh. */
+  async settle(request, body, reply) {
+    const url = new URL(request.url);
+    for (let step = 0; reply.engine !== undefined && step < ENGINE_STEPS; step++) {
+      const call = JSON.parse(reply.engine);
+      const answer = await this.engine(call);
+      reply = this.cell.resume(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, answer.status, answer.body);
+    }
+    if (reply.engine !== undefined) {
+      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "core.analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
+    }
+    return reply;
   }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
@@ -87,6 +125,7 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    reply = await this.settle(request, body, reply);
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
 }

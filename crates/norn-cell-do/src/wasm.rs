@@ -56,6 +56,8 @@ pub struct NornCell {
     object_types: Vec<String>,
     /// The retained-definition kinds this cell admits.
     kinds: DefinitionKinds,
+    /// D102: the link to the tenant analytics engine, once the Worker has one.
+    engine: Option<crate::olap::Exchange>,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -73,6 +75,10 @@ pub struct Reply {
     /// retry interval has passed); the host refetches, then retries once.
     #[wasm_bindgen(js_name = refreshJwks)]
     pub refresh_jwks: bool,
+    /// D102: the analytics engine call the Worker performs before re-entering
+    /// with `resume` (an `EngineCall` as JSON); `status` and `body` are then
+    /// not the answer.
+    pub engine: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -167,7 +173,48 @@ impl NornCell {
                         .iter()
                         .map(|(role, _)| *role),
                 ),
+            engine: None,
         })
+    }
+
+    /// D102: answer questions on the tenant analytics engine the Worker
+    /// reaches (`NORN_OLAP_URL`); without it this cell has no analytics.
+    #[wasm_bindgen(js_name = enableAnalytics)]
+    pub fn enable_analytics(&mut self) {
+        self.engine.get_or_insert_with(crate::olap::Exchange::default);
+    }
+
+    /// Re-enter a request with the engine's answer to the call it ended with.
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        clippy::too_many_arguments,
+        reason = "wasm-bindgen passes strings by value; a re-entry carries the request and the answer"
+    )]
+    pub fn resume(
+        &self,
+        method: &str,
+        path: &str,
+        query: &str,
+        authorization: Option<String>,
+        now_ms: f64,
+        body: Option<String>,
+        call: &str,
+        status: u16,
+        answer: String,
+    ) -> Reply {
+        if let (Some(engine), Ok(call)) = (
+            self.engine.as_ref(),
+            serde_json::from_str::<crate::olap::EngineCall>(call),
+        ) {
+            engine.resume(crate::olap::EngineAnswer {
+                op: call.op,
+                digest: call.digest,
+                status,
+                body: answer,
+            });
+        }
+        self.fetch(method, path, query, authorization, now_ms, body)
     }
 
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
@@ -220,6 +267,18 @@ impl NornCell {
             .questions
             .as_ref()
             .map(|questions| -> &dyn AdHocQuestions<WorkersEngine> { questions });
+        let on_engine = match (questions, self.engine.as_ref()) {
+            (Some(inner), Some(engine)) => Some(crate::olap::EngineQuestions::new(
+                inner,
+                engine,
+                self.host.scope(),
+            )),
+            (Some(_) | None, _) => None,
+        };
+        let questions = on_engine
+            .as_ref()
+            .map(|wrapped| -> &dyn AdHocQuestions<WorkersEngine> { wrapped })
+            .or(questions);
         let resolver = self.principals.resolver();
         let request = server::Request {
             method,
@@ -245,10 +304,16 @@ impl NornCell {
             #[cfg(feature = "fixtures")]
             Principals::Fixtures(_) => false,
         };
+        let engine = self
+            .engine
+            .as_ref()
+            .and_then(crate::olap::Exchange::take_pending)
+            .and_then(|call| serde_json::to_string(&call).ok());
         Reply {
             status: response.status,
             body: response.body,
             refresh_jwks,
+            engine,
         }
     }
 }

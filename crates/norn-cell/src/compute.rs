@@ -139,14 +139,20 @@ impl Member {
     }
 }
 
+/// D102: the identity a host's row gate is asked for when it decides every
+/// row of a type alike; a bucket whose members are not listed is gated by it.
+pub const ALL_MEMBERS: &str = ":all";
+
 impl QueryRow {
     /// DATA-VALUES-1 (D52/D53): mark `restricted` members and, if any, withhold
     /// every member's amounts in this bucket, so no hidden amount follows from
     /// the totals. For such a reader the bucket aggregate is disclosed only
     /// when the bucket has at least `min_disclosed` members; a smaller bucket
     /// keeps its membership but is `suppressed`: no totals and a null value.
+    /// A bucket whose members are not listed (D102) is restricted when
+    /// [`ALL_MEMBERS`] is, and counts its `member_count`.
     pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool, min_disclosed: usize) {
-        let mut any = false;
+        let mut any = self.member_count.is_some() && restricted(ALL_MEMBERS);
         for (id, member) in &mut self.members {
             member.restricted = restricted(id);
             any |= member.restricted;
@@ -155,7 +161,10 @@ impl QueryRow {
             for member in self.members.values_mut() {
                 member.amounts = None;
             }
-            if self.members.len() < min_disclosed {
+            let members = self
+                .member_count
+                .map_or(self.members.len(), |n| usize::try_from(n).unwrap_or(usize::MAX));
+            if members < min_disclosed {
                 self.totals.clear();
                 self.null_counts.clear();
                 self.value = None;

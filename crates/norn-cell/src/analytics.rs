@@ -23,12 +23,14 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
+mod dataset;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
 
 pub use assemble::{Prepared, bucket_value};
+pub use dataset::DatasetRecord;
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -70,6 +72,12 @@ impl From<TenantId> for String {
     fn from(value: TenantId) -> Self {
         value.0
     }
+}
+
+/// The hex SHA-256 of `bytes`.
+#[must_use]
+pub fn hex_digest(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {

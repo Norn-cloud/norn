@@ -172,14 +172,8 @@ fn refusal(code: &str, detail: &str) -> EngineRefusal {
     }
 }
 
-/// The status a refusal answers with.
 fn status_of(refused: &EngineRefusal) -> u16 {
-    match refused.code.as_str() {
-        "core.analytics.frontier_moved" | "core.analytics.frontier_behind" | "core.compute.stale_input" => 409,
-        "core.analytics.engine" => 500,
-        code if code.starts_with("core.compute.") || code.starts_with("core.bulk.") => 422,
-        _ => 400,
-    }
+    crate::olap::refusal_status(&refused.code)
 }
 
 fn refuse(stream: &TcpStream, status: u16, refused: &EngineRefusal) -> std::io::Result<()> {

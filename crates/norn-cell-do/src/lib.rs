@@ -18,6 +18,7 @@
 //!   re-enter [`server`] as the same caller.
 //! - `dev` (native only): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
+//! - [`olap`]: the cell's link to its tenant analytics engine (D102).
 //! - `olapd` (native, `duckdb`): `norn-olapd`, the tenant analytics engine
 //!   the cell host reaches for analytical questions and loads (D102).
 
@@ -25,6 +26,7 @@ pub mod analytics;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
 pub mod mcp;
+pub mod olap;
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 pub mod olapd;
 pub mod policy;

@@ -76,17 +76,35 @@ impl<E: SqlEngine> CellStore<E> {
         let bound = self.check_question_plan(plan)?;
         let query = lower(plan)?;
         let revision = self.verified_head()?;
-        let exclusions = self.analytics_exclusions(&context.world, plan.grain().as_str())?;
+        let grain = plan.grain().as_str();
+        // BULK-LINEAGE-1: a loaded dataset is read at its current load; its
+        // rows are not cell facts, so no finding excludes them.
+        let (source, exclusions) = match self.analytics_dataset(grain)? {
+            Some(dataset) => (
+                Source::Dataset {
+                    table: grain.to_owned(),
+                    load: dataset.load,
+                },
+                BTreeMap::new(),
+            ),
+            None => {
+                let exclusions = self.analytics_exclusions(&context.world, grain)?;
+                (
+                    Source::Mirror {
+                        world: context.world.clone(),
+                        table: grain.to_owned(),
+                        frontier: revision.commits,
+                        scope: context.scope.clone(),
+                        excluded: exclusions.keys().cloned().collect(),
+                    },
+                    exclusions,
+                )
+            }
+        };
         let (query_pin, definition_pin) = self.question_pins(plan, None)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
-            source: Source::Mirror {
-                world: context.world.clone(),
-                table: plan.grain().as_str().to_owned(),
-                frontier: revision.commits,
-                scope: context.scope.clone(),
-                excluded: exclusions.keys().cloned().collect(),
-            },
+            source,
             query,
             inline_members: u64::try_from(bound).unwrap_or(u64::MAX),
         };
