@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
-import { Braces, Database, GitBranch, History, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { Braces, Database, GitBranch, History as HistoryIcon, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,10 @@ import { useMode } from "./lib/live-transport.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
+import { EvidenceList } from "./evidence/evidence-crop.tsx"
+import { Findings } from "./evidence/findings.tsx"
+import { History } from "./evidence/history.tsx"
+import { readFindings, type EvidenceRef } from "./evidence/review.ts"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { liveAccess } from "./lib/live.ts"
@@ -44,6 +48,9 @@ export function ObjectPage() {
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
   const live = useMode().data?.kind === "live"
+  // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
+  const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
+  const evidence = review.data?.document.evidence ?? []
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
@@ -95,11 +102,12 @@ export function ObjectPage() {
             ))}
             <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
             <Facts concept={concept} reads={data} />
+            {live && <Findings objectType={name} id={id} />}
             <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
           </TabsContent>
           <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} /></TabsContent>
-          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} /></TabsContent>
+          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} evidence={evidence} /></TabsContent>
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
               {concept.rules.length === 0
@@ -108,9 +116,9 @@ export function ObjectPage() {
             </Well></Panel>
           </TabsContent>
           <TabsContent value="ledger" className="pt-4">
-            <Panel icon={History} label="Ledger"><Well>
-              <Empty icon={History} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>The server does not publish this record's change history yet. Version {data.object.document.version} is the one stored.</Empty>
-            </Well></Panel>
+            {live ? <History objectType={name} id={id} /> : <Panel icon={HistoryIcon} label="Ledger"><Well>
+              <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>The server does not publish this record's change history yet. Version {data.object.document.version} is the one stored.</Empty>
+            </Well></Panel>}
           </TabsContent>
           <TabsContent value="access" className="pt-4">
             <Panel icon={KeyRound} label="Access"><Well>
@@ -176,7 +184,7 @@ function Relations({ concept, id, links, concepts }: { readonly concept: Concept
   )
 }
 
-function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
+function Lineage({ lineage, evidence = [] }: { readonly lineage: SourceLineage | undefined; readonly evidence?: readonly EvidenceRef[] }) {
   const { inspect } = useInspector()
   useEffect(() => () => inspect(), [lineage, inspect])
   return (
@@ -197,6 +205,15 @@ function Lineage({ lineage }: { readonly lineage: SourceLineage | undefined }) {
             </TableRow>
           ))}
         </DenseTable>
+        {evidence.length > 0 && Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => {
+          const fields = provenance.sourceFields ?? []
+          return (
+            <div key={`evidence-${fact}`} className="space-y-2 pt-2">
+              <div className="text-sm font-medium">{fact.replaceAll("_", " ")}, as read from the scan</div>
+              <EvidenceList refs={evidence} filter={(item) => fields.includes(item.subjectProperty) || fields.some((field) => item.subjectProperty.startsWith(`${field}.`))} />
+            </div>
+          )
+        })}
         <p className="text-meta text-muted-foreground">The source record's own field values are not served yet.{lineage.documentDigest ? <> The cell keeps its digest, <CopyId value={lineage.documentDigest} short={16} />, so a copy of the row can be checked against it.</> : null}</p>
       </>}
     </Well></Panel>
