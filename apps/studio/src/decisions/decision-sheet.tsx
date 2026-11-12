@@ -104,8 +104,9 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
   return (
     <Sheet open={decision !== null} onOpenChange={(open) => { if (!open) request() }}>
       <SheetContent className="w-[min(34rem,100vw)] gap-0 overflow-y-auto border-node-border p-0 shadow-float sm:max-w-lg">
-        <SheetTitle className="sr-only">{decision?.question ?? ""}</SheetTitle>
-        <SheetDescription className="sr-only">{decision ? `${flowTitle(decision)} · ${stepTitle(decision)}` : ""}</SheetDescription>
+        {/* The dialog's name; the element draws the visible heading, so this is not a second one. */}
+        <SheetTitle asChild><span className="sr-only">{decision?.question ?? ""}</span></SheetTitle>
+        <SheetDescription asChild><span className="sr-only">{decision ? `${flowTitle(decision)} · ${stepTitle(decision)}` : ""}</span></SheetDescription>
         {engine.isError
           ? <p role="alert" className="p-6 text-sm text-destructive">The decision engine is not part of this build, so nothing can be decided here.</p>
           : <div ref={setHost} className="contents" />}
