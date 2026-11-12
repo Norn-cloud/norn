@@ -88,6 +88,10 @@ pub struct CodeEntry {
     pub message: &'static str,
     /// The checker version that introduced the code.
     pub since: &'static str,
+    /// Supported author action, mutually exclusive with `no_fix`.
+    pub fix: Option<&'static str>,
+    /// Why an automatic supported repair cannot be offered.
+    pub no_fix: Option<&'static str>,
 }
 
 include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"));
@@ -114,18 +118,28 @@ pub const fn severity_str(severity: &DiagnosticSeverity) -> &'static str {
 /// The conformance manifest: every registered code with its tier, severity,
 /// message template, and `since` version, in registry order. Checked in as
 /// `crates/norn-checker/conformance/diagnostic-codes/`.
+///
+/// The format stays `diagnostic-codes@1`: each code gains one optional member,
+/// `fix` or `no_fix`, which is an additive change to an open object (D84).
 #[must_use]
 pub fn conformance_manifest() -> serde_json::Value {
     let codes: Vec<serde_json::Value> = REGISTRY
         .iter()
         .map(|entry| {
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "code": entry.code,
                 "tier": entry.tier.as_str(),
                 "severity": severity_str(&entry.severity),
                 "message": entry.message,
                 "since": entry.since,
-            })
+            });
+            if let (Some(fields), Some(fix)) = (value.as_object_mut(), entry.fix) {
+                fields.insert("fix".to_owned(), fix.into());
+            }
+            if let (Some(fields), Some(reason)) = (value.as_object_mut(), entry.no_fix) {
+                fields.insert("no_fix".to_owned(), reason.into());
+            }
+            value
         })
         .collect();
     serde_json::json!({
@@ -160,6 +174,11 @@ mod tests {
                         .chars()
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')),
                 "{} is not lower snake case",
+                entry.code
+            );
+            assert!(
+                matches!((entry.fix, entry.no_fix), (Some(fix), None) | (None, Some(fix)) if !fix.trim().is_empty()),
+                "{} lacks actionable guidance or an explicit no_fix reason",
                 entry.code
             );
             assert!(!entry.message.is_empty(), "{} has no message", entry.code);
