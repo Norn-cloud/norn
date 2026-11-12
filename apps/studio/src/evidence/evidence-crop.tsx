@@ -22,7 +22,17 @@ function pageProblem(error: unknown): string {
  * cell issues after its policy decides; the box is the evidence's own.
  */
 export function EvidenceCrop({ evidence, className }: { readonly evidence: Evidence; readonly className?: string }) {
-  const scan = useQuery({ queryKey: ["scan", evidence.documentUri], queryFn: () => readScan(evidence.documentUri), retry: false, staleTime: 4 * 60_000 })
+  // An object-store URI is read only through the cell's short-lived, policy-checked read; a plain
+  // web URI the evidence names (a local `norn dev` serving synthetic scans) is shown as it is.
+  const direct = /^https?:\/\//.test(evidence.documentUri)
+  const scan = useQuery({
+    queryKey: ["scan", evidence.documentUri],
+    queryFn: () => direct
+      ? Promise.resolve({ document: { getUrl: evidence.documentUri, expiresAt: "" }, numbers: new Map<string, string>(), origin: "live" as const })
+      : readScan(evidence.documentUri),
+    retry: false,
+    staleTime: 4 * 60_000,
+  })
   const [aspect, setAspect] = useState<number | null>(null)
   const [whole, setWhole] = useState(false)
   const { x, y, w, h } = evidence.box
