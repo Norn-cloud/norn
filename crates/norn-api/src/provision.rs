@@ -219,6 +219,13 @@ pub fn not_provisioned() -> Refusal {
     )
 }
 
+/// The refusal for provisioning a cell that already exists from other
+/// definitions, or on a host that provisions cells itself.
+#[must_use]
+pub fn already_provisioned() -> Refusal {
+    conflict()
+}
+
 fn conflict() -> Refusal {
     Refusal::new(
         StatusCode::CONFLICT,

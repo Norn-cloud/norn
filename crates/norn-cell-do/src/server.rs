@@ -288,10 +288,10 @@ fn route<E: SqlEngine>(
         .strip_prefix("/v1/actions/")
         .filter(|id| !id.is_empty() && !id.contains('/'));
     // `Route` is the one list of what this host serves; a path it does not
-    // name is not found. `/v1/access` and `/v1/cell:provision` are dispatched
-    // by the published host's entry point and the tenant, never here.
-    let served =
-        Route::of(path).is_some_and(|route| !matches!(route, Route::Access | Route::Provision));
+    // name is not found. `/v1/access` is dispatched by the published host's
+    // entry point, never here.
+    let route_of = Route::of(path);
+    let served = route_of.is_some_and(|route| route != Route::Access);
     if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -299,6 +299,8 @@ fn route<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
+    } else if route_of == Some(Route::Provision) {
+        provisioned(host, actor, request)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if let Some(action) = action {
@@ -358,6 +360,32 @@ fn route<E: SqlEngine>(
 /// verified.
 fn cell<E: SqlEngine>(host: Option<&DevHost<E>>) -> Result<&DevHost<E>, Refusal> {
     host.ok_or_else(norn_api::authz::read_denied)
+}
+
+/// `POST /v1/cell:provision` on a cell this dispatch already serves: a
+/// tenant host provisions a vacant scope before any cell route
+/// ([`crate::tenant::Tenant`]); a cell served here exists, so a provisioner
+/// is told so, and anyone else gets the opaque denial.
+fn provisioned<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ));
+    }
+    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
+    Err(norn_api::provision::already_provisioned())
 }
 
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
