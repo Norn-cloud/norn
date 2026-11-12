@@ -111,7 +111,10 @@ impl NornCell {
         };
         let tenant = (if scope == seed::demo_scope() {
             let store = seed::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            // The demo cell publishes no questions: its decisions and action
+            // calls answer with the lineage-keyed receipt handles.
             Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
+                .map(|tenant| tenant.with_receipt_handles(lineage_key.as_deref()))
         } else if scope == analytics::analytics_scope() {
             let analytics::Analytics {
                 store,
