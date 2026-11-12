@@ -14,7 +14,14 @@ Writes into OUTDIR:
   schemas do not carry (order and ship dates, lead time, region, customer
   segment, unit price, currency). These load through the demo project's
   `sales.order.add` action.
-- `manifest.json`: counts, the seed, and a SHA-256 of every file.
+- `manifest.json`: counts, the seed, each holding's stock flow (closing =
+  opening + receipts - deliveries, in grams) and a SHA-256 of every file.
+
+Holdings move over time: each holding opens at START, and every receipt and
+delivery emits its new balance as a later change of the same record, with
+the change time in the system's own field (ERPNext `modified`, Shopify
+`updated_at`, Odoo `write_date`) and a `sourceVersion` that orders the
+changes, so each change commits as the holding's next version.
 
 Quantities come in different units on purpose (g, kg and pieces). A sum
 that is not grouped by unit adds grams to pieces; the demo groups by unit.
@@ -44,13 +51,17 @@ ITEMS = [
 ]
 # How each system names a dataset and the record's identity and reference fields.
 SHAPE = {
-    "erpnext": {"id": "name", "ref": "custom_norn_ref", "party": "Party", "item": "Item", "holding": "Warehouse Lot Balance", "order": "Sales Order Item", "prefix": "SYN-ERPNEXT"},
-    "shopify": {"id": "id", "ref": "metafield_norn_ref", "party": "Customer", "item": "ProductVariant", "holding": "InventoryLevel", "order": "OrderLine", "prefix": "SYN-SHOPIFY"},
-    "odoo": {"id": "id", "ref": "x_norn_ref", "party": "res.partner", "item": "product.product", "holding": "stock.quant", "order": "sale.order.line", "prefix": "SYN-ODOO"},
+    "erpnext": {"id": "name", "ref": "custom_norn_ref", "party": "Party", "item": "Item", "holding": "Warehouse Lot Balance", "order": "Sales Order Item", "prefix": "SYN-ERPNEXT", "observed": "modified"},
+    "shopify": {"id": "id", "ref": "metafield_norn_ref", "party": "Customer", "item": "ProductVariant", "holding": "InventoryLevel", "order": "OrderLine", "prefix": "SYN-SHOPIFY", "observed": "updated_at"},
+    "odoo": {"id": "id", "ref": "x_norn_ref", "party": "res.partner", "item": "product.product", "holding": "stock.quant", "order": "sale.order.line", "prefix": "SYN-ODOO", "observed": "write_date"},
 }
 START = date(2026, 1, 5)
 # Holding cost per gram (USD), the same values the live sandboxes are seeded with.
 STOCK_COST_PER_GRAM = {"GOLD": 45, "SILVER": 0.8}
+# Grams per holding: opening balance, reorder point and receipt size. A
+# receipt restocks a holding before a delivery would take it below the
+# reorder point.
+STOCK_PLAN = {"GOLD": (5000, 1000, 5000), "SILVER": (20000, 5000, 20000)}
 
 
 def generate(orders: int, seed: int):
@@ -90,8 +101,11 @@ def snapshot(system: str, customers, rows):
     shape = SHAPE[system]
     out = []
 
-    def record(dataset, local, ref, **fields):
-        out.append({"dataset": dataset, "record": {shape["id"]: f"{shape['prefix']}-{local}", shape["ref"]: ref, **fields}})
+    def record(dataset, local, ref, version=None, **fields):
+        row = {"dataset": dataset, "record": {shape["id"]: f"{shape['prefix']}-{local}", shape["ref"]: ref, **fields}}
+        if version is not None:
+            row["sourceVersion"] = version
+        out.append(row)
 
     for role in ("owner", "custodian"):
         record(shape["party"], role, f"demo/party/{role}", label=role.title(), role=role)
@@ -102,16 +116,45 @@ def snapshot(system: str, customers, rows):
     for customer in customers:
         if customer["ref"] in used:
             record(shape["party"], customer["ref"].rsplit("/", 1)[1], customer["ref"], label=customer["label"], role="customer")
+    # Each holding's balance over time: the opening balance at START, then
+    # its new balance after every receipt (+) and delivery (-), each a
+    # separate change with its own time and source version.
+    def holding(code, region, quantity, at, version):
+        record(shape["holding"], f"holding-{region}-{code.lower()}", f"demo/holding/owner/{region}/{code.lower()}", version, resource_code=code, quantity=quantity, unit="g", location=region, item_ref=f"demo/item/{code.lower()}", owner_ref="demo/party/owner", custodian_ref="demo/party/custodian", stock_cost=round(quantity * STOCK_COST_PER_GRAM[code]), cost_currency="USD", valuation_method="moving_average", **{shape["observed"]: at})
+
+    opened = f"{START.isoformat()}T00:00:00Z"
+    balance = {}
     for code, label, unit, price, _ in ITEMS:
         if unit != "g":
             continue
         record(shape["item"], f"item-{code.lower()}", f"demo/item/{code.lower()}", code=code, label=label, sku=f"SKU-{code}", price=float(price))
         for region in REGIONS:
-            record(shape["holding"], f"holding-{region}-{code.lower()}", f"demo/holding/owner/{region}/{code.lower()}", resource_code=code, quantity=100000, unit=unit, location=region, item_ref=f"demo/item/{code.lower()}", owner_ref="demo/party/owner", custodian_ref="demo/party/custodian", stock_cost=round(100000 * STOCK_COST_PER_GRAM[code]), cost_currency="USD", valuation_method="moving_average")
+            balance[(code, region)] = STOCK_PLAN[code][0]
+            holding(code, region, STOCK_PLAN[code][0], opened, f"{opened}#000000")
     for row in mine:
         number = row["order_ref"].split("/")[2]
         record(shape["order"], f"order-{number}", row["order_ref"], quantity=int(row["quantity"]), unit=row["unit"], due_at=f"{row['ship_date']}T12:00:00Z", provider_ref="demo/party/owner", receiver_ref=row["customer_ref"], holding_ref=f"demo/holding/owner/{row['region']}/{row['item_code'].lower()}")
-    return {"profile": f"synthetic-{system}-three/1", "capability": "synthetic_snapshot", "productionCdc": False, "snapshotWatermark": len(out), "snapshot": out}
+    flows = {key: {"receipts": 0, "deliveries": 0} for key in balance}
+    sequence = 0
+    for row in sorted(mine, key=lambda row: (row["ship_date"], row["order_ref"])):
+        key = (row["item_code"], row["region"])
+        quantity = int(row["quantity"])
+        _, reorder, receipt = STOCK_PLAN[row["item_code"]]
+        while balance[key] - quantity < reorder:
+            at = f"{row['ship_date']}T08:00:00Z"
+            balance[key] += receipt
+            flows[key]["receipts"] += receipt
+            sequence += 1
+            holding(key[0], key[1], balance[key], at, f"{at}#{sequence:06d}")
+        at = f"{row['ship_date']}T12:00:00Z"
+        balance[key] -= quantity
+        flows[key]["deliveries"] += quantity
+        sequence += 1
+        holding(key[0], key[1], balance[key], at, f"{at}#{sequence:06d}")
+    for (code, region), flow in flows.items():
+        assert balance[(code, region)] == STOCK_PLAN[code][0] + flow["receipts"] - flow["deliveries"] >= 0
+    stock = {f"{code.lower()}/{region}": {"opening": STOCK_PLAN[code][0], **flow, "closing": balance[(code, region)]} for (code, region), flow in sorted(flows.items())}
+    return {"profile": f"synthetic-{system}-three/1", "capability": "synthetic_snapshot", "productionCdc": False, "snapshotWatermark": len(out), "snapshot": out}, stock
 
 
 def main() -> None:
@@ -123,7 +166,9 @@ def main() -> None:
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
     customers, rows = generate(args.orders, args.seed)
-    files = {f"{system}.json": snapshot(system, customers, rows) for system in SHAPE}
+    files, stock = {}, {}
+    for system in SHAPE:
+        files[f"{system}.json"], stock[system] = snapshot(system, customers, rows)
     files["orders.json"] = {"seed": args.seed, "rows": rows}
     digests = {}
     for name, document in files.items():
@@ -136,6 +181,8 @@ def main() -> None:
         "customers": len({row["customer_ref"] for row in rows}),
         "perSystem": {system: sum(row["system"] == system and row["unit"] == "g" for row in rows) for system in SHAPE},
         "units": sorted({row["unit"] for row in rows}),
+        # Grams per holding: closing = opening + receipts - deliveries.
+        "stock": stock,
         "sha256": digests,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")

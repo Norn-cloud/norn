@@ -20,6 +20,10 @@ pub enum Operation {
     /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
     /// the cell's own policy.
     ProvisionCell,
+    /// Start a sync of the named source connection, or sign, complete, load
+    /// or read an upload (`upload`): a write of the cell's sources, decided
+    /// like a definitions write.
+    SyncSource(String),
     /// Decide a decision a flow run waits on, whose request declares these
     /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
     /// run; it grants the run nothing.

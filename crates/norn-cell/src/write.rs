@@ -691,6 +691,26 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         params![observation_id],
                     )?;
                 }
+                if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                    // OBS-PAGE-1: the page's still-pending members are consumed
+                    // by the commit that consumes the page (the guard checked
+                    // that it applies exactly them).
+                    let members = format!(
+                        "SELECT value FROM json_each((SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?2), '$.input.members')"
+                    );
+                    self.conn.execute(
+                        &format!(
+                            "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" IN ({members})"
+                        ),
+                        params![commit_seq, observation_id],
+                    )?;
+                    self.conn.execute(
+                        &crate::system::claim_endpoints_of(&format!(
+                            "i.\"consumed_commit_seq\" = ?1 AND i.\"observation_id\" IN ({members})"
+                        )),
+                        params![commit_seq, observation_id],
+                    )?;
+                }
             }
         }
         Ok(())

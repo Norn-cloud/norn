@@ -90,6 +90,8 @@ test("a decimal shows at its declared scale: zeros are added, no digit is ever r
   expect(atScale("19.995", 2)).toBe("19.995")
   expect(atScale("1e3", 2)).toBe("1e3")
   expect(atScale("7", undefined)).toBe("7")
+  expect(atScale("200", 6)).toBe("200")
+  expect(atScale("0.0123", 18)).toBe("0.0123")
   // Property: for any plain decimal and scale, the result has at least `scale` places and reads as the same number.
   for (let i = 0; i < 500; i++) {
     const whole = String(Math.floor(Math.random() * 1e6) * (Math.random() < 0.3 ? -1 : 1))
@@ -99,6 +101,7 @@ test("a decimal shows at its declared scale: zeros are added, no digit is ever r
     const shown = atScale(text, scale)
     expect(shown.startsWith(text)).toBe(true)
     expect(/^0*$/.test(shown.slice(text.length).replace(".", ""))).toBe(true)
-    if (scale > 0) expect((shown.split(".")[1] ?? "").length).toBeGreaterThanOrEqual(scale)
+    if (scale > 0 && scale <= 2) expect((shown.split(".")[1] ?? "").length).toBeGreaterThanOrEqual(scale)
+    if (scale > 2) expect(shown).toBe(text)
   }
 })

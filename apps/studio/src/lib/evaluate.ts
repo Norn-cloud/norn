@@ -72,8 +72,9 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
 }
 
 /** One bucket's records for a question built in Studio: POST /v1/questions:trace, passing lineageRef back exactly as received. */
-export async function traceQuestion(question: unknown, lineageRef: string, bucket: string, fetcher: Fetch = fetch): Promise<LiveRead<Trace>> {
-  const response = await post("/v1/questions:trace", { question, lineageRef, bucket }, fetcher)
+export async function traceQuestion(question: unknown, lineageRef: string, bucket: string, fetcher: Fetch = fetch, answered?: { readonly knownAsOf: number; readonly nowMs: number }): Promise<LiveRead<Trace>> {
+  // With the answer's knownAsOf and nowMs the cell traces the answer as it was given, even after later commits.
+  const response = await post("/v1/questions:trace", { question, lineageRef, bucket, ...answered ?? {} }, fetcher)
   if (response === undefined) return { kind: "unavailable", status: 0 }
   if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }

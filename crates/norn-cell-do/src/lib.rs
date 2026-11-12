@@ -19,11 +19,15 @@
 //! - [`base`]: the trusted base this host compiles in.
 //! - [`tenant`]: one scope's cell, vacant until `POST /v1/cell:provision`
 //!   (HOST-PROVISION-1) creates it, then served and reopened on restart.
+//! - [`actions`]: governed action calls decided by the scope's own policy
+//!   (#1252).
 //! - `dev` (native only): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 
+pub mod actions;
 pub mod analytics;
 pub mod base;
+pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
 pub mod mcp;

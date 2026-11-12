@@ -35,6 +35,16 @@ class Refused(Exception):
     """The cell refused a read or a write; the message carries its refusal."""
 
 
+def _unknown_route(answer) -> bool:
+    """A 400 that means the host read `{type}:export` as an object route: it does not know
+    the export's parameters. Matched on the refusal's code and explanation, not the status."""
+    try:
+        refusal = answer.json()
+    except ValueError:
+        return False
+    return refusal.get("code") == "request.invalid" and str(refusal.get("explanation") or "").startswith("unknown query parameter")
+
+
 @dataclass(frozen=True)
 class Cell:
     client: AuthenticatedClient
@@ -67,22 +77,24 @@ class Cell:
         """The columns through the cell's analytical engine (`:export`, Parquet): every row the
         caller may read, nulls kept, `id` and `version` included. The answer's snapshot
         (`Norn-Snapshot`) is in `frame.attrs["snapshot"]`. None when the host has no such
-        engine, so the caller falls back to the paged object route: 404 or 501, or 400 or
-        405 from a host that reads `{type}:export` as an object route. A refusal of the
-        caller's authority (403) is not a fallback: it raises."""
+        engine, so the caller falls back to the paged object route: 404, 405 or 501, or the
+        one 400 a host without the engine gives when it reads `{type}:export` as an object
+        route (code `request.invalid`, explanation "unknown query parameter …"). Any other
+        refusal, another 400 or a 403 included, raises with the cell's explanation."""
         import io
 
         answer = self.client.get_httpx_client().get(
             f"/v1/objects/{object_type}:export",
             params={"columns": ",".join(columns), "format": "parquet", "orgId": self.org_id, "environmentId": self.environment_id},
         )
-        if answer.status_code in (400, 404, 405, 501):
+        if answer.status_code in (404, 405, 501) or (answer.status_code == 400 and _unknown_route(answer)):
             return None
         if answer.status_code != 200:
             raise Refused(f"exporting {object_type} ({answer.status_code}): {answer.text}")
         frame = pd.read_parquet(io.BytesIO(answer.content))
         frame.attrs["snapshot"] = answer.headers.get("Norn-Snapshot")
         frame.attrs["withheld"] = int(answer.headers.get("Norn-Withheld-Rows", "0"))
+        frame.attrs["read_path"] = "export"
         return frame
 
     def rows(self, object_type: str, columns: list[str] | None = None) -> pd.DataFrame:
@@ -129,6 +141,14 @@ class RegressionChecks:
         return self.spec["summary"]
 
 
+def p_decimal(text: str | None) -> str | None:
+    """A p-value as the exact decimal text the cell stores (18 places, no exponent), or None."""
+    if text is None:
+        return None
+    fixed = f"{float(text):.18f}".rstrip("0")
+    return fixed + "0" if fixed.endswith(".") else fixed
+
+
 def revision(rows: pd.DataFrame) -> str:
     """The dataset revision the checks ran on: a hash of every row's id and version."""
     pairs = sorted(zip(rows["id"].astype(str), rows["version"].astype(int))) if len(rows) else []
@@ -147,19 +167,21 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
     # The engine's snapshot when it answered (the same snapshot re-exports the same rows),
     # else a hash of every row's id and version.
     dataset = rows.attrs.get("snapshot") or revision(rows)
+    # Which read the checks ran on: the analytical engine's export, or the paged object route.
+    read_path = rows.attrs.get("read_path", "paged")
     identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset, *([request] if request else [])], separators=(",", ":"))
     spec_id = "ms-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
     checks, plots = assumption_suite(rows, target, list(features), order)
     spec = {"spec": spec_id, "object_type": object_type, "target": target, "features": ",".join(features),
             "order_field": order, "dataset_revision": dataset, "rows": int(len(rows)), "rows_used": int(plots["n"]),
-            "method": environment(), "summary": summary(checks), "request": request}
+            "method": environment(), "summary": summary(checks), "request": request, "read_path": read_path}
     result = RegressionChecks(spec, checks, plots)
     # An absent value (no order field, no p-value) is recorded as null: the properties are nullable.
     action = "stats.modelspec.record_for_request" if request else "stats.modelspec.record"
     result.receipts.append(cell.call(action, spec, spec_id)["receipt"]["receiptHash"])
     for index, check in enumerate(checks):
         values = {"check": f"{spec_id}-{index:02d}", "spec": spec_id, "assumption": check.assumption, "test": check.test,
-                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": check.p_value,
+                  "subject": check.subject, "status": check.status, "statistic": check.statistic, "p_value": p_decimal(check.p_value),
                   "threshold": check.threshold, "threshold_source": check.threshold_source, "remediation": check.remediation}
         result.receipts.append(cell.call("stats.assumptioncheck.record", values, values["check"])["receipt"]["receiptHash"])
     return result
