@@ -1,5 +1,5 @@
 {
-  "description": "Shared verdicts for the pull_request concurrency rule. crates/norn-skeleton-guard/src/ci/mod.rs (concurrency_error) and verification/coverage-v1/validate.py (validate_pull_request_concurrency) must both reach `expect` for every case. A case's workflow is `on` followed by `concurrency` (null: none). A case with `source` holds that workflow's exact checked-in text.",
+  "description": "Shared verdicts for the pull_request concurrency rule. crates/norn-skeleton-guard/src/ci/mod.rs (concurrency_error) and verification/coverage-v1/validate.py (validate_pull_request_concurrency) must both reach `expect` for every case. A case's workflow is `on` followed by `concurrency` (null: none). A case with `source` holds that workflow's exact checked-in text. validate.py (a gate file) pins every case's name, verdict and input digest in PULL_REQUEST_CONCURRENCY_CASES: cases may be added anywhere, but losing, flipping or changing a pinned one needs /approve-gates.",
   "cases": [
     {
       "name": "codeql.yml as checked in",
