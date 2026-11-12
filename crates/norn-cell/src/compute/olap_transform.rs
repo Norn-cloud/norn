@@ -775,7 +775,7 @@ fn execute(
 ) -> Result<TransformOutput, CellError> {
     let conn = db(Connection::open_in_memory())?;
     db(conn.execute_batch(
-        "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1; SET TimeZone='UTC';",
+        "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;",
     ))?;
     load(&conn, plan, input)?;
     let schema = plan.output_schema();
