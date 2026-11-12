@@ -4,3 +4,4 @@
 -r ../examples/requirements.in
 statsmodels==0.15.0
 scipy
+pyarrow
