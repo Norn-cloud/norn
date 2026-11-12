@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2 } from "lucide-react"
+import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
@@ -39,6 +39,19 @@ const settled = (result: Installed) => {
   throw new Error("conflict" in result ? "Someone changed this dashboard since the list was read; reload and try again." : result.findings.map(({ message }) => message).join(" ") || "The cell refused the change.")
 }
 
+/** A deleted dashboard: retiring keeps its history, so undoing installs the same definition over the retired version. */
+interface Removed { readonly id: string; readonly version: number; readonly dashboard: Dashboard }
+
+function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Removed; readonly pending: boolean; readonly error?: string; readonly onUndo: () => void }) {
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 text-sm shadow-elevation">
+      <span>Deleted “{removed.dashboard.title || "Untitled dashboard"}”. Its history stays in the cell.</span>
+      <Button type="button" size="sm" variant="outline" className="ms-auto" disabled={pending} onClick={onUndo}><Undo2 />{pending ? "Restoring…" : "Undo"}</Button>
+      {error && <p role="alert" className="basis-full text-destructive">Not restored. {error}</p>}
+    </div>
+  )
+}
+
 /** Every saved dashboard, with open, duplicate and delete. */
 export function DashboardsPage() {
   const store = useDefinitions()
@@ -58,7 +71,17 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
-  const remove = useMutation({ mutationFn: async (summary: DashboardSummary) => settled(await store.retire(summary.id, summary.version)), onSettled: refresh })
+  const [removed, setRemoved] = useState<Removed>()
+  const remove = useMutation({
+    mutationFn: async (summary: DashboardSummary) => {
+      const stored = await store.get(summary.id)
+      const retired = settled(await store.retire(summary.id, summary.version))
+      return stored === undefined || !retired.installed ? undefined : { id: summary.id, version: retired.version, dashboard: stored.dashboard }
+    },
+    onSuccess: setRemoved,
+    onSettled: refresh,
+  })
+  const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -72,6 +95,7 @@ export function DashboardsPage() {
       {dashboards.isError && <EmptyState icon={LayoutDashboard}>{failure(dashboards.error)}</EmptyState>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
+      {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
       {rows?.length === 0 && <EmptyState icon={LayoutDashboard}>No dashboards saved yet.</EmptyState>}
       {rows?.map((stored) => (
         <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
@@ -287,11 +311,19 @@ export function DashboardBoardPage() {
     },
     onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
   })
+  const [removed, setRemoved] = useState<Removed>()
   const remove = useMutation({
-    mutationFn: async (from: StoredDashboard) => settled(await store.retire(from.id, from.version)),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards" }) },
+    mutationFn: async (from: StoredDashboard) => {
+      const retired = settled(await store.retire(from.id, from.version))
+      return retired.installed ? { id: from.id, version: retired.version, dashboard: from.dashboard } : undefined
+    },
+    onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["dashboards"] }) },
   })
-  const board = stored.data
+  const undo = useMutation({
+    mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)),
+    onSuccess: () => { setRemoved(undefined); void client.invalidateQueries({ queryKey: ["dashboards"] }); void stored.refetch() },
+  })
+  const board = removed ? undefined : stored.data
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
@@ -313,6 +345,8 @@ export function DashboardBoardPage() {
       {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && <p className="text-muted-foreground">Reading the dashboard…</p>}
       {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
       {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
+      {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
+      {removed && <Button asChild variant="ghost" size="sm"><Link to="/dashboards">Back to dashboards</Link></Button>}
       {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
       {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} />}
     </section>
