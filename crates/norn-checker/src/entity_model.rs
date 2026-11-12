@@ -63,7 +63,7 @@ use crate::object_types::{
     check_property_default, check_property_shape, codes, unsatisfiable, valid_date,
 };
 use crate::property_types::{
-    ResolvedType, TypeResolution, error, matches_grammar, resolve_type, span_at, with_additivity,
+    ResolvedType, TypeResolution, error, matches_grammar, resolve_type, span_at, with_contract,
 };
 use crate::{Diagnostic, interfaces};
 
@@ -1379,6 +1379,7 @@ impl<'a> Checker<'a, '_> {
         let conflicted = self.check_implements(&base, def, &ancestors, &table, &inherited);
 
         self.check_declared_members(&base, def, &table, &conflicted);
+        self.check_unit_sources(&base, def, &table);
 
         self.check_type_links(&base, def, registered, parent);
         self.check_owned_collections(&base, def, parent);
@@ -1717,6 +1718,44 @@ impl<'a> Checker<'a, '_> {
 
     /// Id grammar, duplicates, types, overrides, and member namespaces of the
     /// properties a type declares.
+    /// METRIC-UNIT-PARTITION-1: each unit source names another stored
+    /// property of this type whose values are unit or currency codes (text,
+    /// enum or a registry code type).
+    fn check_unit_sources(&mut self, base: &[&str], def: &'a ObjectTypeDef, table: &Table<'a>) {
+        for (position, property) in def.properties.iter().enumerate() {
+            let Some(member) = table.get(&property.id) else {
+                continue;
+            };
+            let sources = member.ty.unit_source();
+            let invalid = sources.iter().find(|id| {
+                **id == property.id
+                    || table.get(id).is_none_or(|source| {
+                        source.property.is_read_only()
+                            || !matches!(
+                                source.ty.resolution,
+                                TypeResolution::Registry
+                                    | TypeResolution::Base(
+                                        PropertyType::Text { .. } | PropertyType::Enum { .. }
+                                    )
+                            )
+                    })
+            });
+            if let Some(id) = invalid {
+                let position = position.to_string();
+                self.out.push(error(
+                    crate::property_types::codes::INVALID_UNIT_SOURCE,
+                    format!(
+                        "property {:?} takes its unit from {:?}, which is not another stored text, enum or code property of {:?}",
+                        property.id.as_str(),
+                        id.as_str(),
+                        def.name.as_str()
+                    ),
+                    span_at(base, &["properties", position.as_str(), "type", "unitSource"]),
+                ));
+            }
+        }
+    }
+
     fn check_own_properties(
         &mut self,
         base: &[&str],
@@ -2429,12 +2468,22 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
         return None;
     }
     if let PropertyType::Ref { name, .. } = sup.declared {
-        return Some(sub.resolved.names.contains(&name));
+        // METRIC-UNIT-PARTITION-1: a member may add a unit source, never drop
+        // or change the one the requirement declares.
+        let required = sup.resolved.unit_source();
+        return Some(
+            sub.resolved.names.contains(&name)
+                && (required.is_empty() || sub.resolved.unit_source() == required),
+        );
     }
     match (sub.resolved.resolution, sup.resolved.resolution) {
         (TypeResolution::Base(narrow), TypeResolution::Base(wide)) => Some(base_narrows(
-            &with_additivity(narrow, sub.resolved.additivity()),
-            &with_additivity(wide, sup.resolved.additivity()),
+            &with_contract(
+                narrow,
+                sub.resolved.additivity(),
+                sub.resolved.unit_source(),
+            ),
+            &with_contract(wide, sup.resolved.additivity(), sup.resolved.unit_source()),
         )),
         _ => Some(false),
     }

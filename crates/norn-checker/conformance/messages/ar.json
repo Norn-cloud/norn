@@ -1562,6 +1562,10 @@
       "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
       "review": "needs_review"
     },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: وحدة المقياس مخزنة في خصائص مجاورة؛ جمّع حسب كل منها أو ثبّت كلًّا منها بمرشح eq، حتى لا يخلط أي تجميع بين الوحدات.",
+      "review": "needs_review"
+    },
     "metric.validation.ontology_projection": {
       "message": "مجموعات البيانات أو العلاقات الدلالية المُولَّدة تختلف عن الأنطولوجيا.",
       "review": "needs_review"
@@ -2024,6 +2028,10 @@
     },
     "property_type.validation.invalid_unit": {
       "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
+      "review": "needs_review"
+    },
+    "property_type.validation.invalid_unit_source": {
+      "message": "مصدر الوحدة {$detail}",
       "review": "needs_review"
     },
     "property_type.validation.inverted_range": {

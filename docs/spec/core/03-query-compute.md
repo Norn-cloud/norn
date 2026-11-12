@@ -68,6 +68,36 @@ class pair is admitted exactly when the requirement is undeclared or equal),
 non-numeric type, or against a declared one, refuses), and
 **METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
 
+**METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
+`unitSource`: one or more distinct sibling properties whose values together
+are its unit (canon's quantities take theirs from `unit` or, for money,
+`currency`). It is declared inline or at a `ref` use site, under the same
+chain rule as use-site additivity. A decimal declares at most one of a static
+`unit`, `currencySource`, `perUnit` or `unitSource`. Each source must be
+another stored property of the same object type whose values are codes (text,
+enum or a registry code type). A use site never contradicts the source the
+referenced type declares. Against a requirement or overridden property
+declared as a `ref`, a member keeps the declared source and may add one where
+none is declared. Any violation refuses
+`property_type.validation.invalid_unit_source`. A question that aggregates
+such a measure (sum, average, minimum or maximum; counts are exempt) groups by
+each source property, or fixes it with an `eq` filter of the question or of
+the metric's default filters. `eq null` counts, because question filters
+compare nulls as values. Otherwise the question refuses
+`metric.validation.mixed_unit`. A reaggregation never rolls up across a
+source property, and ratio operands are checked the same way. Derived
+candidates expose their source paths as `unit_partition`. While the exact
+engine admits one grouping dimension, the shape it supports is the time
+dimension plus `eq` filters on each source.
+
+Named scenarios: **METRIC-UNIT-GROUPED** and **METRIC-UNIT-FIXED** (grouping
+by or fixing every source admits), **METRIC-UNIT-MIXED** (leaving any source
+free refuses; `ne` does not fix it), **METRIC-UNIT-ENGINE-SHAPE** (a time
+grouping with `eq` filters on every source lowers to the exact engine), and
+**METRIC-UNIT-DECLARATION** (a source that is the measure itself, missing or
+not a code property, a decimal with a static unit, or a member that drops a
+declared source, refuses).
+
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
 Candidates are uncertified; deriving one does not declare a governed KPI or
