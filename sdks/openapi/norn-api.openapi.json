@@ -161,8 +161,8 @@
         "tags": [
           "crate::provision"
         ],
-        "summary": "Provision the cell for `scope` on a fresh `engine` from an admitted\nsubmission, in one engine transaction (HOST-PROVISION-ATOMIC): the store\nschema, the scope binding, a fresh cell identity, the definitions, their\nreceipt and the ledger commit together, or nothing.",
-        "description": "The caller has already passed [`authorize`]; `now_ms` is the host clock\n(Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
+        "summary": "Provision the scope's cell from the caller's definitions (owner only).",
+        "description": "One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the\nscope binding, a fresh cell identity, the definitions, their receipt and\nthe ledger commit together, or nothing. The host calls this on a fresh\nengine after [`authorize`] and [`admit_submission`]; `now_ms` is the host\nclock (Unix milliseconds), recorded as the install time.\n\n# Errors\n`cell.provision_conflict` (409) when the engine already holds a cell\nprovisioned from something else; `host.error` (500) for a storage failure,\nwhich leaves the engine as it was.",
         "operationId": "provision_cell",
         "parameters": [
           {
@@ -225,6 +225,16 @@
               }
             }
           },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
           "409": {
             "description": "The request was refused: the cell holds other definitions, or the submission names another trusted base.",
             "content": {
@@ -265,7 +275,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
       }
     },
     "/v1/definitions/{id}": {

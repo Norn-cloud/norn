@@ -42,12 +42,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Provision the cell for `scope` on a fresh `engine` from an admitted
-         *     submission, in one engine transaction (HOST-PROVISION-ATOMIC): the store
-         *     schema, the scope binding, a fresh cell identity, the definitions, their
-         *     receipt and the ledger commit together, or nothing.
-         * @description The caller has already passed [`authorize`]; `now_ms` is the host clock
-         *     (Unix milliseconds), recorded as the install time.
+         * Provision the scope's cell from the caller's definitions (owner only).
+         * @description One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the
+         *     scope binding, a fresh cell identity, the definitions, their receipt and
+         *     the ledger commit together, or nothing. The host calls this on a fresh
+         *     engine after [`authorize`] and [`admit_submission`]; `now_ms` is the host
+         *     clock (Unix milliseconds), recorded as the install time.
          *
          *     # Errors
          *     `cell.provision_conflict` (409) when the engine already holds a cell
@@ -9471,6 +9471,15 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
                 headers: {
                     [name: string]: unknown;
                 };
