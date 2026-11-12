@@ -223,6 +223,19 @@ pub struct RunDocument {
     pub terminal: bool,
     /// The steps the run reached, in order.
     pub steps: Vec<RunStep>,
+    /// The open decision the run waits on, when the caller may decide it;
+    /// `null` otherwise.
+    pub decision: Option<RunDecision>,
+}
+
+/// The open decision a run waits on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDecision {
+    /// The decision id (`POST /v1/decisions/{id}:decide`).
+    pub id: String,
+    /// When it expires (logical milliseconds).
+    pub expires_at_ms: u64,
 }
 
 fn run_exists() -> Refusal {
@@ -430,7 +443,10 @@ pub fn start_run<E: SqlEngine>(
     {
         // An exact retry returns the run; another flow's id never leaks.
         return if row.flow.id == body.flow && readable(host, access, &row) {
-            Ok((StatusCode::OK, document(cell.store(), &flow.view, row)?))
+            Ok((
+                StatusCode::OK,
+                document(host, actor, cell.store(), &flow.view, row)?,
+            ))
         } else {
             Err(run_exists())
         };
@@ -445,7 +461,7 @@ pub fn start_run<E: SqlEngine>(
         .ok_or_else(|| Refusal::host("a committed run start left no ledger row"))?;
     Ok((
         StatusCode::CREATED,
-        document(cell.store(), &flow.view, row)?,
+        document(host, actor, cell.store(), &flow.view, row)?,
     ))
 }
 
@@ -529,6 +545,7 @@ fn commit_start<E: SqlEngine>(
 pub fn get_run<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
+    actor: &str,
     id: &str,
     access: ReadAccess<'_>,
 ) -> Result<RunDocument, Refusal> {
@@ -547,7 +564,7 @@ pub fn get_run<E: SqlEngine>(
         .filter(|row| readable(host, access, row))
         .ok_or_else(run_not_found)?;
     let flow = run_flow(cell.store(), &row)?;
-    document(cell.store(), &flow, row)
+    document(host, actor, cell.store(), &flow, row)
 }
 
 /// The view of the flow a started run runs: the installed flow's while it is
@@ -573,14 +590,18 @@ fn run_flow<E: SqlEngine>(store: &CellStore<E>, row: &RunRow) -> Result<FlowView
 
 /// The run document for `row`, with its timeline.
 fn document<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
     store: &CellStore<E>,
     flow: &FlowView,
     row: RunRow,
 ) -> Result<RunDocument, Refusal> {
-    let terminal = match row.state.as_deref() {
-        None => true,
-        Some(state) => terminal_state(store, &row.object_type, state),
+    let decision = if terminal_state_of(store, &row) {
+        None
+    } else {
+        crate::decisions::run_decision(host, store, actor, &row.run_id)?
     };
+    let terminal = terminal_state_of(store, &row);
     let steps = timeline(store, flow, &row, terminal)?;
     Ok(RunDocument {
         id: row.run_id,
@@ -600,7 +621,16 @@ fn document<E: SqlEngine>(
         updated_commit_seq: row.updated_commit_seq,
         terminal,
         steps,
+        decision,
     })
+}
+
+/// Whether the run has ended: its object is deleted, or its state is
+/// terminal.
+fn terminal_state_of<E: SqlEngine>(store: &CellStore<E>, row: &RunRow) -> bool {
+    row.state
+        .as_deref()
+        .is_none_or(|state| terminal_state(store, &row.object_type, state))
 }
 
 /// Whether `state` is a terminal state of a lifecycle of `object_type`. A
