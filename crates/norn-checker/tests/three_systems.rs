@@ -554,6 +554,11 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
             .iter()
             .map(|path| path.property.as_str())
             .collect();
-        assert_eq!(partition, ["unit", "currency"], "{}", candidate.definition.name);
+        assert_eq!(
+            partition,
+            ["unit", "currency"],
+            "{}",
+            candidate.definition.name
+        );
     }
 }

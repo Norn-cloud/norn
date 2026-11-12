@@ -202,7 +202,11 @@ fn an_inline_requirement_still_needs_the_same_additivity() {
 
 /// A flow whose unit is stored beside it, in `unit` or (for money) `currency`.
 fn flow(quantity: &Value, required: &Value) -> Vec<ArtifactEnvelope> {
-    let mut artifacts = model("undeclared", quantity, &reference("demo.quantity", "undeclared"));
+    let mut artifacts = model(
+        "undeclared",
+        quantity,
+        &reference("demo.quantity", "undeclared"),
+    );
     let mut event: Value = serde_json::to_value(&artifacts[1]).expect("wire");
     event["payload"]["interface"]["properties"][1]["type"] = required.clone();
     artifacts[1] = serde_json::from_value(event).expect("envelope");
@@ -243,10 +247,16 @@ fn question(space: &norn_checker::metric::derive::MetricSpace, shape: [&str; 2])
     let mut dimensions = vec![json!({"path": {"property": "occurred_at"}, "grain": "week"})];
     let mut filters = Vec::new();
     for (source, how) in ["unit", "currency"].into_iter().zip(shape) {
-        let value = if source == "unit" { json!("g") } else { Value::Null };
+        let value = if source == "unit" {
+            json!("g")
+        } else {
+            Value::Null
+        };
         match how {
             "grouped" => dimensions.push(json!({"path": {"property": source}})),
-            "eq" | "ne" => filters.push(json!({"path": {"property": source}, "operator": how, "value": value})),
+            "eq" | "ne" => {
+                filters.push(json!({"path": {"property": source}, "operator": how, "value": value}))
+            }
             _ => {}
         }
     }
@@ -261,7 +271,10 @@ fn question(space: &norn_checker::metric::derive::MetricSpace, shape: [&str; 2])
 
 #[test]
 fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fixed() {
-    let artifacts = flow(&partitioned(&["unit", "currency"]), &reference("demo.quantity", "undeclared"));
+    let artifacts = flow(
+        &partitioned(&["unit", "currency"]),
+        &reference("demo.quantity", "undeclared"),
+    );
     assert_eq!(errors(&artifacts), BTreeSet::new());
     let space = space(&artifacts);
     let metric = space
@@ -304,20 +317,33 @@ fn a_unit_source_names_other_stored_code_properties_and_members_keep_it() {
     assert!(refused(partitioned(&["quantity"]), free.clone()), "itself");
     assert!(refused(partitioned(&["missing"]), free.clone()), "missing");
     assert!(refused(partitioned(&["weight"]), free.clone()), "a decimal");
-    assert!(refused(partitioned(&["unit", "unit"]), free.clone()), "repeated");
     assert!(
-        refused(json!({"kind": "ref", "name": "demo.code", "unitSource": ["unit"]}), free.clone()),
+        refused(partitioned(&["unit", "unit"]), free.clone()),
+        "repeated"
+    );
+    assert!(
+        refused(
+            json!({"kind": "ref", "name": "demo.code", "unitSource": ["unit"]}),
+            free.clone()
+        ),
         "on text"
     );
     assert!(
-        refused(json!({"kind": "decimal", "scale": 6, "unit": {"system": "ucum", "code": "g"}, "unitSource": ["unit"]}), free),
+        refused(
+            json!({"kind": "decimal", "scale": 6, "unit": {"system": "ucum", "code": "g"}, "unitSource": ["unit"]}),
+            free
+        ),
         "with a static unit"
     );
     // A member keeps a source its ref requirement declares, and may add one.
-    let required = json!({"kind": "ref", "name": "demo.quantity", "unitSource": ["unit", "currency"]});
+    let required =
+        json!({"kind": "ref", "name": "demo.quantity", "unitSource": ["unit", "currency"]});
     assert!(
         errors(&flow(&reference("demo.quantity", "additive"), &required))
             .contains(object_codes::INTERFACE_PROPERTY_TYPE_MISMATCH)
     );
-    assert_eq!(errors(&flow(&partitioned(&["unit", "currency"]), &required)), BTreeSet::new());
+    assert_eq!(
+        errors(&flow(&partitioned(&["unit", "currency"]), &required)),
+        BTreeSet::new()
+    );
 }

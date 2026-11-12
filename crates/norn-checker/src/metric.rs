@@ -1213,12 +1213,11 @@ impl<'a> Checker<'a> {
         measure: (&str, MeasureAggregate, Option<&norn_ir::PropertyId>),
         at: &str,
     ) {
-        let fixed = |id: &norn_ir::PropertyId| {
-            question
-                .dimensions
-                .iter()
-                .any(|dimension| dimension.path.links.is_empty() && &dimension.path.property == id)
-                || question
+        let fixed =
+            |id: &norn_ir::PropertyId| {
+                question.dimensions.iter().any(|dimension| {
+                    dimension.path.links.is_empty() && &dimension.path.property == id
+                }) || question
                     .filters
                     .iter()
                     .chain(&metric.default_filters)
@@ -1227,7 +1226,7 @@ impl<'a> Checker<'a> {
                             && filter.path.links.is_empty()
                             && &filter.path.property == id
                     })
-        };
+            };
         if self.unit_source(measure).iter().any(|id| !fixed(id)) {
             self.reject(codes::MIXED_UNIT, &format!("{at}/groupBy"));
         }
