@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.invalid_contract",
+  "message": "a model contract names no output or does not apply to its output's type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

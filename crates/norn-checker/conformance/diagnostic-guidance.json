@@ -1640,6 +1640,50 @@
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {
+    "code": "model.admission.feature_kind",
+    "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target."
+  },
+  {
+    "code": "model.admission.unknown_feature",
+    "fix": "Name a property the input object type declares, inherits, implements or gains from an extension."
+  },
+  {
+    "code": "model.admission.unknown_input",
+    "fix": "Include the input object type in the artifact set or the installed base, or name a declared one."
+  },
+  {
+    "code": "model.validation.duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "model.validation.invalid_contract",
+    "fix": "Point the contract at a declared output and use a rule its type admits: range and finite for numeric outputs, oneOf for enum or text outputs."
+  },
+  {
+    "code": "model.validation.invalid_id",
+    "fix": "Rename the id at the reported path to the grammar the message names."
+  },
+  {
+    "code": "model.validation.invalid_output",
+    "fix": "Declare the output as an inline text, integer, decimal, boolean or enum type; give a decimal a static unit or none."
+  },
+  {
+    "code": "model.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "model.validation.target_in_features",
+    "fix": "Remove the target property from the model's features."
+  },
+  {
+    "code": "model.validation.trust_without_contract",
+    "fix": "Add at least one contract on an output, or declare the model's trust as opaque."
+  },
+  {
+    "code": "model.validation.unsupported_trust",
+    "fix": "Declare the model's trust as opaque, or as contract_checked with at least one contract."
+  },
+  {
     "code": "object_type.validation.additivity_not_refined",
     "fix": "Declare the same additivity the requirement or overridden property declares, or none; declare a different one only where the requirement declares none."
   },

@@ -291,6 +291,22 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "model"
+        },
+        "payload": {
+          "$ref": "#/$defs/ModelPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -1493,6 +1509,11 @@
           "description": "Localized labels for definitions; never part of a definition's\nidentity ([`labels`]).",
           "type": "string",
           "const": "labels"
+        },
+        {
+          "description": "`ModelIR`: a typed predictive model with opaque internals\n([`model`]).",
+          "type": "string",
+          "const": "model"
         }
       ]
     },
@@ -3060,6 +3081,83 @@
         "name",
         "op",
         "value"
+      ]
+    },
+    "ContractRule": {
+      "description": "A closed check on one output's values. There are no free expressions.",
+      "oneOf": [
+        {
+          "description": "Inclusive bounds on a numeric output; at least one bound.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "range"
+            },
+            "max": {
+              "description": "Inclusive upper bound.",
+              "$ref": "#/$defs/DecimalLiteral"
+            },
+            "min": {
+              "description": "Inclusive lower bound.",
+              "$ref": "#/$defs/DecimalLiteral"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Every object gets a value.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "notNull"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A numeric output is never NaN or infinite.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "finite"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A categorical (`enum` or `text`) output takes one of these values.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "oneOf"
+            },
+            "values": {
+              "description": "The admitted values; non-empty and unique.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        }
       ]
     },
     "CorrespondenceRelation": {
@@ -7718,6 +7816,169 @@
         "live_footprint_target_bytes"
       ]
     },
+    "ModelContract": {
+      "description": "A named contract on one output.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique contract id (`[a-z][a-z0-9_]*`).",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "output": {
+          "description": "The output it checks, by [`ModelOutput::id`].",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "rule": {
+          "description": "The check.",
+          "$ref": "#/$defs/ContractRule"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "output",
+        "rule"
+      ]
+    },
+    "ModelInput": {
+      "description": "What a model reads. A tagged union so later inputs (a transform, a\ndataset) are additive variants.",
+      "oneOf": [
+        {
+          "description": "The live objects of one object type, by qualified name\n(`sales.Customer`). Features and the target are its properties.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "objectType"
+            },
+            "objectType": {
+              "description": "The input object type.",
+              "$ref": "#/$defs/ObjectTypeName"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "objectType"
+          ]
+        }
+      ]
+    },
+    "ModelMethod": {
+      "description": "How the model was built: display text only.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "The method (`logistic regression`).",
+          "type": "string"
+        },
+        "version": {
+          "description": "The tool or method version (`sklearn 1.6`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ]
+    },
+    "ModelOutput": {
+      "description": "One prediction column a model writes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique column id (`[a-z][a-z0-9_]*`).",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "nullable": {
+          "description": "Whether the model may leave the column empty for an object.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The column's value type, in the property type representation\n(`EntityIR`); a quantity carries its unit inside a `decimal` type, as a\nproperty does.",
+          "$ref": "#/$defs/PropertyType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "nullable"
+      ]
+    },
+    "ModelPayload": {
+      "description": "A typed predictive model with opaque internals ([`model`]).",
+      "type": "object",
+      "properties": {
+        "contracts": {
+          "description": "Checks every output must meet before it is written. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelContract"
+          }
+        },
+        "extensions": {
+          "description": "Reserved versioned extension slots, as on other artifact roots.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "features": {
+          "description": "Input properties the model uses, in order; non-empty and unique.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyId"
+          }
+        },
+        "input": {
+          "description": "What the model reads.",
+          "$ref": "#/$defs/ModelInput"
+        },
+        "method": {
+          "description": "Display-only description of how the model was built.",
+          "$ref": "#/$defs/ModelMethod"
+        },
+        "modelId": {
+          "description": "Dotted model id ([`MODEL_ID_PATTERN`], `sales.churn_model`).",
+          "type": "string"
+        },
+        "outputs": {
+          "description": "Prediction columns; non-empty, ids unique.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelOutput"
+          }
+        },
+        "target": {
+          "description": "The supervised target property; omitted for a scoring-only model.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "title": {
+          "description": "Human-readable title.",
+          "type": "string"
+        },
+        "trust": {
+          "description": "How far the outputs can be trusted without running the model.",
+          "$ref": "#/$defs/TrustLevel"
+        },
+        "version": {
+          "description": "The model artifact's version (SemVer 2.0.0).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "modelId",
+        "title",
+        "version",
+        "input",
+        "features",
+        "outputs",
+        "trust",
+        "method"
+      ]
+    },
     "Multiplicity": {
       "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
       "oneOf": [
@@ -8851,6 +9112,11 @@
           "description": "Localized labels; a downstream pack may label upstream definitions.",
           "type": "string",
           "const": "labels"
+        },
+        {
+          "description": "A typed predictive model (`ModelIR`).",
+          "type": "string",
+          "const": "model"
         }
       ]
     },
@@ -12024,6 +12290,31 @@
         "id",
         "source",
         "target"
+      ]
+    },
+    "TrustLevel": {
+      "description": "VIEW-TRUST-1: how far a definition's output can be trusted without running it.",
+      "oneOf": [
+        {
+          "description": "Computed by Norn from declared semantics on any qualified engine (exact or DuckDB).",
+          "type": "string",
+          "const": "native"
+        },
+        {
+          "description": "Native and covered by a machine-checked proof.",
+          "type": "string",
+          "const": "proven"
+        },
+        {
+          "description": "Opaque internals whose outputs are checked against declared contracts before they are written.",
+          "type": "string",
+          "const": "contract_checked"
+        },
+        {
+          "description": "Opaque internals; outputs are labelled and not trusted beyond their type.",
+          "type": "string",
+          "const": "opaque"
+        }
       ]
     },
     "TurnBudget": {

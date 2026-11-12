@@ -1746,6 +1746,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
+    verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -2222,6 +2223,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified: RefCell::new(LedgerHead::genesis()),
             source_disputes: RefCell::default(),
             mapping_plans: RefCell::default(),
+            verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
         }
@@ -2574,6 +2576,7 @@ impl<E: SqlEngine> CellStore<E> {
         StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
             .with_mapping_plans(&self.mapping_plans)
+            .with_verified_receipts(&self.verified_receipts)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 

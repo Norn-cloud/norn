@@ -138,7 +138,8 @@ impl ActionPolicy {
                 | ArtifactKind::Mapping
                 | ArtifactKind::Law
                 | ArtifactKind::DefinedConcept
-                | ArtifactKind::Labels => {}
+                | ArtifactKind::Labels
+                | ArtifactKind::Model => {}
             }
         }
         // Which policy governs each action: the one its `access` ref names, at

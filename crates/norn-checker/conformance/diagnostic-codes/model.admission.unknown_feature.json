@@ -1,0 +1,7 @@
+{
+  "code": "model.admission.unknown_feature",
+  "message": "a model's feature or target is not a property of its input object type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

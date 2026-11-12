@@ -3281,6 +3281,94 @@
       "no_fix": null
     },
     {
+      "code": "model.admission.feature_kind",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's feature or target property has a kind a model cannot read",
+      "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.unknown_feature",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's feature or target is not a property of its input object type",
+      "fix": "Name a property the input object type declares, inherits, implements or gains from an extension.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.unknown_input",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's input object type is not declared by the artifact set or the installed base",
+      "fix": "Include the input object type in the artifact set or the installed base, or name a declared one.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.duplicate_id",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model lists a feature, output or contract id twice",
+      "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_contract",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model contract names no output or does not apply to its output's type",
+      "fix": "Point the contract at a declared output and use a rule its type admits: range and finite for numeric outputs, oneOf for enum or text outputs.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_id",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model, input, feature, target, output or contract id is malformed",
+      "fix": "Rename the id at the reported path to the grammar the message names.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_output",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model output is not an inline text, integer, decimal, boolean or enum column",
+      "fix": "Declare the output as an inline text, integer, decimal, boolean or enum type; give a decimal a static unit or none.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_payload",
+      "tier": "T2",
+      "severity": "error",
+      "message": "model payload does not match its strict root",
+      "fix": "Correct the member at the reported path to match its declared type, schema and constraints.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.target_in_features",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's target is also one of its features",
+      "fix": "Remove the target property from the model's features.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.trust_without_contract",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a contract_checked model declares no contract",
+      "fix": "Add at least one contract on an output, or declare the model's trust as opaque.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.unsupported_trust",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's trust is not opaque or contract_checked",
+      "fix": "Declare the model's trust as opaque, or as contract_checked with at least one contract.",
+      "no_fix": null
+    },
+    {
       "code": "object_type.validation.additivity_not_refined",
       "tier": "T3",
       "severity": "error",
