@@ -86,5 +86,5 @@ test("view: a cell without the transform routes says so instead of showing nothi
   await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ json: fixture.catalog }))
   await page.route("**/api/host/v1/transforms/**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "no such route" } }))
   await page.goto("/transforms/shop.revenue_by_region")
-  await expect(page.getByText("Not served")).toBeVisible()
+  await expect(page.getByText("Not served", { exact: true })).toBeVisible()
 })

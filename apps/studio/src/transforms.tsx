@@ -37,7 +37,7 @@ export function TransformsPage() {
       {transforms.length > 0 && (
         <TableCard>
           <Table>
-            <TableHeader><TableRow><TableHead>Transform</TableHead><TableHead>Reads</TableHead><TableHead>Version</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead scope="col">Transform</TableHead><TableHead scope="col">Reads</TableHead><TableHead scope="col">Version</TableHead></TableRow></TableHeader>
             <TableBody>
               {transforms.map((transform) => (
                 <TableRow key={transform.id}>
@@ -83,7 +83,7 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
       </div>
       <TableCard>
         <Table>
-          <TableHeader><TableRow>{page.columns.map((column) => <TableHead key={column.name}><ColumnHead column={column} /></TableHead>)}<TableHead>Lineage</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow>{page.columns.map((column) => <TableHead scope="col" key={column.name}><ColumnHead column={column} /></TableHead>)}<TableHead scope="col">Lineage</TableHead></TableRow></TableHeader>
           <TableBody>
             {page.rows.map((row, index) => (
               <TableRow key={row.rowId}>
@@ -122,7 +122,7 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
       </Well>
       <TableCard>
         <Table>
-          <TableHeader><TableRow><TableHead>Input</TableHead><TableHead>Type</TableHead><TableHead>Record</TableHead><TableHead className="text-right">Version</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead scope="col">Input</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Record</TableHead><TableHead scope="col" className="text-right">Version</TableHead></TableRow></TableHeader>
           <TableBody>
             {document.members.map((source) => (
               <TableRow key={`${source.input}/${source.id}`}>
@@ -207,7 +207,7 @@ function PlanTab({ id }: { readonly id: string }) {
         <Panel icon={Rows3} label="Output columns">
           <TableCard>
             <Table>
-              <TableHeader><TableRow><TableHead>Column</TableHead><TableHead>Type</TableHead><TableHead>Aggregation</TableHead><TableHead>Comes from</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead scope="col">Column</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Aggregation</TableHead><TableHead scope="col">Comes from</TableHead></TableRow></TableHeader>
               <TableBody>
                 {output.columns.map((column) => (
                   <TableRow key={column.name}>
