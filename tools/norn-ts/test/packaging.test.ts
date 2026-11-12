@@ -150,7 +150,7 @@ test("dev host: neither an override nor a prebuilt host says how to build it fro
     // A release without this platform (macOS in the alpha) names what it has and the toolchain to build with.
     const mac = await refusal(hostBinary(lookup(root, { platform: "darwin-arm64" })))
     expect(mac.message).toContain("no prebuilt host for darwin-arm64 (it has linux-x64)")
-    expect(mac.message).toContain("(Rust 1.98.0)")
+    expect(mac.message).toContain("at commit 0123456789abcdef0123456789abcdef01234567 (`git checkout 0123456789abcdef0123456789abcdef01234567`; Rust 1.98.0)")
   } finally { rmSync(root, { recursive: true }) }
 })
 
