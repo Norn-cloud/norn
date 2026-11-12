@@ -6,6 +6,7 @@ export const SHEET_CSS = `
 .norn-sheet { display: grid; gap: 1.25rem; padding: 1.5rem; color: var(--foreground, #111); font: 14px/1.5 var(--font-sans, system-ui, sans-serif); }
 .norn-sheet-header { display: grid; gap: .375rem; }
 .norn-title { margin: 0; font-size: 1rem; font-weight: 600; }
+.norn-sheet-header .norn-title { padding-inline-end: 2rem; }
 .norn-meta { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
 .norn-legend { font-size: .875rem; font-weight: 500; margin-bottom: .5rem; }
 .norn-chip { justify-self: start; display: inline-flex; align-items: center; border-radius: .375rem; padding: .0625rem .375rem; font-size: .75rem;
@@ -58,7 +59,7 @@ export const SHEET_CSS = `
 ui-alert-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .35); }
 .norn-form { display: grid; gap: 1.25rem; }
 .norn-link { font-size: .875rem; color: inherit; text-underline-offset: 4px; }
-.norn-link:hover { text-decoration: underline; }
+.norn-link:hover, .norn-outcome-card .norn-link { text-decoration: underline; }
 .norn-problem { margin: 0; font-size: .8125rem; color: var(--destructive, #b91c1c); }
 .norn-field textarea[aria-invalid="true"] { border-color: var(--destructive, #dc2626); }
 [data-region="countdown"][data-urgent] { color: var(--destructive, #b91c1c); font-weight: 500; }
