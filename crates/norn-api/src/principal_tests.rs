@@ -75,6 +75,21 @@ fn a_signed_session_token_maps_through_the_declared_role_table() {
 }
 
 #[test]
+fn an_assistant_grant_acts_as_its_person_and_never_as_a_service() {
+    let granted = resolve(&token(&claims("user", "member", "oauth"))).unwrap();
+    assert_eq!(
+        (
+            granted.subject_id.as_str(),
+            granted.actor_kind,
+            granted.roles.as_slice(),
+            granted.auth_method.as_str()
+        ),
+        ("user:u1", ActorKind::User, ["member".to_owned()].as_slice(), "oauth")
+    );
+    assert!(resolve(&token(&claims("service", "viewer", "oauth"))).is_err());
+}
+
+#[test]
 fn an_api_key_is_a_service_that_never_approves() {
     let service = resolve(&token(&claims("service", "viewer", "api_key"))).unwrap();
     assert_eq!(
