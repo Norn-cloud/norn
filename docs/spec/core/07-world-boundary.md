@@ -128,8 +128,11 @@ repeated identity inside the page), before anything is captured. K is at most
 Equivalence scenario: **OBS-PAGE-EQUIV** (consuming a page equals consuming
 its records one by one in page order, over committed end state: the same facts,
 versions, events, links, findings, quarantine and per-record lineage, modulo
-bundle digests and commit count; a transient pending row that never commits is
-not part of the comparison; generated pages mix refusals, identities repeated
+bundle digests and commit count; events compare as a multiset, with object
+events in page order, and within a commit no event precedes one it depends on:
+a link-claim event follows the object events of both endpoints the commit
+creates or changes; a transient pending row that never commits is not part of
+the comparison; generated pages mix refusals, identities repeated
 across pages, intra-page links in both orders, and pages refused for framing).
 
 ## Perform and recovery semantics

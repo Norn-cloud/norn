@@ -9934,6 +9934,12 @@ export interface components {
             objectType: string | null;
             /** @description The time property its buckets use, for a simple metric. */
             timeProperty: string | null;
+            /**
+             * @description Properties a question over this metric must group by or fix with an
+             *     `eq` filter (`eq null` included): its unit sources, such as `unit` and
+             *     `currency`. Empty when its values share one unit.
+             */
+            unitPartition: string[];
         };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {

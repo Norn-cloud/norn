@@ -164,6 +164,8 @@ routes! {
     UploadComplete => ("POST", "/v1/uploads/{id}:complete"),
     /// `POST /v1/uploads/{id}:load`, dispatched by the entry point (`connect`).
     UploadLoad => ("POST", "/v1/uploads/{id}:load"),
+    /// `POST /v1/uploads/{id}:define`, dispatched by the entry point (`connect`).
+    UploadDefine => ("POST", "/v1/uploads/{id}:define"),
     /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
@@ -200,6 +202,7 @@ impl Route {
                 | Self::UploadRead
                 | Self::UploadComplete
                 | Self::UploadLoad
+                | Self::UploadDefine
         )
     }
 
@@ -279,6 +282,7 @@ impl Route {
             return match verb {
                 "complete" if !id.is_empty() && !id.contains('/') => Some(Self::UploadComplete),
                 "load" if !id.is_empty() && !id.contains('/') => Some(Self::UploadLoad),
+                "define" if !id.is_empty() && !id.contains('/') => Some(Self::UploadDefine),
                 _ => None,
             };
         }
@@ -356,13 +360,20 @@ pub fn handle_all<E: SqlEngine>(
 /// is absent.
 #[must_use]
 pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
-    respond(route::<E>(
-        None,
-        None,
-        &DefinitionKinds::default(),
-        None,
-        request,
-    ))
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {

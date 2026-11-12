@@ -133,6 +133,7 @@ impl NornCell {
                 scope.clone(),
                 &DEMO_GRANTS,
                 Box::new(move || Ok(WorkersEngine::new(storage.clone()))),
+                lineage_key.as_deref(),
             )
         })
         .map_err(rejected)?;

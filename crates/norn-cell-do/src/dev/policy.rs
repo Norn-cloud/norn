@@ -347,6 +347,8 @@ mod tests {
             .unwrap();
         assert_eq!(entry["objectType"], TYPE);
         assert_eq!(entry["timeProperty"], "occurred_at");
+        // Its values share one unit: nothing to group by or fix.
+        assert_eq!(entry["unitPartition"], json!([]));
         let (status, answer) = call(
             &host,
             &metrics,

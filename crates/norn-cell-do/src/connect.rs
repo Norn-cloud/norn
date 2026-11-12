@@ -13,6 +13,8 @@
 //!   `PUT` the browser sends the bytes to.
 //! - `/v1/uploads/{id}:complete`: the cell reads the object, records its URI
 //!   and SHA-256 and profiles it.
+//! - `/v1/uploads/{id}:define`: [`LoadRequest`]; installs the generated
+//!   definitions only, for a loader that writes the rows itself.
 //! - `/v1/uploads/{id}:load`: [`LoadRequest`]; installs and loads.
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
@@ -24,6 +26,11 @@
 //! CONNECT-FETCH-1: every outbound URL is built from server configuration
 //! (`NORN_SOURCES`, `NORN_S3_*`): a connection's base URL or the storage
 //! endpoint, never a request's or the cell's data.
+//! UPLOAD-ID-1: an upload id carries its store and object key, sealed with the
+//! store's secret, so `:complete`, `:load` and `:read` work after the Durable
+//! Object restarts; an id resolves only in the scope whose prefix its key names
+//! (or `synthetic/`), and a `:load` after a restart checks the object against
+//! the `sha256` that `:complete` returned (UPLOAD-DIGEST-1).
 
 use std::collections::BTreeMap;
 
@@ -63,6 +70,7 @@ impl Routed {
     }
 }
 
+#[derive(Clone)]
 struct Upload {
     store: Store,
     key: String,
@@ -99,6 +107,8 @@ enum Waiting {
         request: LoadRequest,
         actor: String,
         started_ms: u64,
+        /// `false` for `:define`: install the definitions, write no rows.
+        rows: bool,
     },
 }
 
@@ -132,10 +142,65 @@ fn refused(status: u16, code: &str, message: &str) -> Response {
     }
 }
 
+/// An upload id the cell can check without remembering it:
+/// `<u|d><hex key>.<seal>`, the store, the object key and the store's seal of both.
+fn upload_id(store: Store, key: &str, s3: &S3Config) -> String {
+    let tag = match store {
+        Store::Uploads => 'u',
+        Store::Documents => 'd',
+    };
+    let seal = s3.seal(&format!("upload/{tag}/{key}"));
+    format!("{tag}{}.{seal}", uploads::hex(key.as_bytes()))
+}
+
+/// The store and key of a sealed upload id, if its seal checks.
+fn unseal<'a>(
+    id: &str,
+    store_of: impl Fn(Store) -> Option<&'a S3Config>,
+) -> Option<(Store, String)> {
+    let (head, seal) = id.split_once('.')?;
+    let mut chars = head.chars();
+    let store = match chars.next()? {
+        'u' => Store::Uploads,
+        'd' => Store::Documents,
+        _ => return None,
+    };
+    let digits: Vec<u32> = chars.map(|c| c.to_digit(16)).collect::<Option<_>>()?;
+    if !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes: Vec<u8> = digits
+        .chunks(2)
+        .map(|pair| match pair {
+            [high, low] => u8::try_from(high.saturating_mul(16).saturating_add(*low)).ok(),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let key = String::from_utf8(bytes).ok()?;
+    let s3 = store_of(store)?;
+    let expected = upload_id(store, &key, s3);
+    let expected = expected.rsplit_once('.').map_or("", |(_, seal)| seal);
+    (same(expected.as_bytes(), seal.as_bytes()) && !key.contains("..")).then_some((store, key))
+}
+
+/// Whether `a` equals `b`, in time that depends only on their lengths.
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
+}
+
+/// Whether `key` lies under a prefix the cell serving `scope_key` writes.
+fn owns(key: &str, scope_key: &str) -> bool {
+    key.strip_prefix("uploads/")
+        .and_then(|rest| rest.strip_prefix(scope_key))
+        .is_some_and(|rest| rest.starts_with('/'))
+        || key.starts_with("synthetic/")
+}
+
 enum Route<'a> {
     Sync(&'a str),
     Begin,
     Complete(&'a str),
+    Define(&'a str),
     Load(&'a str),
     Read,
 }
@@ -158,6 +223,7 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
     match verb {
         "complete" => Some(Route::Complete(id)),
+        "define" => Some(Route::Define(id)),
         "load" => Some(Route::Load(id)),
         _ => None,
     }
@@ -212,6 +278,39 @@ impl Connect {
         })
     }
 
+    /// The upload `id` names, when its object lies under a prefix the cell
+    /// serving `scope_key` writes: as remembered, or, after a restart, rebuilt
+    /// from the id itself once its seal checks (UPLOAD-ID-1).
+    fn resolve(&self, id: &str, scope_key: &str) -> Option<Upload> {
+        let upload = if let Some(upload) = self.uploads.get(id) {
+            upload.clone()
+        } else {
+            let (store, key) = unseal(id, |store| self.store(store))?;
+            let name = key.rsplit('/').next().unwrap_or_default();
+            // A person's upload is `<nonce>-<name>`; the nonce is the cell's.
+            let file_name = match name.split_once('-') {
+                Some((nonce, rest))
+                    if key.starts_with("uploads/")
+                        && nonce.len() == 20
+                        && nonce.chars().all(|c| c.is_ascii_hexdigit()) =>
+                {
+                    rest
+                }
+                _ => name,
+            };
+            Upload {
+                store,
+                file_name: file_name.to_owned(),
+                content_type: String::new(),
+                uri: self.store(store)?.uri(&key),
+                key,
+                completed: None,
+                columns: Vec::new(),
+            }
+        };
+        owns(&upload.key, scope_key).then_some(upload)
+    }
+
     /// The completed upload `id`, as recorded; `None` before `:complete`.
     #[must_use]
     pub fn upload_record(&self, id: &str) -> Option<UploadRecord> {
@@ -258,6 +357,7 @@ impl Connect {
         };
         match self.sources.step(host, id, response, now_ms) {
             Step::Request(request) => json!({"request": request}).to_string(),
+            Step::Continue => json!({"continue": true}).to_string(),
             Step::Done(summary) => json!({"done": summary}).to_string(),
         }
     }
@@ -291,7 +391,9 @@ impl Connect {
         let actor = principals.resolve(request.authorization, request.now);
         let target = match &route {
             Route::Sync(id) => (*id).to_owned(),
-            Route::Begin | Route::Complete(_) | Route::Load(_) | Route::Read => "upload".to_owned(),
+            Route::Begin | Route::Complete(_) | Route::Define(_) | Route::Load(_) | Route::Read => {
+                "upload".to_owned()
+            }
         };
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
         let allowed = host.filter(|host| {
@@ -324,21 +426,27 @@ impl Connect {
                 }
             },
             Route::Begin => Routed::reply(self.begin(host, request.body, now_ms)),
-            Route::Complete(id) => {
-                self.fetch_object(id, now_ms, |upload| Waiting::Complete { upload })
-            }
-            Route::Load(id) => match serde_json::from_str::<LoadRequest>(request.body) {
-                Ok(load) => {
-                    let actor = actor.clone();
-                    self.fetch_object(id, now_ms, |upload| Waiting::Load {
-                        upload,
-                        request: load,
-                        actor,
-                        started_ms: now_ms,
-                    })
+            Route::Complete(id) => self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
+                Waiting::Complete { upload }
+            }),
+            Route::Define(id) | Route::Load(id) => {
+                match serde_json::from_str::<LoadRequest>(request.body) {
+                    Ok(load) => {
+                        let actor = actor.clone();
+                        let rows = matches!(route, Route::Load(_));
+                        self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
+                            Waiting::Load {
+                                upload,
+                                request: load,
+                                actor,
+                                started_ms: now_ms,
+                                rows,
+                            }
+                        })
+                    }
+                    Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
                 }
-                Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
-            },
+            }
             Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
         })
     }
@@ -391,14 +499,15 @@ impl Connect {
                 );
             }
         };
-        let id = self.token(now_ms);
+        let nonce = self.token(now_ms);
         // Seeded synthetic objects keep their names, so their URIs are known in
         // advance; a person's upload gets the id in its key.
         let key = if begin.prefix.is_some() {
             format!("{prefix}/{name}")
         } else {
-            format!("{prefix}/{id}-{name}")
+            format!("{prefix}/{nonce}-{name}")
         };
+        let id = upload_id(store, &key, &s3);
         let put_url = s3.presign("PUT", &key, now_ms, URL_SECONDS);
         let uri = s3.uri(&key);
         self.uploads.insert(
@@ -425,14 +534,13 @@ impl Connect {
 
     fn fetch_object(
         &mut self,
-        id: &str,
+        (id, scope_key): (&str, &str),
         now_ms: u64,
         waiting: impl FnOnce(String) -> Waiting,
     ) -> Routed {
         let Some((s3, upload)) = self
-            .uploads
-            .get(id)
-            .and_then(|u| Some((self.store(u.store)?, u)))
+            .resolve(id, scope_key)
+            .and_then(|u| Some((self.store(u.store)?.clone(), u)))
         else {
             return Routed::reply(refused(404, "upload.not_found", "no such upload"));
         };
@@ -459,12 +567,12 @@ impl Connect {
     fn read<E: SqlEngine>(&self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
         let not_found = || refused(404, "upload.not_found", "no such upload");
         let request: Value = serde_json::from_str(body).unwrap_or_default();
+        let scope_key = host.scope().key();
         let found = if let Some(id) = request.get("uploadId").and_then(Value::as_str) {
-            self.uploads
-                .get(id)
-                .and_then(|u| Some((self.store(u.store)?, u.key.clone())))
+            self.resolve(id, &scope_key)
+                .and_then(|u| Some((self.store(u.store)?, u.key)))
         } else {
-            let own = format!("uploads/{}/", host.scope().key());
+            let own = format!("uploads/{scope_key}/");
             let uri = request
                 .get("uri")
                 .and_then(Value::as_str)
@@ -516,15 +624,18 @@ impl Connect {
         let sha256 = uploads::sha256_hex(body);
         let size = u64::try_from(body.len()).unwrap_or(u64::MAX);
         match waiting {
-            Waiting::Complete { upload } => self.complete(&upload, body, &sha256, size),
+            Waiting::Complete { upload } => {
+                self.complete((&upload, &host.scope().key()), body, &sha256, size)
+            }
             Waiting::Load {
                 upload,
                 request,
                 actor,
                 started_ms,
+                rows,
             } => self.load(
                 host,
-                &upload,
+                (&upload, rows),
                 &request,
                 &actor,
                 body,
@@ -534,10 +645,17 @@ impl Connect {
         }
     }
 
-    fn complete(&mut self, id: &str, body: &[u8], sha256: &str, size: u64) -> Response {
-        let Some(upload) = self.uploads.get_mut(id) else {
+    fn complete(
+        &mut self,
+        (id, scope_key): (&str, &str),
+        body: &[u8],
+        sha256: &str,
+        size: u64,
+    ) -> Response {
+        let Some(resolved) = self.resolve(id, scope_key) else {
             return refused(404, "upload.not_found", "no such upload");
         };
+        let upload = self.uploads.entry(id.to_owned()).or_insert(resolved);
         let table = std::str::from_utf8(body).ok().map(uploads::parse_csv);
         let csv = matches!(table, Some(Ok(_)));
         upload.completed = Some((sha256.to_owned(), size, csv));
@@ -571,18 +689,23 @@ impl Connect {
     fn load<E: SqlEngine>(
         &mut self,
         host: &DevHost<E>,
-        id: &str,
+        (id, rows): (&str, bool),
         request: &LoadRequest,
         actor: &str,
         body: &[u8],
         sha256: &str,
         (started_ms, now_ms): (u64, u64),
     ) -> Response {
-        let Some(upload) = self.uploads.get(id) else {
+        let Some(upload) = self.resolve(id, &host.scope().key()) else {
             return refused(404, "upload.not_found", "no such upload");
         };
-        // UPLOAD-DIGEST-1: the object read now is the one profiled.
-        match &upload.completed {
+        // UPLOAD-DIGEST-1: the object read now is the one profiled; a cell that
+        // restarted since checks it against the digest `:complete` returned.
+        let recorded = upload
+            .completed
+            .clone()
+            .or_else(|| request.sha256.clone().map(|sha| (sha, 0, true)));
+        match &recorded {
             Some((recorded, _, true)) if recorded == sha256 => {}
             Some((_, _, true)) => {
                 return refused(
@@ -611,6 +734,15 @@ impl Connect {
             Ok(version) => version,
             Err(reason) => return refused(422, "upload.refused", &reason),
         };
+        if !rows {
+            return json_response(
+                200,
+                &json!({
+                    "objectType": generated.object_type, "definitionsVersion": version,
+                    "sourceSchema": generated.source_schema, "mapping": generated.mapping,
+                }),
+            );
+        }
         let loaded = match uploads::load_rows(host, &generated, &table, &upload.uri, sha256, now_ms)
         {
             Ok(loaded) => loaded,
@@ -668,6 +800,10 @@ mod tests {
             route_of("/v1/uploads/abc:load"),
             Some(Route::Load("abc"))
         ));
+        assert!(matches!(
+            route_of("/v1/uploads/abc:define"),
+            Some(Route::Define("abc"))
+        ));
         for other in [
             "/v1/sources/a/b:sync",
             "/v1/sources/:sync",
@@ -680,5 +816,84 @@ mod tests {
         let scope = scope_of("orgId=org_a&environmentId=prod&x=1");
         assert_eq!(scope.org_id.as_deref(), Some("org_a"));
         assert_eq!(scope.environment_id.as_deref(), Some("prod"));
+    }
+
+    fn connect(secret: &str) -> Connect {
+        let vars = json!({
+            "NORN_S3_ENDPOINT": "https://storage.example.test",
+            "NORN_S3_BUCKET": "uploads-bucket",
+            "NORN_S3_DOCUMENTS_BUCKET": "documents-bucket",
+            "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
+            "NORN_SECRET_S3_SECRET_ACCESS_KEY": secret,
+            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
+            "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
+        });
+        Connect::new("[]", &vars.to_string()).expect("configuration")
+    }
+
+    /// UPLOAD-ID-1: a cell that never saw an upload (a restart) resolves its
+    /// id from the seal alone, and only for the scope whose prefix it names.
+    #[test]
+    fn a_sealed_upload_id_survives_a_restart_and_stays_in_its_scope() {
+        let issuing = connect("secret-one");
+        let s3 = issuing
+            .store(Store::Uploads)
+            .expect("uploads store")
+            .clone();
+        let key = "uploads/org_a/prod/0123456789abcdef0123-orders.csv";
+        let id = upload_id(Store::Uploads, key, &s3);
+
+        let restarted = connect("secret-one");
+        let upload = restarted.resolve(&id, "org_a/prod").expect("resolves");
+        assert_eq!(upload.key, key);
+        assert_eq!(upload.file_name, "orders.csv");
+        assert_eq!(upload.uri, "s3://uploads-bucket/".to_owned() + key);
+        assert!(upload.completed.is_none());
+
+        // Another scope, even one whose key starts the same, never sees it.
+        assert!(restarted.resolve(&id, "org_a/pro").is_none());
+        assert!(restarted.resolve(&id, "org_b/prod").is_none());
+        // A different secret, a changed seal or a changed key does not check.
+        assert!(connect("secret-two").resolve(&id, "org_a/prod").is_none());
+        let (head, seal) = id.split_once('.').expect("sealed");
+        let flipped = if seal.starts_with('0') { '1' } else { '0' };
+        let tampered: String = format!("{head}.")
+            .chars()
+            .chain(std::iter::once(flipped))
+            .chain(seal.chars().skip(1))
+            .collect();
+        assert!(restarted.resolve(&tampered, "org_a/prod").is_none());
+        let other = upload_id(Store::Uploads, "uploads/org_b/prod/x.csv", &s3);
+        let (_, other_seal) = other.split_once('.').expect("sealed");
+        assert!(
+            restarted
+                .resolve(&format!("{head}.{other_seal}"), "org_a/prod")
+                .is_none()
+        );
+        // The store tag is sealed too: the same key in the documents store.
+        let documents = format!("d{}", id.strip_prefix('u').expect("an uploads id"));
+        assert!(restarted.resolve(&documents, "org_a/prod").is_none());
+        for garbage in ["", ".", "u.", "uzz.00", "x00.00", "u0.00"] {
+            assert!(
+                restarted.resolve(garbage, "org_a/prod").is_none(),
+                "{garbage}"
+            );
+        }
+    }
+
+    #[test]
+    fn synthetic_objects_resolve_in_every_scope() {
+        let cell = connect("secret-one");
+        let s3 = cell
+            .store(Store::Documents)
+            .expect("documents store")
+            .clone();
+        let id = upload_id(Store::Documents, "synthetic/scans/receipt-01.pdf", &s3);
+        let upload = cell.resolve(&id, "org_z/dev").expect("resolves");
+        assert_eq!(upload.file_name, "receipt-01.pdf");
+        assert_eq!(
+            upload.uri,
+            "s3://documents-bucket/synthetic/scans/receipt-01.pdf"
+        );
     }
 }

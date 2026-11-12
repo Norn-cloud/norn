@@ -51,6 +51,7 @@ mod mapping_identity;
 mod mapping_links;
 #[doc(hidden)]
 pub use mapping_links::check_link_plans_against_wide_scope;
+pub mod mapping_page;
 mod mapping_process;
 mod migration;
 pub mod mining;
