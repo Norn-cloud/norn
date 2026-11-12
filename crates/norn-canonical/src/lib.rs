@@ -1127,6 +1127,14 @@ fn normalize_unicode(value: &str) -> String {
 /// strings to, also an `EntityIR` v2 identity-key normalization step (#2848).
 #[must_use]
 pub fn nfc(value: &str) -> String {
+    // The quick check's `Yes` is definitive (UAX #15): the text is already in
+    // NFC, so composing it again would return the same characters. Nearly
+    // every string Norn canonicalizes is ASCII or otherwise already NFC.
+    if unicode_normalization::is_nfc_quick(value.chars())
+        == unicode_normalization::IsNormalized::Yes
+    {
+        return value.to_owned();
+    }
     value.nfc().collect()
 }
 

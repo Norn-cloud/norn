@@ -92,6 +92,10 @@ pub(crate) struct MappingPlan {
 #[derive(Debug, Default)]
 pub(crate) struct MappingPlanCache {
     plans: BTreeMap<(u64, String, String), Arc<MappingPlan>>,
+    /// The last fully verified install: the raw bytes of every row the
+    /// verification read, with what it proved (the set's canonical digest and
+    /// the journal's install record).
+    verified: Option<(Vec<u8>, String, crate::store::DefinitionInstallRecord)>,
 }
 
 const MAX_MAPPING_PLANS: usize = 16;
@@ -190,8 +194,34 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             self.retained_definition_model(version)?;
             return Err(mismatch());
         };
-        let key = (version, digest(&installed)?, input.mapping.clone());
-        let installation = self.retained_definition_install(&installed)?;
+        // MAPPING-PLAN-1 still re-reads the installed row, the journal record
+        // with its payload bodies and the receipt on every call. When their
+        // raw bytes equal those of the last copy that verified, verification
+        // is a function of those bytes and gives the same result, so only a
+        // change pays for re-canonicalizing the whole set.
+        let fingerprint = self.install_fingerprint(&installed)?;
+        let known = self.mapping_plans.and_then(|cache| {
+            cache
+                .borrow()
+                .verified
+                .as_ref()
+                .filter(|(seen, ..)| *seen == fingerprint)
+                .map(|(_, digest, installation)| (digest.clone(), installation.clone()))
+        });
+        let (set_digest, installation) = if let Some(known) = known {
+            known
+        } else {
+            let proved = (
+                digest(&installed)?,
+                self.retained_definition_install(&installed)?,
+            );
+            if let Some(cache) = self.mapping_plans {
+                cache.borrow_mut().verified =
+                    Some((fingerprint, proved.0.clone(), proved.1.clone()));
+            }
+            proved
+        };
+        let key = (version, set_digest, input.mapping.clone());
         let cached = self
             .mapping_plans
             .and_then(|cache| cache.borrow().plans.get(&key).cloned());
@@ -239,6 +269,44 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             cache.plans.insert(key, Arc::clone(&plan));
         }
         Ok(plan)
+    }
+
+    /// The raw bytes of every row the install verification reads, each
+    /// length-prefixed: the installed row, its journal record, the payload
+    /// bodies the record references and the receipt. No canonicalization, and
+    /// compared exactly, not by a digest.
+    fn install_fingerprint(
+        &self,
+        installed: &crate::InstalledDefinitionSet,
+    ) -> Result<Vec<u8>, CellError> {
+        let mut bytes = Vec::new();
+        let mut field = |part: &[u8]| {
+            bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+            bytes.extend_from_slice(part);
+        };
+        field(serde_json::to_string(installed)?.as_bytes());
+        let seq = crate::read::to_i64(installed.commit_seq, "commit_seq")?;
+        let journal: Option<(String, String)> = self.conn.query_optional(
+            r#"SELECT "hash", "record" FROM "_norn_export_journal" WHERE "commit_seq" = ?1"#,
+            crate::engine::params![seq],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if let Some((stored, record)) = journal {
+            field(stored.as_bytes());
+            field(record.as_bytes());
+        }
+        let bodies = self.conn.query(
+            r#"SELECT p."scope", p."world", p."body" FROM "_norn_export_payload" e JOIN "_norn_payload" p ON p."hash" = e."hash" WHERE e."commit_seq" = ?1 ORDER BY e."ordinal""#,
+            crate::engine::params![seq],
+        )?;
+        for row in bodies {
+            let row = crate::engine::SqlRow(row);
+            for column in 0..3 {
+                field(row.get::<String>(column)?.as_bytes());
+            }
+        }
+        field(serde_json::to_string(&self.receipt_at(installed.commit_seq)?)?.as_bytes());
+        Ok(bytes)
     }
 
     pub(crate) fn mapping_bundle(
