@@ -1259,6 +1259,152 @@ fn a_seeded_cell_is_not_provisioned_over() {
     assert_eq!(definitions(&mut cell, Some(&owner)), before);
 }
 
+/// A seeded demo cell with one run waiting on its ask (deciders admin or
+/// owner), started by an admin; `handles` keys its receipt coordinates.
+fn waiting_demo_cell(handles: Option<&[u8]>) -> (Cell<NativeEngine>, String) {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let tenant = Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
+        .unwrap()
+        .with_receipt_handles(handles)
+        .unwrap();
+    let tokens =
+        TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW).unwrap();
+    let mut cell = Cell { tenant, tokens };
+    let at = query(&scope);
+    let owner = user(&scope.org_id, "owner");
+    let artifacts: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!(
+        "../../../tools/norn-ts/fixtures/flows/ask.ir.json"
+    ))
+    .unwrap()
+    .into_iter()
+    .map(|mut artifact| {
+        artifact["scope"] = json!({ "orgId": scope.org_id, "environmentId": scope.environment_id });
+        artifact
+    })
+    .collect();
+    let mut body = json!({ "kind": "flow", "id": "ops.approve_refund", "payload": {
+        "flow": { "id": "ops.approve_refund", "version": "1.0.0", "title": "Approve a refund" },
+        "artifacts": artifacts } });
+    let admitted = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:admit",
+        &at,
+        Some(&owner),
+        &body.to_string(),
+    );
+    assert_eq!(admitted.status, 200, "{}", admitted.body);
+    body["signoff"] = json!({ "restatementSha256": json_of(&admitted)["restatementSha256"] });
+    let installed = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &at,
+        Some(&owner),
+        &body.to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    let started = call(
+        &mut cell,
+        "POST",
+        "/v1/runs",
+        &at,
+        Some(&user(&scope.org_id, "admin")),
+        &json!({ "flow": "ops.approve_refund", "runId": "refund-1" }).to_string(),
+    );
+    assert_eq!(started.status, 201, "{}", started.body);
+    (cell, at)
+}
+
+/// What `role` sees in the inbox, and what its :decide of the run's
+/// decision answers.
+fn inbox_and_decide(
+    cell: &mut Cell<NativeEngine>,
+    at: &str,
+    role: &str,
+    id: &str,
+) -> (Response, Response) {
+    let caller = user(&seed::demo_scope().org_id, role);
+    let page = call(
+        cell,
+        "GET",
+        "/v1/decisions",
+        &format!("{at}&state=pending"),
+        Some(&caller),
+        "",
+    );
+    let decided = call(
+        cell,
+        "POST",
+        &format!("/v1/decisions/{id}:decide"),
+        at,
+        Some(&caller),
+        &json!({ "choice": "approve", "idempotencyKey": format!("k-{role}") }).to_string(),
+    );
+    (page, decided)
+}
+
+/// DECISIONS-1 on the seeded demo cell: for every role, the inbox lists
+/// exactly the decisions that role's :decide accepts. The demo cell publishes
+/// no questions; its lineage-keyed receipt handles are its disclosure
+/// authority, so its deciders decide.
+#[test]
+fn every_role_lists_exactly_what_it_may_decide() {
+    let admin = user(&seed::demo_scope().org_id, "admin");
+    for (role, decides) in [
+        ("viewer", false),
+        ("member", false),
+        ("admin", true),
+        ("owner", true),
+    ] {
+        // A fresh cell per role: deciding resolves the decision.
+        let (mut cell, at) = waiting_demo_cell(Some(&[7; 32]));
+        let pending = format!("{at}&state=pending");
+        let page = call(
+            &mut cell,
+            "GET",
+            "/v1/decisions",
+            &pending,
+            Some(&admin),
+            "",
+        );
+        let id = json_of(&page)["items"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (page, decided) = inbox_and_decide(&mut cell, &at, role, &id);
+        assert_eq!(page.status, 200, "{role}: {}", page.body);
+        let listed: Vec<String> = json_of(&page)["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect();
+        let expected: Vec<String> = if decides {
+            vec![id.clone()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(listed, expected, "{role}");
+        let status = if decides { 200 } else { 404 };
+        assert_eq!(decided.status, status, "{role}: {}", decided.body);
+    }
+}
+
+/// A cell with no disclosure authority decides nothing, and lists nothing
+/// either: its inbox never offers a decision its :decide refuses.
+#[test]
+fn a_cell_that_cannot_decide_lists_nothing() {
+    let (mut cell, at) = waiting_demo_cell(None);
+    let (page, decided) = inbox_and_decide(&mut cell, &at, "admin", "dec_any");
+    assert_eq!(page.status, 403, "{}", page.body);
+    assert_eq!(
+        (decided.status, code(&decided).as_str()),
+        (404, "decision.not_found")
+    );
+}
+
 /// A lineage key shorter than 32 bytes refuses to open the cell rather than
 /// serve weakly keyed receipt handles.
 #[test]

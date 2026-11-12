@@ -176,6 +176,28 @@ the open decision it waits on (`decision: {id, expiresAtMs}`) when the caller ma
 decide it. Named scenarios (`crates/norn-cell-do/tests/decisions.rs`):
 **DECIDE-ONCE**, **DECIDE-REFUSE**, **DECIDE-EXPIRED**.
 
+### ACTION-STEP-1 — a run's action steps act as its starter
+
+A flow step that calls a governed action is a perform of the built-in
+`norn.action@1` with `{action, input}`. Like a decision, the cell parks it
+(PARKED-1), and the cell executes it itself through the ordinary governed action
+path. The host records the verified principal who started the run (subject, actor
+kind and the roles of its declared role table) in the run's start event. After a
+start or a decision, the host runs the run's pending action steps, making that
+starter the verified caller for each one call and restoring the request's own
+caller on every path. A run therefore acts under its starter's authority for its
+whole life: a decider's approval is a condition and lends the run none of the
+decider's rights, so a starter without a right cannot obtain it by routing the
+action after someone else's decision. The step's output is the action's target
+`{objectType, objectId, version}`. A denial, or a run with no recorded starter or
+one the host cannot act as, is the typed failure `Denied`; any other refusal is
+`Refused` with its code; a host failure leaves the step pending for the next
+drive, whose per-attempt idempotency key replays the call. The roles are those
+verified at start, so a role revoked later still holds for the run until it ends;
+a waiting run is bounded by its decisions' seven-day expiry. Named scenarios
+(`crates/norn-cell-do/tests/action_steps.rs`): **STEP-AS-STARTER**,
+**STEP-NO-LAUNDERING**.
+
 ### DECISION-LEDGER-1 — resolved decisions
 
 The commit that consumes a parked decision's result carries one
