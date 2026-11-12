@@ -11,6 +11,8 @@ description = "Generated core IR and checker API contracts"
 base64 = "0.22.1"
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", features = ["derive"] }
+# The `norn.decision@1` request a flow's ask step parks (DECISIONS-1).
+norn-builtins = { path = "../norn-builtins" }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }

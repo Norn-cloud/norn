@@ -9,6 +9,7 @@ pub mod answers;
 pub mod authz;
 pub mod clock;
 pub mod contracts;
+pub mod decisions;
 pub mod openapi;
 /// Stable host refusal wire contract.
 pub mod refusal;
@@ -23,6 +24,7 @@ pub mod binding_definitions;
 pub mod definition_routes;
 /// The `flow` retained-definition kind (automations lowered by `lowerFlow`).
 pub mod flow_definitions;
+mod flow_driver;
 /// Shared cell and definition epoch.
 pub mod host;
 /// RFC 8785 JSON canonicalization for connector manifest digests.

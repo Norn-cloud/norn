@@ -117,7 +117,7 @@ pub fn handle_all<E: SqlEngine>(
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
-    if let Some(response) = crate::runs::dispatch(host, actor, request) {
+    if let Some(response) = crate::runs::dispatch(host, questions, actor, request) {
         return response;
     }
     let question = path
