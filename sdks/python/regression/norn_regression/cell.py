@@ -50,6 +50,15 @@ class Cell:
         return cls(AuthenticatedClient(base_url=session["url"], token=token),
                    session["scope"]["orgId"], session["scope"]["environmentId"])
 
+    @classmethod
+    def from_env(cls) -> "Cell":
+        """A hosted cell through Studio's proxy: NORN_URL (https://<studio>/api/host), ORG, ENV,
+        and NORN_TOKEN_FILE holding a Studio API key, sent as `x-api-key`."""
+        import os
+        key = Path(os.environ["NORN_TOKEN_FILE"]).read_text().strip()
+        client = AuthenticatedClient(base_url=os.environ["NORN_URL"].rstrip("/"), token=key, prefix="", auth_header_name="x-api-key")
+        return cls(client, os.environ["ORG"], os.environ["ENV"])
+
     @property
     def where(self) -> dict:
         return {"org_id": self.org_id, "environment_id": self.environment_id}

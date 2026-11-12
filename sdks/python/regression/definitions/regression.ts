@@ -68,3 +68,80 @@ export const RecordAssumptionCheck = Norn.action({
   createLinks: [{ link: "spec", targetType: ModelSpec, targetIdField: "spec" }],
   effect: { kind: "upsert_input_object", type: AssumptionCheck, objectIdField: "check", writeMode: { kind: "create_only" } },
 })
+
+// One click in Studio: a queued request a server-side worker runs
+// (norn_regression.worker). The worker reports progress and the result
+// through stats.checkrequest.finish; the request keeps its history in receipts.
+const RequestFields = Schema.Struct({
+  request: Schema.String,
+  objectType: Schema.String,
+  target: Schema.String,
+  features: Schema.String, // comma-joined
+  orderField: Schema.String, // "" when none
+  status: Schema.Literals(["queued", "running", "done", "failed"]),
+  spec: Schema.String, // the stats.ModelSpec id once done, else ""
+  error: Schema.String, // why it failed, else ""
+})
+
+export const CheckRequest = Norn.type({
+  name: "stats.CheckRequest", title: "Regression check request", version: "0.1.0",
+  properties: RequestFields,
+  identity: [{ name: "primary", properties: ["request"] }],
+})
+
+export const SubmitCheckRequest = Norn.action({
+  id: "stats.checkrequest.submit", title: "Request regression assumption checks", version: "0.1.0",
+  input: RequestFields,
+  output: Schema.Struct({ request: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  writes: [{ type: CheckRequest, change: "created" }],
+  effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "create_only" } },
+})
+
+export const FinishCheckRequest = Norn.action({
+  id: "stats.checkrequest.finish", title: "Report a regression check request's progress", version: "0.1.0",
+  input: RequestFields,
+  output: Schema.Struct({ request: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  writes: [{ type: CheckRequest, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
+})
+
+// Who may call the stats actions on a hosted cell: a member (the worker's
+// Studio API key holds role member) or above, in the request's org and
+// environment. On a local dev host the session token is the owner.
+export const StatsAccess = Norn.access({
+  id: "stats.regression.access",
+  title: "Regression assumption checks",
+  version: "0.1.0",
+  rules: [
+    {
+      ruleId: "request",
+      actions: [SubmitCheckRequest],
+      resourceType: CheckRequest,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],
+    },
+    {
+      ruleId: "report",
+      actions: [FinishCheckRequest],
+      resourceType: CheckRequest,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],
+    },
+    {
+      ruleId: "record-spec",
+      actions: [RecordModelSpec],
+      resourceType: ModelSpec,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],
+    },
+    {
+      ruleId: "record-check",
+      actions: [RecordAssumptionCheck],
+      resourceType: AssumptionCheck,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }],
+    },
+  ],
+})

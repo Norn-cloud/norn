@@ -187,7 +187,9 @@ def _suite(frame: pd.DataFrame, target: str, features: list[str], order: str | N
     checks = missingness(frame, fields)
     data = pd.DataFrame({field: _numeric(frame, field) for field in fields})
     if order is not None:
-        data[order] = frame[order]
+        # Numeric when it parses (a CSV upload stores text), otherwise its own order (timestamps sort as text).
+        numeric = _numeric(frame, order)
+        data[order] = numeric if numeric.notna().all() else frame[order]
     data = data.dropna(subset=fields).reset_index(drop=True)
     n, p = len(data), len(features) + 1
     if n <= p + 1:

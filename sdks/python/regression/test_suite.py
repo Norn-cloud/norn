@@ -106,6 +106,13 @@ class Suite(unittest.TestCase):
             for value in (check.threshold, check.threshold_source, check.remediation, check.statistic):
                 self.assertTrue(value, check)
 
+    def test_text_columns_from_an_uploaded_csv_are_read_as_numbers(self):
+        frame = dataset(n=1500)
+        text = frame.astype({column: str for column in ("x1", "x2", "x3", "y", "t")})
+        first, _ = assumption_suite(frame, "y", ["x1", "x2"], order="t")
+        again, _ = assumption_suite(text, "y", ["x1", "x2"], order="t")
+        self.assertEqual([c.as_dict() for c in first], [c.as_dict() for c in again])
+
     def test_bad_requests_are_refused(self):
         with self.assertRaisesRegex(ValueError, "both the target and a feature"):
             assumption_suite(clean(), "y", ["y", "x1"])

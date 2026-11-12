@@ -36,4 +36,20 @@ cell.call("lab.sample.add", {"sample": "s99999", "t": 99999, "x1": "1.0000", "x2
 later = check_regression("lab.Sample", **args)
 assert later.spec["datasetRevision"] != first.spec["datasetRevision"] and later.spec["spec"] != first.spec["spec"]
 assert len(cell.rows("stats.ModelSpec")) == 2
-print(f"regression demo: ok ({len(first.checks)} checks, {len(first.receipts)} receipts, replay identical, new revision recorded)")
+# One click in Studio: a queued request, run by the worker through the same governed actions.
+import subprocess  # noqa: E402
+cell.call("stats.checkrequest.submit", {"request": "rq-demo-1", "objectType": "lab.Sample", "target": "y", "features": "x1,x2",
+                                        "orderField": "t", "status": "queued", "spec": "", "error": ""}, "rq-demo-1")
+cell.call("stats.checkrequest.submit", {"request": "rq-demo-2", "objectType": "lab.Sample", "target": "y", "features": "nope",
+                                        "orderField": "", "status": "queued", "spec": "", "error": ""}, "rq-demo-2")
+subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
+requests = cell.rows("stats.CheckRequest").set_index("request")
+assert requests.loc["rq-demo-1", "status"] == "done", requests
+spec = requests.loc["rq-demo-1", "spec"]
+assert spec in set(cell.rows("stats.ModelSpec")["spec"])
+assert requests.loc["rq-demo-2", "status"] == "failed" and "nope" in requests.loc["rq-demo-2", "error"], requests
+# A second pass finds nothing queued.
+subprocess.run([sys.executable, "-m", "norn_regression.worker", "--project", sys.argv[1], "--once"], check=True)
+assert len(cell.rows("stats.CheckRequest")) == 2
+
+print(f"regression demo: ok ({len(first.checks)} checks, {len(first.receipts)} receipts, replay identical, new revision recorded, worker ran one request and failed one with its reason)")

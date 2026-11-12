@@ -28,11 +28,26 @@ version and revision, and every action call's idempotency key derives from it.
 Rerunning on the same revision replays the same calls and gets the same
 receipts; a write to the dataset records a new spec beside the old one.
 
+**Hosted: one click in Studio.** Studio's button calls
+`stats.checkrequest.submit` and creates a `stats.CheckRequest` with status
+`queued`. The worker (`python -m norn_regression.worker`, image from
+`Dockerfile`) runs next to the hosted cell. It reaches the cell through
+Studio's proxy (`NORN_URL=https://<studio>/api/host`) with a Studio API key
+(`NORN_TOKEN_FILE`, sent as `x-api-key`), polls every 5 s, runs the queued
+requests, and reports `running`, then `done` with the spec id or `failed` with
+the reason, through `stats.checkrequest.finish`. The queue is the cell; every
+step has a receipt. Run one worker per cell. `stats.regression.access` grants
+role `member` the four stats actions.
+
+The same function stays callable from Python. It works on any object type
+whose fields hold numbers or numeric text, such as a dataset uploaded as CSV.
+
 **Files**
 - `check_regression.py`: the notebook cell (`# %%`).
 - `synthetic.py`: a seeded dataset with known violations: heteroscedastic, AR(1) errors in `t`, `x3` collinear with `x1` and `x2`.
 - `test_suite.py`: the suite against known violations, without a cell.
-- `run-demo.sh WORKDIR`: generates the client, runs the tests, serves `definitions/` with `norn dev`, seeds 2,000 samples, runs the notebook and `e2e_check.py`.
+- `run-demo.sh WORKDIR`: generates the client, runs the tests, serves `definitions/` with `norn dev`, seeds 2,000 samples, and runs the notebook and `e2e_check.py`. The end-to-end check includes the worker running one queued request and failing one with its reason.
+- `norn_regression/worker.py` and `Dockerfile`: the hosted job runner.
 
 **Limits.**
 - The model is ordinary least squares with an intercept. Rows with a missing value are dropped.
