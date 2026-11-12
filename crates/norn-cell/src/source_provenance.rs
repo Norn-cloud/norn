@@ -44,7 +44,8 @@ pub struct InstanceSourceProvenance {
     pub field_provenance: BTreeMap<PropertyId, InstanceProvenance>,
 }
 
-/// The receipt bytes one trace may read beyond its slice budget: a page of
+/// The receipt bytes each receipt read of a trace may take beyond its slice
+/// budget (a trace proves the version, then reads its receipt): a page of
 /// the most records OBS-PAGE-1 admits (1,000) writes a receipt of about
 /// 1.3 MB.
 const TRACE_RECEIPT_ALLOWANCE: u64 = 2 * 1024 * 1024;
@@ -68,13 +69,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         // An exhausted budget is a bound, not corrupt evidence: the route serves
         // it as 413 `core.compute.bound_exceeded`, never a partial trace.
         let exhausted = || CellError::ComputeRefused("core.compute.bound_exceeded");
-        let instance = match self.object_at_version_with_budget(
-            world,
-            fact.object_type.as_str(),
-            &fact.key,
-            fact.version,
-            budget,
-        )? {
+        // Proving the version reads the same receipt (see below).
+        let instance = match budget.with_allowance(TRACE_RECEIPT_ALLOWANCE, |budget| {
+            self.object_at_version_with_budget(
+                world,
+                fact.object_type.as_str(),
+                &fact.key,
+                fact.version,
+                budget,
+            )
+        })? {
             BudgetedRead::Found(instance) => instance,
             BudgetedRead::Exhausted => return Err(exhausted()),
             BudgetedRead::Missing => return Err(invalid()),
