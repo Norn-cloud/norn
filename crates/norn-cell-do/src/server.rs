@@ -581,7 +581,7 @@ fn route<E: SqlEngine>(
             ),
             (None, _) if transform_path(path).is_some() => transform_path(path).map_or_else(
                 || Err(norn_api::authz::read_denied()),
-                |target| transforms(host, actor, target, query),
+                |target| transforms(cell(host)?, actor, target, query),
             ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(cell(host)?, &query, actor))
