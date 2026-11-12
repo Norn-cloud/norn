@@ -84,9 +84,9 @@ impl QuestionRuntime<NativeEngine> for Bounded {
 
 impl AdHocQuestions<NativeEngine> for Bounded {
     fn definitions(&self) -> &[MetricDefinition] {
-        self.definitions.as_deref().unwrap_or_else(|| {
-            AdHocQuestions::<NativeEngine>::definitions(&self.inner)
-        })
+        self.definitions
+            .as_deref()
+            .unwrap_or_else(|| AdHocQuestions::<NativeEngine>::definitions(&self.inner))
     }
     fn catalog(&self) -> &EffectiveCatalog {
         AdHocQuestions::<NativeEngine>::catalog(&self.inner)
@@ -346,8 +346,7 @@ fn a_ratio_is_refused_unless_the_denominators_type_is_readable_too() {
     assert_eq!(granted.status, 200, "{}", granted.body);
     let baseline = evaluate(&cell, None, &question("gold"));
     assert_eq!(baseline.status, 403);
-    let mut definitions =
-        AdHocQuestions::<NativeEngine>::definitions(&cell.runtime.inner).to_vec();
+    let mut definitions = AdHocQuestions::<NativeEngine>::definitions(&cell.runtime.inner).to_vec();
     let ratio = definitions
         .iter()
         .find(|definition| definition.name == "demo.yield")

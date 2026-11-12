@@ -144,8 +144,9 @@ fn derive(
     })
 }
 
-/// Rows an ad-hoc question may read per evaluation.
-pub const MAX_ROWS: u32 = 50_000;
+/// Rows an ad-hoc question may read per evaluation: the kernel limit
+/// profile's slice bound, above which admission refuses every question.
+pub const MAX_ROWS: u32 = 1_000;
 /// Buckets an ad-hoc answer may hold.
 pub const MAX_BUCKETS: usize = 5_000;
 
@@ -164,7 +165,11 @@ pub struct DerivedRuntime<'m> {
 /// Admission authorizes each operand against its own type as well, so a
 /// caller who cannot read the denominator's type never gets the ratio.
 pub(crate) fn governed<'a>(definitions: &'a [MetricDefinition], resource: &'a str) -> &'a str {
-    let find = |name: &str| definitions.iter().find(|definition| definition.name == name);
+    let find = |name: &str| {
+        definitions
+            .iter()
+            .find(|definition| definition.name == name)
+    };
     let model = |name: &str| {
         find(name)?
             .type_params

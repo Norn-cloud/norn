@@ -412,6 +412,16 @@ mod tests {
     }
 
     #[test]
+    fn the_row_bound_is_the_kernel_slice_bound() {
+        assert_eq!(
+            crate::questions::MAX_ROWS,
+            norn_ir::ResourceLimitProfile::norn_limits_v1()
+                .slice
+                .max_records
+        );
+    }
+
+    #[test]
     fn every_derived_sum_is_answered_on_whichever_engine_lowers_it() {
         let dir = tempfile::tempdir().unwrap();
         let host = host(dir.path());
