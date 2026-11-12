@@ -630,7 +630,8 @@ def studio_browser_pin_canaries() -> None:
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
                 ("not in the plan", " integration browser formal ", " integration formal "),
-                ("no checker-admission test", "        bun test test/decision.test.ts\n", "")):
+                ("no checker-admission test", "        NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts\n", ""),
+                ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test", "bun test")):
             if core.count(before) != 1:
                 raise AssertionError(f"browser pin canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")
