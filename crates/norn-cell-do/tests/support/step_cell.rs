@@ -2,7 +2,11 @@
 //! that decides every action for the cell's current verified caller, as the
 //! hosted cells' does, and the `melt` flow installed: shared by the action
 //! step (ACTION-STEP-1) and approval (APPROVAL-1) tests.
-#![allow(dead_code, reason = "each test target uses part of the shared cell")]
+#![allow(
+    dead_code,
+    unused_imports,
+    reason = "each test target uses part of the shared cell"
+)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
