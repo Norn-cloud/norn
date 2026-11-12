@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 const XS: &str = "http://www.w3.org/2001/XMLSchema";
+/// The quick-xml version recorded as this importer's parser in every import's provenance; a
+/// test holds it equal to the crate's exact `quick-xml = "=…"` requirement.
+const QUICK_XML_VERSION: &str = "0.42.0";
 const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 /// Largest admitted schema file.
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
@@ -144,12 +147,11 @@ impl XsdNode {
 /// The Clark name of an element or attribute. `budget` is the file's
 /// running total of expanded bytes, charged before the string is built.
 fn expanded(
-    name: &[u8],
+    name: &str,
     scope: &Scope,
     attribute: bool,
     budget: &mut usize,
 ) -> Result<String, String> {
-    let name = std::str::from_utf8(name).map_err(|e| e.to_string())?;
     let (prefix, local) = name.split_once(':').unwrap_or(("", name));
     let uri = if attribute && prefix.is_empty() {
         None
@@ -248,15 +250,10 @@ fn parse_node(
             bound,
         })
     };
-    let name = expanded(
-        start.name().as_ref().as_bytes(),
-        &scope,
-        false,
-        &mut bindings.expanded,
-    )?;
+    let name = expanded(start.name().as_ref(), &scope, false, &mut bindings.expanded)?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
-        let key = expanded(key.as_bytes(), &scope, true, &mut bindings.expanded)?;
+        let key = expanded(&key, &scope, true, &mut bindings.expanded)?;
         if attributes.insert(key, value).is_some() {
             return Err("duplicate expanded attribute".into());
         }
@@ -447,7 +444,7 @@ impl SchemaImporter for XsdReader {
                 adapter: self.adapter(),
                 parser: Some(ComponentPin {
                     name: "quick-xml".into(),
-                    version: "0.41.0".into(),
+                    version: QUICK_XML_VERSION.into(),
                 }),
                 evaluator: None,
                 tables: Vec::new(),
@@ -912,8 +909,11 @@ mod decoding_tests {
         );
     }
 
+    /// CDATA keeps `\r\n` as written: behaviour inherited from quick-xml 0.41 and kept by this
+    /// port. It diverges from XML 1.0 §2.11, which normalizes line ends in the whole document
+    /// before parsing (follow-up: #1285).
     #[test]
-    fn text_resolves_references_normalizes_line_ends_and_keeps_cdata_as_written() {
+    fn text_resolves_references_normalizes_line_ends_and_keeps_the_inherited_raw_cdata() {
         let xml = format!(
             "{OPEN}<xs:annotation><xs:documentation>x &amp; y &#x42;&lt;\r\nline\
              <![CDATA[ <raw>&amp;\r\n ]]>z</xs:documentation></xs:annotation></xs:schema>"
@@ -922,6 +922,19 @@ mod decoding_tests {
             find(&nodes(&xml), "documentation").text,
             "x & y B<\nline <raw>&amp;\r\n z"
         );
+    }
+
+    /// Every import's provenance names the quick-xml that parsed it: the pin equals the
+    /// crate's exact requirement, so a version bump cannot leave the provenance behind.
+    #[test]
+    fn the_provenance_parser_pin_is_the_required_quick_xml() {
+        let manifest = include_str!("../Cargo.toml");
+        let required: Vec<&str> = manifest
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("quick-xml = \"="))
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+        assert_eq!(required, [super::QUICK_XML_VERSION]);
     }
 
     #[test]
