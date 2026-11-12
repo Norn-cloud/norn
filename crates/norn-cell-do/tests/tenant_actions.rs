@@ -87,7 +87,7 @@ const QUERY: &str = "orgId=org_a&environmentId=prod";
 
 /// The melt artifacts, re-scoped to the tenant, with the action's `access`
 /// set by `access` (or removed).
-fn melt(access: Option<Value>) -> Vec<Value> {
+fn melt(access: Option<&Value>) -> Vec<Value> {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../norn-cell/tests/fixtures/constitution.json"
     ))
@@ -102,7 +102,7 @@ fn melt(access: Option<Value>) -> Vec<Value> {
             if artifact["kind"] == "action" {
                 let payload = artifact["payload"].as_object_mut().unwrap();
                 payload.remove("access");
-                if let Some(access) = &access {
+                if let Some(access) = access {
                     payload.insert("access".into(), access.clone());
                 }
             }
@@ -195,7 +195,7 @@ fn provisioned(path: &Path, artifacts: &[Value]) -> Cell {
 }
 
 fn with_policy(roles: &[&str]) -> Vec<Value> {
-    let mut artifacts = melt(Some(access()));
+    let mut artifacts = melt(Some(&access()));
     artifacts.push(policy(POLICY, &[MELT_ACTION], roles));
     artifacts
 }
@@ -286,13 +286,13 @@ fn an_action_is_callable_only_through_its_own_policy() {
             artifacts
         }),
         ("another policy grants it", {
-            let mut artifacts = melt(Some(access()));
+            let mut artifacts = melt(Some(&access()));
             artifacts.push(policy(POLICY, &[MELT_ACTION], &["owner"]));
             artifacts.push(policy(other, &[MELT_ACTION], &["admin"]));
             artifacts
         }),
         ("pinned to another version", {
-            let mut artifacts = melt(Some(json!({ "artifactId": POLICY, "version": "9.9.9" })));
+            let mut artifacts = melt(Some(&json!({ "artifactId": POLICY, "version": "9.9.9" })));
             artifacts.push(policy(POLICY, &[MELT_ACTION], &["admin"]));
             artifacts
         }),
@@ -317,7 +317,7 @@ fn an_action_is_callable_only_through_its_own_policy() {
 /// policy: the host then serves no action.
 #[test]
 fn a_policy_that_does_not_compile_yields_none() {
-    let mut artifacts = melt(Some(access()));
+    let mut artifacts = melt(Some(&access()));
     let mut broken = policy(POLICY, &[MELT_ACTION], &["admin"]);
     broken["payload"]["rules"][0]["resourceType"] = json!("constitution.NoSuchType");
     artifacts.push(broken);
