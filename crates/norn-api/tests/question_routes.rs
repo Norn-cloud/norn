@@ -521,6 +521,18 @@ fn asof_uses_authenticated_cutoff_and_preserves_the_old_answer_after_correction(
 }
 
 #[test]
+fn a_moved_answer_is_a_retryable_conflict_saying_so() {
+    let refusal = Refusal::from_compute(norn_cell::CellError::ComputeRefused(
+        "core.projection.answer_moved",
+    ));
+    assert_eq!(
+        (refusal.status, refusal.code.as_str(), refusal.retryable),
+        (409, "core.projection.answer_moved", true)
+    );
+    assert_eq!(refusal.message, "the data changed since this answer");
+}
+
+#[test]
 fn compute_refusal_projection_keeps_codes_and_hides_other_diagnostics() {
     for code in [
         "core.compute.stale_input",

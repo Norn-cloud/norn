@@ -79,7 +79,7 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
             }
         ),
         Err(CellError::ComputeRefused(
-            "core.projection.lineage_incomplete"
+            "core.projection.answer_moved"
         ))
     ));
     assert_eq!(head, store.verified_head().expect("unchanged"));
@@ -163,7 +163,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
             _ => changed.now_ms += 1,
         }
         let expected = if change < 2 {
-            "core.projection.lineage_incomplete"
+            "core.projection.answer_moved"
         } else {
             "core.compute.stale_input"
         };
@@ -201,7 +201,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
             }
         ),
         Err(CellError::ComputeRefused(
-            "core.projection.lineage_incomplete"
+            "core.projection.answer_moved"
         ))
     ));
 }

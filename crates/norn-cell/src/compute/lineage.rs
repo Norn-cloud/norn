@@ -124,8 +124,10 @@ impl<E: SqlEngine> CellStore<E> {
             if !result.complete || result.freshness != Freshness::Exact {
                 return Err(refused("core.compute.stale_input"));
             }
+            // The answer the handle names is not the one the cell gives now:
+            // the data or the reader's view changed since it was answered.
             if !matches(&result.lineage_ref) {
-                return Err(incomplete());
+                return Err(refused("core.projection.answer_moved"));
             }
             let row = result.rows.get(bucket).ok_or_else(incomplete)?;
             let mut totals = Totals::default();
