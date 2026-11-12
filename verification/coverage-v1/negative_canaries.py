@@ -625,7 +625,7 @@ def rust_parity_evidence_canaries() -> None:
     first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
     second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
     call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
-    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(={first}) | test(={second})'\n"
+    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter \"${{guard[@]}}\" --lib -E 'test(={first}) | test(={second})'\n"
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
@@ -634,7 +634,7 @@ def rust_parity_evidence_canaries() -> None:
                 ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
                 ("only one parity test required", call, call.replace(f" {second}", "")),
                 ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
-                ("the default filter decides", "run --locked --ignore-default-filter -p", "run --locked -p")):
+                ("the default filter decides", 'run --locked --ignore-default-filter "${guard[@]}" --lib', 'run --locked "${guard[@]}" --lib')):
             if core.count(before) != 1:
                 raise AssertionError(f"Rust parity evidence canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")

@@ -829,7 +829,7 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     # The Rust parity tests (crates/norn-skeleton-guard/src/ci/mod.rs) must have run and passed in
     # the cheap phase, which every plan runs: nextest's JUnit report, not their source text.
     require_passed = '# Fails unless each named test of binary $2 ran and passed in nextest\'s JUnit report $1:\n# absent (renamed, deleted, ignored, cfg\'d out), skipped, failed or an unreadable report fails.\nrequire_passed() {\n  python3 - "$@" << \'PY\'\nimport sys\nimport xml.etree.ElementTree as ET\nreport, binary, *names = sys.argv[1:]\ncases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")\n         if suite.get("name") == binary for case in suite.iter("testcase")}\nbad = [name for name in names if name not in cases or any(\n    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]\nif not names or bad:\n    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or \'none named\'}")\nPY\n}\n'
-    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c \'import json, sys; print(json.load(sys.stdin)["target_directory"])\')/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
+    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      # nextest keeps its reports under the workspace root\'s target/nextest, whatever\n      # CARGO_TARGET_DIR says, and the guard\'s workspace root is its own directory (D95).\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c \'import json, sys; print(json.load(sys.stdin)["workspace_root"])\')/target/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
     require(runner.count(require_passed) == 1 and runner.count(rust_parity) == 1,
             "cheap phase must require the two Rust concurrency parity tests to have run and passed")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
@@ -838,6 +838,14 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
     require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
+    # The guard is its own workspace (D95): no test shard or workspace command reaches it, so
+    # its suite, clippy, docs and doctests run by name in phases every plan selects or full runs.
+    require("guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)\n" in runner
+            and '"${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"\n' in runner
+            and 'cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings\n' in runner
+            and 'cargo test --locked "${guard[@]}" --doc\n' in runner
+            and 'RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps\n' in runner,
+            "the guard workspace's suite, clippy, doctests and docs must run")
 
 
 def validate_timeout_budgets(

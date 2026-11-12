@@ -19,6 +19,10 @@ rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
+# The skeleton guard is its own Cargo workspace (D95): its manifest and lockfile are in the
+# gated crate directory. Every guard command names it and shares the root target directory.
+guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 # The pinned nextest, installed like the other tools when absent.
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
@@ -89,7 +93,9 @@ run_phase() {
     cheap)
       use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
+      cargo metadata --locked --format-version 1 "${guard[@]}" > /dev/null
       cargo fmt --all -- --check
+      cargo fmt --all "${guard[@]}" -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
@@ -111,9 +117,11 @@ run_phase() {
       # The Rust half of the concurrency parity check runs on every plan, whatever packages the
       # plan selects, and its two named tests must have run and passed.
       ensure_nextest
-      parity_report="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/nextest/ci/junit.xml"
+      # nextest keeps its reports under the workspace root's target/nextest, whatever
+      # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (D95).
+      parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
       rm -f "$parity_report"
-      "${nextest[@]}" run --locked --ignore-default-filter -p norn-skeleton-guard --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
+      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
       require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
       ;;
     test)
@@ -172,6 +180,7 @@ PY
       ;;
     doctest)
       cargo test --locked --workspace --doc
+      cargo test --locked "${guard[@]}" --doc
       ;;
     features)
       cargo test --locked -p norn-canonical -p norn-checker
@@ -184,8 +193,14 @@ PY
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
-    clippy) cargo clippy --locked --workspace --all-targets -- -D warnings ;;
-    doc) RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps ;;
+    clippy)
+      cargo clippy --locked --workspace --all-targets -- -D warnings
+      cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings
+      ;;
+    doc)
+      RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+      RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
+      ;;
     guards)
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
@@ -200,7 +215,11 @@ PY
       python3 scripts/check_demo_scenarios.py
       cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
+      cargo deny --locked "${guard[@]}" check --config deny.toml
       cargo xtask ci policy
+      # The guard's own suite: it left the root workspace (D95), so no test shard selects it.
+      # The guards phase runs in every plan, full or affected.
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
     integration)
       cargo build --locked -p norn-cli
@@ -461,7 +480,8 @@ for path in changed:
     elif not path.startswith(".github/ci/provenance/") and not (
             path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
         outside.append(path)
-reached, stack = set(touched) | {"norn-skeleton-guard"}, list(touched)
+# The guard is its own workspace (D95); the guards phase, in every plan, runs its suite.
+reached, stack = set(touched), list(touched)
 while stack:
     for user in users[stack.pop()]:
         if user not in reached:

@@ -40,8 +40,11 @@ def main() -> int:
     if args.root is None:
         command = ["cargo", "xtask", "ci", "policy"]
     else:
-        command = ["cargo", "run", "--locked", "--quiet", "--manifest-path", str(REPO / "Cargo.toml"),
-                   "-p", "norn-skeleton-guard", "--bin", "xtask", "--", "ci", "trusted",
+        # The guard is its own workspace (D95): its manifest and lockfile sit in the gated
+        # crate directory, so the root manifest and lockfile never reach this binary.
+        command = ["cargo", "run", "--locked", "--quiet",
+                   "--manifest-path", str(REPO / "crates/norn-skeleton-guard/Cargo.toml"),
+                   "--bin", "xtask", "--", "ci", "trusted",
                    "--root", str(Path(args.root).resolve()), "--base-root", str(REPO)]
         if args.maintainer_evidence is not None:
             command += ["--maintainer-evidence", str(Path(args.maintainer_evidence).resolve())]

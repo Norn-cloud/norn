@@ -4,7 +4,11 @@ This test and CI crate checks the retained Cargo boundaries, deterministic core,
 canonical-byte ownership, exact source enrollment and shipped-file provenance.
 It is never a runtime dependency.
 
-`cargo test --locked -p norn-skeleton-guard` runs the boundary and negative
+The crate is its own Cargo workspace (D95): its `Cargo.toml` and `Cargo.lock` are
+in this gated directory, outside the root workspace, so the root manifest and
+lockfile never change what the trusted lane builds.
+
+`cargo test --locked --manifest-path crates/norn-skeleton-guard/Cargo.toml` runs the boundary and negative
 provenance regressions. `cargo xtask ci provenance` checks the candidate;
 `cargo xtask ci provenance --root PATH --distribution --base-root BASE` checks a
 fully expanded distribution against trusted source facts. The provenance engine
