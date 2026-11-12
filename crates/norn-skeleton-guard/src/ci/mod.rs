@@ -10,7 +10,7 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
 /// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 15] = [
+const GATE_FILES: [&str; 21] = [
     "scripts/ci/core.sh",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
@@ -26,6 +26,13 @@ const GATE_FILES: [&str; 15] = [
     "scripts/check-proof-holes.py",
     "crates/norn-skeleton-guard/baseline.json",
     "crates/norn-checker/tests/non_code_literals.baseline.json",
+    // The release (#521): what the release workflow builds, proves and ships.
+    "scripts/release/assemble.py",
+    "scripts/release/test_assemble.py",
+    "scripts/release/third_party.py",
+    "scripts/release/test_third_party.py",
+    "scripts/release/build.sh",
+    "scripts/release/tools.sh",
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.

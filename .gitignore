@@ -84,9 +84,10 @@ docs/**
 !docs/showcase/**
 !docs/reference/
 !docs/reference/index.md
-# The alpha tutorial is public; the rest of docs/authoring/ stays personal.
+# The alpha tutorial and release procedure are public; the rest of docs/authoring/ stays personal.
 !docs/authoring/
 !docs/authoring/tutorial.md
+!docs/authoring/release.md
 legacy/docs/platform-docs-archive-2026-06-01/local-ignored/
 !openspec/docs/
 !openspec/docs/**/*.md

@@ -140,7 +140,9 @@ def sources(commit: Commit, name: str) -> dict[str, str]:
 
 def manifest_of(commit: Commit, name: str, version: str, channel: str, platforms: list[str]) -> dict:
     tracked = json.loads(commit.read(f"{TOOL}/package.json"))
-    common = {"version": version, "license": tracked["license"], "repository": "github:Norn-cloud/norn"}
+    # The full URL form: npm provenance checks it against the publishing repository.
+    common = {"version": version, "license": tracked["license"],
+              "repository": {"type": "git", "url": "git+https://github.com/Norn-cloud/norn.git"}}
     if kind_of(name) == "@norn/dev-host":
         platform = name.removeprefix("@norn/dev-host-")
         return {"name": name, **common, "description": f"Norn dev host (norn-dev-host) for {platform}",
