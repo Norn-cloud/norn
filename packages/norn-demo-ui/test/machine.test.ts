@@ -6,20 +6,26 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { type Classified, type Clock, type Machine, type Msg, type Transport, classifyResponse, createDriver, init, update, walks, wasmEvaluate } from "../src/machine/index.ts"
+import { type Classified, type Clock, type Evaluate, type Machine, type Msg, type Transport, classifyResponse, createDriver, init, update, walks, wasmEvaluate } from "../src/machine/index.ts"
 
+// The engine is built by CI's integration phase (NORN_CHECKER_WASM_PKG); without it the
+// engine-backed rows are skipped and `classifyResponse` still runs.
 const pkg = process.env.NORN_CHECKER_WASM_PKG
-if (!pkg) throw new Error("NORN_CHECKER_WASM_PKG must name the built checker WASM package")
-const checker = (await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)) as {
-  initSync(options: { module: Uint8Array }): unknown
-  evaluateExpression(expression: string, inputJson: string, profile?: string): string
+const withEngine = pkg ? describe : describe.skip
+const checker = pkg
+  ? ((await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)) as {
+      initSync(options: { module: Uint8Array }): unknown
+      evaluateExpression(expression: string, inputJson: string, profile?: string): string
+    })
+  : null
+checker?.initSync({ module: readFileSync(join(pkg ?? "", "norn_checker_wasm_bg.wasm")) })
+const evaluate: Evaluate = checker ? wasmEvaluate(checker) : () => {
+  throw new Error("no checker engine")
 }
-checker.initSync({ module: readFileSync(join(pkg, "norn_checker_wasm_bg.wasm")) })
-const evaluate = wasmEvaluate(checker)
 
 const machine = JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/ui/orders-approve.machine.json"), "utf8")) as Machine
 
-describe("update", () => {
+withEngine("update", () => {
   test("a user event starts the awaited call under the state's deadline", () => {
     const opened = init(machine)
     expect(opened.snapshot).toEqual({ stateId: "browsing", fields: { lastCode: null }, entry: 0 })
@@ -49,7 +55,7 @@ describe("update", () => {
   })
 })
 
-describe("walks", () => {
+withEngine("walks", () => {
   test("every transition has a walk, and replaying it fires exactly that path", () => {
     const all = walks(machine, (_, event) => (event.source.kind === "outcome" && event.source.outcome === "refused" ? { code: "law.refused", retryable: false } : undefined))
     expect(all.map((walk) => walk.transitionId)).toEqual(machine.transitions.map((transition) => transition.transitionId))
@@ -102,7 +108,7 @@ function manualTransport() {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-describe("driver", () => {
+withEngine("driver", () => {
   test("the deadline aborts the call and raises timeout; a retry replays the same key", async () => {
     const clock = manualClock()
     const { transport, calls } = manualTransport()
