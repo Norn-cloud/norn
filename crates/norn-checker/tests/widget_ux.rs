@@ -4362,14 +4362,16 @@ fn studio_decision_sheet_is_admitted_clean() {
     assert_clean(&found);
 }
 
+fn machine(sheet: &mut Value) -> &mut Value {
+    &mut sheet["payload"]["ux"]["pages"][0]["machine"]
+}
+
 #[test]
 fn a_control_raises_an_event_and_a_choice_carries_its_value() {
     let sheet: Value = serde_json::from_str(include_str!(
         "../../../apps/studio/src/decisions/decision-sheet.widget.json"
     ))
     .expect("decision sheet should be JSON");
-    let machine =
-        |sheet: &mut Value| -> &mut Value { &mut sheet["payload"]["ux"]["pages"][0]["machine"] };
     let codes = |sheet: Value| -> Vec<(String, String)> {
         findings_with_support(sheet, Vec::new(), &[])
             .into_iter()
