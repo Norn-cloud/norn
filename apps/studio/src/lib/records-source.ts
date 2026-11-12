@@ -1,6 +1,7 @@
 import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { nextCursor, recordsPath, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "./records-query.ts"
+import { currentMode } from "./live-transport.ts"
 import { transport, type ObjectPage } from "./transport.ts"
 
 /** One diagnostic of a refusal, its pointer into the request (`/sort/0`, `/filter/all/1/value`, `/after`). */
@@ -32,7 +33,11 @@ export interface RecordsDeps {
   readonly recorded: (objectType: string, after?: string) => Promise<Read<ObjectPage> | null>
 }
 
-const defaults: RecordsDeps = { fetcher: (input, init) => fetch(input, init), recorded: transport.objectPage }
+/** The recording is read only when no cell is connected: a connected cell's 404 is its answer, never replaced. */
+const defaults: RecordsDeps = {
+  fetcher: (input, init) => fetch(input, init),
+  recorded: async (objectType, after) => (await currentMode()).kind === "live" ? null : transport.objectPage(objectType, after),
+}
 
 function recordedPage(read: Read<ObjectPage> | null): RecordsRead {
   if (read === null) return { kind: "none" }
