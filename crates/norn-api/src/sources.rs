@@ -70,7 +70,7 @@ pub struct ConnectionConfig {
     /// Rows per source request for every feed, in place of the connector's
     /// (SYNC-PAGE-1): a host tunes how many requests a sync makes without a
     /// new definitions version. At most the pull's item bound
-    /// ([`Limits`](crate::pull::Limits)); the cell still maps and commits
+    /// ([`Limits`]); the cell still maps and commits
     /// what a request returns in its own pages
     /// ([`PAGE_ROWS`](crate::host::PAGE_ROWS)).
     #[serde(default, skip_serializing_if = "Option::is_none")]
