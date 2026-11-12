@@ -24,7 +24,7 @@ norn-kernel = { path = "../norn-kernel" }
 norn-projections = { path = "../norn-projections" }
 # Query-string decoding for the fetch dispatch.
 # Reads a host token's key id to rate-limit JWKS refetches; never trusts it.
-base64 = "0.22.1"
+base64 = "0.23.1"
 form_urlencoded = "1.2.2"
 http = "1.5.0"
 # Percent-decodes object path segments.

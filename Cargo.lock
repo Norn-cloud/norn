@@ -2197,7 +2197,7 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "ed25519-dalek",
  "http",
  "jsonschema",
@@ -2249,7 +2249,7 @@ dependencies = [
 name = "norn-cell"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "ct-merkle",
  "duckdb",
@@ -2279,7 +2279,7 @@ dependencies = [
 name = "norn-cell-do"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "ed25519-dalek",
  "form_urlencoded",
