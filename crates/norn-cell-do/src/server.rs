@@ -235,7 +235,6 @@ pub fn handle_all<E: SqlEngine>(
     let actor = actor.as_deref();
     let question = question_path(path);
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
-    let catalog = path == "/v1/questions:catalog";
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
@@ -257,7 +256,7 @@ pub fn handle_all<E: SqlEngine>(
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
-    } else if catalog {
+    } else if path == "/v1/questions:catalog" {
         ad_hoc_catalog(host, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
