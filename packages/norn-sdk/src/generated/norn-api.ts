@@ -11233,6 +11233,15 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused: the scope's stored cell cannot be opened. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
         };
     };
     load_dataset: {
