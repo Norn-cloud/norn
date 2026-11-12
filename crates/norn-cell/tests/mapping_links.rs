@@ -1059,12 +1059,18 @@ fn claims_follow_their_referents(cell: &Cell) -> Result<(), String> {
             let Some(key) = text(&entry.event, &["event", "values", side]) else {
                 continue;
             };
-            let later = ledger.iter().enumerate().skip(index + 1).any(|(_, other)| {
-                other.commit_seq == entry.commit_seq
-                    && text(&other.event, &["event", "key", "objectType"]).as_deref()
-                        != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
-                    && text(&other.event, &["event", "key", "key"]).as_deref() == Some(key.as_str())
-            });
+            let later =
+                ledger
+                    .iter()
+                    .enumerate()
+                    .skip(index.saturating_add(1))
+                    .any(|(_, other)| {
+                        other.commit_seq == entry.commit_seq
+                            && text(&other.event, &["event", "key", "objectType"]).as_deref()
+                                != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+                            && text(&other.event, &["event", "key", "key"]).as_deref()
+                                == Some(key.as_str())
+                    });
             if later {
                 return Err(format!(
                     "commit {}: claim at {index} precedes an event of {key}",
@@ -1181,7 +1187,7 @@ proptest::proptest! {
                 .iter()
                 .zip(&paged)
                 .position(|(a, b)| a != b)
-                .map(|at| (&single[at..(at + 3).min(single.len())], &paged[at..(at + 3).min(paged.len())]))
+                .map(|at| (&single[at..at.saturating_add(3).min(single.len())], &paged[at..at.saturating_add(3).min(paged.len())]))
         );
     }
 }
