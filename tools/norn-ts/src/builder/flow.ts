@@ -87,6 +87,8 @@ export interface Perform extends StepSourceMap {
   readonly fn: FnRef
   readonly input: Expr
   readonly bind?: string
+  /** Display-only label (the canvas node title); never changes behaviour. */
+  readonly label?: string
   readonly at?: SourceLocation
 }
 
@@ -101,6 +103,8 @@ export interface Sleep extends StepSourceMap {
   readonly _tag: "Sleep"
   readonly step: string
   readonly millis: number
+  /** Display-only label (the canvas node title); never changes behaviour. */
+  readonly label?: string
   readonly at?: SourceLocation
 }
 
@@ -145,6 +149,8 @@ export interface FlowMeta {
   /** Dotted lower-case id; the namespace is everything before the last segment. */
   readonly id: string
   readonly version: string
+  /** Display-only title (the canvas flow title); never changes behaviour. */
+  readonly title?: string
 }
 
 export interface FlowDef {
@@ -178,17 +184,21 @@ export function fn(
   return located({ _tag: "Fn" as const, ...rest, errors: [...errors] }, at)
 }
 
-export function perform(step: string, handle: FnRef, input: Expr, options: { readonly bind?: string } & At = {}): Perform {
-  const node: Perform = { _tag: "Perform", step, fn: handle, input }
-  return located(options.bind === undefined ? node : { ...node, bind: options.bind }, options.at)
+export function perform(step: string, handle: FnRef, input: Expr, options: { readonly bind?: string; readonly label?: string } & At = {}): Perform {
+  const node: Perform = {
+    _tag: "Perform", step, fn: handle, input,
+    ...(options.bind === undefined ? {} : { bind: options.bind }),
+    ...(options.label === undefined ? {} : { label: options.label }),
+  }
+  return located(node, options.at)
 }
 
 export function retry(target: Perform, policy: RetryPolicy, options: At = {}): Retry {
   return located({ _tag: "Retry" as const, perform: target, policy }, options.at)
 }
 
-export function sleep(step: string, duration: Duration, options: At = {}): Sleep {
-  return located({ _tag: "Sleep" as const, step, millis: duration.millis }, options.at)
+export function sleep(step: string, duration: Duration, options: { readonly label?: string } & At = {}): Sleep {
+  return located({ _tag: "Sleep" as const, step, millis: duration.millis, ...(options.label === undefined ? {} : { label: options.label }) }, options.at)
 }
 
 export function route(
@@ -218,7 +228,7 @@ export function succeed(value: Expr, options: At = {}): Succeed {
 }
 
 export function flow(meta: FlowMeta, body: ReadonlyArray<Step>, options: At = {}): FlowDef {
-  return located({ _tag: "Flow" as const, meta: { id: meta.id, version: meta.version }, body: [...body] }, options.at)
+  return located({ _tag: "Flow" as const, meta: { id: meta.id, version: meta.version, ...(meta.title === undefined ? {} : { title: meta.title }) }, body: [...body] }, options.at)
 }
 
 /** Duration constructors (Effect duration literals lower to these). */

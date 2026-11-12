@@ -751,8 +751,24 @@ class DefinitionCompiler {
     }
   }
 
+  /** `inputLabels`: an object literal of `{field: {title?, description?}}` literals. */
+  private inputLabels(node: ts.Expression): Readonly<Record<string, { readonly title?: string; readonly description?: string }>> {
+    const e = this.deref(node)
+    if (!ts.isObjectLiteralExpression(e)) throw new CompileError("NORN-FLOW-LITERAL", "inputLabels is an object literal of field labels", node)
+    const labels: Record<string, { readonly title?: string; readonly description?: string }> = {}
+    for (const property of e.properties) {
+      if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
+        throw new CompileError("NORN-FLOW-LITERAL", "an input label is `field: { title, description }`", property)
+      }
+      const m = this.closedRecord(property.initializer, ["title", "description"], [])
+      const title = m.get("title"), description = m.get("description")
+      labels[property.name.text] = { ...(title ? { title: this.string(title) } : {}), ...(description ? { description: this.string(description) } : {}) }
+    }
+    return labels
+  }
+
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -775,6 +791,15 @@ class DefinitionCompiler {
       ...(ledgerCategory ? { ledgerCategory: this.string(ledgerCategory) } : {}),
       input: schema("input"),
       output: schema("output"),
+      ...(members.has("inputLabels") ? { inputLabels: this.inputLabels(need("inputLabels")) } : {}),
+      ...(members.has("inputGroups")
+        ? {
+            inputGroups: this.list(need("inputGroups")).map((entry) => {
+              const m = this.closedRecord(entry, ["id", "title", "fields"], ["id", "title", "fields"])
+              return { id: this.string(m.get("id")!), title: this.string(m.get("title")!), fields: this.strings(m.get("fields")!) }
+            }),
+          }
+        : {}),
       slice: members.has("slice") ? this.list(need("slice")).map((entry) => this.sliceEntry(entry)) : [],
       derive: members.has("derive") ? this.list(need("derive")).map((entry, index) => {
         const m = this.closedRecord(entry, ["field", "expression", "inputRequired"], ["field", "expression"])

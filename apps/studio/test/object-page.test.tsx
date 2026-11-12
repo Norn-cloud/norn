@@ -54,7 +54,7 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
-  expect(html).toContain("Copy 6ec08e5b9fc6375526a98b96eeff65f402fbad558e4df418ed603f32b3017980")
+  expect(html).toContain("Copy c57613e24612d622549f16d9707d77be8bc2273d76a1aace235c428290bc4459")
   expect(html).toContain("This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.")
   expect(html).toContain("Viewing as")
   expect(html).not.toContain("no signed-in principal")

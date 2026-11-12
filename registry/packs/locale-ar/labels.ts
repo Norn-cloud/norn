@@ -51,6 +51,14 @@ export const ArabicLabels = Norn.labels({
     "canon.Party": { label: { ar: "طرف" }, properties: { display_name: { ar: "الاسم" }, kind: { ar: "النوع" } }, values: { kind: { person: { ar: "شخص" }, organization: { ar: "مؤسسة" }, system: { ar: "نظام" } } } },
     "canon.PartyRole": { label: { ar: "دور الطرف" }, localizedDescription: { ar: "دور الطرف كما ورد في المصدر" }, properties: { role: { ar: "الدور" }, valid_from: { ar: "ساري من" }, valid_to: { ar: "ساري حتى" } } },
     "canon.Posting": { label: { ar: "ترحيل" }, localizedDescription: { ar: "قيد دفتري مرصود بإشارة، وليس أمر ترحيل" }, properties: { account_code: { ar: "كود الحساب" }, amount, currency, book: { ar: "الدفتر" }, account_role: { ar: "دور الحساب" } } },
+    "canon.ValuationPolicy": {
+      label: { ar: "سياسة تقييم المخزون" }, localizedDescription: { ar: "سياسة تقييم المخزون" },
+      properties: { id: { ar: "المعرّف" }, label: { ar: "الاسم" }, valuation_method: { ar: "طريقة التقييم" } },
+      values: { valuation_method: valuation },
+    },
     "canon.SettlementObservation": { label: { ar: "تسوية مرصودة" }, localizedDescription: { ar: "تسوية مرصودة من المصدر" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
+  },
+  actions: {
+    "canon.valuation_policy.set": { label: { ar: "تحديد سياسة تقييم المخزون" }, localizedDescription: { ar: "إنشاء سياسة تقييم مخزون أو تحديثها." } },
   },
 })

@@ -98,10 +98,37 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         restatement_sha256: "b".repeat(64),
     });
     let installed = store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &first)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &first,
+        )
         .expect("first revision");
     assert_eq!(installed.version, 2);
     assert_eq!(installed.canonical_set, canonical);
+
+    // Fable S6: a revision that is not a flow cannot change the model.
+    let other_model = Model::from_definitions(&[], &[]).expect("another model");
+    let remodelled = change(
+        "studio.dashboard.m",
+        1,
+        RetainedLifecycle::Active,
+        "M",
+        None,
+    );
+    assert!(matches!(
+        store.install_retained_definition(
+            other_model,
+            &input(&canonical, 21),
+            Some(2),
+            SCOPE,
+            &remodelled
+        ),
+        Err(CellError::DefinitionReceiptInvalid(message))
+            if message.contains("not a flow installs over the active model")
+    ));
 
     // An unused id is required without an expected revision.
     let again = change(
@@ -112,7 +139,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         None,
     );
     assert!(matches!(
-        store.install_retained_definition(&input(&canonical, 21), Some(2), SCOPE, &again),
+        store.install_retained_definition(
+            model.clone(),
+            &input(&canonical, 21),
+            Some(2),
+            SCOPE,
+            &again
+        ),
         Err(CellError::RetainedDefinitionConflict {
             expected: None,
             actual: Some(1),
@@ -128,7 +161,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(2),
     );
     assert!(matches!(
-        store.install_retained_definition(&input(&canonical, 22), Some(2), SCOPE, &stale),
+        store.install_retained_definition(
+            model.clone(),
+            &input(&canonical, 22),
+            Some(2),
+            SCOPE,
+            &stale
+        ),
         Err(CellError::RetainedDefinitionConflict {
             actual: Some(1),
             ..
@@ -152,7 +191,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(1),
     );
     store
-        .install_retained_definition(&input(&canonical, 30), Some(2), SCOPE, &second)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 30),
+            Some(2),
+            SCOPE,
+            &second,
+        )
         .expect("second revision");
     let other = change(
         "studio.dashboard.b",
@@ -162,7 +207,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         None,
     );
     store
-        .install_retained_definition(&input(&canonical, 40), Some(3), SCOPE, &other)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 40),
+            Some(3),
+            SCOPE,
+            &other,
+        )
         .expect("other id");
     let retired = change(
         "studio.dashboard.b",
@@ -172,7 +223,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         Some(1),
     );
     store
-        .install_retained_definition(&input(&canonical, 50), Some(4), SCOPE, &retired)
+        .install_retained_definition(
+            model.clone(),
+            &input(&canonical, 50),
+            Some(4),
+            SCOPE,
+            &retired,
+        )
         .expect("retire");
 
     let reader = store.read();
@@ -284,12 +341,24 @@ fn a_retained_revision_cannot_change_the_kernel_set_or_receipt() {
     other_set.canonical_set = "[]".to_owned();
     for changed in [other_receipt, other_set] {
         assert!(matches!(
-            store.install_retained_definition(&changed, Some(1), SCOPE, &dashboard),
+            store.install_retained_definition(
+                store.model().clone(),
+                &changed,
+                Some(1),
+                SCOPE,
+                &dashboard
+            ),
             Err(CellError::DefinitionReceiptInvalid(_))
         ));
     }
     let installed = store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .install_retained_definition(
+            store.model().clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &dashboard,
+        )
         .expect("unchanged kernel");
     let before = store
         .read()
@@ -333,7 +402,13 @@ fn provisioning_reopen_adds_the_retained_table_to_an_older_file() {
         None,
     );
     store
-        .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &dashboard)
+        .install_retained_definition(
+            store.model().clone(),
+            &input(&canonical, 20),
+            Some(1),
+            SCOPE,
+            &dashboard,
+        )
         .expect("retained install on the reopened file");
     let listed = store
         .read()
