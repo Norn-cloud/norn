@@ -11,9 +11,12 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+import sys
 import tempfile
 from typing import Literal
 
+# Isolated mode (-I) drops the script directory; admit only this directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from behaviour import evidence, hook_registrations, production
 from python_ast import dotted, function_inventory
 from codegraph import CodeGraph, CodeGraphRust, VERSION
@@ -82,11 +85,11 @@ class FrappeRules:
     def emit(self, handler, relation, path, line, entity=None, field=None, target=None,
              condition=None, diagnostic=None, pointer="", script_line=None):
         if entity is not None and entity not in self.catalog:
-            diagnostic = diagnostic or "unknown_doctype"
+            diagnostic = diagnostic or "unknown_entity"
         if field is not None and (entity is None or entity not in self.catalog or field not in self.catalog[entity] | STANDARD_FIELDS):
             diagnostic = diagnostic or "unknown_field"
         if relation in {"reads", "writes", "triggers_on"} and entity is None:
-            diagnostic = diagnostic or "dynamic_doctype"
+            diagnostic = diagnostic or "dynamic_entity"
         self.facts.append(Fact(handler, relation, entity, field, target, condition,
                                self.source(path, line, pointer), "unresolved" if diagnostic else "resolved", diagnostic, script_line))
 
@@ -520,10 +523,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apps", nargs="+", type=Path)
     parser.add_argument("--codegraph", required=True, type=Path)
-    parser.add_argument("--scratch", type=Path, default=Path(tempfile.gettempdir()) / "norn-code-ontology")
+    parser.add_argument("--scratch", type=Path, help="directory for this run's copies; default: a fresh temporary directory, removed afterwards")
+    parser.add_argument("--allow-unpinned-codegraph", action="store_true",
+                        help="run a binary whose bytes are not the pinned release's; prints a warning, refused when CI is set")
     parser.add_argument("--revision", default="working-tree", help="evidence revision; default explicitly denotes unpinned working tree")
     args = parser.parse_args()
-    report = analyze(collect(args.apps), CodeGraphRust(args.codegraph, args.scratch), args.revision)
+    with tempfile.TemporaryDirectory(prefix="norn-code-ontology-") as fresh:
+        substrate = CodeGraphRust(args.codegraph, args.scratch or Path(fresh), args.allow_unpinned_codegraph)
+        report = analyze(collect(args.apps), substrate, args.revision)
     print(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=True))
 
 

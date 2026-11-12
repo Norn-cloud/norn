@@ -172,6 +172,27 @@ mod tests {
     }
 
     #[test]
+    fn port_is_absent_from_the_catalog_and_refused_when_called() {
+        // `norn port` starts a process; the MCP surface must never reach it.
+        let names: Vec<String> = super::platform_tools()
+            .unwrap()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(names, ["norn.capabilities", "norn.check"]);
+        for arguments in [
+            RuntimeObject::new(),
+            RuntimeObject::from([("tool".into(), RuntimeValue::String("selftest".into()))]),
+        ] {
+            assert!(
+                Human
+                    .call("norn.port", arguments, RuntimeObject::new())
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn capabilities_refusal_keeps_typed_payload_and_recovery_explanation() {
         let refusal = capabilities_catalog(Some("obsolete")).unwrap_err();
         let arguments =

@@ -40,8 +40,12 @@ The client reuses clap, ureq/rustls and the maintained sse-stream decoder;
 MCP event data stays text so business decimals never round through floats.
 
 `norn port parity|scoreboard|code-ontology|selftest [ARGS...]` forwards to the
-porting tools in `tools/norn-port` and exits with the tool's status. The CLI
-links none of that code: it runs the script under `NORN_PORT_HOME` (default
-`tools/norn-port` under the working directory) with `NORN_PORT_PYTHON` (default
-`python3`). What the tools prove, and their limits, are in
+porting tools and exits with the tool's own status. `code-ontology` reads
+source as data; `parity` EXECUTES the original function it is given, in a
+subprocess that is not a sandbox, so use it only on code you would run
+yourself. The CLI links none of that code. It finds the tools from its own
+installation or an absolute `NORN_PORT_HOME`, never from the working directory,
+and runs them under `python3` from an absolute `PATH` entry (or an absolute
+`NORN_PORT_PYTHON`) in isolated mode with a short fixed environment. Today the
+tools ship only in a source checkout. Details and limits:
 `tools/norn-port/README.md`.

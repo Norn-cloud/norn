@@ -10,7 +10,7 @@ import hashlib
 
 HOOKS = {"doc_events", "scheduler_events", "has_permission", "permission_query_conditions",
          "override_doctype_class", "extend_doctype_class", "before_request", "after_request",
-         "after_install", "after_migrate", "after_sync", "customer_loyalty_points"}
+         "after_install", "after_migrate", "after_sync"}
 
 
 def production(path):

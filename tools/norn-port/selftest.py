@@ -10,6 +10,8 @@ import sys
 import unittest
 from pathlib import Path
 
+# Isolated mode (-I) drops the script directory; admit only this directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import port
 
 
@@ -42,9 +44,13 @@ def comparison_violations(source, filename):
 
 
 FIXTURES = Path(__file__).resolve().parent / "selftest-fixtures"
-# The modules whose values cross the parity comparison. The code-ontology
-# tools compare source syntax, not wire values, and are outside this lint.
-HARNESS = ("json_compare.py", "original.py", "port.py", "python_ast.py", "selftest.py")
+# Every module here is linted unless it is listed below with its reason, so a
+# new module is covered by default.
+NOT_PARITY_VALUES = {
+    "code_ontology.py",       # compares source syntax (node kinds, names), never parity wire values
+    "code_ontology_test.py",  # asserts on that tool's facts
+    "codegraph.py",           # compares a version string and file digests
+}
 NORN = ""
 
 
@@ -100,7 +106,10 @@ class ParitySelfTest(unittest.TestCase):
 
     def test_all_harness_equalities_use_the_shared_comparator(self):
         failures = []
-        for name in HARNESS:
+        linted = sorted(path.name for path in port.ROOT.glob("*.py") if path.name not in NOT_PARITY_VALUES)
+        self.assertTrue({"json_compare.py", "original.py", "port.py", "python_ast.py"} <= set(linted))
+        self.assertTrue(all((port.ROOT / name).is_file() for name in NOT_PARITY_VALUES))
+        for name in linted:
             failures.extend(comparison_violations((port.ROOT / name).read_text(), name))
         self.assertJsonEqual(failures, [])
         for source in [
@@ -161,7 +170,7 @@ def inspect(value: Missing) -> Missing:
         inventory = {"format": "norn.code-unit-inventory/0.1", "app": "selftest", "sourceLoc": 10,
                      "units": [{"id": self.spec["id"], "source": {**self.spec["source"], "line": 1},
                                 "trigger": "call", "reads": [], "writes": [], "externalCalls": [],
-                                "loc": 10, "target": "rule", "parityRecipe": "P-PURE",
+                                "loc": 10, "target": "rule", "parityRecipe": "pure",
                                 "status": "translated", "nornArtifactIds": [self.spec["artifactId"]]}]}
         inventory_path = self.output / "inventory.json"
         port.write(inventory_path, inventory)

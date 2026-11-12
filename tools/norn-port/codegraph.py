@@ -10,7 +10,9 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 from typing import Protocol
@@ -18,6 +20,8 @@ import urllib.request
 
 VERSION = "0.54.0"
 ARCHIVE_SHA256 = "dcb3da1d007bf0d9c9e7f0d54ad71281514d930ddfd6a7841eccdd8bee9f8c69"
+# SHA-256 of the one binary inside that archive. Checked before every use.
+BINARY_SHA256 = "9774545e1e565f90cbda944854f15a77431b3f3b606063b009db1c69f48d222b"
 ARCHIVE = f"codegraph-{VERSION}-x86_64-unknown-linux-musl.tar.gz"
 ARCHIVE_URL = f"https://github.com/sunerpy/codegraph-rust/releases/download/v{VERSION}/{ARCHIVE}"
 
@@ -27,18 +31,50 @@ class CodeGraph(Protocol):
     def extract(self, sources: dict[str, bytes]) -> dict: ...
 
 
+class UnpinnedBinary(ValueError):
+    """The binary's bytes are not the pinned release's."""
+
+
 class CodeGraphRust:
-    def __init__(self, binary: Path, scratch: Path):
-        self.binary = str(binary.resolve())
+    """Runs the pinned binary. Its bytes are hashed before anything executes.
+
+    The verified bytes are copied into this run's private scratch directory and
+    only that copy is executed, so the file cannot change between the check and
+    the run. `allow_unpinned` is for a locally built binary only: it prints a
+    warning and is refused when `CI` is set.
+    """
+
+    def __init__(self, binary: Path, scratch: Path, allow_unpinned: bool = False):
+        self.binary = Path(binary).resolve()
         self.scratch = scratch
+        self.allow_unpinned = allow_unpinned
+
+    def verified(self, directory: Path) -> str:
+        raw = self.binary.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != BINARY_SHA256:
+            if not self.allow_unpinned:
+                raise UnpinnedBinary(f"{self.binary}: sha256 {digest} is not the pinned {BINARY_SHA256}")
+            if os.environ.get("CI"):
+                raise UnpinnedBinary("an unpinned codegraph binary is refused when CI is set")
+            print(f"warning: running UNPINNED codegraph binary {self.binary} (sha256 {digest}); "
+                  "its output is not evidence", file=sys.stderr)
+        copy = directory / "codegraph"
+        copy.write_bytes(raw)
+        copy.chmod(0o700)
+        return str(copy)
 
     def extract(self, sources: dict[str, bytes]) -> dict:
-        version = subprocess.check_output([self.binary, "--version"], text=True).strip()
-        if version.split()[-1] != VERSION:
-            raise ValueError(f"codegraph {VERSION} required, got {version}")
         self.scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="graph-", dir=self.scratch) as temp:
-            root = Path(temp)
+            tools = Path(temp) / "bin"
+            tools.mkdir()
+            binary = self.verified(tools)
+            version = subprocess.check_output([binary, "--version"], text=True).strip()
+            if version.split()[-1] != VERSION:
+                raise ValueError(f"codegraph {VERSION} required, got {version}")
+            root = Path(temp) / "src"
+            root.mkdir()
             for name, raw in sorted(sources.items()):
                 relative = Path(name)
                 if relative.is_absolute() or ".." in relative.parts:
@@ -48,10 +84,10 @@ class CodeGraphRust:
                 path.write_bytes(raw)
             # Explicit target=none creates only the scratch index, never agent
             # configuration. init performs a full index of the copied files.
-            subprocess.run([self.binary, "init", str(root), "--target", "none"], check=True,
+            subprocess.run([binary, "init", str(root), "--target", "none"], check=True,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
             output = root / "graph.json"
-            subprocess.run([self.binary, "export", "-p", str(root), "--no-centrality", "-o", str(output)],
+            subprocess.run([binary, "export", "-p", str(root), "--no-centrality", "-o", str(output)],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
             graph = json.loads(output.read_text())
             if not isinstance(graph.get("nodes"), list) or not isinstance(graph.get("links"), list):
@@ -66,6 +102,8 @@ def fetch(directory: Path) -> Path:
     member named `codegraph` is written. Nothing is installed or configured.
     """
     binary = directory / "codegraph"
+    if binary.is_file() and hashlib.sha256(binary.read_bytes()).hexdigest() != BINARY_SHA256:
+        raise UnpinnedBinary(f"{binary}: an existing file there is not the pinned binary; remove it")
     if not binary.is_file():
         with urllib.request.urlopen(ARCHIVE_URL, timeout=120) as response:
             raw = response.read()
@@ -76,8 +114,11 @@ def fetch(directory: Path) -> Path:
             member = archive.extractfile("codegraph")
             if member is None:
                 raise ValueError(f"{ARCHIVE}: no codegraph binary")
-            directory.mkdir(parents=True, exist_ok=True)
-            binary.write_bytes(member.read())
+            extracted = member.read()
+        if hashlib.sha256(extracted).hexdigest() != BINARY_SHA256:
+            raise UnpinnedBinary(f"{ARCHIVE}: its codegraph binary is not the pinned one")
+        directory.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(extracted)
         binary.chmod(0o755)
     return binary.resolve()
 

@@ -15,13 +15,17 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-# Hypothesis keeps a cache directory; never let it land in the caller's tree.
-os.environ.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", str(Path(tempfile.gettempdir()) / "norn-port-hypothesis"))
+# Hypothesis keeps a cache directory; give it one of this run's own, removed at
+# exit, so it never lands in the caller's tree or a shared fixed path.
+_HYPOTHESIS_HOME = tempfile.TemporaryDirectory(prefix="norn-port-hypothesis-")
+os.environ.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", _HYPOTHESIS_HOME.name)
 
 from hypothesis import HealthCheck, Phase, find, given, seed, settings, strategies as st
 from hypothesis_jsonschema import from_schema
 from jsonschema import Draft202012Validator
 
+# Isolated mode (-I) drops the script directory; admit only this directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from json_compare import canonical, equal
 
 ROOT = Path(__file__).resolve().parent
@@ -274,6 +278,13 @@ def scoreboard(inventory_path, defs, reports, output, authoring, source_root, ma
     units = inventory["units"]
     if not equal(len({unit["id"] for unit in units}), len(units)):
         raise ValueError("inventory unit ids must be unique")
+    # Rules that may tighten later live here, not in the frozen schema.
+    for unit in units:
+        if equal(unit["status"], "translated"):
+            if not unit["nornArtifactIds"]:
+                raise ValueError(f"translated unit {unit['id']} names no Norn artifact")
+        elif not unit.get("reason"):
+            raise ValueError(f"unit {unit['id']} is not translated and gives no reason")
     report_list = [read(path) for path in reports.glob("*.json") if read(path).get("format", "").startswith("norn.port-parity/")]
     by_id = {}
     for report in report_list:
@@ -329,6 +340,8 @@ def main():
     if equal(args.command, "scoreboard"):
         print(json.dumps(scoreboard(args.inventory, args.defs, args.reports, args.output, args.authoring, args.source_root, args.manifest)))
         return
+    print(f"norn port parity: EXECUTING the original functions named in {args.manifest} from {args.source_root} "
+          "in a subprocess. This is not a sandbox; run it only on code you would run yourself.", file=sys.stderr, flush=True)
     failed = False
     for spec in read(args.manifest)["units"]:
         if spec.get("cases", 1000) < 1000:

@@ -1,22 +1,53 @@
-//! `norn-code-ontology`: the pure `norn.code-ontology/1` contract shared by
-//! the port and connect front ends.
+//! `norn-code-ontology`: the pure `norn.code-ontology/1` contract.
 //!
-//! A host tool (`tools/norn-port/code_ontology.py`) owns the code graph, file
-//! access and per-framework source rules. This crate only decodes the facts it
-//! emits and joins them to the source-unit inventory. A resolved static edge
-//! is neither behavioural parity nor authorization.
+//! A host tool owns the code graph, file access and per-framework source
+//! rules, and emits facts: which handler reads, writes, triggers on, calls,
+//! schedules, guards or exposes what, each with its file, line, revision and
+//! byte digest. This crate only decodes them. A resolved static edge is
+//! neither behavioural parity nor authorization.
+//!
+//! # What `/1` fixes and what it leaves open
+//!
+//! - [`Relation`] and [`Confidence`] are closed: a new relation or resolution
+//!   state is a new format version.
+//! - Every object is closed: a new member is a new format version too.
+//! - [`Diagnostic`] is open. It is a code string with named constants for the
+//!   codes the current extractor emits. A reader built against an older list
+//!   still decodes a document that carries a newer code.
+//! - Entity and field names are the source system's own. The only extractor
+//!   today, `tools/norn-port/code_ontology.py`, has rules for one framework;
+//!   some diagnostic codes name what its source languages are
+//!   (`python_parse_error`, `dynamic_client_handlers`). A reader for another
+//!   system emits the same shape with its own codes where these do not fit.
+//! - Facts say which field is touched, not what the field is. Field
+//!   descriptors (native type, required, keys, code sets, relations) are not
+//!   part of this format; they come from a schema reader's `SourceSchemaIR`.
+//! - The source-unit inventory that facts can be joined to is not here yet; it
+//!   arrives with its first producer.
 //!
 //! Ring 1; no IO, so it also builds for `wasm32-unknown-unknown`. See
 //! `README.md` for the boundary.
 #![forbid(unsafe_code)]
 
-pub mod unit;
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use unit::{CodeUnit, SourceEvidence};
+/// Exact source evidence: the file, where in it, and which bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceEvidence {
+    /// Source file, relative to the analysed root.
+    pub path: String,
+    /// One-based source line.
+    pub line: u64,
+    /// JSON pointer inside a metadata document; empty for code.
+    pub pointer: String,
+    /// Revision of the analysed source, or `working-tree` when unpinned.
+    pub revision: String,
+    /// SHA-256 of the unchanged original file bytes.
+    pub sha256: String,
+}
 
 /// Versioned host analysis format.
 pub const FORMAT: &str = "norn.code-ontology/1";
@@ -25,11 +56,11 @@ pub const FORMAT: &str = "norn.code-ontology/1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Relation {
-    /// Document or field read.
+    /// Entity or field read.
     Reads,
-    /// Document or field write.
+    /// Entity or field write.
     Writes,
-    /// Document event, permission hook or form target.
+    /// Entity event, permission hook or form target.
     TriggersOn,
     /// Static call or a retained unresolved call.
     Calls,
@@ -37,7 +68,7 @@ pub enum Relation {
     Schedules,
     /// Source condition enclosing a throw, without predicate translation.
     ThrowsIf,
-    /// Whitelisted method path.
+    /// A method the source system exposes to callers.
     ExposesApi,
 }
 
@@ -51,51 +82,88 @@ pub enum Confidence {
     Unresolved,
 }
 
-/// Conservative source-analysis gaps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Diagnostic {
-    /// Literal `DocType` absent from supplied metadata.
-    UnknownDoctype,
-    /// Field absent from supplied `DocType` metadata.
-    UnknownField,
-    /// Computed `DocType` cannot be resolved.
-    DynamicDoctype,
-    /// Runtime hook composition.
-    DynamicHook,
-    /// Callback not uniquely present in source inventory.
-    UnresolvedHandler,
-    /// Receiver does not have a proved source `DocType`.
-    UntypedDocument,
-    /// Source call has no resolved target.
-    UnresolvedCall,
-    /// Throw has no enclosing recognized condition.
-    UnguardedThrow,
-    /// Computed or signature-ambiguous field list.
-    DynamicFields,
-    /// Expression, wildcard or alias rather than a literal field.
-    FieldExpression,
-    /// Computed or inconsistent Client Script `DocType`.
-    DynamicClientTarget,
-    /// Computed Client Script handler map.
-    DynamicClientHandlers,
-    /// Invalid metadata JSON.
-    InvalidMetadata,
-    /// Source Python could not be parsed.
-    PythonParseError,
-    /// Client registration has unbalanced syntax.
-    JavascriptParseError,
+/// A typed gap: why a fact is unresolved, or why a file gave no facts.
+///
+/// Open by design. The constants are the codes the current extractor emits;
+/// any other string decodes too, so a newer extractor does not break an older
+/// reader. Compare with the constants; do not match exhaustively.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Diagnostic(pub String);
+
+impl Diagnostic {
+    /// A literal entity name absent from the supplied metadata.
+    pub const UNKNOWN_ENTITY: &'static str = "unknown_entity";
+    /// A field absent from the supplied entity metadata.
+    pub const UNKNOWN_FIELD: &'static str = "unknown_field";
+    /// A computed entity name that cannot be resolved statically.
+    pub const DYNAMIC_ENTITY: &'static str = "dynamic_entity";
+    /// A hook registration composed at run time.
+    pub const DYNAMIC_HOOK: &'static str = "dynamic_hook";
+    /// A callback not uniquely present in the source inventory.
+    pub const UNRESOLVED_HANDLER: &'static str = "unresolved_handler";
+    /// A receiver whose entity is not proved by the source.
+    pub const UNTYPED_DOCUMENT: &'static str = "untyped_document";
+    /// A call with no resolved target.
+    pub const UNRESOLVED_CALL: &'static str = "unresolved_call";
+    /// A throw with no enclosing recognized condition.
+    pub const UNGUARDED_THROW: &'static str = "unguarded_throw";
+    /// A computed or signature-ambiguous field list.
+    pub const DYNAMIC_FIELDS: &'static str = "dynamic_fields";
+    /// An expression, wildcard or alias where a literal field was needed.
+    pub const FIELD_EXPRESSION: &'static str = "field_expression";
+    /// A client script whose entity is computed or inconsistent.
+    pub const DYNAMIC_CLIENT_TARGET: &'static str = "dynamic_client_target";
+    /// A client script whose handler map is computed.
+    pub const DYNAMIC_CLIENT_HANDLERS: &'static str = "dynamic_client_handlers";
+    /// Metadata that is not valid JSON.
+    pub const INVALID_METADATA: &'static str = "invalid_metadata";
+    /// Python source that does not parse.
+    pub const PYTHON_PARSE_ERROR: &'static str = "python_parse_error";
+    /// A JavaScript registration with unbalanced syntax.
+    pub const JAVASCRIPT_PARSE_ERROR: &'static str = "javascript_parse_error";
+
+    /// Every code the current extractor emits.
+    pub const KNOWN: &'static [&'static str] = &[
+        Self::UNKNOWN_ENTITY,
+        Self::UNKNOWN_FIELD,
+        Self::DYNAMIC_ENTITY,
+        Self::DYNAMIC_HOOK,
+        Self::UNRESOLVED_HANDLER,
+        Self::UNTYPED_DOCUMENT,
+        Self::UNRESOLVED_CALL,
+        Self::UNGUARDED_THROW,
+        Self::DYNAMIC_FIELDS,
+        Self::FIELD_EXPRESSION,
+        Self::DYNAMIC_CLIENT_TARGET,
+        Self::DYNAMIC_CLIENT_HANDLERS,
+        Self::INVALID_METADATA,
+        Self::PYTHON_PARSE_ERROR,
+        Self::JAVASCRIPT_PARSE_ERROR,
+    ];
+
+    /// The code as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether this build names the code.
+    #[must_use]
+    pub fn is_known(&self) -> bool {
+        Self::KNOWN.contains(&self.as_str())
+    }
 }
 
 /// One evidence-bearing source relation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fact {
-    /// Existing source unit identity, not a Norn artifact ID.
+    /// Source handler identity (path plus qualified symbol), not a Norn artifact ID.
     pub handler: String,
     /// Source-native edge kind.
     pub relation: Relation,
-    /// Native `DocType`, when literal or statically bound.
+    /// The source system's entity name, when literal or statically bound.
     pub entity: Option<String>,
     /// Native field, when literal.
     pub field: Option<String>,
@@ -109,7 +177,8 @@ pub struct Fact {
     pub confidence: Confidence,
     /// Required gap when confidence is unresolved.
     pub diagnostic: Option<Diagnostic>,
-    /// One-based embedded Client Script line; source pointer locates its JSON string.
+    /// One-based line inside a script embedded in a metadata document; the
+    /// source pointer locates the JSON string that holds it.
     #[serde(default)]
     pub script_line: Option<u64>,
 }
@@ -146,7 +215,7 @@ pub struct AppCoverage {
     pub handlers: u64,
     /// Reads, writes and triggers, including unresolved edges.
     pub entity_edges: u64,
-    /// Subset resolved to supplied `DocType`/field metadata.
+    /// Subset resolved to supplied entity and field metadata.
     pub resolved_entity_edges: u64,
     /// Percentage, or null when no entity edges exist.
     pub resolved_percent: Option<f64>,
@@ -174,32 +243,4 @@ pub struct CodeOntology {
     pub entities: BTreeMap<String, Vec<String>>,
     /// Analysis boundary, not a conformance claim.
     pub limitations: Vec<String>,
-}
-
-impl CodeOntology {
-    /// Join to the syntactic source inventory without replacing it with a second
-    /// graph-driven inventory. Clauses retain their enclosing handler's edges;
-    /// this does not establish enclosing-handler parity.
-    pub fn facts_for<'a>(&'a self, unit: &'a CodeUnit) -> impl Iterator<Item = &'a Fact> {
-        let path = unit
-            .source
-            .path
-            .strip_prefix("code/")
-            .unwrap_or(&unit.source.path);
-        let symbol = unit.symbol.split('#').next().unwrap_or(&unit.symbol);
-        let handler = format!("{path}:{symbol}");
-        // Registration facts retain hooks.py evidence, so byte identity must
-        // be checked against the callback handler rather than the edge source.
-        let source_matches = self.handlers.iter().any(|candidate| {
-            candidate.id == handler
-                && candidate.source.path == path
-                && candidate.source.sha256 == unit.source.sha256
-                && candidate.source.revision == unit.source.revision
-        });
-        self.facts.iter().filter(move |fact| {
-            source_matches
-                && fact.handler == handler
-                && fact.source.revision == unit.source.revision
-        })
-    }
 }

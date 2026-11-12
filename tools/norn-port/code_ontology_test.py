@@ -24,8 +24,9 @@ class CodeOntologyTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def test_golden_and_repeatability(self):
-        expected = json.loads((ROOT / "code-ontology-fixtures/golden.json").read_text())
-        self.assertEqual(self.report, expected)
+        golden = (ROOT / "code-ontology-fixtures/golden.json").read_bytes()
+        # The exact bytes the command prints, not merely an equal document.
+        self.assertEqual((json.dumps(self.report, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode(), golden)
         self.assertEqual(self.report, analyze(dict(reversed(list(self.sources.items()))), self.substrate, "fixture"))
 
     def test_all_relations(self):

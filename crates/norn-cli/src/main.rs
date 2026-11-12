@@ -26,7 +26,7 @@ enum Command {
     Remote(remote::RemoteArgs),
     /// Run a porting tool: parity, scoreboard, code-ontology or selftest.
     #[command(
-        long_about = "Run a porting tool from tools/norn-port with the remaining arguments unchanged: parity (an original function against its Norn candidate on generated inputs), scoreboard, code-ontology (norn.code-ontology/1 facts for source directories) or selftest. The tools read source as data. Set NORN_PORT_HOME when the tools are not at tools/norn-port under the working directory, and NORN_PORT_PYTHON to choose the interpreter. The exit status is the tool's."
+        long_about = "Run a porting tool with the remaining arguments unchanged. code-ontology emits norn.code-ontology/1 facts for source directories; it reads source as data and never imports or executes it. parity is different: it EXECUTES the original function named in its manifest, in a subprocess, and compares the result with the Norn candidate. That is process isolation for source you already trust, not a sandbox: point parity only at code you would run yourself. scoreboard counts inventoried, translated and measured units; selftest checks the parity harness against this binary. The tools are found from this binary's installation (or NORN_PORT_HOME, an absolute path), never from the working directory or the analysed tree. They run under python3 from an absolute PATH entry (or NORN_PORT_PYTHON, an absolute path) in isolated mode with a short fixed environment, so that interpreter and its installed packages are trusted. Today the tools ship only in a Norn source checkout. The exit status is the tool's; a signal is 128 plus its number."
     )]
     Port(port::PortArgs),
     /// Read a configured source and print sealed raw observations.
@@ -92,7 +92,8 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
-        Command::Port(args) => port::execute(&args),
+        // `main` runs this command itself, to hand back the tool's exit status.
+        Command::Port(_) => Err("norn port runs only from the command line".to_owned()),
         Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
@@ -259,7 +260,11 @@ fn source_digest(root: &std::path::Path) -> Result<String, String> {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse().command) {
+    let command = Cli::parse().command;
+    if let Command::Port(arguments) = &command {
+        return port::execute(arguments);
+    }
+    match run(command) {
         Ok((document, accepted)) => {
             if (!document.is_empty() && writeln!(std::io::stdout().lock(), "{document}").is_err())
                 || !accepted

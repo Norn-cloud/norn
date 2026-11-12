@@ -1,11 +1,13 @@
 {
-  "sha256": "34a0e48ef2a5b867e12108d3c814d06d5507632c138fd52f16944e7aa231c424",
-  "origin": "authored",
-  "category": "code",
+  "sha256": "ce09039dc3f8b13ddd294fa9e2be5a0cde6ee992f4bdfa0ffd6c93288e251b32",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "tools/norn-port/requirements.in"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",

@@ -2,23 +2,49 @@
 
 Files-only tooling for porting source-system code to Norn definitions: a
 code-unit inventory, differential parity between an original function and its
-Norn candidate, a scoreboard, and a deterministic code ontology (which code
-unit reads, writes or triggers on which entity). It reads source as data and
-never imports or executes the code it maps, apart from the reviewed original
-function the parity runner calls. The parity report format is a **draft**, not
-a ratified parity-artifact contract or an installation gate. App-specific
-definitions and reports live in the application's repository, never here.
+Norn candidate, a scoreboard, and a deterministic code ontology (which handler
+reads, writes or triggers on which entity).
 
-`norn port <subcommand> ...` forwards to this directory's tools; `norn-cli`
-gains no dependency on them (see "Command" below).
+**What runs your code and what does not.**
 
-`inventory.schema.json` types the source path and symbol, trigger, declared
-reads/writes/external calls, inclusive source LOC, mapping target, parity
-recipe, status, and artifact IDs. `access` is the cross-cutting authorization
-target; `setup-only` is a classification outside the six runtime targets.
-The classifier is a reviewed inventory, not a claimed automatic Python
-business-code translator. A fallback reason is mandatory. `translated` must
-only be set after review of its parity report and checker admission.
+- `code-ontology` reads source as data. It parses files and never imports or
+  executes them.
+- `parity` EXECUTES the original function named in its manifest, in a
+  subprocess, to compare it with the Norn candidate. That is process isolation
+  for source you already trust. It is not a sandbox. Point it only at code you
+  would run yourself, after reviewing it for IO. It prints a notice when it
+  starts.
+- `scoreboard` and `selftest` read reports and this directory's own fixtures.
+
+The parity report format is a **draft**, not a ratified parity-artifact
+contract or an installation gate. App-specific definitions and reports live in
+the application's repository, never here.
+
+`norn port <tool> ...` forwards to this directory's tools; `norn-cli` gains no
+dependency on them (see "Command" below). Today the tools ship only in a Norn
+source checkout: a packaged `norn` has no `norn port` until the tools and their
+Python dependencies are packaged with it.
+
+## Inventory
+
+`inventory.schema.json` (version 0.1) types an application's code-unit
+inventory: source path, symbol and line, trigger, declared reads, writes and
+external calls, inclusive source LOC, mapping target, parity recipe, status and
+Norn artifact IDs. Required per unit: `id`, `source`, `loc`, `status`,
+`nornArtifactIds`. `status` is `translated`, `fallback` or `setup-only`; the
+scoreboard requires a translated unit to name at least one artifact and every
+other unit to give a `reason`. `target` and `parityRecipe` are free text: the
+schema lists the target values in use and defines no recipe vocabulary. The
+inventory is a reviewed classification, not an automatic translator.
+`translated` must only be set after review of the unit's parity report and
+checker admission.
+
+The schema is enrolled as an additive-only contract, because inventories live
+in application repositories. From here on it can gain optional members and
+nothing else: no member can become required, no value set can be narrowed or
+closed, no type or bound can change, and `format` and `$id` stay `0.1`. An
+incompatible revision is a new schema file with a new `$id`. Rules that must be
+able to tighten live in `port.py`, not in the schema.
 
 ## Execution
 
@@ -27,7 +53,7 @@ Build and check on Boat or another disposable sandbox, using committed source:
 ```sh
 cargo build --locked -p norn-cli
 python3 -m venv /tmp/norn-port-venv
-/tmp/norn-port-venv/bin/pip install -r tools/norn-port/requirements.txt
+/tmp/norn-port-venv/bin/pip install --require-hashes -r tools/norn-port/requirements.txt
 /tmp/norn-port-venv/bin/python tools/norn-port/selftest.py --norn /path/to/target/debug/norn
 /tmp/norn-port-venv/bin/python tools/norn-port/port.py parity \
   --manifest /path/to/app/norn/<pack>/parity-manifest.json \
@@ -41,8 +67,10 @@ python3 -m venv /tmp/norn-port-venv
   --output /path/to/app/norn/<pack>/scoreboard.json
 ```
 
-No dev server, cell,
-credentials, live-site calls, or effect dispatch is involved.
+`requirements.txt` pins every package, direct and transitive, by version and
+SHA-256; it is compiled from `requirements.in` (the command is in that file)
+and needs Python 3.11 or later. No dev server, cell, credentials, live-site
+calls, or effect dispatch is involved.
 
 `norn eval --defs DIR --org ORG --env ENV --rule ARTIFACT_ID` admits the entire
 set with the existing checker, prepares one untriggered RuleIR v2 `decide` with its sub-decision closure,
@@ -135,38 +163,43 @@ rejected and other closed-schema profiles keep their existing boundary.
 ## Code ontology
 
 `python3 tools/norn-port/code_ontology.py APP_DIRECTORY... --codegraph /path/to/codegraph`
-emits deterministic `norn.code-ontology/1` JSON to stdout. Install the pinned
-`code-ontology-requirements.txt` into an isolated Python environment first;
-tree-sitter JavaScript supplies syntax nodes for the Frappe client rules. Pass `--revision SHA`
+emits deterministic `norn.code-ontology/1` JSON to stdout. Install
+`requirements.txt` into an isolated Python environment first; tree-sitter
+JavaScript supplies syntax nodes for the Frappe client rules. Pass `--revision SHA`
 for a pinned input snapshot; the default explicitly says `working-tree`. The
 source directories are read-only inputs, never imported or executed. SQLite and
-copied sources live temporarily under `--scratch` (default
-`norn-code-ontology` under the system temporary directory) and are removed even on failure.
+copied sources live in a fresh temporary directory of this run (or under
+`--scratch`) and are removed even on failure.
 
 The host `CodeGraph` Protocol is the replacement boundary. Its default adapter
 uses the MIT-licensed [sunerpy/codegraph-rust v0.54.0](https://github.com/sunerpy/codegraph-rust/tree/v0.54.0)
-binary's full index and node-link export, with centrality disabled. Use the
-release archive `codegraph-0.54.0-x86_64-unknown-linux-musl.tar.gz`, SHA256
-`dcb3da1d007bf0d9c9e7f0d54ad71281514d930ddfd6a7841eccdd8bee9f8c69`;
-verify it against that release's `SHA256SUMS` before extracting. `python3 tools/norn-port/codegraph.py --fetch DIR`
-downloads that archive, refuses any other digest, unpacks only the binary into `DIR` and prints its path. The adapter
-rejects other versions and does not install an MCP server, watcher or daemon.
-No new Cargo dependency or SQLite owner is introduced.
+binary's full index and node-link export, with centrality disabled. The pin is
+two SHA-256 digests in `codegraph.py`: the release archive
+`codegraph-0.54.0-x86_64-unknown-linux-musl.tar.gz` and the one binary inside
+it. `python3 tools/norn-port/codegraph.py --fetch DIR` downloads the archive,
+refuses any other digest, unpacks only the binary into `DIR` and prints its
+path. The binary's digest is checked again before every use, whether it was
+fetched or passed with `--codegraph`: the verified bytes are copied into the
+run's scratch directory and only that copy is executed, including for the
+version probe. `--allow-unpinned-codegraph` runs a locally built binary
+instead; it prints a warning and is refused when `CI` is set. The adapter
+installs no MCP server, watcher or daemon. No Cargo dependency or SQLite owner
+is introduced.
 
 The tool reuses `behaviour.py`'s hook ledger and the shared `python_ast.py`
 function inventory, so the graph never becomes a second authority for
 source-language clauses.
-`norn_code_ontology::CodeOntology` (`crates/norn-code-ontology`) is the pure, wasm-safe typed
-contract; `facts_for` joins graph facts to inventoried `CodeUnit`s only when path,
-symbol, original-byte digest and revision agree. Resolved source facts still
+`norn_code_ontology::CodeOntology` (`crates/norn-code-ontology`) is the pure,
+wasm-safe typed contract; its README says which parts of version 1 are closed
+and which are open. Resolved source facts still
 require ontology mapping and original-source parity before porting. Connect can
 use the same facts to inspect side effects without claiming parity.
 
 Coverage includes every production Python function/method and literal client
 handler in the supplied apps, not only registered entrypoints. Its resolution
 denominator is **reads + writes + triggers_on**, with unresolved edges included.
-Calls, schedules, guards and APIs do not inflate that percentage. Missing stock
-DocTypes require additional metadata inputs; computed SQL fields, dynamic hook
+Calls, schedules, guards and APIs do not inflate that percentage. Entities
+whose metadata was not supplied need it as an additional input; computed SQL fields, dynamic hook
 composition, uncertain receivers and external calls remain typed gaps. The
 entity matrix contains resolved touching-handler identities; it is not a claim
 that every handler was translated or tested. Python control-flow joins are
@@ -184,12 +217,29 @@ or source module execution is needed.
 ## Command
 
 `norn port parity|scoreboard|code-ontology|selftest [ARGS...]` runs `port.py`,
-`code_ontology.py` or `selftest.py` from this directory with the remaining
-arguments unchanged, and exits with the tool's status. The directory is
-`NORN_PORT_HOME` when set, otherwise `tools/norn-port` under the working
-directory; the interpreter is `NORN_PORT_PYTHON` when set, otherwise `python3`.
-The CLI adds no behaviour of its own and links none of this code. `selftest`
-passes `--norn` with the running binary's own path.
+`code_ontology.py` or `selftest.py` with the remaining arguments unchanged and
+exits with the tool's own status (a signal is 128 plus its number). The CLI
+links none of this code.
+
+- **Where the tools come from.** From the Norn installation, never from the
+  working directory or the tree being analysed, which is data and is only ever
+  an argument. `NORN_PORT_HOME`, when set, must be an absolute path. Otherwise
+  the directory is fixed relative to the running binary: `share/norn/port`
+  beside an installed `bin/norn`, or `tools/norn-port` of the checkout for a
+  Cargo build at `target/<profile>/norn`. If neither is there the command
+  refuses.
+- **Which interpreter.** `NORN_PORT_PYTHON`, when set, must be an absolute
+  path. Otherwise it is the first `python3` in an absolute `PATH` entry;
+  relative entries are skipped, so the working directory cannot supply it.
+  `PATH` is the caller's own configuration: that interpreter and the packages
+  installed in it are trusted, as they would be if you ran the tool by hand.
+- **How it runs.** In Python's isolated mode (`-I`): `PYTHONPATH`,
+  `PYTHONSTARTUP` and the other `PYTHON*` variables are ignored, the user site
+  directory is off, and neither the working directory nor the script directory
+  is importable; each tool adds only its own directory. The tool receives
+  `TMPDIR`, `LANG`, `LC_ALL` and `CI` and no other variable.
+- `parity` and `selftest` are given `--norn` with the running binary's path; a
+  `--norn` you pass yourself comes later and wins.
 
 ## Limits of this directory
 

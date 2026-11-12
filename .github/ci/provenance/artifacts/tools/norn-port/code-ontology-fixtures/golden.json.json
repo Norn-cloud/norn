@@ -1,5 +1,5 @@
 {
-  "sha256": "3bed3436f9e7b4f136f63a2d940b0f19b8d09b50ab1d027b3c940921538b9a02",
+  "sha256": "453f19e33c077a9af68fb6b4c2def034d081d98fe987396e625e28540840b103",
   "origin": "derived",
   "category": "synthetic-golden",
   "license": "Apache-2.0",
@@ -12,7 +12,8 @@
     "tools/norn-port/code-ontology-fixtures/demo/demo/doctype/invoice/invoice.py",
     "tools/norn-port/code-ontology-fixtures/demo/demo/hooks.py",
     "tools/norn-port/code-ontology-fixtures/demo/demo/invoice.js",
-    "tools/norn-port/code_ontology.py"
+    "tools/norn-port/code_ontology.py",
+    "tools/norn-port/codegraph.py"
   ],
   "rights_evidence": [
     {

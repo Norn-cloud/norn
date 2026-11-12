@@ -8,11 +8,11 @@
       "unresolved": {
         "dynamic_client_handlers": 3,
         "dynamic_client_target": 1,
-        "dynamic_doctype": 2,
+        "dynamic_entity": 2,
         "dynamic_fields": 1,
         "dynamic_hook": 1,
         "field_expression": 1,
-        "unknown_doctype": 2,
+        "unknown_entity": 2,
         "unresolved_call": 2,
         "untyped_document": 26
       }
@@ -1241,7 +1241,7 @@
     {
       "condition": null,
       "confidence": "unresolved",
-      "diagnostic": "dynamic_doctype",
+      "diagnostic": "dynamic_entity",
       "entity": null,
       "field": null,
       "handler": "demo/demo/api.py:dynamic",
@@ -1259,7 +1259,7 @@
     {
       "condition": null,
       "confidence": "unresolved",
-      "diagnostic": "dynamic_doctype",
+      "diagnostic": "dynamic_entity",
       "entity": null,
       "field": null,
       "handler": "demo/demo/api.py:shared_wildcard",
@@ -1331,7 +1331,7 @@
     {
       "condition": null,
       "confidence": "unresolved",
-      "diagnostic": "unknown_doctype",
+      "diagnostic": "unknown_entity",
       "entity": "External",
       "field": "missing",
       "handler": "demo/demo/api.py:dynamic",
@@ -1349,7 +1349,7 @@
     {
       "condition": null,
       "confidence": "unresolved",
-      "diagnostic": "unknown_doctype",
+      "diagnostic": "unknown_entity",
       "entity": "Missing",
       "field": null,
       "handler": "demo/demo/api.py:shared_unknown",
