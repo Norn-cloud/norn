@@ -16,6 +16,12 @@
 //! an index for reads, never authority, and every read goes through the
 //! caller's gates.
 
+/// The `norn.decision@1` request a parked decision carries, and its bounds.
+/// Hosts reach built-ins through the cell (`norn_cell::builtin_registered`).
+pub use norn_builtins::decision::{
+    DecisionOption, DecisionRequest, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS, OptionEffect, Risk,
+    parse_request,
+};
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
 

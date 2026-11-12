@@ -19,8 +19,10 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_builtins::decision::{DecisionRequest, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS, OptionEffect};
-use norn_cell::decision_ledger::{DecisionResolved, DecisionRow, Resolution};
+use norn_cell::decision_ledger::{
+    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS,
+    OptionEffect, Resolution,
+};
 use norn_cell::engine::SqlEngine;
 use norn_cell::read::PendingCommand;
 use norn_cell::{CellStore, MAIN_WORLD};
@@ -423,7 +425,7 @@ fn open_decision<E: SqlEngine>(
     let Ok(bytes) = input.canonical_json() else {
         return Ok(None);
     };
-    let Ok(request) = norn_builtins::decision::parse_request(&bytes) else {
+    let Ok(request) = norn_cell::decision_ledger::parse_request(&bytes) else {
         return Ok(None);
     };
     let requested_at_ms = store
@@ -477,9 +479,9 @@ fn may_decide<E: SqlEngine>(host: &DevHost<E>, actor: &str, request: &DecisionRe
 
 fn risk(request: &DecisionRequest) -> DecisionRisk {
     match request.risk {
-        norn_builtins::decision::Risk::Low => DecisionRisk::Low,
-        norn_builtins::decision::Risk::Medium => DecisionRisk::Medium,
-        norn_builtins::decision::Risk::High => DecisionRisk::High,
+        norn_cell::decision_ledger::Risk::Low => DecisionRisk::Low,
+        norn_cell::decision_ledger::Risk::Medium => DecisionRisk::Medium,
+        norn_cell::decision_ledger::Risk::High => DecisionRisk::High,
     }
 }
 
