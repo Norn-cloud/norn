@@ -501,7 +501,14 @@ pub fn load_dataset<E: SqlEngine>(
     let record = uploads
         .record(&request.upload_id)
         .ok_or_else(dataset_not_found)?;
-    let loaded = load_upload(host, &request.object_type, &record, uploads, transport, now_ms)?;
+    let loaded = load_upload(
+        host,
+        &request.object_type,
+        &record,
+        uploads,
+        transport,
+        now_ms,
+    )?;
     // The type's upload connection, whichever path loads it: an `:define`d
     // type `upload.<Name>` reports where a cell load of it does.
     let named = request.object_type.strip_prefix("upload.");

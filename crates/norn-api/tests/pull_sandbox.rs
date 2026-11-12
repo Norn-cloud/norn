@@ -882,7 +882,10 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
     );
     let calls = engine.0.lock().expect("calls");
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].file.url, "https://objects.example/uploads/demo/items.csv");
+    assert_eq!(
+        calls[0].file.url,
+        "https://objects.example/uploads/demo/items.csv"
+    );
     assert_eq!(calls[0].table.name, "canon.Item");
     let text = |object: &norn_ir::RuntimeObject, field: &str| {
         object
@@ -908,14 +911,21 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
         assert_eq!(text(&connection, field).as_deref(), Some(value), "{field}");
     }
     let run = host
-        .host_object("source.SyncRun", &format!("upload.canon.item/{EXTRACTED_AT_MS}"))
+        .host_object(
+            "source.SyncRun",
+            &format!("upload.canon.item/{EXTRACTED_AT_MS}"),
+        )
         .expect("read")
         .expect("the load's run");
     assert_eq!(text(&run, "run_by").as_deref(), Some("loader"));
     assert_eq!(text(&run, "outcome").as_deref(), Some("partial"));
     let count = |field: &str| run.get(field).and_then(RuntimeValue::as_i64);
     assert_eq!(
-        (count("rows_read"), count("rows_landed"), count("rows_quarantined")),
+        (
+            count("rows_read"),
+            count("rows_landed"),
+            count("rows_quarantined")
+        ),
         (Some(4), Some(3), Some(1))
     );
 }
