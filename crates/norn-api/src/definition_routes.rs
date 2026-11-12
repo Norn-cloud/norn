@@ -429,8 +429,8 @@ pub struct DefinitionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
     /// For a flow: whether this caller may start a run of it, decided by
-    /// exactly the gate `POST /v1/runs` applies ([`Operation::StartRun`]).
-    /// Absent for other kinds. Starting is decided again at the call.
+    /// the same gate `POST /v1/runs` applies. Absent for other kinds; a start
+    /// is decided again at the call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_start: Option<bool>,
 }
