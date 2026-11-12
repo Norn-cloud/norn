@@ -147,6 +147,13 @@ pub fn period_start(seconds: i64, grain: TimeGrain) -> Result<String, &'static s
 /// Most output buckets one snapshot question may produce.
 const MAX_AS_OF_BUCKETS: usize = 1024;
 
+/// An exact UTC instant as `(seconds, nanoseconds)`.
+type Instant = (i64, u32);
+
+/// A snapshot bucket: its period label (none without a time grouping) and its
+/// exclusive end.
+type Period = (Option<String>, Instant);
+
 /// METRIC-SNAPSHOT-ASOF-1: one subject's contributions, given its stored
 /// versions as `(version, values)` in any order. A time grouping (on the
 /// measure's own time property) cuts the window into its civil periods,
@@ -238,11 +245,7 @@ pub fn as_of(
 
 /// The civil `grain` periods meeting `[start, end)`: each period's label (as
 /// [`period_start`] gives it) and its exclusive end, clipped to `end`.
-fn periods(
-    start: (i64, u32),
-    end: (i64, u32),
-    grain: TimeGrain,
-) -> Result<Vec<(Option<String>, (i64, u32))>, &'static str> {
+fn periods(start: Instant, end: Instant, grain: TimeGrain) -> Result<Vec<Period>, &'static str> {
     // Every period boundary is a UTC midnight: walk midnights until the label changes.
     let mut day = start
         .0
