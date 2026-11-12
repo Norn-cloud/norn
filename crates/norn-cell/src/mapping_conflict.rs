@@ -206,7 +206,10 @@ pub(crate) struct SourceDisputeIndex {
     identities: BTreeSet<[String; 5]>,
     conflicts: BTreeSet<[String; 5]>,
     roots_by_key: BTreeMap<String, BTreeSet<String>>,
-    pub(crate) claim_endpoints: BTreeMap<String, BTreeMap<(u64, String), u64>>,
+    /// Consumed claim bundles by the source key of a claim they carry.
+    pub(crate) claim_sources: BTreeMap<String, BTreeMap<(u64, String), u64>>,
+    /// Consumed claim bundles by the target key of a claim they carry.
+    pub(crate) claim_targets: BTreeMap<String, BTreeMap<(u64, String), u64>>,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -248,13 +251,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let seq = crate::read::to_u64(row.get(1)?, "claim sequence")?;
             let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
             let record: serde_json::Value = serde_json::from_str(&row.get::<String>(4)?)?;
-            let mut endpoints = BTreeSet::new();
+            let (mut sources, mut targets) = (BTreeSet::new(), BTreeSet::new());
             if record
                 .get("clearedLinks")
                 .and_then(serde_json::Value::as_array)
                 .is_some_and(|links| !links.is_empty())
             {
-                endpoints.insert(row.get::<String>(3)?);
+                sources.insert(row.get::<String>(3)?);
             }
             for link in record
                 .get("links")
@@ -262,18 +265,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .into_iter()
                 .flatten()
             {
-                for field in ["key", "targetKey"] {
-                    if let Some(key) = link.get(field).and_then(serde_json::Value::as_str) {
-                        endpoints.insert(key.to_owned());
-                    }
+                if let Some(key) = link.get("key").and_then(serde_json::Value::as_str) {
+                    sources.insert(key.to_owned());
+                }
+                if let Some(key) = link.get("targetKey").and_then(serde_json::Value::as_str) {
+                    targets.insert(key.to_owned());
                 }
             }
-            for key in endpoints {
-                index
-                    .claim_endpoints
-                    .entry(key)
-                    .or_default()
-                    .insert((seq, id.clone()), bytes);
+            for (side, keys) in [
+                (&mut index.claim_sources, sources),
+                (&mut index.claim_targets, targets),
+            ] {
+                for key in keys {
+                    side.entry(key)
+                        .or_default()
+                        .insert((seq, id.clone()), bytes);
+                }
             }
         }
         Ok(index)
