@@ -54,7 +54,11 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// A store error.
-    pub fn record_analytics_dataset(&self, object_type: &str, record: &DatasetRecord) -> Result<(), CellError> {
+    pub fn record_analytics_dataset(
+        &self,
+        object_type: &str,
+        record: &DatasetRecord,
+    ) -> Result<(), CellError> {
         let text = crate::codec::canonical_json(record)?;
         self.conn.transaction(|| {
             self.conn.execute(

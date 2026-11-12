@@ -28,13 +28,19 @@ impl Exchange {
     /// The call this request ended with, if any; taken once.
     pub fn take_pending(&self) -> Option<EngineCall> {
         *self.answer.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        self.pending.lock().unwrap_or_else(PoisonError::into_inner).take()
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 }
 
 impl Transport for Exchange {
     fn resumed(&self) -> Option<EngineAnswer> {
-        self.answer.lock().unwrap_or_else(PoisonError::into_inner).take()
+        self.answer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
         *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(call.clone());
@@ -96,13 +102,14 @@ impl Transport for InProcess {
 #[must_use]
 pub fn refusal_status(code: &str) -> u16 {
     match code {
-        "analytics.frontier_moved" | "analytics.frontier_behind" | "core.compute.stale_input" => 409,
+        "analytics.frontier_moved" | "analytics.frontier_behind" | "core.compute.stale_input" => {
+            409
+        }
         "analytics.engine" => 500,
         code if code.starts_with("core.compute.") || code.starts_with("bulk.") => 422,
         _ => 400,
     }
 }
-
 
 /// The cell's completed uploads, for loads (#921).
 impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
@@ -114,7 +121,7 @@ impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
                 content_type: record.content_type,
             })
     }
-    fn signed_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
-        Self::signed_get(self, uri, u32::try_from(seconds).ok()?, now_ms)
+    fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
+        self.signed_get(uri, u32::try_from(seconds).ok()?, now_ms)
     }
 }

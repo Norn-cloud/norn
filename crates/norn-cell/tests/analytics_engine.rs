@@ -64,13 +64,20 @@ fn sync(store: &CellStore, engine: &Engine, world: &str) {
     }
 }
 
-fn ask(store: &CellStore, engine: &Engine, plan: &QuestionPlan, context: QueryContext) -> Result<QueryResult, String> {
+fn ask(
+    store: &CellStore,
+    engine: &Engine,
+    plan: &QuestionPlan,
+    context: QueryContext,
+) -> Result<QueryResult, String> {
     sync(store, engine, &context.world);
     let prepared = store
         .analytics_prepare(plan, context, &tenant())
         .map_err(|e| code(&e))?;
     let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
-    store.analytics_answer(prepared, response).map_err(|e| code(&e))
+    store
+        .analytics_answer(prepared, response)
+        .map_err(|e| code(&e))
 }
 
 fn code(error: &CellError) -> String {
@@ -83,7 +90,12 @@ fn code(error: &CellError) -> String {
 
 /// QUERY-ENGINE-1: equal frontier, equal envelope (only the engine label differs),
 /// or the same refusal.
-fn compare(store: &CellStore, engine: &Engine, plan: &QuestionPlan, context: &QueryContext) -> Option<QueryResult> {
+fn compare(
+    store: &CellStore,
+    engine: &Engine,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+) -> Option<QueryResult> {
     let exact = store
         .evaluate_question(plan, context.clone(), |_| Ok(true))
         .map_err(|e| code(&e));
@@ -118,11 +130,19 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
 /// The fixture's type with `recovered` nullable, asked as a sum of `recovered`
 /// (or the yield ratio) grouped by `metal`.
 fn by_metal(sum: bool, max_items: u32) -> (CellStore, QuestionPlan, QueryContext) {
-    shaped(sum, max_items, &serde_json::json!([{"path": {"property": "metal"}}]))
+    shaped(
+        sum,
+        max_items,
+        &serde_json::json!([{"path": {"property": "metal"}}]),
+    )
 }
 
 /// As [`by_metal`], grouped by `dimensions` (a `QuestionIR` dimension list).
-fn shaped(sum: bool, max_items: u32, dimensions: &serde_json::Value) -> (CellStore, QuestionPlan, QueryContext) {
+fn shaped(
+    sum: bool,
+    max_items: u32,
+    dimensions: &serde_json::Value,
+) -> (CellStore, QuestionPlan, QueryContext) {
     let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
@@ -160,17 +180,25 @@ fn shaped(sum: bool, max_items: u32, dimensions: &serde_json::Value) -> (CellSto
     }
     let plan = admit(plan.definitions(), &question, &catalog, max_items).expect("admitted");
     let model = Model::from_definitions(&[object], &[]).expect("model");
-    (CellStore::open_in_memory(model).expect("cell"), plan, context)
+    (
+        CellStore::open_in_memory(model).expect("cell"),
+        plan,
+        context,
+    )
 }
 
 fn row(id: &str, input: i64, recovered: Option<i64>, at: &str, metal: &str) -> FactWriteRow {
-    let exact = |value: i64| RuntimeValue::from(Decimal::parse(&format!("{value}e-3")).expect("scale 3"));
+    let exact =
+        |value: i64| RuntimeValue::from(Decimal::parse(&format!("{value}e-3")).expect("scale 3"));
     FactWriteRow::Put {
         object_type: TYPE.into(),
         key: id.into(),
         values: BTreeMap::from([
             ("input".into(), exact(input)),
-            ("recovered".into(), recovered.map_or(RuntimeValue::Null, exact)),
+            (
+                "recovered".into(),
+                recovered.map_or(RuntimeValue::Null, exact),
+            ),
             ("loss".into(), exact(0)),
             ("occurred_at".into(), RuntimeValue::from(at)),
             ("metal".into(), RuntimeValue::from(metal)),
@@ -185,7 +213,13 @@ fn query_three_scrap_yield_engine_matches_exact_after_correction_and_retraction(
     load(&mut store);
     compare(&store, &engine, &plan, &context).expect("answered");
     for write in [
-        put("SYN-MELT-15-1", 75_000, 72_000, "2026-10-23T12:00:00Z", "gold"),
+        put(
+            "SYN-MELT-15-1",
+            75_000,
+            72_000,
+            "2026-10-23T12:00:00Z",
+            "gold",
+        ),
         FactWriteRow::Delete {
             object_type: TYPE.into(),
             key: "SYN-MELT-15-1".into(),
@@ -260,11 +294,25 @@ proptest::proptest! {
 fn an_answer_at_an_earlier_frontier_reads_only_versions_current_then() {
     let (_dir, engine) = engine();
     let (mut store, plan, context) = by_metal(true, 100);
-    commit(&mut store, vec![row("A", 1000, Some(400), TIMES[0], "gold")]);
-    let exact = store.evaluate_question(&plan, context.clone(), |_| Ok(true)).expect("exact");
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let exact = store
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("exact");
     sync(&store, &engine, WORLD);
-    let earlier = store.analytics_prepare(&plan, context, &tenant()).expect("prepared").request;
-    commit(&mut store, vec![row("A", 1000, Some(900), TIMES[0], "gold"), row("B", 1, Some(1), TIMES[0], "gold")]);
+    let earlier = store
+        .analytics_prepare(&plan, context, &tenant())
+        .expect("prepared")
+        .request;
+    commit(
+        &mut store,
+        vec![
+            row("A", 1000, Some(900), TIMES[0], "gold"),
+            row("B", 1, Some(1), TIMES[0], "gold"),
+        ],
+    );
     sync(&store, &engine, WORLD);
     let response = engine.evaluate(&earlier).expect("earlier frontier");
     assert_eq!(totals(&response), exact_totals(&exact));
@@ -275,7 +323,13 @@ fn totals(response: &EvaluateResponse) -> BTreeMap<String, Vec<String>> {
         .buckets
         .iter()
         .map(|b| {
-            let key = String::from_utf8(bucket_value(&b.group).expect("bucket").canonical_json().expect("key")).expect("utf8");
+            let key = String::from_utf8(
+                bucket_value(&b.group)
+                    .expect("bucket")
+                    .canonical_json()
+                    .expect("key"),
+            )
+            .expect("utf8");
             (key, b.totals.clone())
         })
         .collect()
@@ -306,7 +360,15 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
     let (_dir, engine) = engine();
     let (mut store, plan, context) = by_metal(true, 3);
     let writes = (0..9)
-        .map(|i| row(&format!("M{i}"), 100 * i, (i % 3 != 0).then_some(10 * i), TIMES[0], METALS[usize::try_from(i % 2).expect("index")]))
+        .map(|i| {
+            row(
+                &format!("M{i}"),
+                100 * i,
+                (i % 3 != 0).then_some(10 * i),
+                TIMES[0],
+                METALS[usize::try_from(i % 2).expect("index")],
+            )
+        })
         .collect();
     commit(&mut store, writes);
     assert!(matches!(
@@ -315,14 +377,21 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
     ));
     let answered = ask(&store, &engine, &plan, context.clone()).expect("engine answers");
     let (_wide_store, wide_plan, _) = by_metal(true, 100);
-    let exact = store.evaluate_question(&wide_plan, context.clone(), |_| Ok(true)).expect("wide exact");
-    let prepared = store.analytics_prepare(&plan, context, &tenant()).expect("prepared");
+    let exact = store
+        .evaluate_question(&wide_plan, context.clone(), |_| Ok(true))
+        .expect("wide exact");
+    let prepared = store
+        .analytics_prepare(&plan, context, &tenant())
+        .expect("prepared");
     for (key, row) in &answered.rows {
         assert!(row.members.is_empty());
         let exact_row = &exact.rows[key];
         assert_eq!(row.totals, exact_row.totals);
         assert_eq!(row.null_counts, exact_row.null_counts);
-        assert_eq!(row.member_count, Some(u64::try_from(exact_row.members.len()).expect("count")));
+        assert_eq!(
+            row.member_count,
+            Some(u64::try_from(exact_row.members.len()).expect("count"))
+        );
         let RuntimeValue::String(text) = &row.bucket else {
             panic!("a text bucket: {:?}", row.bucket);
         };
@@ -356,13 +425,22 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
 fn a_row_of_another_scope_refuses_as_stale() {
     let (_dir, engine) = engine();
     let (mut store, plan, context) = by_metal(true, 100);
-    commit(&mut store, vec![row("A", 1000, Some(400), TIMES[0], "gold")]);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
     sync(&store, &engine, WORLD);
-    let mut request = store.analytics_prepare(&plan, context, &tenant()).expect("prepared").request;
+    let mut request = store
+        .analytics_prepare(&plan, context, &tenant())
+        .expect("prepared")
+        .request;
     if let Source::Mirror { scope, .. } = &mut request.source {
         *scope = "another".into();
     }
-    assert_eq!(engine.evaluate(&request).expect_err("refused").code, "core.compute.stale_input");
+    assert_eq!(
+        engine.evaluate(&request).expect_err("refused").code,
+        "core.compute.stale_input"
+    );
 }
 
 /// A batch that does not continue the mirror's frontier is refused whole.
@@ -370,8 +448,13 @@ fn a_row_of_another_scope_refuses_as_stale() {
 fn a_sync_that_skips_commits_is_refused() {
     let (_dir, engine) = engine();
     let (mut store, _plan, _context) = by_metal(true, 100);
-    commit(&mut store, vec![row("A", 1000, Some(400), TIMES[0], "gold")]);
-    engine.frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables")).expect("frontier");
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    engine
+        .frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables"))
+        .expect("frontier");
     let skipping = SyncRequest {
         tenant: tenant(),
         world: WORLD.into(),
@@ -379,7 +462,10 @@ fn a_sync_that_skips_commits_is_refused() {
         through: 9,
         rows: Vec::new(),
     };
-    assert_eq!(engine.sync(&skipping).expect_err("refused").code, "analytics.frontier_moved");
+    assert_eq!(
+        engine.sync(&skipping).expect_err("refused").code,
+        "analytics.frontier_moved"
+    );
 }
 
 /// A CSV in the engine's scratch directory, the only place a load reads.
@@ -415,16 +501,19 @@ fn load_request(plan: &QuestionPlan, load: &str, sha256: String) -> LoadRequest 
 fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     let (_dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
-    let (file, sha256) = csv(&engine, &[
-        "metal,occurred_at,input,recovered,loss",
-        "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
-        "gold,2026-10-23T12:00:00Z,2,,0",
-        "silver,2026-10-23T12:00:00+02:00,1.2345,1,0",
-        "gold,not-a-time,1,1,0",
-        "gold,2026-10-23T12:00:00Z,abc,1,0",
-        "gold,2026-10-23T12:00:00Z,   ,1,0",
-        "\"go,ld\",2026-02-30T00:00:00Z,1,1,0",
-    ]);
+    let (file, sha256) = csv(
+        &engine,
+        &[
+            "metal,occurred_at,input,recovered,loss",
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+            "gold,2026-10-23T12:00:00Z,2,,0",
+            "silver,2026-10-23T12:00:00+02:00,1.2345,1,0",
+            "gold,not-a-time,1,1,0",
+            "gold,2026-10-23T12:00:00Z,abc,1,0",
+            "gold,2026-10-23T12:00:00Z,   ,1,0",
+            "\"go,ld\",2026-02-30T00:00:00Z,1,1,0",
+        ],
+    );
     let response = engine
         .load(&load_request(&plan, "load-1", sha256.clone()), file.path())
         .expect("loaded");
@@ -560,7 +649,10 @@ proptest::proptest! {
 )]
 fn bulk_path_measurements() {
     use std::time::Instant;
-    let threads: u32 = std::env::var("NORN_BENCH_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let threads: u32 = std::env::var("NORN_BENCH_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     let dir = tempfile::tempdir().expect("engine dir");
     let engine = Engine::new(Settings {
         root: dir.path().to_path_buf(),
@@ -570,7 +662,10 @@ fn bulk_path_measurements() {
     .expect("engine");
     println!("threads {threads}, memory_limit 512MB");
     let (_store, plan, _context) = by_metal(false, 100);
-    let rows: usize = std::env::var("NORN_BENCH_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(1_000_000);
+    let rows: usize = std::env::var("NORN_BENCH_ROWS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_000_000);
     let mut lines = Vec::with_capacity(rows + 1);
     lines.push("metal,occurred_at,input,recovered,loss".to_owned());
     for i in 0..rows {
@@ -587,15 +682,28 @@ fn bulk_path_measurements() {
             recovered.map_or(String::new(), |r| format!("{}.{:03}", r / 1000, r % 1000)),
         ));
     }
-    let (file, sha256) = csv(&engine, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    let (file, sha256) = csv(
+        &engine,
+        &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
     let bytes = std::fs::metadata(file.path()).expect("size").len();
     let started = Instant::now();
-    let loaded = engine.load(&load_request(&plan, "csv", sha256), file.path()).expect("csv load");
+    let loaded = engine
+        .load(&load_request(&plan, "csv", sha256), file.path())
+        .expect("csv load");
     let csv_secs = started.elapsed().as_secs_f64();
-    println!("csv: {rows} rows, {bytes} bytes, {:.3}s, {:.0} rows/s, rejected {}", csv_secs, rows as f64 / csv_secs, loaded.rejected);
+    println!(
+        "csv: {rows} rows, {bytes} bytes, {:.3}s, {:.0} rows/s, rejected {}",
+        csv_secs,
+        rows as f64 / csv_secs,
+        loaded.rejected
+    );
     let ask = |load: &str| norn_cell::analytics::EvaluateRequest {
         tenant: tenant(),
-        source: Source::Dataset { table: TYPE.into(), load: load.into() },
+        source: Source::Dataset {
+            table: TYPE.into(),
+            load: load.into(),
+        },
         query: lower(&plan).expect("lowered"),
         inline_members: 100,
     };
@@ -607,39 +715,82 @@ fn bulk_path_measurements() {
         assert!(!answer.buckets.is_empty());
     }
     times.sort_by(f64::total_cmp);
-    println!("question over {rows} rows (ratio by metal, digests): p50 {:.3}s, max {:.3}s", times[5], times[10]);
+    println!(
+        "question over {rows} rows (ratio by metal, digests): p50 {:.3}s, max {:.3}s",
+        times[5], times[10]
+    );
     let started = Instant::now();
     let profile = engine
         .profile(&norn_cell::analytics::ProfileRequest {
             tenant: tenant(),
-            source: Source::Dataset { table: TYPE.into(), load: "csv".into() },
-            columns: vec!["input".into(), "recovered".into(), "occurred_at".into(), "metal".into()],
+            source: Source::Dataset {
+                table: TYPE.into(),
+                load: "csv".into(),
+            },
+            columns: vec![
+                "input".into(),
+                "recovered".into(),
+                "occurred_at".into(),
+                "metal".into(),
+            ],
         })
         .expect("profile");
-    println!("profile of 4 columns over {} rows: {:.3}s", profile.rows, started.elapsed().as_secs_f64());
+    println!(
+        "profile of 4 columns over {} rows: {:.3}s",
+        profile.rows,
+        started.elapsed().as_secs_f64()
+    );
     let started = Instant::now();
     let parquet = engine
         .export(&norn_cell::analytics::ExportRequest {
             tenant: tenant(),
-            source: Source::Dataset { table: TYPE.into(), load: "csv".into() },
-            columns: vec!["metal".into(), "occurred_at".into(), "input".into(), "recovered".into(), "loss".into()],
+            source: Source::Dataset {
+                table: TYPE.into(),
+                load: "csv".into(),
+            },
+            columns: vec![
+                "metal".into(),
+                "occurred_at".into(),
+                "input".into(),
+                "recovered".into(),
+                "loss".into(),
+            ],
             format: norn_cell::analytics::ExportFormat::Parquet,
         })
         .expect("export");
     let parquet_bytes = std::fs::metadata(&parquet).expect("size").len();
-    println!("parquet export: {parquet_bytes} bytes, {:.3}s", started.elapsed().as_secs_f64());
-    let mut request = load_request(&plan, "parquet", norn_cell::analytics::hex_digest(&std::fs::read(&parquet).expect("read")));
+    println!(
+        "parquet export: {parquet_bytes} bytes, {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+    let mut request = load_request(
+        &plan,
+        "parquet",
+        norn_cell::analytics::hex_digest(&std::fs::read(&parquet).expect("read")),
+    );
     request.file.format = FileFormat::Parquet;
     let started = Instant::now();
     let loaded = engine.load(&request, &parquet).expect("parquet load");
     let parquet_secs = started.elapsed().as_secs_f64();
-    println!("parquet: {} rows, {:.3}s, {:.0} rows/s", loaded.rows, parquet_secs, loaded.rows as f64 / parquet_secs);
+    println!(
+        "parquet: {} rows, {:.3}s, {:.0} rows/s",
+        loaded.rows,
+        parquet_secs,
+        loaded.rows as f64 / parquet_secs
+    );
     let started = Instant::now();
-    engine.evaluate(&ask("parquet")).expect("question after parquet");
-    println!("question after parquet load: {:.3}s", started.elapsed().as_secs_f64());
+    engine
+        .evaluate(&ask("parquet"))
+        .expect("question after parquet");
+    println!(
+        "question after parquet load: {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
     // The governed mirror: 100k versions in batches of 10k.
     let (store, _plan, _context) = by_metal(true, 100);
-    engine.frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables")).expect("frontier");
+    engine
+        .frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables"))
+        .expect("frontier");
     let table = table_schema(TYPE, plan.properties()).expect("schema");
     let started = Instant::now();
     let mut seq = 0u64;
@@ -654,19 +805,38 @@ fn bulk_path_measurements() {
                     version: 1,
                     commit_seq: batch + 1,
                     scope: "synthetic".into(),
-                    values: Some(table.columns.iter().map(|c| match c.id.as_str() {
-                        "metal" => norn_cell::analytics::Value::Text("gold".into()),
-                        "occurred_at" => norn_cell::analytics::Value::Instant { text: TIMES[0].into(), secs: 1_792_756_800, nanos: 0 },
-                        _ => norn_cell::analytics::Value::Number(format!("{}.5", i % 1000)),
-                    }).collect()),
+                    values: Some(
+                        table
+                            .columns
+                            .iter()
+                            .map(|c| match c.id.as_str() {
+                                "metal" => norn_cell::analytics::Value::Text("gold".into()),
+                                "occurred_at" => norn_cell::analytics::Value::Instant {
+                                    text: TIMES[0].into(),
+                                    secs: 1_792_756_800,
+                                    nanos: 0,
+                                },
+                                _ => norn_cell::analytics::Value::Number(format!("{}.5", i % 1000)),
+                            })
+                            .collect(),
+                    ),
                     bad: false,
                 }
             })
             .collect();
         engine
-            .sync(&SyncRequest { tenant: tenant(), world: WORLD.into(), after: batch, through: batch + 1, rows })
+            .sync(&SyncRequest {
+                tenant: tenant(),
+                world: WORLD.into(),
+                after: batch,
+                through: batch + 1,
+                rows,
+            })
             .expect("sync");
     }
     let sync_secs = started.elapsed().as_secs_f64();
-    println!("mirror sync: {seq} versions, {sync_secs:.3}s, {:.0} rows/s", seq as f64 / sync_secs);
+    println!(
+        "mirror sync: {seq} versions, {sync_secs:.3}s, {:.0} rows/s",
+        seq as f64 / sync_secs
+    );
 }

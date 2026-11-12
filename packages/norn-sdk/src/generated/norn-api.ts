@@ -82,6 +82,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/datasets:load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * BULK-LOAD-1: load a completed upload into the tenant's engine as the
+         *     dataset `objectType`, typed by that admitted definition. The engine reads
+         *     the object through a presigned URL, verifies its SHA-256, types every row,
+         *     and quarantines a row it cannot type (or that misses a required value)
+         *     with its reason. The load becomes the dataset's current one; each row
+         *     traces to `(uri, sha256, row)`. Only an admin or owner may load.
+         * @description # Errors
+         *     A denied caller (one opaque 403), an unknown upload or type (404), a
+         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         */
+        post: operations["load_dataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/decisions": {
         parameters: {
             query?: never;
@@ -425,6 +452,33 @@ export interface paths {
          *     or a host failure.
          */
         get: operations["get_object_links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/objects/{type}:export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * D102: every row of `object_type` the caller may read, with the named
+         *     properties plus `id` and `version`, from the tenant's engine, exact at the
+         *     cell's verified head (or a dataset's current load). The caller needs
+         *     Population and Values on the type; quarantined rows are left out, as on a
+         *     page. The host streams the engine's file; the snapshot it is exact at is
+         *     the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
+         * @description # Errors
+         *     A denied gate (one opaque 403), an unknown type (404), an unknown column
+         *     or format (400), or an unreachable engine.
+         */
+        get: operations["export_objects"];
         put?: never;
         post?: never;
         delete?: never;
@@ -777,6 +831,13 @@ export interface components {
             type?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** @description `POST /v1/datasets:load` body. */
+        DatasetLoadRequest: {
+            /** @description The admitted object type the rows are typed by. */
+            objectType: string;
+            /** @description A completed upload of this cell. */
+            uploadId: string;
         };
         /**
          * @description Whether this call decided, or replayed an identical earlier call.
@@ -1680,6 +1741,41 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /** @description The outcome of `POST /v1/datasets:load`. */
+        NornDatasetLoad: {
+            /**
+             * Format: int64
+             * @description File size in bytes.
+             */
+            bytes: number;
+            /** @description The load identity; answers over the dataset name it. */
+            load: string;
+            /**
+             * Format: int64
+             * @description Load time in milliseconds.
+             */
+            millis: number;
+            /** @description The dataset's object type. */
+            objectType: string;
+            /** @description Quarantined rows per reason code (`bulk.*`). */
+            reasons: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Rows quarantined.
+             */
+            rejected: number;
+            /**
+             * Format: int64
+             * @description Rows admitted.
+             */
+            rows: number;
+            /** @description The file's SHA-256, verified by the engine. */
+            sha256: string;
+            /** @description The file's durable URI. */
+            uri: string;
+        };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
             /**
@@ -10272,10 +10368,23 @@ export interface components {
         NornQueryRow: {
             /** @description Grouping value: null without a group-by, the value for one, and for several an array of their values in the question's order (a null member is its own group). */
             bucket: unknown;
+            /**
+             * Format: int64
+             * @description D102: contributing members, present when `members` is not listed
+             *     because the population exceeds the question's bound (the analytics
+             *     engine answered); the trace pages them.
+             */
+            memberCount?: number | null;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
+            /**
+             * @description MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each
+             *     as `<identity bytes>:<identity>,<version>` then `,<coefficient>` per
+             *     operand (empty when absent) and `;`. Present with `memberCount`.
+             */
+            membershipDigest?: string | null;
             /**
              * @description Per operand, in `totals` order: how many members' measured value was
              *     null. A null is skipped by the sum, never read as 0. Absent when no
@@ -10903,6 +11012,80 @@ export interface operations {
                 };
             };
             /** @description The request was refused: the definitions are not admissible. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    load_dataset: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetLoadRequest"];
+            };
+        };
+        responses: {
+            /** @description The load. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDatasetLoad"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The file was refused. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12141,6 +12324,74 @@ export interface operations {
             };
             /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    export_objects: {
+        parameters: {
+            query: {
+                /** @description Organization scope. */
+                orgId?: string;
+                /** @description Environment scope. */
+                environmentId?: string;
+                /** @description Comma-separated property ids; each row also carries `id` and `version`. */
+                columns: string;
+                /** @description `parquet` (the default) or `jsonl`. */
+                format?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to export. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.apache.parquet": unknown;
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

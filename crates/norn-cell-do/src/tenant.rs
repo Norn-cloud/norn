@@ -196,7 +196,8 @@ impl<E: SqlEngine> Tenant<E> {
     /// D102: answer questions, loads and exports on the tenant analytics
     /// engine the host reaches; without it the cell has no analytics.
     pub fn enable_analytics(&mut self) {
-        self.engine.get_or_insert_with(crate::olap::Exchange::default);
+        self.engine
+            .get_or_insert_with(crate::olap::Exchange::default);
     }
 
     /// Re-enter with the engine's answer to the call the last request ended with.
@@ -209,7 +210,9 @@ impl<E: SqlEngine> Tenant<E> {
     /// The engine call the last request ended with, if any; taken once.
     #[must_use]
     pub fn take_engine_call(&self) -> Option<norn_api::analytics_routes::EngineCall> {
-        self.engine.as_ref().and_then(crate::olap::Exchange::take_pending)
+        self.engine
+            .as_ref()
+            .and_then(crate::olap::Exchange::take_pending)
     }
 
     /// D102: a load or an export on a served cell with an engine, reading
@@ -257,9 +260,13 @@ impl<E: SqlEngine> Tenant<E> {
                     .as_ref()
                     .map(|questions| -> &dyn AdHocQuestions<E> { questions });
                 let on_engine = match (questions, &self.engine) {
-                    (Some(inner), Some(engine)) => Some(
-                        norn_api::analytics_routes::EngineQuestions::new(inner, engine, &self.scope),
-                    ),
+                    (Some(inner), Some(engine)) => {
+                        Some(norn_api::analytics_routes::EngineQuestions::new(
+                            inner,
+                            engine,
+                            &self.scope,
+                        ))
+                    }
                     (Some(_) | None, _) => None,
                 };
                 let questions = on_engine

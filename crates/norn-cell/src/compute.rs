@@ -161,9 +161,9 @@ impl QueryRow {
             for member in self.members.values_mut() {
                 member.amounts = None;
             }
-            let members = self
-                .member_count
-                .map_or(self.members.len(), |n| usize::try_from(n).unwrap_or(usize::MAX));
+            let members = self.member_count.map_or(self.members.len(), |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            });
             if members < min_disclosed {
                 self.totals.clear();
                 self.null_counts.clear();

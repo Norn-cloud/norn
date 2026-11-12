@@ -22,8 +22,8 @@ use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse,
-    Source, SyncRequest, TableSchema, TenantId, Test, Value, hex,
+    MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse, Source,
+    SyncRequest, TableSchema, TenantId, Test, Value, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -152,7 +152,10 @@ impl Engine {
         if let Some(open) = tenants.get(tenant) {
             return Ok(Arc::clone(open));
         }
-        let path = self.settings.root.join(format!("{}.duckdb", tenant.as_str()));
+        let path = self
+            .settings
+            .root
+            .join(format!("{}.duckdb", tenant.as_str()));
         let conn = db(Connection::open(&path))?;
         let scratch = self.scratch();
         let scratch = scratch.to_string_lossy().replace('\'', "''");
@@ -214,9 +217,8 @@ impl Engine {
                 ));
             }
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let applied = apply_sync(conn, request).and_then(|()| {
-                set_meta(conn, &key, &request.through.to_string())
-            });
+            let applied = apply_sync(conn, request)
+                .and_then(|()| set_meta(conn, &key, &request.through.to_string()));
             match applied {
                 Ok(()) => db(conn.execute_batch("COMMIT"))?,
                 Err(error) => {
@@ -288,7 +290,12 @@ impl Engine {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
             let projection = Projection::build(&request.query, &scope)?;
-            let members = projection.page(conn, &request.group, request.after.as_deref(), request.limit)?;
+            let members = projection.page(
+                conn,
+                &request.group,
+                request.after.as_deref(),
+                request.limit,
+            )?;
             Ok(MembersResponse { members })
         })
     }
@@ -302,10 +309,13 @@ impl Engine {
     /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
     pub fn load(&self, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
         let started = Instant::now();
-        let (digest, bytes) = sha256_file(file)
-            .map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+        let (digest, bytes) =
+            sha256_file(file).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
         if digest != request.file.sha256 {
-            return Err(refusal("bulk.digest_mismatch", "the file is not the recorded upload"));
+            return Err(refusal(
+                "bulk.digest_mismatch",
+                "the file is not the recorded upload",
+            ));
         }
         self.with(&request.tenant, |conn| {
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
@@ -341,7 +351,10 @@ impl Engine {
             let scope = Scope::new(conn, &request.source)?;
             let rows = query_u64(
                 conn,
-                &Frag::fmt(&format!("SELECT count(*) FROM {} WHERE {{}}", scope.table), &[&scope.population]),
+                &Frag::fmt(
+                    &format!("SELECT count(*) FROM {} WHERE {{}}", scope.table),
+                    &[&scope.population],
+                ),
             )?;
             let columns = request
                 .columns
@@ -360,7 +373,9 @@ impl Engine {
     pub fn export(&self, request: &ExportRequest) -> Outcome<PathBuf> {
         let name = format!(
             "export-{}.{}",
-            hex(&Sha256::digest(format!("{:?}{:?}", request, Instant::now()).as_bytes())),
+            hex(&Sha256::digest(
+                format!("{:?}{:?}", request, Instant::now()).as_bytes()
+            )),
             match request.format {
                 ExportFormat::Parquet => "parquet",
                 ExportFormat::Jsonl => "jsonl",
@@ -432,8 +447,8 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
         let mut statement = db(conn.prepare(
             "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%'",
         ))?;
-        let names: Vec<String> = db(db(statement.query_map([], |row| row.get(0)))?
-            .collect::<Result<_, _>>())?;
+        let names: Vec<String> =
+            db(db(statement.query_map([], |row| row.get(0)))?.collect::<Result<_, _>>())?;
         for name in names {
             db(conn.execute_batch(&format!("DROP TABLE {}", ident(&name))))?;
         }
@@ -442,13 +457,22 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
         ))?;
         for table in tables {
             let columns: Vec<String> = table.columns.iter().map(column_ddl).collect();
-            let system = [":w VARCHAR", ":id VARCHAR", ":v UBIGINT", ":from UBIGINT", ":to UBIGINT", ":scope VARCHAR", ":type VARCHAR", ":bad BOOLEAN"]
-                .iter()
-                .map(|c| {
-                    let (name, ty) = c.split_once(' ').unwrap_or((c, "VARCHAR"));
-                    format!("{} {ty}", ident(name))
-                })
-                .collect::<Vec<_>>();
+            let system = [
+                ":w VARCHAR",
+                ":id VARCHAR",
+                ":v UBIGINT",
+                ":from UBIGINT",
+                ":to UBIGINT",
+                ":scope VARCHAR",
+                ":type VARCHAR",
+                ":bad BOOLEAN",
+            ]
+            .iter()
+            .map(|c| {
+                let (name, ty) = c.split_once(' ').unwrap_or((c, "VARCHAR"));
+                format!("{} {ty}", ident(name))
+            })
+            .collect::<Vec<_>>();
             db(conn.execute_batch(&format!(
                 "CREATE TABLE {} ({}{}{})",
                 mirror_table(&table.name),
@@ -457,7 +481,11 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
                 columns.join(", ")
             )))?;
             set_meta(conn, &format!("pin:{}", table.name), &table.pin)?;
-            set_meta(conn, &format!("schema:{}", table.name), &schema_text(table)?)?;
+            set_meta(
+                conn,
+                &format!("schema:{}", table.name),
+                &schema_text(table)?,
+            )?;
         }
         Ok(())
     })();
@@ -499,7 +527,10 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {
         if row.commit_seq <= request.after || row.commit_seq > request.through {
-            return Err(refusal("analytics.frontier_moved", "a row outside the batch"));
+            return Err(refusal(
+                "analytics.frontier_moved",
+                "a row outside the batch",
+            ));
         }
         by_table.entry(row.table.as_str()).or_default().push(row);
     }
@@ -528,7 +559,11 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
             let mut appender = db(conn.appender(":stage"))?;
             for (ord, row) in rows.iter().enumerate() {
                 let tomb = row.values.is_none();
-                if row.values.as_ref().is_some_and(|v| v.len() != table.columns.len()) {
+                if row
+                    .values
+                    .as_ref()
+                    .is_some_and(|v| v.len() != table.columns.len())
+                {
                     return Err(refusal("analytics.engine", "values do not match the table"));
                 }
                 let mut values = vec![
@@ -725,7 +760,8 @@ impl Scope {
             &[&self.all, &id_list(&self.excluded)],
         );
         let mut statement = db(conn.prepare(&sql.text))?;
-        let rows = db(statement.query_map(params_from_iter(sql.params), |row| row.get::<_, String>(0)))?;
+        let rows =
+            db(statement.query_map(params_from_iter(sql.params), |row| row.get::<_, String>(0)))?;
         db(rows.collect())
     }
 }
@@ -741,7 +777,11 @@ fn id_list(ids: &[String]) -> Frag {
 
 fn query_u64(conn: &Connection, sql: &Frag) -> Outcome<u64> {
     let mut statement = db(conn.prepare(&sql.text))?;
-    db(statement.query_row(params_from_iter(sql.params.clone()), |row| row.get::<_, u64>(0)))
+    db(
+        statement.query_row(params_from_iter(sql.params.clone()), |row| {
+            row.get::<_, u64>(0)
+        }),
+    )
 }
 
 /// A lowered question as SQL over its scope: per row the bucket, the
@@ -825,7 +865,10 @@ fn filter_sql(scope: &Scope, filter: &Filter) -> Outcome<Condition> {
                 ),
                 _ => return Err(refusal(UNSUPPORTED, "a literal of another kind")),
             };
-            (Frag::fmt("({} IS NOT NULL AND {} = {})", &[&c, &c, &bound]), never)
+            (
+                Frag::fmt("({} IS NOT NULL AND {} = {})", &[&c, &c, &bound]),
+                never,
+            )
         }
         Test::Instant { secs, nanos } => (
             Frag::fmt(
@@ -885,14 +928,20 @@ impl Projection {
     )]
     fn build(query: &Lowered, scope: &Scope) -> Outcome<Self> {
         let window = &query.window;
-        if !matches!(scope.column(&window.column)?.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+        if !matches!(
+            scope.column(&window.column)?.kind,
+            ColumnKind::Timestamp | ColumnKind::Date
+        ) {
             return Err(refusal(UNSUPPORTED, "the window is not on an instant"));
         }
         let time = Frag::raw(ident(&window.column));
         let question = filters_sql(scope, &query.filters)?;
         // The base layer evaluates the question's filters once per row.
         let base = Frag::fmt(
-            &format!("SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}", scope.table),
+            &format!(
+                "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
+                scope.table
+            ),
             &[&question.holds, &question.refuse, &scope.population],
         );
         let q = Frag::raw("\":q\"");
@@ -909,16 +958,28 @@ impl Projection {
             Frag::raw(format!("{} AS id", ident(":id"))),
             Frag::raw(format!("{} AS v", ident(":v"))),
         ];
-        let mut refusals = vec![Frag::raw("\":qr\""), Frag::fmt("({} AND {} IS NULL)", &[&q, &time])];
+        let mut refusals = vec![
+            Frag::raw("\":qr\""),
+            Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
+        ];
         let mut groups = Vec::new();
         for (i, dimension) in query.dimensions.iter().enumerate() {
             let (group, representative, kind) = match dimension {
                 super::Dimension::Period { column, grain } => {
-                    if !matches!(scope.column(column)?.kind, ColumnKind::Timestamp | ColumnKind::Date) {
-                        return Err(refusal(UNSUPPORTED, "a period of a value that is not an instant"));
+                    if !matches!(
+                        scope.column(column)?.kind,
+                        ColumnKind::Timestamp | ColumnKind::Date
+                    ) {
+                        return Err(refusal(
+                            UNSUPPORTED,
+                            "a period of a value that is not an instant",
+                        ));
                     }
                     // Reaching a row without the instant refuses, as the exact engine does.
-                    refusals.push(Frag::fmt("({} AND {} IS NULL)", &[&reach, &Frag::raw(ident(column))]));
+                    refusals.push(Frag::fmt(
+                        "({} AND {} IS NULL)",
+                        &[&reach, &Frag::raw(ident(column))],
+                    ));
                     let start = period_sql(&derived(column, "t"), *grain);
                     (start.clone(), start, GroupKind::Period(*grain))
                 }
@@ -928,9 +989,11 @@ impl Projection {
                         ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date => {
                             (format!("nfc_normalize({c})"), c, GroupKind::Text)
                         }
-                        ColumnKind::Integer | ColumnKind::Decimal { .. } => {
-                            (c.clone(), format!("CAST({c} AS VARCHAR)"), GroupKind::Number)
-                        }
+                        ColumnKind::Integer | ColumnKind::Decimal { .. } => (
+                            c.clone(),
+                            format!("CAST({c} AS VARCHAR)"),
+                            GroupKind::Number,
+                        ),
                         ColumnKind::Boolean => (c.clone(), c, GroupKind::Bool),
                         ColumnKind::Opaque => return Err(refusal(UNSUPPORTED, "an opaque bucket")),
                     }
@@ -957,7 +1020,9 @@ impl Projection {
                     let six = format!("TRY_CAST({c} AS DECIMAL(38,6))");
                     (
                         format!("CAST({six} * 1000000 AS HUGEINT)"),
-                        format!("({six} IS NOT NULL AND {six} = {c} AND abs(CAST({six} * 1000000 AS HUGEINT)) <= {MAX_VALUE})"),
+                        format!(
+                            "({six} IS NOT NULL AND {six} = {c} AND abs(CAST({six} * 1000000 AS HUGEINT)) <= {MAX_VALUE})"
+                        ),
                     )
                 }
                 ColumnKind::Text
@@ -989,8 +1054,14 @@ impl Projection {
             .collect::<Vec<_>>()
             .join(" OR ");
         let sql = Frag::fmt(
-            &format!("SELECT *, ({contributes}) AS contributes FROM (SELECT {{}}, ({{}}) AS refuse FROM ({{}}) AS base) AS p"),
-            &[&Frag::join(&select, ", "), &Frag::join(&refusals, " OR "), &base],
+            &format!(
+                "SELECT *, ({contributes}) AS contributes FROM (SELECT {{}}, ({{}}) AS refuse FROM ({{}}) AS base) AS p"
+            ),
+            &[
+                &Frag::join(&select, ", "),
+                &Frag::join(&refusals, " OR "),
+                &base,
+            ],
         );
         Ok(Self { sql, arity, groups })
     }
@@ -1001,9 +1072,13 @@ impl Projection {
         for (offset, kind) in self.groups.iter().enumerate() {
             let at = index.saturating_add(offset);
             members.push(match kind {
-                GroupKind::Period(grain) => row
-                    .get::<_, Option<i64>>(at)?
-                    .map_or(GroupKey::Null, |day| GroupKey::Period { grain: *grain, day }),
+                GroupKind::Period(grain) => {
+                    row.get::<_, Option<i64>>(at)?
+                        .map_or(GroupKey::Null, |day| GroupKey::Period {
+                            grain: *grain,
+                            day,
+                        })
+                }
                 GroupKind::Text => row
                     .get::<_, Option<String>>(at)?
                     .map_or(GroupKey::Null, GroupKey::Text),
@@ -1048,7 +1123,9 @@ impl Projection {
             out.push_str(" AS VARCHAR), '')");
             out
         });
-        format!("CAST(strlen(id) AS VARCHAR) || ':' || id || ',' || CAST(v AS VARCHAR){amounts} || ';'")
+        format!(
+            "CAST(strlen(id) AS VARCHAR) || ':' || id || ',' || CAST(v AS VARCHAR){amounts} || ';'"
+        )
     }
 
     /// Per bucket of the materialized projection: totals, magnitudes, null
@@ -1057,7 +1134,9 @@ impl Projection {
         let mut aggregates = Vec::new();
         for k in 0..self.arity {
             aggregates.push(format!("CAST(COALESCE(sum(a{k}), 0) AS VARCHAR)"));
-            aggregates.push(format!("CAST(COALESCE(sum(abs(CAST(a{k} AS HUGEINT))), 0) AS VARCHAR)"));
+            aggregates.push(format!(
+                "CAST(COALESCE(sum(abs(CAST(a{k} AS HUGEINT))), 0) AS VARCHAR)"
+            ));
             aggregates.push(format!("CAST(sum(n{k}) AS UBIGINT)"));
         }
         // One representative per dimension, all from the bucket's first member.
@@ -1144,7 +1223,9 @@ impl Projection {
     ) -> Outcome<Vec<MemberRow>> {
         let members: Vec<&GroupKey> = match (group, self.groups.len()) {
             (_, 0) => Vec::new(),
-            (GroupKey::Tuple(members), n) if n > 1 && members.len() == n => members.iter().collect(),
+            (GroupKey::Tuple(members), n) if n > 1 && members.len() == n => {
+                members.iter().collect()
+            }
             (one, 1) => vec![one],
             _ => return Err(refusal(UNSUPPORTED, "a bucket of another shape")),
         };
@@ -1243,7 +1324,9 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                 format!(
                     "translate({c}, '0123456789', '') IN ('', '.', '-', '+', '-.', '+.') AND NOT ltrim({c}, '+-') LIKE '.%' AND NOT {c} LIKE '%.' AS s{i}"
                 ),
-                format!("strpos({c}, '.') = 0 OR strlen({c}) - strpos({c}, '.') <= {scale} AS f{i}"),
+                format!(
+                    "strpos({c}, '.') = 0 OR strlen({c}) - strpos({c}, '.') <= {scale} AS f{i}"
+                ),
                 format!(
                     "CASE WHEN translate({c}, '0123456789', '') IN ('', '.', '-', '+', '-.', '+.') AND (strpos({c}, '.') = 0 OR strlen({c}) - strpos({c}, '.') <= {scale}) THEN TRY_CAST({c} AS DECIMAL(38,{scale})) END AS {v}"
                 ),
@@ -1324,9 +1407,13 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         FileFormat::Csv => format!(
             "SELECT * FROM read_csv('{path}', header = true, all_varchar = true, delim = ',', quote = '\"', escape = '\"', strict_mode = true, null_padding = false)"
         ),
-        FileFormat::Parquet => format!("SELECT * FROM read_parquet('{path}', file_row_number = true)"),
+        FileFormat::Parquet => {
+            format!("SELECT * FROM read_parquet('{path}', file_row_number = true)")
+        }
     };
-    db(conn.execute_batch(&format!("CREATE OR REPLACE TEMP TABLE \":file\" AS {source}")))?;
+    db(conn.execute_batch(&format!(
+        "CREATE OR REPLACE TEMP TABLE \":file\" AS {source}"
+    )))?;
     let mut statement = db(conn.prepare(
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ':file'",
     ))?;
@@ -1340,7 +1427,10 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
     for (i, column) in request.table.columns.iter().enumerate() {
         let name = request.headers.get(&column.id).unwrap_or(&column.id);
         let Some(data_type) = present.get(name) else {
-            return Err(refusal("bulk.missing_column", format!("the file has no column {name}")));
+            return Err(refusal(
+                "bulk.missing_column",
+                format!("the file has no column {name}"),
+            ));
         };
         let f = ident(name);
         let text = match (column.kind, data_type.as_str()) {
@@ -1350,11 +1440,19 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
             (ColumnKind::Date, "DATE") => format!("strftime({f}, '%Y-%m-%d')"),
             _ => format!("CAST({f} AS VARCHAR)"),
         };
-        texts.push(format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"));
+        texts.push(format!(
+            "CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"
+        ));
         let Parsed { columns, reason } = parse_sql(column.kind, i);
         parsed.extend(columns);
-        let missing = if column.nullable { "NULL" } else { "'bulk.required'" };
-        reasons.push(format!("CASE WHEN c{i} IS NULL THEN {missing} ELSE {reason} END"));
+        let missing = if column.nullable {
+            "NULL"
+        } else {
+            "'bulk.required'"
+        };
+        reasons.push(format!(
+            "CASE WHEN c{i} IS NULL THEN {missing} ELSE {reason} END"
+        ));
     }
     let order = match request.file.format {
         FileFormat::Csv => "rowid",
@@ -1427,7 +1525,11 @@ fn load_file(
         ),
         [&request.load],
     ))?;
-    let rows: u64 = db(conn.query_row(&format!("SELECT count(*) FROM {dataset}"), [], |row| row.get(0)))?;
+    let rows: u64 = db(
+        conn.query_row(&format!("SELECT count(*) FROM {dataset}"), [], |row| {
+            row.get(0)
+        }),
+    )?;
     let mut statement = db(conn.prepare(&format!(
         "SELECT \":reason\", count(*) FROM {quarantine} GROUP BY \":reason\" ORDER BY \":reason\""
     )))?;
@@ -1437,7 +1539,11 @@ fn load_file(
     .collect::<Result<_, _>>())?;
     db(conn.execute_batch("DROP TABLE \":checked\"; DROP TABLE \":file\";"))?;
     set_meta(conn, &format!("load:{}", table.name), &request.load)?;
-    set_meta(conn, &format!("dataset:{}", table.name), &schema_text(table)?)?;
+    set_meta(
+        conn,
+        &format!("dataset:{}", table.name),
+        &schema_text(table)?,
+    )?;
     set_meta(
         conn,
         &format!("lineage:{}", request.load),
@@ -1446,12 +1552,17 @@ fn load_file(
     Ok((rows, reasons))
 }
 
-fn present(kind: ColumnKind, text: Option<String>, secs: Option<i64>, nanos: Option<i32>) -> Option<Value> {
+fn present(
+    kind: ColumnKind,
+    text: Option<String>,
+    secs: Option<i64>,
+    nanos: Option<i32>,
+) -> Option<Value> {
     let text = text?;
     Some(match kind {
-        ColumnKind::Integer | ColumnKind::Decimal { .. } => Value::Number(
-            norn_ir::Decimal::parse(&text).map_or(text, |d| d.canonical()),
-        ),
+        ColumnKind::Integer | ColumnKind::Decimal { .. } => {
+            Value::Number(norn_ir::Decimal::parse(&text).map_or(text, |d| d.canonical()))
+        }
         ColumnKind::Timestamp | ColumnKind::Date => Value::Instant {
             text,
             secs: secs?,
@@ -1470,7 +1581,10 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
     let (t, n) = if temporal {
         (derived(id, "t"), derived(id, "n"))
     } else {
-        ("CAST(NULL AS BIGINT)".to_owned(), "CAST(NULL AS INTEGER)".to_owned())
+        (
+            "CAST(NULL AS BIGINT)".to_owned(),
+            "CAST(NULL AS INTEGER)".to_owned(),
+        )
     };
     let (order, distinct_of) = if temporal {
         (format!("{t}, {n}"), format!("({t}, {n})"))
@@ -1478,13 +1592,17 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
         (c.clone(), c.clone())
     };
     let counts = Frag::fmt(
-        &format!("SELECT count({c}), count(DISTINCT {distinct_of}) FROM {} WHERE {{}}", scope.table),
+        &format!(
+            "SELECT count({c}), count(DISTINCT {distinct_of}) FROM {} WHERE {{}}",
+            scope.table
+        ),
         &[&scope.population],
     );
     let mut statement = db(conn.prepare(&counts.text))?;
-    let (count, distinct): (u64, u64) = db(statement.query_row(params_from_iter(counts.params), |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    }))?;
+    let (count, distinct): (u64, u64) = db(statement
+        .query_row(params_from_iter(counts.params), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }))?;
     let ordered = matches!(
         column.kind,
         ColumnKind::Integer | ColumnKind::Decimal { .. } | ColumnKind::Timestamp | ColumnKind::Date
@@ -1511,11 +1629,15 @@ fn profile_column(conn: &Connection, scope: &Scope, id: &str, rows: u64) -> Outc
             &[&scope.population, &wanted],
         );
         let mut statement = db(conn.prepare(&sql.text))?;
-        let found: BTreeMap<u64, Option<Value>> = db(db(statement.query_map(params_from_iter(sql.params), |row| {
-            let rank: u64 = row.get(0)?;
-            Ok((rank, present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?)))
-        }))?
-        .collect::<Result<_, _>>())?;
+        let found: BTreeMap<u64, Option<Value>> =
+            db(db(statement.query_map(params_from_iter(sql.params), |row| {
+                let rank: u64 = row.get(0)?;
+                Ok((
+                    rank,
+                    present(column.kind, row.get(1)?, row.get(2)?, row.get(3)?),
+                ))
+            }))?
+            .collect::<Result<_, _>>())?;
         for (percent, rank) in ranks {
             if let Some(Some(value)) = found.get(&rank) {
                 quantiles.push((percent, value.clone()));

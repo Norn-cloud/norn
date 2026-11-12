@@ -14,8 +14,8 @@ use norn_ir::{Decimal, RuntimeValue};
 use norn_ir::metric::TimeGrain;
 
 use super::{
-    BucketTotals, Grain, EvaluateRequest, EvaluateResponse, GroupKey, MemberRow, MembershipDigest, Source,
-    TenantId, lower::lower,
+    BucketTotals, EvaluateRequest, EvaluateResponse, Grain, GroupKey, MemberRow, MembershipDigest,
+    Source, TenantId, lower::lower,
 };
 use crate::compute::{Engine, Member, QueryContext, QueryResult, QueryRow, decimal, refused};
 use crate::engine::{SqlEngine, SqlRow, params};
@@ -41,7 +41,9 @@ pub fn bucket_value(group: &GroupKey) -> Result<RuntimeValue, CellError> {
                 Grain::Quarter => TimeGrain::Quarter,
                 Grain::Year => TimeGrain::Year,
             };
-            let seconds = day.checked_mul(86_400).ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+            let seconds = day
+                .checked_mul(86_400)
+                .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
             RuntimeValue::from(period_start(seconds, grain).map_err(refused)?)
         }
         GroupKey::Tuple(members) => {
@@ -292,7 +294,10 @@ fn assemble_row(
     arity: usize,
     inline: bool,
 ) -> Result<QueryRow, CellError> {
-    if bucket.totals.len() != arity || bucket.magnitude.len() != arity || bucket.nulls.len() != arity {
+    if bucket.totals.len() != arity
+        || bucket.magnitude.len() != arity
+        || bucket.nulls.len() != arity
+    {
         return Err(CellError::Engine("operand arity".to_owned()));
     }
     let mut totals = Vec::with_capacity(arity);
@@ -337,7 +342,11 @@ fn assemble_row(
             .collect::<Result<BTreeMap<_, _>, CellError>>()?;
         (members, None, None)
     } else {
-        (BTreeMap::new(), Some(bucket.count), Some(bucket.digest.clone()))
+        (
+            BTreeMap::new(),
+            Some(bucket.count),
+            Some(bucket.digest.clone()),
+        )
     };
     Ok(QueryRow {
         bucket: value,

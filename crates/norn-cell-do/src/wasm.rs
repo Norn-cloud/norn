@@ -188,12 +188,13 @@ impl NornCell {
         answer: String,
     ) -> Reply {
         if let Ok(call) = serde_json::from_str::<norn_api::analytics_routes::EngineCall>(call) {
-            self.tenant.resume_engine(norn_api::analytics_routes::EngineAnswer {
-                op: call.op,
-                digest: call.digest,
-                status,
-                body: answer,
-            });
+            self.tenant
+                .resume_engine(norn_api::analytics_routes::EngineAnswer {
+                    op: call.op,
+                    digest: call.digest,
+                    status,
+                    body: answer,
+                });
         }
         self.fetch(method, path, query, authorization, now_ms, body)
     }
@@ -374,6 +375,7 @@ impl NornCell {
             start_sync: None,
             then_token: None,
             then_request: None,
+            engine: None,
         }
     }
 }

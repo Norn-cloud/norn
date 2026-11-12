@@ -45,7 +45,10 @@ pub(crate) fn column_kind(property: &EffectiveProperty) -> Option<ColumnKind> {
 ///
 /// # Errors
 /// The columns cannot be encoded.
-pub fn table_schema(name: &str, properties: &[EffectiveProperty]) -> Result<TableSchema, CellError> {
+pub fn table_schema(
+    name: &str,
+    properties: &[EffectiveProperty],
+) -> Result<TableSchema, CellError> {
     let columns: Vec<Column> = properties
         .iter()
         .filter_map(|property| {

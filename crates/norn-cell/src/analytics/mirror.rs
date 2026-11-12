@@ -8,7 +8,9 @@ use norn_checker::metric::compute::contribution::instant_key;
 use norn_ir::RuntimeValue;
 
 use super::lower::table_schema;
-use super::{Column, ColumnKind, FrontierRequest, MirrorRow, SyncRequest, TableSchema, TenantId, Value};
+use super::{
+    Column, ColumnKind, FrontierRequest, MirrorRow, SyncRequest, TableSchema, TenantId, Value,
+};
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::read::{to_i64, to_u64};
 use crate::system::FACT_VALUES;
@@ -25,7 +27,11 @@ pub struct MirrorBatch {
 
 /// The stored value of one column, or `None` when it fails its property's
 /// check (the row is then marked bad and any question reading it refuses).
-fn stored(column: &Column, property: &EffectiveProperty, value: Option<&RuntimeValue>) -> Option<Value> {
+fn stored(
+    column: &Column,
+    property: &EffectiveProperty,
+    value: Option<&RuntimeValue>,
+) -> Option<Value> {
     let value = value?;
     property.check_runtime_value(value).ok()?;
     Some(match (column.kind, value) {
@@ -34,7 +40,9 @@ fn stored(column: &Column, property: &EffectiveProperty, value: Option<&RuntimeV
         (ColumnKind::Integer, RuntimeValue::Number(number)) if number.is_integer() => {
             Value::Number(number.canonical())
         }
-        (ColumnKind::Decimal { scale }, RuntimeValue::Number(number)) if number.scale() <= scale => {
+        (ColumnKind::Decimal { scale }, RuntimeValue::Number(number))
+            if number.scale() <= scale =>
+        {
             Value::Number(number.canonical())
         }
         (ColumnKind::Boolean, RuntimeValue::Bool(flag)) => Value::Bool(*flag),
@@ -46,7 +54,9 @@ fn stored(column: &Column, property: &EffectiveProperty, value: Option<&RuntimeV
                 nanos,
             }
         }
-        (ColumnKind::Opaque, value) => Value::Json(String::from_utf8(value.canonical_json().ok()?).ok()?),
+        (ColumnKind::Opaque, value) => {
+            Value::Json(String::from_utf8(value.canonical_json().ok()?).ok()?)
+        }
         _ => return None,
     })
 }
@@ -61,7 +71,11 @@ impl<E: SqlEngine> CellStore<E> {
         let model = self.model();
         model
             .object_types()
-            .filter(|def| model.chain(def.name.as_str()).is_ok_and(|chain| chain.len() == 1))
+            .filter(|def| {
+                model
+                    .chain(def.name.as_str())
+                    .is_ok_and(|chain| chain.len() == 1)
+            })
             .map(|def| {
                 let contract = model.query_contract(def.name.as_str())?;
                 table_schema(def.name.as_str(), &contract.properties)
@@ -73,7 +87,11 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// The model cannot be read.
-    pub fn analytics_frontier(&self, tenant: &TenantId, world: &str) -> Result<FrontierRequest, CellError> {
+    pub fn analytics_frontier(
+        &self,
+        tenant: &TenantId,
+        world: &str,
+    ) -> Result<FrontierRequest, CellError> {
         Ok(FrontierRequest {
             tenant: tenant.clone(),
             world: world.to_owned(),

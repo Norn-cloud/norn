@@ -1153,25 +1153,34 @@ pub fn analytics<E: SqlEngine>(
                 let kind = percent_encoding::percent_decode_str(kind)
                     .decode_utf8()
                     .map_err(|_bad| Refusal::invalid("the type is not UTF-8"))?;
-                norn_api::analytics_routes::export_objects(host, &query, actor, &kind, &CellObjectAccess, transport)
+                norn_api::analytics_routes::export_objects(
+                    host,
+                    &query,
+                    actor,
+                    &kind,
+                    &CellObjectAccess,
+                    transport,
+                )
             })
             .map(|()| String::new()),
-        ("POST", None, Some(uploads)) => parse(query, &["orgId", "environmentId"]).and_then(|fields| {
-            let scope = ScopeQuery {
-                org_id: fields.get("orgId").cloned(),
-                environment_id: fields.get("environmentId").cloned(),
-            };
-            norn_api::analytics_routes::load_dataset(
-                host,
-                &scope,
-                actor,
-                body,
-                uploads,
-                transport,
-                now.saturating_mul(1000),
-            )
-            .and_then(|document| document_json(&document))
-        }),
+        ("POST", None, Some(uploads)) => {
+            parse(query, &["orgId", "environmentId"]).and_then(|fields| {
+                let scope = ScopeQuery {
+                    org_id: fields.get("orgId").cloned(),
+                    environment_id: fields.get("environmentId").cloned(),
+                };
+                norn_api::analytics_routes::load_dataset(
+                    host,
+                    &scope,
+                    actor,
+                    body,
+                    uploads,
+                    transport,
+                    now.saturating_mul(1000),
+                )
+                .and_then(|document| document_json(&document))
+            })
+        }
         ("POST", None, None) => Err(Refusal::new(
             StatusCode::NOT_IMPLEMENTED,
             "dataset.uploads_unconfigured",

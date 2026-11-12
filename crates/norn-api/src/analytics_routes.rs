@@ -77,7 +77,8 @@ pub struct EngineAnswer {
 
 impl EngineCall {
     fn new(op: &str, request: &impl Serialize) -> Result<Self, CellError> {
-        let body = serde_json::to_string(request).map_err(|e| CellError::Encoding(e.to_string()))?;
+        let body =
+            serde_json::to_string(request).map_err(|e| CellError::Encoding(e.to_string()))?;
         Ok(Self {
             op: op.to_owned(),
             digest: hex_digest(body.as_bytes()),
@@ -107,7 +108,9 @@ fn decode<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, CellError> {
 
 /// A Core 03 refusal the engine reported, as the cell's own.
 fn refused(body: &str) -> CellError {
-    let code = decode::<EngineRefusal>(body).map(|r| r.code).unwrap_or_default();
+    let code = decode::<EngineRefusal>(body)
+        .map(|r| r.code)
+        .unwrap_or_default();
     for known in [
         UNSUPPORTED_ENGINE,
         "core.compute.bound_exceeded",
@@ -158,7 +161,9 @@ fn exchange<E: SqlEngine>(
         }
         answer = Some(transport.call(&next).ok_or_else(pending)?);
     }
-    Err(CellError::Engine("the analytics exchange did not settle".to_owned()))
+    Err(CellError::Engine(
+        "the analytics exchange did not settle".to_owned(),
+    ))
 }
 
 fn mirror_world(source: &Source) -> Option<(&str, u64)> {
@@ -178,7 +183,13 @@ fn evaluate_on<E: SqlEngine>(
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, CellError> {
     let call = EngineCall::new("evaluate", request)?;
-    let answer = exchange(store, transport, tenant, mirror_world(&request.source), &call)?;
+    let answer = exchange(
+        store,
+        transport,
+        tenant,
+        mirror_world(&request.source),
+        &call,
+    )?;
     if answer.status == 200 {
         decode(&answer.body)
     } else {
@@ -198,7 +209,11 @@ impl<'a, E: SqlEngine> EngineQuestions<'a, E> {
     /// Answer `inner`'s questions on the engine `transport` reaches, for the
     /// cell bound to `scope`.
     #[must_use]
-    pub fn new(inner: &'a dyn AdHocQuestions<E>, transport: &'a dyn Transport, scope: &CellScope) -> Self {
+    pub fn new(
+        inner: &'a dyn AdHocQuestions<E>,
+        transport: &'a dyn Transport,
+        scope: &CellScope,
+    ) -> Self {
         Self {
             inner,
             transport,
@@ -224,7 +239,12 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     fn question_names(&self) -> Vec<String> {
         self.inner.question_names()
     }
-    fn snapshot(&self, store: &CellStore<E>, plan: &QuestionPlan, actor: &str) -> Result<QuestionSnapshot, Refusal> {
+    fn snapshot(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        actor: &str,
+    ) -> Result<QuestionSnapshot, Refusal> {
         self.inner.snapshot(store, plan, actor)
     }
     fn access(
@@ -250,7 +270,8 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         capability: ReadCapability,
         object_type: &str,
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
-        self.inner.collection_access(scope, actor, capability, object_type)
+        self.inner
+            .collection_access(scope, actor, capability, object_type)
     }
     /// D102: the engine answers. This host's read policy decides a row by its
     /// type alone, so the population gate is asked once for the whole grain
@@ -416,7 +437,7 @@ pub trait Uploads {
     /// The completed upload `id`, if any.
     fn record(&self, id: &str) -> Option<UploadRecord>;
     /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
-    fn signed_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
+    fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
 }
 
 /// The outcome of `POST /v1/datasets:load`.
@@ -504,11 +525,11 @@ pub fn load_dataset<E: SqlEngine>(
     // The URL is minted per request; the call's identity is the load without it.
     let mut call = EngineCall::new("load", &load_request).map_err(engine_failure)?;
     load_request.file.url = uploads
-        .signed_get(&record.uri, LOAD_URL_SECONDS, now_ms)
+        .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
         .ok_or_else(|| Refusal::host("the object store is not configured"))?;
     call.body = serde_json::to_string(&load_request).map_err(Refusal::host)?;
-    let answer = exchange(store, transport, &load_request.tenant, None, &call)
-        .map_err(engine_failure)?;
+    let answer =
+        exchange(store, transport, &load_request.tenant, None, &call).map_err(engine_failure)?;
     if answer.status != 200 {
         let refusal: EngineRefusal = decode(&answer.body).map_err(engine_failure)?;
         return Err(Refusal::new(

@@ -52,7 +52,10 @@ impl Config {
             .filter(|t| t.len() >= 32)
             .ok_or("NORN_SECRET_DUCKDB_TOKEN must hold at least 32 bytes")?;
         let threads = var("NORN_OLAP_THREADS")
-            .map(|t| t.parse::<u32>().map_err(|e| format!("NORN_OLAP_THREADS: {e}")))
+            .map(|t| {
+                t.parse::<u32>()
+                    .map_err(|e| format!("NORN_OLAP_THREADS: {e}"))
+            })
             .transpose()?
             .unwrap_or(1);
         Ok(Self {
@@ -79,10 +82,16 @@ pub fn run(config: Config) -> std::io::Result<()> {
     for stream in listener.incoming().flatten() {
         if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
             active.fetch_sub(1, Ordering::SeqCst);
-            let _busy = respond(&stream, 503, "application/json", b"{\"code\":\"analytics.busy\"}");
+            let _busy = respond(
+                &stream,
+                503,
+                "application/json",
+                b"{\"code\":\"analytics.busy\"}",
+            );
             continue;
         }
-        let (engine, token, active) = (Arc::clone(&engine), Arc::clone(&token), Arc::clone(&active));
+        let (engine, token, active) =
+            (Arc::clone(&engine), Arc::clone(&token), Arc::clone(&active));
         std::thread::spawn(move || {
             // A broken connection affects only itself.
             let _ignored = connection(&stream, &engine, &token);
@@ -134,10 +143,18 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         return respond(stream, 200, "application/json", b"{\"ok\":true}");
     }
     if !authorized(request.authorization.as_deref(), token) {
-        return refuse(stream, 401, &refusal("analytics.unauthorized", "the caller is not the cell"));
+        return refuse(
+            stream,
+            401,
+            &refusal("analytics.unauthorized", "the caller is not the cell"),
+        );
     }
     if request.method != "POST" {
-        return refuse(stream, 404, &refusal("analytics.unknown", "no such operation"));
+        return refuse(
+            stream,
+            404,
+            &refusal("analytics.unknown", "no such operation"),
+        );
     }
     match request.path.as_str() {
         "/v1/frontier" => answer(stream, &request, |r: FrontierRequest| engine.frontier(&r)),
@@ -147,7 +164,11 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
         "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
-        _ => refuse(stream, 404, &refusal("analytics.unknown", "no such operation")),
+        _ => refuse(
+            stream,
+            404,
+            &refusal("analytics.unknown", "no such operation"),
+        ),
     }
 }
 
@@ -188,12 +209,22 @@ fn answer<T: DeserializeOwned, R: Serialize>(
 ) -> std::io::Result<()> {
     let parsed: T = match serde_json::from_slice(&request.body) {
         Ok(parsed) => parsed,
-        Err(error) => return refuse(stream, 400, &refusal("analytics.invalid", &error.to_string())),
+        Err(error) => {
+            return refuse(
+                stream,
+                400,
+                &refusal("analytics.invalid", &error.to_string()),
+            );
+        }
     };
     match operation(parsed) {
         Ok(result) => match serde_json::to_string(&result) {
             Ok(body) => respond(stream, 200, "application/json", body.as_bytes()),
-            Err(error) => refuse(stream, 500, &refusal("analytics.engine", &error.to_string())),
+            Err(error) => refuse(
+                stream,
+                500,
+                &refusal("analytics.engine", &error.to_string()),
+            ),
         },
         Err(refused) => refuse(stream, status_of(&refused), &refused),
     }
@@ -213,12 +244,24 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
         .call()
         .map_err(|e| unreadable(format!("the object could not be read: {e}")))?;
     if response.status() != 200 {
-        return Err(unreadable(format!("the object store answered {}", response.status())));
+        return Err(unreadable(format!(
+            "the object store answered {}",
+            response.status()
+        )));
     }
-    let path = engine.scratch().join(format!("load-{}", request.load.replace(|c: char| !c.is_ascii_alphanumeric(), "_")));
+    let path = engine.scratch().join(format!(
+        "load-{}",
+        request
+            .load
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+    ));
     let copied = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&path)?;
-        let mut reader = response.body_mut().with_config().limit(MAX_FILE_BYTES).reader();
+        let mut reader = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_FILE_BYTES)
+            .reader();
         std::io::copy(&mut reader, &mut file)?;
         file.sync_all()
     })();
@@ -233,7 +276,13 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
 fn export(stream: &TcpStream, request: &Request, engine: &Engine) -> std::io::Result<()> {
     let parsed: ExportRequest = match serde_json::from_slice(&request.body) {
         Ok(parsed) => parsed,
-        Err(error) => return refuse(stream, 400, &refusal("analytics.invalid", &error.to_string())),
+        Err(error) => {
+            return refuse(
+                stream,
+                400,
+                &refusal("analytics.invalid", &error.to_string()),
+            );
+        }
     };
     let kind = match parsed.format {
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
@@ -261,7 +310,8 @@ fn export(stream: &TcpStream, request: &Request, engine: &Engine) -> std::io::Re
 fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
     let invalid = |detail: String| (400, refusal("analytics.invalid", &detail));
     let mut reader = BufReader::new(
-        stream.take(u64::try_from(MAX_HEAD_BYTES.saturating_add(MAX_BODY_BYTES)).unwrap_or(u64::MAX)),
+        stream
+            .take(u64::try_from(MAX_HEAD_BYTES.saturating_add(MAX_BODY_BYTES)).unwrap_or(u64::MAX)),
     );
     let mut line = String::new();
     let mut head = 0_usize;
@@ -272,7 +322,9 @@ fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
             .map_err(|e| invalid(format!("unreadable request: {e}")))?;
         head = head.saturating_add(read);
         if read == 0 || head > MAX_HEAD_BYTES {
-            return Err(invalid("the request head is missing or too long".to_owned()));
+            return Err(invalid(
+                "the request head is missing or too long".to_owned(),
+            ));
         }
         Ok(())
     };
@@ -281,7 +333,10 @@ fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
     let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
         return Err(invalid("the request line is malformed".to_owned()));
     };
-    let (method, path) = (method.to_owned(), target.split('?').next().unwrap_or_default().to_owned());
+    let (method, path) = (
+        method.to_owned(),
+        target.split('?').next().unwrap_or_default().to_owned(),
+    );
     let (mut length, mut authorization) = (0_usize, None);
     loop {
         next(&mut reader, &mut line)?;
@@ -301,7 +356,10 @@ fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
         }
     }
     if length > MAX_BODY_BYTES {
-        return Err((413, refusal("analytics.too_large", "the request body exceeds the bound")));
+        return Err((
+            413,
+            refusal("analytics.too_large", "the request body exceeds the bound"),
+        ));
     }
     let mut body = vec![0_u8; length];
     reader
