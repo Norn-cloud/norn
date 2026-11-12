@@ -44,6 +44,9 @@ fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
 const UNSUPPORTED: &str = "core.compute.unsupported_engine";
 /// The most rows one records page returns.
 pub const MAX_PAGE_ROWS: u32 = 200;
+/// The columns every exported row carries itself; no property is exported
+/// under these names.
+pub const EXPORT_RESERVED: [&str; 2] = ["id", "version"];
 const STALE: &str = "core.compute.stale_input";
 const MAX_VALUE: &str = "9000000000000000000";
 
@@ -498,6 +501,12 @@ impl Engine {
                 format!("{} AS version", ident(":v")),
             ];
             for id in &request.columns {
+                if EXPORT_RESERVED.contains(&id.as_str()) {
+                    return Err(refusal(
+                        "analytics.invalid",
+                        format!("{id} names the row's own column"),
+                    ));
+                }
                 let column = scope.column(id)?;
                 let value = match (request.format, column.kind) {
                     (ExportFormat::Jsonl, ColumnKind::Integer | ColumnKind::Decimal { .. }) => {
@@ -2057,7 +2066,8 @@ fn temporal_labels(
     let read = |width: u32| -> Outcome<Vec<(String, u64)>> {
         let sql = Frag::fmt(
             &format!(
-                "SELECT left({c}, {width}) AS label, count(*) FROM {} WHERE {{}} AND {c} IS NOT NULL GROUP BY label ORDER BY label",
+                // A reserved alias: a property may itself be named `label`.
+                "SELECT left({c}, {width}) AS \":label\", count(*) FROM {} WHERE {{}} AND {c} IS NOT NULL GROUP BY \":label\" ORDER BY \":label\"",
                 scope.table
             ),
             &[&scope.population],

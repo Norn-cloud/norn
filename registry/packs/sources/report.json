@@ -14,5 +14,13 @@
     "outcome": "partial", "watermark_from": "{}", "watermark_to": "{\"Item\":{\"version\":\"2026-11-12 11:58:01.000000\",\"id\":\"GOLD\"}}",
     "rows_read": 511, "rows_landed": 510, "rows_quarantined": 1, "quarantine_reasons": "mapping.runtime.invalid_record=1",
     "error_code": null, "error_message": null
+  },
+  "upload": {
+    "id": "5b1f0e3a9c2d4e6f8a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f", "upload_id": "u75706c6f6164732f6f72672f6465762f73616c65732e637376.0123456789abcdef0123456789abcdef",
+    "store": "uploads", "uri": "s3://uploads/uploads/org/dev/sales.csv",
+    "sha256": "8f4e2a9c1b7d3f6e0a5c9b2d8e4f1a7c3b6d9e2f5a8c1b4d7e0f3a6c9b2d5e8f", "size": 52,
+    "content_type": "text/csv", "file_name": "sales.csv", "format": "csv",
+    "columns": "[{\"name\":\"Region\",\"id\":\"region\",\"inferred\":\"text\",\"nullable\":false,\"null_count\":0,\"samples\":[\"north\"]}]",
+    "owner": "user:example", "completed_at": "2026-11-12T12:00:05.000Z"
   }
 }

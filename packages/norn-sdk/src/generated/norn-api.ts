@@ -9200,6 +9200,18 @@ export interface components {
             /** @description Typed path-to-page routes. */
             routes: components["schemas"]["NornIrWidgetRoute"][];
         };
+        /**
+         * @description Accessibility behaviours a node requires, named as UI SDK's behaviour
+         *     primitives (`@ui-sdk/core`). They say what the control must do for
+         *     keyboard, focus and assistive technology, never how it looks.
+         * @enum {string}
+         */
+        NornIrWidgetBehavior: "focus_scope" | "roving_focus" | "typeahead" | "selection" | "popup" | "dismiss" | "drag_and_drop" | "live_region";
+        /**
+         * @description Every way a call or read the page awaits can end.
+         * @enum {string}
+         */
+        NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
         /** @description Supported page components. */
         NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"];
         /** @description A named section or tab with explicit field inclusion and order. */
@@ -9610,6 +9622,192 @@ export interface components {
          */
         NornIrWidgetLayout: "table" | "detail" | "kanban" | "form" | "dashboard";
         /**
+         * @description A page's interaction statechart (UI-MACHINE-1).
+         *
+         *     Client state is the typed `fields` record, changed only by the `assign`
+         *     of a transition that a declared event fires. Effects are closed: call a
+         *     declared action binding, read a declared data binding, call a declared
+         *     host operation, cancel the awaited call, or navigate. The machine grants
+         *     no authority: the server decides every call and read it names.
+         */
+        NornIrWidgetMachine: {
+            /** @description Declared events and where each comes from. */
+            events: components["schemas"]["NornIrWidgetMachineEvent"][];
+            /** @description Typed client-state fields. */
+            fields: components["schemas"]["NornIrWidgetMachineField"][];
+            /** @description State the page opens in; it must have the `idle` role. */
+            initialStateId: string;
+            /**
+             * @description Version of the machine contract.
+             * @enum {string}
+             */
+            machineVersion: "0.1";
+            /** @description Declared states. */
+            states: components["schemas"]["NornIrWidgetMachineState"][];
+            /** @description Declared transitions. */
+            transitions: components["schemas"]["NornIrWidgetMachineTransition"][];
+        };
+        /** @description A server call or read named by a pending state or an effect. */
+        NornIrWidgetMachineCall: components["schemas"]["NornIrWidgetMachineCallOneOf0"] | components["schemas"]["NornIrWidgetMachineCallOneOf1"] | components["schemas"]["NornIrWidgetMachineCallOneOf2"];
+        /** @description Call the declared action binding. */
+        NornIrWidgetMachineCallOneOf0: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "action";
+        };
+        /** @description Read the declared data binding. */
+        NornIrWidgetMachineCallOneOf1: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "read";
+        };
+        /** @description Call a host operation by its `OpenAPI` operation id. */
+        NornIrWidgetMachineCallOneOf2: {
+            /** @enum {string} */
+            kind: "operation";
+            operationId: string;
+        };
+        /** @description Closed transition effects. */
+        NornIrWidgetMachineEffect: components["schemas"]["NornIrWidgetMachineEffectOneOf0"] | components["schemas"]["NornIrWidgetMachineEffectOneOf1"] | components["schemas"]["NornIrWidgetMachineEffectOneOf2"];
+        /** @description Start the call or read; its outcome arrives as an `outcome` event. */
+        NornIrWidgetMachineEffectOneOf0: {
+            call: components["schemas"]["NornIrWidgetMachineCall"];
+            input?: components["schemas"]["NornIrWidgetMachineEffectOneOf0PropertyInput"];
+            /** @enum {string} */
+            kind: "start";
+        };
+        /**
+         * @description Request members, each a ZEN expression over `input.fields` and
+         *     `input.event`. An action binding maps its own inputs and takes none.
+         */
+        NornIrWidgetMachineEffectOneOf0PropertyInput: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Cancel the awaited call; its outcome arrives as `cancelled`. */
+        NornIrWidgetMachineEffectOneOf1: {
+            /** @enum {string} */
+            kind: "cancel";
+        };
+        /** @description Navigate to a declared navigation item. */
+        NornIrWidgetMachineEffectOneOf2: {
+            itemId: string;
+            /** @enum {string} */
+            kind: "navigate";
+        };
+        /** @description One declared event. */
+        NornIrWidgetMachineEvent: {
+            /** @description Stable event id. */
+            eventId: string;
+            /**
+             * @description Typed payload members carried by a user or subscription event.
+             *     Outcome events carry the fixed payload of their outcome.
+             */
+            payload?: components["schemas"]["NornIrWidgetMachineField"][];
+            /** @description Where the event comes from. */
+            source: components["schemas"]["NornIrWidgetMachineEventSource"];
+        };
+        /**
+         * @description Closed event sources. Every source is an input: a person, the server, a
+         *     subscription, or a deadline the machine itself declared.
+         */
+        NornIrWidgetMachineEventSource: components["schemas"]["NornIrWidgetMachineEventSourceOneOf0"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf1"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf2"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf3"] | components["schemas"]["NornIrWidgetMachineEventSourceOneOf4"];
+        /** @description The page was opened by the host. */
+        NornIrWidgetMachineEventSourceOneOf0: {
+            /** @enum {string} */
+            kind: "page_opened";
+        };
+        /** @description A person used the control at `node_id` in this page's tree. */
+        NornIrWidgetMachineEventSourceOneOf1: {
+            /** @enum {string} */
+            kind: "user";
+            nodeId: string;
+        };
+        /** @description The server answered the call or read the current state awaits. */
+        NornIrWidgetMachineEventSourceOneOf2: {
+            /**
+             * @description For `refused` only: the refusal category matched. Omitted, it
+             *     matches every category.
+             * @enum {string}
+             */
+            category?: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+            /** @enum {string} */
+            kind: "outcome";
+            outcome: components["schemas"]["NornIrWidgetCallOutcome"];
+        };
+        /** @description A subscribed data binding delivered a new snapshot. */
+        NornIrWidgetMachineEventSourceOneOf3: {
+            bindingId: string;
+            /** @enum {string} */
+            kind: "subscription";
+        };
+        /** @description Fires `after_ms` after the source state of its transition is entered. */
+        NornIrWidgetMachineEventSourceOneOf4: {
+            afterMs: components["schemas"]["NornIrWholeNumber"];
+            /** @enum {string} */
+            kind: "timer";
+        };
+        /** @description One typed client-state field, or one typed member of an event payload. */
+        NornIrWidgetMachineField: {
+            /** @description Stable field id, unique within its record. */
+            fieldId: string;
+            /**
+             * @description Initial value of a state field. Required fields need one; payload
+             *     members never carry one.
+             */
+            initial?: components["schemas"]["NornIrJsonValue"];
+            /** @description Whether the value is always present (otherwise it may be null). */
+            required: boolean;
+            /**
+             * @description Scalar type.
+             * @enum {string}
+             */
+            type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+        };
+        /** @description One declared state. */
+        NornIrWidgetMachineState: {
+            /** @description The call or read a `pending` state waits for. */
+            awaits?: components["schemas"]["NornIrWidgetMachineCall"];
+            /**
+             * Format: uint64
+             * @description Deadline of a `pending` state; when it passes the runtime cancels the
+             *     call and raises the `timeout` outcome.
+             */
+            deadlineMs?: number;
+            /**
+             * @description Role of the state.
+             * @enum {string}
+             */
+            role: "idle" | "pending" | "error" | "terminal";
+            /** @description Stable state id. */
+            stateId: string;
+        };
+        /** @description One declared transition. */
+        NornIrWidgetMachineTransition: {
+            assign?: components["schemas"]["NornIrWidgetMachineTransitionPropertyAssign"];
+            /** @description Effects run when the transition fires, in order. */
+            effects?: components["schemas"]["NornIrWidgetMachineEffect"][];
+            /** @description Source state. */
+            from: string;
+            /**
+             * @description Boolean ZEN guard over `input.fields` and `input.event`. A guarded
+             *     transition refines; it never counts as covering an outcome.
+             */
+            guard?: string;
+            /** @description Triggering event. */
+            on: string;
+            /** @description Target state. */
+            target: string;
+            /** @description Stable transition id. */
+            transitionId: string;
+        };
+        /**
+         * @description New field values, each a ZEN expression over `input.fields` and
+         *     `input.event`, typed as the field.
+         */
+        NornIrWidgetMachineTransitionPropertyAssign: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /**
          * @description Host-native projections available to Widget UX.
          * @enum {string}
          */
@@ -9656,6 +9854,8 @@ export interface components {
         };
         /** @description One node in the page component tree. */
         NornIrWidgetNode: {
+            /** @description Accessibility behaviours this node requires (UI-VIEW-1). */
+            behaviors?: components["schemas"]["NornIrWidgetBehavior"][];
             /** @description Child components in presentation order. */
             children: components["schemas"]["NornIrWidgetNode"][];
             /** @description Closed component kind and its typed reference. */
@@ -9721,12 +9921,24 @@ export interface components {
         NornIrWidgetPage: {
             /** @description Typed values supplied by routes or the host when opening this page. */
             contextParams: components["schemas"]["NornIrWidgetContextParam"][];
+            /**
+             * @description Declared interaction statechart of this page (UI-MACHINE-1). The
+             *     renderer executes only this machine; the checker proves it has no
+             *     absorbing non-terminal state and that every pending state handles
+             *     every server outcome.
+             */
+            machine?: components["schemas"]["NornIrWidgetMachine"];
             /** @description Human-readable page name. */
             name: string;
             /** @description Stable page id. “Page” is an interaction surface, not computed data. */
             pageId: string;
             /** @description Root of the page component tree. */
             root: components["schemas"]["NornIrWidgetNode"];
+            /**
+             * @description What this page is in the UI ontology (UI-VIEW-1): a semantic view
+             *     kind bound to the domain concept it presents. Renderer-neutral.
+             */
+            view?: components["schemas"]["NornIrWidgetView"];
         };
         /** @description A requested page size and the hard maximum the host must enforce. */
         NornIrWidgetPageBounds: {
@@ -9797,6 +10009,11 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Refusal categories, as the server's `norn/refusal@2` documents them.
+         * @enum {string}
+         */
+        NornIrWidgetRefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
         /**
          * @description Projection renderers.
          * @enum {string}
@@ -9874,6 +10091,11 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetSortDirection: "asc" | "desc";
+        /**
+         * @description The role of a state. Roles drive the checker's laws.
+         * @enum {string}
+         */
+        NornIrWidgetStateRole: "idle" | "pending" | "error" | "terminal";
         /** @description The typed UX contract nested in a legacy `widget` payload. */
         NornIrWidgetUx: {
             /** @description Typed Norn action calls available to placements and forms. */
@@ -9943,6 +10165,30 @@ export interface components {
             /** @description Version or revision property on the edited object. */
             property: components["schemas"]["NornIrPropertyRef"];
         };
+        /**
+         * @description A page's place in the UI ontology (UI-VIEW-1).
+         *
+         *     A view is a semantic, typed UI concept, never a visual one. Its four
+         *     contracts are the page's typed data bindings (data), its `machine`
+         *     (interaction), the `behaviors` on its nodes (accessibility), and the
+         *     capability catalog derived by [`WidgetUx::renderer_capabilities`]
+         *     (what a renderer must implement to draw it). Renderers are compile
+         *     targets of this contract; swapping one never touches the page.
+         */
+        NornIrWidgetView: {
+            /**
+             * @description Semantic kind of the view.
+             * @enum {string}
+             */
+            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+            /** @description The domain concept the view presents. */
+            subject: components["schemas"]["NornIrWidgetViewSubject"];
+        };
+        /**
+         * @description Closed semantic view kinds.
+         * @enum {string}
+         */
+        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
         /** @description One render state of a widget. */
         NornIrWidgetViewState: {
             kind: components["schemas"]["NornIrWidgetViewStateKind"];
@@ -9955,6 +10201,49 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetViewStateKind: "empty" | "loading" | "ready" | "error" | "preview";
+        /** @description The domain concept a view presents. */
+        NornIrWidgetViewSubject: components["schemas"]["NornIrWidgetViewSubjectOneOf0"] | components["schemas"]["NornIrWidgetViewSubjectOneOf1"] | components["schemas"]["NornIrWidgetViewSubjectOneOf2"] | components["schemas"]["NornIrWidgetViewSubjectOneOf3"] | components["schemas"]["NornIrWidgetViewSubjectOneOf4"] | components["schemas"]["NornIrWidgetViewSubjectOneOf5"] | components["schemas"]["NornIrWidgetViewSubjectOneOf6"];
+        /** @description An object type (entity artifact). */
+        NornIrWidgetViewSubjectOneOf0: {
+            /** @enum {string} */
+            kind: "object_type";
+            object: components["schemas"]["NornIrArtifactRef"];
+        };
+        /** @description An action artifact. */
+        NornIrWidgetViewSubjectOneOf1: {
+            action: components["schemas"]["NornIrArtifactRef"];
+            /** @enum {string} */
+            kind: "action";
+        };
+        /** @description A retained question definition. */
+        NornIrWidgetViewSubjectOneOf2: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "question";
+        };
+        /** @description A transform. */
+        NornIrWidgetViewSubjectOneOf3: {
+            /** @enum {string} */
+            kind: "transform";
+            transformId: string;
+        };
+        /** @description A retained dashboard definition. */
+        NornIrWidgetViewSubjectOneOf4: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "dashboard";
+        };
+        /** @description A retained flow definition. */
+        NornIrWidgetViewSubjectOneOf5: {
+            definitionId: string;
+            /** @enum {string} */
+            kind: "flow";
+        };
+        /** @description The viewer's decisions. */
+        NornIrWidgetViewSubjectOneOf6: {
+            /** @enum {string} */
+            kind: "decisions";
+        };
         /**
          * @description MetricFlow timestamp selection.
          * @enum {string}

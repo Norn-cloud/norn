@@ -66,6 +66,29 @@ export const SyncRun = Norn.type({
   ],
 })
 
+// An upload the cell completed (UPLOAD-RECORD-1): what it read back from
+// storage at `:complete` (URI, SHA-256, size, the CSV profile) and who
+// completed it, kept so the upload loads after the host restarts. Its id is
+// the SHA-256 of the sealed upload id, which `upload_id` carries.
+export const Upload = Norn.type({
+  name: "source.Upload", title: "Completed upload", version: "0.1.0", implements: [Synced],
+  properties: Schema.Struct({
+    id: Schema.String,
+    upload_id: Schema.String,
+    store: Schema.Literals(["uploads", "documents"]),
+    uri: Schema.String,
+    sha256: Schema.String,
+    size: Schema.Int,
+    content_type: Schema.String,
+    file_name: Schema.String,
+    format: Schema.Literals(["csv", "other"]),
+    columns: Schema.String,
+    owner: Schema.String,
+    completed_at: Norn.ref("iso8601.timestamp"),
+  }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+
 export const RunSource = Norn.sourceSchema({
   id: "norn.connect.source",
   title: "The cell's own source sync reports",
@@ -73,10 +96,11 @@ export const RunSource = Norn.sourceSchema({
   source: {system: "norn-connect", instance: "cell", version: "norn-connect/1"},
   observedAt: "2026-11-12T00:00:00Z",
   adapter: {name: "norn-pull", version: "1"},
-  rawMetadata: {uri: "registry/packs/sources/report.json", sha256: "d35c28b304e8f7be251f1b8201f023a5dddb04bdf393774ab3309c28b6b9fecd"},
+  rawMetadata: {uri: "registry/packs/sources/report.json", sha256: "0522e67830bda54566f0999587a445b7a5d99af5285c9d0348f0089611d9f7e6"},
   datasets: [
     {id: "connection", nativeName: "Connection state after a sync run", kind: "document"},
-    {id: "sync_run", nativeName: "Sync run report", kind: "document"}
+    {id: "sync_run", nativeName: "Sync run report", kind: "document"},
+    {id: "upload", nativeName: "Completed upload record", kind: "document"}
   ],
   fields: [
     {dataset: "connection", name: "id", ordinal: 0, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
@@ -112,18 +136,33 @@ export const RunSource = Norn.sourceSchema({
     {dataset: "sync_run", name: "rows_quarantined", ordinal: 11, nativeType: "count", typeCandidate: {type: "integer", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "quarantine_reasons", ordinal: 12, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "sync_run", name: "error_code", ordinal: 13, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: false},
-    {dataset: "sync_run", name: "error_message", ordinal: 14, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: false}
+    {dataset: "sync_run", name: "error_message", ordinal: 14, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: false},
+    {dataset: "upload", name: "id", ordinal: 0, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "upload_id", ordinal: 1, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "store", ordinal: 2, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "uri", ordinal: 3, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "sha256", ordinal: 4, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "size", ordinal: 5, nativeType: "count", typeCandidate: {type: "integer", origin: "declared"}, required: true},
+    {dataset: "upload", name: "content_type", ordinal: 6, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "file_name", ordinal: 7, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "format", ordinal: 8, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "columns", ordinal: 9, nativeType: "json", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "owner", ordinal: 10, nativeType: "text", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "upload", name: "completed_at", ordinal: 11, nativeType: "rfc3339", typeCandidate: {type: "string", origin: "declared"}, required: true}
   ],
   codeSets: [
     {id: "connection_auth", dataset: "connection", field: "auth", origin: "declared", values: [{value: "api_key"}, {value: "client_credentials"}, {value: "presigned_upload"}]},
     {id: "connection_status", dataset: "connection", field: "status", origin: "declared", values: [{value: "syncing"}, {value: "ok"}, {value: "partial"}, {value: "failed"}]},
     {id: "connection_trigger", dataset: "connection", field: "last_trigger", origin: "declared", values: [{value: "schedule"}, {value: "manual"}, {value: "upload"}]},
     {id: "run_trigger", dataset: "sync_run", field: "trigger", origin: "declared", values: [{value: "schedule"}, {value: "manual"}, {value: "upload"}]},
-    {id: "run_outcome", dataset: "sync_run", field: "outcome", origin: "declared", values: [{value: "running"}, {value: "ok"}, {value: "partial"}, {value: "failed"}]}
+    {id: "run_outcome", dataset: "sync_run", field: "outcome", origin: "declared", values: [{value: "running"}, {value: "ok"}, {value: "partial"}, {value: "failed"}]},
+    {id: "upload_store", dataset: "upload", field: "store", origin: "declared", values: [{value: "uploads"}, {value: "documents"}]},
+    {id: "upload_format", dataset: "upload", field: "format", origin: "declared", values: [{value: "csv"}, {value: "other"}]}
   ],
   constraints: [
     {id: "connection_id", kind: "primary_key", dataset: "connection", fields: ["id"], origin: "declared"},
-    {id: "sync_run_id", kind: "primary_key", dataset: "sync_run", fields: ["id"], origin: "declared"}
+    {id: "sync_run_id", kind: "primary_key", dataset: "sync_run", fields: ["id"], origin: "declared"},
+    {id: "upload_id", kind: "primary_key", dataset: "upload", fields: ["id"], origin: "declared"}
   ]
 })
 
@@ -131,7 +170,7 @@ export const RunMapping = Norn.mapping({
   id: "norn.connect.mapping",
   title: "Sync reports to connections and runs",
   version: "0.1.0",
-  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "77e210d14cdde9ecfc6844d4a41c23270f55227df4c4257db17788a94b704ae9"},
+  source: {schemaId: "norn.connect.source", version: "0.1.0", sha256: "3dba3f7839bedd02f62ece31aec12c6b6c3ab406a3f94ab75ddb2e110a96301b"},
   sourceContract: {kind: "generic"},
   interfaces: [Synced],
   maps: [
@@ -172,6 +211,21 @@ export const RunMapping = Norn.mapping({
         {property: "error_message", value: "input.error_message"}
       ],
       links: [{link: "connection", targetMap: "connection", key: "input.connection_id"}]
+    },
+    {
+      id: "upload",
+      source: {dataset: "upload"},
+      target: {type: Upload, interface: Synced},
+      subject: "input.id",
+      sourceRecord: "'norn-connect/cell/upload/' + input.id",
+      properties: [
+        {property: "id", value: "input.id"}, {property: "upload_id", value: "input.upload_id"},
+        {property: "store", value: "input.store"}, {property: "uri", value: "input.uri"},
+        {property: "sha256", value: "input.sha256"}, {property: "size", value: "input.size"},
+        {property: "content_type", value: "input.content_type"}, {property: "file_name", value: "input.file_name"},
+        {property: "format", value: "input.format"}, {property: "columns", value: "input.columns"},
+        {property: "owner", value: "input.owner"}, {property: "completed_at", value: "timestamp(input.completed_at)"}
+      ]
     }
   ]
 })

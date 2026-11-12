@@ -1,6 +1,7 @@
 //! D102 / HOST-READ-5: the sources pack's own types, written by the cell's
 //! connection reports (observations through the report mapping, run after
-//! run), profile on the engine exactly as the cell profiles them.
+//! run), profile on the engine exactly as the cell profiles them: a property
+//! named like an engine alias (`label`) is just a column.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -204,5 +205,22 @@ fn reported_connections_and_runs_profile_on_the_engine_as_in_the_cell() {
         let engine = server::analytics(&host, &principals, &transport, None, &request)
             .expect("an engine route");
         assert_eq!(profile_of(&engine), profile_of(&exact), "{name}");
+    }
+    // A property named as a row's own column, or one named twice, is refused
+    // before the engine is asked.
+    for columns in ["id", "version", "label,label", "nope"] {
+        let path = "/v1/objects/source.Connection:export";
+        let query = format!("{SCOPE}&columns={columns}&format=jsonl");
+        let request = server::Request {
+            method: "GET",
+            path,
+            query: &query,
+            authorization: MEMBER,
+            now: 0,
+            body: "",
+        };
+        let refused = server::analytics(&host, &principals, &transport, None, &request)
+            .expect("an engine route");
+        assert_eq!(refused.status, 400, "{columns}: {}", refused.body);
     }
 }
