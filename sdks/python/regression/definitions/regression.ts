@@ -53,6 +53,7 @@ export const RecordModelSpec = Norn.action({
   input: SpecFields,
   output: Schema.Struct({ spec: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   writes: [{ type: ModelSpec, change: "created" }],
   effect: { kind: "upsert_input_object", type: ModelSpec, objectIdField: "spec", writeMode: { kind: "create_only" } },
 })
@@ -62,6 +63,7 @@ export const RecordAssumptionCheck = Norn.action({
   input: CheckFields,
   output: Schema.Struct({ check: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   writes: [{ type: AssumptionCheck, change: "created" }],
   // The spec must exist: it is read by its key in the same commit, and linked.
   slice: [{ name: "spec", type: ModelSpec, key: { property: { from: "input", property: "spec" } } }],
@@ -94,6 +96,7 @@ export const SubmitCheckRequest = Norn.action({
   input: RequestFields,
   output: Schema.Struct({ request: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   writes: [{ type: CheckRequest, change: "created" }],
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "create_only" } },
 })
@@ -103,6 +106,7 @@ export const FinishCheckRequest = Norn.action({
   input: RequestFields,
   output: Schema.Struct({ request: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  access: { artifactId: "stats.regression.access.policy", version: "0.1.0" },
   writes: [{ type: CheckRequest, change: "modified" }],
   effect: { kind: "upsert_input_object", type: CheckRequest, objectIdField: "request", writeMode: { kind: "upsert" } },
 })

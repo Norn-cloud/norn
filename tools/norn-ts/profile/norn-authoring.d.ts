@@ -364,6 +364,12 @@ declare module "@norn/authoring" {
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
+      /**
+       * The access policy that authorizes calls (ActionIR `access`). A policy whose
+       * rules name this action cannot be referenced here (the definitions would be
+       * circular): give its artifact id, `<policy id>.policy`.
+       */
+      readonly access?: AccessDefinition | { readonly artifactId: string; readonly version?: string }
     }
 
     /** An ActionIR action. */
