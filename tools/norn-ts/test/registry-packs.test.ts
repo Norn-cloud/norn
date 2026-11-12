@@ -39,8 +39,10 @@ test("registry packs are generated from their typed sources", () => {
 test.skipIf(!checker)("the Rust checker admits every registry pack and link", () => {
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
-  // Every installed core interface (a pack may implement any of them), plus the value types and units.
-  const interfaces = readdirSync(core).filter(name => name.endsWith(".interface.json")).sort()
+  // The core interfaces packs implement, plus the value types and units. Not every core interface:
+  // some (core.Order) name registry standard types (iso4217) this checker call does not install.
+  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
+  const interfaces = [...physics.map(name => `core.${name}.interface.json`), "norn.SourceEvidence.interface.json"]
   const base = [...interfaces, "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
