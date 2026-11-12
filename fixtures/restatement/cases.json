@@ -421,6 +421,109 @@
       },
       "restatement": "Refinery weekly\n1. Gold Yield, weekly: Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old\n2. Input in total: Input (sum of input) and Recovered (sum of recovered) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
       "restatementSha256": "25fee0ad971f77c4caec9df5a2a28fb551d438a816bc9e00f27eaaa3922d6c72"
+    },
+    {
+      "name": "an assistant's proposal quotes the request it answers",
+      "payload": {
+        "title": "Refinery weekly",
+        "tiles": [
+          {
+            "id": "t1",
+            "title": "Gold Yield, weekly",
+            "question": {
+              "irVersion": "0.1",
+              "name": "demo.yield_week",
+              "objectSet": "demo.Conversion",
+              "aggregate": [
+                {
+                  "metric": "demo.yield"
+                }
+              ],
+              "groupBy": [
+                {
+                  "path": {
+                    "property": "occurred_at"
+                  },
+                  "grain": "week"
+                }
+              ],
+              "filter": [
+                {
+                  "path": {
+                    "property": "metal"
+                  },
+                  "operator": "eq",
+                  "value": "gold"
+                }
+              ],
+              "window": {
+                "start": "2026-07-06T00:00:00Z",
+                "end": "2026-10-26T00:00:00Z"
+              },
+              "calendar": "iso_utc",
+              "freshness": {
+                "kind": "live",
+                "maxAgeMs": 5000
+              }
+            },
+            "view": {
+              "kind": "chart",
+              "chart": "line"
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "w": 2,
+              "h": 1
+            }
+          },
+          {
+            "id": "t2",
+            "title": "Input in total",
+            "question": {
+              "irVersion": "0.1",
+              "name": "studio.inputs",
+              "objectSet": "demo.Conversion",
+              "aggregate": [
+                {
+                  "metric": "demo.input"
+                },
+                {
+                  "metric": "demo.recovered"
+                }
+              ],
+              "groupBy": [],
+              "filter": [],
+              "window": {
+                "start": "2026-07-06T00:00:00Z",
+                "end": "2026-10-26T00:00:00Z"
+              },
+              "calendar": "iso_utc",
+              "freshness": {
+                "kind": "live",
+                "maxAgeMs": 5000
+              }
+            },
+            "view": {
+              "kind": "table"
+            },
+            "layout": {
+              "x": 0,
+              "y": 1,
+              "w": 1,
+              "h": 1
+            }
+          }
+        ],
+        "origin": {
+          "by": "assistant",
+          "proposal": "prop_7f3a",
+          "model": "claude-sonnet-5-5",
+          "request": "Weekly gold yield and the inputs behind it"
+        }
+      },
+      "restatement": "Refinery weekly\nProposed by the assistant (claude-sonnet-5-5) for the request: \"Weekly gold yield and the inputs behind it\"\n1. Gold Yield, weekly: Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, where metal is \"gold\", from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old\n2. Input in total: Input (sum of input) and Recovered (sum of recovered) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old",
+      "restatementSha256": "82d764e132194ac5cdbb37dfc3fe2686e02fa60d3ea5723237ae31d1641b5e84"
     }
   ]
 }

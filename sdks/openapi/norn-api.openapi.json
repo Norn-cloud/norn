@@ -1882,7 +1882,7 @@
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
-          "crate::object_profile"
+          "crate::object_routes"
         ],
         "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
         "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
@@ -2309,6 +2309,82 @@
           },
           "422": {
             "description": "The request was refused by a typed compute refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/questions:catalog": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "`GET /v1/questions:catalog`: the metrics, object types and engine bounds\nan ad-hoc question is built from, for this caller (D67: only what the\ncaller may read the population of).\n# Errors\nNo actor or a scope that is not this cell's (one opaque 403), or a host\nfailure reading the model.",
+        "operationId": "question_catalog",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The question catalog for this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3011,6 +3087,48 @@
               "null"
             ],
             "description": "Lower-case hex SHA-256 of `restatement`; null with it."
+          }
+        }
+      },
+      "CatalogObjectType": {
+        "type": "object",
+        "description": "One object type an ad-hoc question may range over, with every effective\nproperty and its resolved type (`null` for a registry or unresolved type).",
+        "required": [
+          "name",
+          "properties"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The object type's name: a question's `objectSet`."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProperty"
+            },
+            "description": "Its effective properties, in declaration order."
+          }
+        }
+      },
+      "CatalogProperty": {
+        "type": "object",
+        "description": "One effective property: its id and its resolved type, as declared.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The property id: what a group-by or filter path names."
+          },
+          "type": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+            "additionalProperties": true
           }
         }
       },
@@ -27444,6 +27562,60 @@
           }
         ],
         "description": "An execution world."
+      },
+      "QuestionCatalog": {
+        "type": "object",
+        "description": "`GET /v1/questions:catalog`: what this caller may build an ad-hoc question\nfrom, and what this cell's engine admits. Every metric and object type\nlisted is one the caller may read the population of (D67): a ratio only\nwhen both its operands are, a type only when it is a readable metric's\npopulation. Nothing listed is a promise: `:evaluate` still admits.",
+        "required": [
+          "objectTypes",
+          "metrics",
+          "grains",
+          "operators",
+          "maxGroupBy",
+          "maxBuckets"
+        ],
+        "properties": {
+          "grains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Calendar grains a group-by may bucket a time property by; a group-by\nwithout a grain groups by the property's values."
+          },
+          "maxBuckets": {
+            "type": "integer",
+            "description": "Most buckets one answer may have (above it, 413).",
+            "minimum": 0
+          },
+          "maxGroupBy": {
+            "type": "integer",
+            "description": "Most group-bys one question may have.",
+            "minimum": 0
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+              "additionalProperties": true
+            },
+            "description": "The listed metrics, as declared, in name order."
+          },
+          "objectTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogObjectType"
+            },
+            "description": "The object types the listed metrics range over."
+          },
+          "operators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter operators the engine admits."
+          }
+        }
       },
       "Refusal": {
         "allOf": [
