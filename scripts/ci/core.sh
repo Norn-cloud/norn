@@ -505,7 +505,10 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
                   if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
-done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"] + browser,
+# A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
+# would not narrow a shard, and the guard's own suite runs in the guards phase (D95).
+rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )

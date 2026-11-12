@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """The stable CI entrypoint of the default-deny gates (#3472). No gate logic lives here.
 
-The policy workflow pins exactly these two commands, so the trusted lane's
-check of its own workflow does not change when the gates do; gate changes land
-in base code (crates/norn-skeleton-guard), never in the workflow:
+The trusted workflows pin the one command below, so the trusted lane's check of its
+own workflow does not change when the gates do; gate changes land in base code
+(crates/norn-skeleton-guard), never in the workflow. Without `--root` it checks this
+checkout (`cargo xtask ci policy` and the Python isolation policy); no workflow runs
+that mode, it is for running by hand.
 
-- policy lane, `python3 -I -B scripts/ci/validate-runner-policy.py`: this checkout's
-  gates, `cargo xtask ci policy`;
 - trusted lane, `python3 -I -B -X pycache_prefix=<fresh> trusted/scripts/ci/validate-runner-policy.py --root
   candidate --maintainer-evidence <file>`: the gate binary built from the
   checkout that holds this file (the pull request's base) checks the pull
@@ -33,6 +33,8 @@ REPO = Path(__file__).resolve().parents[2]
 # PYTHON* environment), `-B` and a fresh bytecode prefix, so no `__pycache__` next to any
 # source, standard library included, is read or written. python_isolation.py pins this line.
 PYTHON = [sys.executable, "-I", "-B", "-X", f"pycache_prefix={tempfile.mkdtemp(prefix='norn-pycache-')}"]
+# Run before any child: the interpreter must honour every flag, or nothing below runs.
+ISOLATED = "import sys; sys.exit(0 if sys.flags.isolated and sys.dont_write_bytecode and sys.pycache_prefix else 1)"
 
 
 def main() -> int:
@@ -53,6 +55,9 @@ def main() -> int:
                    "--root", str(Path(args.root).resolve()), "--base-root", str(REPO)]
         if args.maintainer_evidence is not None:
             command += ["--maintainer-evidence", str(Path(args.maintainer_evidence).resolve())]
+    if subprocess.run([*PYTHON, "-c", ISOLATED], cwd=REPO, env=env).returncode != 0:
+        print("child Python is not isolated (-I, -B, pycache_prefix)", file=sys.stderr)
+        return 1
     result = subprocess.run(command, cwd=REPO, env=env).returncode
     # Base-owned Python isolation (#513).
     root = str(Path(args.root).resolve()) if args.root is not None else str(REPO)

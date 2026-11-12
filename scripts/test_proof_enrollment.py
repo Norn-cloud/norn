@@ -266,9 +266,11 @@ class AffectedPlanTests(unittest.TestCase):
     def test_markdown_only_keeps_policy_and_provenance(self):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)
-        self.assertEqual(plan["shard"], ["rest-1"])
+        # The guard is its own workspace (D95): no package is reached, so no test shard runs;
+        # the guards phase runs the guard's suite.
+        self.assertEqual(plan["shard"], [])
         self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
-        self.assertEqual(plan["packages"], "norn-skeleton-guard")
+        self.assertEqual(plan["packages"], "")
         self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
 

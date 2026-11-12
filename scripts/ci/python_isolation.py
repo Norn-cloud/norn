@@ -14,15 +14,20 @@ structural guarantees, which this check pins:
   `PYTHONDONTWRITEBYTECODE`, a fresh `PYTHONPYCACHEPREFIX`) and the assertion that they
   took effect;
 - gated Python (files, and the heredoc and `-c` bodies of the gated shell scripts) never
-  touches `sys.path`, imports only the standard library or `THIRD_PARTY`, loads siblings
-  only through the pinned `_sibling` (compiled from source, never from bytecode or by name
-  alone), and every file it loads by a path this check can resolve is a gate file;
+  touches `sys.path`, imports only the standard library or `THIRD_PARTY`, and loads
+  siblings only through `_sibling` (compiled from source, never from bytecode or by name
+  alone); `spec_from_file_location`, `run_path` and `_sibling` must name, through literals,
+  `__file__` and names bound once, a tracked gate file, or are refused; `exec`/`eval`/
+  `compile` of a file read and the dynamic import machinery are refused;
+- `_sibling` is only ever the pinned `def`, in every tracked Python file, gated or not;
 - no tracked file is bytecode or sits under `__pycache__`, and none is importable under a
   standard-library or `THIRD_PARTY` name.
 
-Best effort on top: `ENV_DROPS` lists shell constructs that would drop the header's
-variables, and workflow lines are scanned for `python` without `-I`. Both are text
-patterns, not a shell or YAML parser.
+Best effort on top, text patterns rather than a shell or YAML parser: `ENV_DROPS` lists
+shell constructs that would drop the header's variables or hide Python input (here-strings,
+double-quoted `-c`); `python_heredocs` reads heredoc bodies fed to a command naming
+`python`; workflow lines are scanned for `python` without `-I`. An interpreter reached only
+through a variable (`"$PY"`) is not recognised by these patterns.
 """
 
 from __future__ import annotations
@@ -52,6 +57,8 @@ TRUSTED_WORKFLOW_RUN = ('python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/
 RUNNER = "scripts/ci/validate-runner-policy.py"
 RUNNER_PYTHON = ('PYTHON = [sys.executable, "-I", "-B", "-X", '
                  'f"pycache_prefix={tempfile.mkdtemp(prefix=\'norn-pycache-\')}"]')
+RUNNER_ISOLATED = ('ISOLATED = "import sys; sys.exit(0 if sys.flags.isolated and sys.dont_write_bytecode '
+                   'and sys.pycache_prefix else 1)"')
 # Third-party packages gated Python may import; the CI venv pins their versions (core.sh).
 THIRD_PARTY = frozenset({"jsonschema", "yaml", "_yaml"})
 IMPORTABLE_SUFFIXES = frozenset({"py", "pyc", "pyo", "pyw", "pyd", "so"})
@@ -91,10 +98,14 @@ ENV_DROPS = (
      "unsetting, unexporting or shadowing an isolation variable"),
     (re.compile(rf"\b(?:{_VARIABLES})="), "reassigning an isolation variable"),
     (re.compile(r"(?:^|[\s;&|(\"'])(?:[\w./${}-]*/)?python3?(?:\.\d+)?\"?\s+-[A-Za-z]*E"), "`python -E`"),
+    (re.compile(r"\b(?:unset|export\s+-n)\b[^#\n]*\$"), "unsetting or unexporting a computed name (`${!PYTHON@}`)"),
+    (re.compile(r"-X\s*pycache_prefix"), "a `-X pycache_prefix` override (an empty one turns the prefix off)"),
+    (re.compile(r"python3?\b[^#\n]*(?<![<\d])<<<"), "a here-string as Python's input (not read by this check)"),
+    (re.compile(r"python3?(?:\.\d+)?\s+(?:-\w+\s+)*-c\s*\""), "a double-quoted `python -c` body (not read by this check)"),
 )
 WORKFLOW_PYTHON = re.compile(r"(?:^|[\s;&|(\"'`])((?:[\w./${}-]*/)?python3?(?:\.\d+)?)\"?(?=\s|$)[ \t]*(\S*)")
-# A heredoc fed to python, the command possibly continued over several `\` lines.
-HEREDOC = re.compile(r"python3?\b(?:[^\n]*\\\n)*[^\n]*<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\2\n", re.S)
+HEREDOC_OPERATOR = re.compile(r"(?<![<\d])<<(-?)\s*(['\"]?)(\w+)\2")
+PYTHON_WORD = re.compile(r"(?:^|[\s;&|(\"'`/])python3?(?:\.\d+)?(?=[\s\"';|)]|$)")
 DASH_C = re.compile(r"python3?\s+-c\s+'([^']*)'")
 
 
@@ -138,6 +149,8 @@ def workflow_errors(path: str, text: str) -> list[str]:
         for match in WORKFLOW_PYTHON.finditer(line):
             if match.group(2) != "-I":
                 errors.append(f"{path}:{number}: `{match.group(1)}` runs without `-I`")
+        if re.search(r"-X\s*pycache_prefix", line) and line.strip() != f"run: {TRUSTED_WORKFLOW_RUN}":
+            errors.append(f"{path}:{number}: a `-X pycache_prefix` outside the pinned trusted run is refused")
     if path in TRUSTED_WORKFLOWS:
         runs = [line.strip() for line in lines if "validate-runner-policy.py" in line and not line.lstrip().startswith("#")]
         if runs != [f"run: {TRUSTED_WORKFLOW_RUN}"]:
@@ -153,6 +166,12 @@ def runner_errors(text: str) -> list[str]:
     errors = []
     if len(pinned) != 1 or len(uses) != 1:
         errors.append(f"{RUNNER}: every child Python must start from the one pinned `{RUNNER_PYTHON}`")
+    asserted = [node for node in tree.body if isinstance(node, ast.Assign)
+                and ast.unparse(node) == ast.unparse(ast.parse(RUNNER_ISOLATED).body[0])]
+    checks = [node for node in ast.walk(tree) if isinstance(node, ast.List) and len(node.elts) == 3
+              and ast.unparse(node) == '[*PYTHON, \'-c\', ISOLATED]']
+    if len(asserted) != 1 or len(checks) != 1:
+        errors.append(f"{RUNNER}: must assert `{RUNNER_ISOLATED}` with `[*PYTHON, \"-c\", ISOLATED]` before any child")
     for node in ast.walk(tree):
         if (isinstance(node, ast.List) and node.elts and isinstance(node.elts[0], ast.Constant)
                 and re.fullmatch(r"(?:.*/)?python3?(?:\.\d+)?", str(node.elts[0].value))):
@@ -176,9 +195,8 @@ def shell_errors(root: Path, path: str, text: str, files: set[str], directories:
         for pattern, label in ENV_DROPS:
             if pattern.search(line):
                 errors.append(f"{path}:{number}: {label} would drop Python isolation")
-    for match in HEREDOC.finditer(text):
-        number = text.count("\n", 0, match.start(3)) + 1
-        errors += python_errors(root, f"{path}:{number}", match.group(3), PurePosixPath("."),
+    for number, body in python_heredocs(path, lines, errors):
+        errors += python_errors(root, f"{path}:{number}", body, PurePosixPath("."),
                                 files, directories, present)
     for match in DASH_C.finditer(text):
         number = text.count("\n", 0, match.start()) + 1
@@ -187,14 +205,58 @@ def shell_errors(root: Path, path: str, text: str, files: set[str], directories:
     return errors
 
 
+def python_heredocs(path: str, lines: list[str], errors: list[str]) -> list[tuple[int, str]]:
+    """Each heredoc body a gated shell script feeds to Python, with its first line number.
+
+    Best effort: a command (joined over `\\` continuation lines) that names `python` anywhere,
+    `cat <<PY | python3 -` included, has its heredocs read as Python; `<<-` terminators may be
+    tab-indented; a body that never terminates is refused. An interpreter reached only
+    through a variable (`"$PY"`) is not recognised."""
+    bodies = []
+    index = 0
+    while index < len(lines):
+        start = index
+        command = lines[index]
+        while command.endswith("\\") and index + 1 < len(lines):
+            index += 1
+            command = command[:-1] + " " + lines[index]
+        index += 1
+        if command.lstrip().startswith("#"):
+            continue
+        is_python = bool(PYTHON_WORD.search(command))
+        for operator in HEREDOC_OPERATOR.finditer(command):
+            strip, delimiter = operator.group(1), operator.group(3)
+            body_start = index
+            while index < len(lines) and (lines[index].lstrip("\t") if strip else lines[index]) != delimiter:
+                index += 1
+            if index >= len(lines):
+                errors.append(f"{path}:{start + 1}: heredoc `{delimiter}` never terminates")
+                return bodies
+            if is_python:
+                bodies.append((body_start + 1, "\n".join(lines[body_start:index])))
+            index += 1
+    return bodies
+
+
 class Paths:
     """Repository-relative paths of the expressions a Python source builds from literals and
     `__file__`; `None` where the value is computed."""
 
     def __init__(self, file: PurePosixPath | None, tree: ast.Module):
         self.file = file
-        self.names = {target.id: node.value for node in tree.body if isinstance(node, ast.Assign)
-                      for target in node.targets if isinstance(target, ast.Name)}
+        # A name resolves only if it is bound exactly once in the whole source, module-level or
+        # function-local, by a simple `name = value`; a name bound twice or any other way (a
+        # parameter, loop, `with`, augmented or walrus target) resolves to nothing.
+        bindings: dict[str, int] = {}
+        simple: dict[str, ast.AST] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bindings[node.id] = bindings.get(node.id, 0) + 1
+            elif isinstance(node, ast.arg):
+                bindings[node.arg] = bindings.get(node.arg, 0) + 1
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                simple[node.targets[0].id] = node.value
+        self.names = {name: value for name, value in simple.items() if bindings.get(name) == 1}
         self.seen: set[str] = set()
 
     @staticmethod
@@ -245,10 +307,38 @@ class Paths:
         return None
 
 
+DYNAMIC_IMPORTS = frozenset({"SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader", "__import__",
+                             "import_module", "run_module", "zipimporter"})
+FILE_READS = frozenset({"open", "read_text", "read_bytes", "read"})
+
+
+def sibling_errors(path: str, tree: ast.AST) -> list[str]:
+    """`_sibling` is only ever the pinned `def`: never rebound (`_sibling = lambda ...`), imported
+    or redefined differently. Checked in every tracked Python file, gated or not."""
+    canonical = ast.unparse(ast.parse(SIBLING_HELPER).body[0])
+    errors = []
+    for node in ast.walk(tree):
+        line = getattr(node, "lineno", 0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_sibling":
+            if ast.unparse(node) != canonical:
+                errors.append(f"{path}:{line}: `_sibling` differs from the pinned loader")
+        elif isinstance(node, ast.Name) and node.id == "_sibling" and isinstance(node.ctx, (ast.Store, ast.Del)):
+            errors.append(f"{path}:{line}: `_sibling` may only be bound by the pinned `def`")
+        elif isinstance(node, ast.alias) and "_sibling" in (node.name, node.asname):
+            errors.append(f"{path}:{line}: `_sibling` may only be bound by the pinned `def`")
+    return errors
+
+
 def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files: set[str],
                   directories: tuple[str, ...], present: set[str]) -> list[str]:
     """Isolation errors in one gated Python source (a file, or a shell heredoc or `-c` body
-    run from the repository root, `here`)."""
+    run from the repository root, `here`).
+
+    What is followed: paths built from literals, `__file__` and names bound exactly once
+    (`Paths`), in `_sibling`, `spec_from_file_location`, `run_path` and the `PATH_WRAPPERS`;
+    such a load must resolve to a tracked gate file, and one that does not resolve is
+    refused. `exec`/`eval`/`compile` of a file read outside `_sibling`, and the dynamic import
+    machinery (`DYNAMIC_IMPORTS`), are refused outright."""
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError as error:
@@ -256,32 +346,39 @@ def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files
     allowed = set(sys.stdlib_module_names) | THIRD_PARTY
     canonical = ast.unparse(ast.parse(SIBLING_HELPER).body[0])
     paths = Paths(PurePosixPath(path) if path.endswith(".py") else None, tree)
-    errors = []
+    errors = sibling_errors(path, tree)
 
     def load(label: str, node: ast.AST | None, line: int) -> None:
         target = paths(node) if node is not None else None
         if target is None:
-            errors.append(f"{path}:{line}: {label} from a computed path cannot be checked")
-        elif str(target) != path and str(target) in present and not is_gated(str(target), files, directories):
+            errors.append(f"{path}:{line}: {label} from a path this check cannot resolve is refused")
+        elif str(target) == path:
+            return
+        elif str(target) not in present:
+            errors.append(f"{path}:{line}: loads {target}, which is not a tracked file")
+        elif not is_gated(str(target), files, directories):
             errors.append(f"{path}:{line}: loads {target}, which is not a gate file")
-        elif str(target) not in present and (root / str(target)).exists():
-            errors.append(f"{path}:{line}: loads {target}, which is untracked")
 
-    parameters: dict[ast.AST, set[str]] = {}
+    enclosing: dict[ast.AST, ast.AST] = {}
     for function in ast.walk(tree):
-        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            names = {argument.arg for argument in function.args.args}
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             for inner in ast.walk(function):
-                parameters.setdefault(inner, set()).update(names)
-            if function.name == "_sibling" and ast.unparse(function) != canonical:
-                errors.append(f"{path}:{function.lineno}: `_sibling` differs from the pinned loader")
+                if inner is not function:
+                    enclosing[inner] = function  # walk order leaves the innermost function last
     for node in ast.walk(tree):
         line = getattr(node, "lineno", 0)
+        function = enclosing.get(node)
+        in_loader = (isinstance(function, ast.FunctionDef) and function.name == "_sibling"
+                     and ast.unparse(function) == canonical)
         if (isinstance(node, ast.Attribute) and node.attr == "path"
                 and isinstance(node.value, ast.Name) and node.value.id == "sys"):
             errors.append(f"{path}:{line}: gated Python must not use `sys.path`")
         elif isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
             errors.append(f"{path}:{line}: gated Python must not use `sys.path`")
+        if (isinstance(node, ast.Name) and node.id in DYNAMIC_IMPORTS) or \
+                (isinstance(node, ast.Attribute) and node.attr in DYNAMIC_IMPORTS) or \
+                (isinstance(node, ast.alias) and node.name.rsplit(".", 1)[-1] in DYNAMIC_IMPORTS):
+            errors.append(f"{path}:{line}: dynamic import machinery is refused in gated Python")
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if isinstance(node, ast.ImportFrom) and node.level:
                 errors.append(f"{path}:{line}: relative import in gated Python")
@@ -299,11 +396,15 @@ def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files
                     errors.append(f"{path}:{line}: names {target}, which is not a gate file")
             continue
         name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-        own = parameters.get(node, set())
+        if name in ("exec", "eval", "compile") and not in_loader and any(
+                isinstance(inner, ast.Call) and (inner.func.attr if isinstance(inner.func, ast.Attribute)
+                                                 else getattr(inner.func, "id", "")) in FILE_READS
+                for argument in node.args for inner in ast.walk(argument)):
+            errors.append(f"{path}:{line}: `{name}` of a file read is refused; load gated code with `_sibling`")
         if name == "_sibling" and node.args:
             module = paths(node.args[0])
             if module is None:
-                errors.append(f"{path}:{line}: `_sibling` of a computed name cannot be checked")
+                errors.append(f"{path}:{line}: `_sibling` of a computed name is refused")
             elif len(node.args) == 1 and not node.keywords:
                 base = PurePosixPath(path).parent if path.endswith(".py") else here
                 load("`_sibling`", ast.Constant(str(base / f"{module}.py")), line)
@@ -313,8 +414,11 @@ def python_errors(root: Path, path: str, source: str, here: PurePosixPath, files
         elif name in ("spec_from_file_location", "run_path") or name in PATH_WRAPPERS:
             index = PATH_WRAPPERS.get(name, 1 if name == "spec_from_file_location" else 0)
             argument = node.args[index] if len(node.args) > index else None
-            if isinstance(argument, ast.Name) and argument.id in own:
-                continue  # a wrapper's parameter: followed at the wrapper's call sites
+            if (isinstance(argument, ast.Name) and isinstance(function, ast.FunctionDef)
+                    and function.name in PATH_WRAPPERS
+                    and len(function.args.args) > PATH_WRAPPERS[function.name]
+                    and function.args.args[PATH_WRAPPERS[function.name]].arg == argument.id):
+                continue  # the wrapper's own path parameter: followed at the wrapper's call sites
             load(f"`{name}`", argument, line)
     return errors
 
@@ -336,7 +440,13 @@ def check(root: Path, gate_source: str) -> list[str]:
         errors += shell_errors(root, path, (root / path).read_text(encoding="utf-8"), files, directories, present) \
             if path in present else [f"{path}: gated shell script is missing"]
     for path in sorted(present):
-        if path.endswith(".py") and is_gated(path, files, directories) and not path.startswith(".github/"):
+        if path.endswith(".py") and not is_gated(path, files, directories):
+            try:
+                errors += sibling_errors(path, ast.parse((root / path).read_text(encoding="utf-8"), filename=path))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                pass  # an ungated file that does not parse loads nothing through `_sibling`
+            continue
+        if path.endswith(".py") and not path.startswith(".github/"):
             try:
                 source = (root / path).read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as error:
