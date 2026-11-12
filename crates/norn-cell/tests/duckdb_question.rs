@@ -202,3 +202,38 @@ proptest::proptest! {
         compare(&store,&plan,context);
     }
 }
+
+/// The grain labels the exact engine buckets by equal `DuckDB`'s `date_trunc`
+/// in UTC, cast to a date: at every month, quarter and year boundary of 2024
+/// (one second either side), around the epoch, on a leap day, across an ISO
+/// week that spans a year end, and at instants swept through 2024.
+#[test]
+#[allow(clippy::arithmetic_side_effects, reason = "instant sweep fixture")]
+fn grain_labels_equal_duckdb_date_trunc() {
+    use norn_checker::metric::compute::contribution::period_start;
+    use norn_ir::metric::TimeGrain;
+    let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+    let edges = [1704067199, 1704067200, 1706745599, 1706745600, 1709251199, 1709251200, 1711929599, 1711929600, 1714521599, 1714521600, 1717199999, 1717200000, 1719791999, 1719792000, 1722470399, 1722470400, 1725148799, 1725148800, 1727740799, 1727740800, 1730419199, 1730419200, 1733011199, 1733011200, 1735689599, 1735689600, -86401, -1, 0, 951782400, 951868799, 4102444799, 1735516800, 1735516799];
+    let sweep = (0..1_500_i64).map(|step| 1_703_462_400 + step * 21_599);
+    for (grain, name) in [
+        (TimeGrain::Day, "day"),
+        (TimeGrain::Week, "week"),
+        (TimeGrain::Month, "month"),
+        (TimeGrain::Quarter, "quarter"),
+        (TimeGrain::Year, "year"),
+    ] {
+        let sql = format!(
+            "SELECT CAST(CAST(date_trunc('{name}', make_timestamp(CAST(? AS BIGINT) * 1000000)) AS DATE) AS VARCHAR)"
+        );
+        for seconds in edges.into_iter().chain(sweep.clone()) {
+            let expected: String = conn
+                .query_row(&sql, [seconds], |row| row.get(0))
+                .expect("date_trunc");
+            assert_eq!(
+                period_start(seconds, grain).expect("label"),
+                expected,
+                "{name} at {seconds}"
+            );
+        }
+    }
+}
