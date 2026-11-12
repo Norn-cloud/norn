@@ -4,23 +4,28 @@
  * admitted/rejected symbol tables and the stable `NORN-FLOW-*` codes; the
  * checker and the corpus tests read it, nothing duplicates it in code.
  */
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-export const TOOL_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
+// Real paths throughout: TypeScript resolves files under node_modules to their
+// real paths, so a pinned directory reached through a symlink (Bun's isolated
+// linker, pnpm) must be compared as its real path too.
+export const TOOL_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), ".."))
 
 /**
  * The directory of a pinned dependency (`effect`, `typescript`), wherever the
  * package manager put it: nested under this package in a checkout, or hoisted
  * next to it when this package is installed into a project. Found the way
- * module resolution finds it, walking up from this package.
+ * module resolution finds it, walking up from this package (`from`). The
+ * result is the real path: isolated linkers (Bun's, pnpm's) install packages
+ * as symlinks, and TypeScript reports the files it reads by their real paths.
  */
-export function dependencyDir(name: string): string {
-  for (let dir = TOOL_ROOT; ; dir = dirname(dir)) {
+export function dependencyDir(name: string, from: string = TOOL_ROOT): string {
+  for (let dir = from; ; dir = dirname(dir)) {
     const candidate = join(dir, "node_modules", name)
-    if (existsSync(join(candidate, "package.json"))) return candidate
-    if (dirname(dir) === dir) return join(TOOL_ROOT, "node_modules", name)
+    if (existsSync(join(candidate, "package.json"))) return realpathSync(candidate)
+    if (dirname(dir) === dir) return join(from, "node_modules", name)
   }
 }
 export const PROFILE_PATH = join(TOOL_ROOT, "profile", "norn-effect-1.json")

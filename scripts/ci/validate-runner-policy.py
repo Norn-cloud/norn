@@ -5,9 +5,9 @@ The policy workflow pins exactly these two commands, so the trusted lane's
 check of its own workflow does not change when the gates do; gate changes land
 in base code (crates/norn-skeleton-guard), never in the workflow:
 
-- policy lane, `python3 scripts/ci/validate-runner-policy.py`: this checkout's
+- policy lane, `python3 -I -B scripts/ci/validate-runner-policy.py`: this checkout's
   gates, `cargo xtask ci policy`;
-- trusted lane, `python3 trusted/scripts/ci/validate-runner-policy.py --root
+- trusted lane, `python3 -I -B -X pycache_prefix=<fresh> trusted/scripts/ci/validate-runner-policy.py --root
   candidate --maintainer-evidence <file>`: the gate binary built from the
   checkout that holds this file (the pull request's base) checks the pull
   request as data. Nothing from the candidate runs. The evidence file, recorded
@@ -23,11 +23,16 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Matches the public workflow and repository toolchain.
 TOOLCHAIN = "1.98.0"
 REPO = Path(__file__).resolve().parents[2]
+# Every child Python starts isolated (#513): `-I` (no script directory or cwd on sys.path, no
+# PYTHON* environment), `-B` and a fresh bytecode prefix, so no `__pycache__` next to any
+# source, standard library included, is read or written. python_isolation.py pins this line.
+PYTHON = [sys.executable, "-I", "-B", "-X", f"pycache_prefix={tempfile.mkdtemp(prefix='norn-pycache-')}"]
 
 
 def main() -> int:
@@ -46,11 +51,15 @@ def main() -> int:
         if args.maintainer_evidence is not None:
             command += ["--maintainer-evidence", str(Path(args.maintainer_evidence).resolve())]
     result = subprocess.run(command, cwd=REPO, env=env).returncode
-    if result != 0 or args.root is None:
-        return result
+    # Base-owned Python isolation (#513).
+    root = str(Path(args.root).resolve()) if args.root is not None else str(REPO)
+    isolation = subprocess.run([*PYTHON, str(REPO / "scripts/ci/python_isolation.py"),
+                                "--root", root], cwd=REPO, env=env).returncode
+    if result != 0 or isolation != 0 or args.root is None:
+        return result or isolation
     # Execute the base validator over candidate bytes; never import candidate Python.
-    return subprocess.run([sys.executable, str(REPO / "scripts/proof_enrollment.py"),
-                           "--root", str(Path(args.root).resolve())], cwd=REPO, env=env).returncode
+    return subprocess.run([*PYTHON, str(REPO / "scripts/proof_enrollment.py"),
+                           "--root", root], cwd=REPO, env=env).returncode
 
 
 if __name__ == "__main__":

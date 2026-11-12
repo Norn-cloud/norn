@@ -12,7 +12,8 @@ import { TOOL_ROOT } from "./profile.ts"
 
 /** One prebuilt dev host of a release: where to get it and what it must hash to. */
 export interface HostAsset {
-  readonly url: string
+  /** Where the tarball channel publishes it; absent on the registry channel, which installs it as a package. */
+  readonly url?: string
   readonly sha256: string
   readonly size: number
 }
@@ -40,7 +41,7 @@ export function parseBuildInfo(value: unknown): BuildInfo {
   const packages = Object.entries(value.packages)
   const hosts = Object.entries(value.hosts)
   if (!packages.every(([, spec]) => text(spec))
-    || !hosts.every(([, host]) => record(host) && text(host.url) && typeof host.sha256 === "string" && /^[0-9a-f]{64}$/.test(host.sha256) && Number.isInteger(host.size))) {
+    || !hosts.every(([, host]) => record(host) && (host.url === undefined || text(host.url)) && typeof host.sha256 === "string" && /^[0-9a-f]{64}$/.test(host.sha256) && Number.isInteger(host.size))) {
     throw new Error("generated/build.json is not a build manifest")
   }
   return value as unknown as BuildInfo

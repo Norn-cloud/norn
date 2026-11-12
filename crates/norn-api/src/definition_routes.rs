@@ -268,6 +268,14 @@ impl DefinitionKinds {
     }
 }
 
+fn request_payload_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form("The kind's payload.", false)
+}
+
+fn admitted_payload_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form("The admitted payload, as canonical JSON.", false)
+}
+
 /// `POST /v1/definitions:admit`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -277,7 +285,7 @@ pub struct AdmitDefinitionRequest {
     /// The definition id.
     pub id: String,
     /// The kind's payload.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = request_payload_schema)]
     pub payload: Box<RawValue>,
 }
 
@@ -290,7 +298,7 @@ pub struct InstallDefinitionRequest {
     /// The definition id.
     pub id: String,
     /// The kind's payload.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = request_payload_schema)]
     pub payload: Box<RawValue>,
     /// The id's current version; absent requires that the id is unused.
     pub expected_version: Option<u64>,
@@ -460,7 +468,7 @@ pub struct DefinitionDocument {
     /// `active` or `retired`.
     pub lifecycle: String,
     /// The admitted payload, as canonical JSON.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = admitted_payload_schema)]
     pub payload: Box<RawValue>,
     /// The commit that installed this version.
     pub receipt: DefinitionReceipt,

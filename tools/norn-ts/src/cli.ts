@@ -88,6 +88,11 @@ if (!orgId || !environmentId) {
   process.stderr.write("--org and --env are required\n")
   process.exit(2)
 }
+if (command === "check") {
+  // Before compiling: a project whose sources do not compile is told too.
+  const { warnAuthoringVersion } = await import("./authoring-version.ts")
+  warnAuthoringVersion(resolve(input))
+}
 const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
 if (!pack.ok) {
   process.stdout.write(`${JSON.stringify(pack)}\n`)
