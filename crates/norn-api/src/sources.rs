@@ -759,7 +759,8 @@ pub struct UploadRun<'a> {
     pub uri: &'a str,
     /// The object's SHA-256.
     pub sha256: &'a str,
-    /// The generated mapping.
+    /// The generated mapping; empty for a dataset load, which its admitted
+    /// definition types directly.
     pub mapping: &'a str,
     /// Who loaded it.
     pub actor: &'a str,
@@ -823,6 +824,15 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
     );
 }
 
+/// The source schema a mapping reads; none for a load without a mapping.
+fn source_schema_id(mapping: &str) -> String {
+    if mapping.is_empty() {
+        String::new()
+    } else {
+        format!("{}.source", mapping.trim_end_matches(".mapping"))
+    }
+}
+
 /// SYNC-REPORT-1: the run, as the cell's own observations. A cell without
 /// the report mapping keeps its in-memory state only.
 fn report<E: SqlEngine>(
@@ -863,7 +873,7 @@ fn report<E: SqlEngine>(
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
         "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => format!("{}.source", config.mapping.trim_end_matches(".mapping")),
+        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&config.mapping),
         "mapping_id" => config.mapping.as_str(),
     };
     let phase = if ended.is_some() { "end" } else { "start" };

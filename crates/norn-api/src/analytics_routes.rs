@@ -430,6 +430,8 @@ pub struct UploadRecord {
     pub sha256: String,
     /// Its declared content type.
     pub content_type: String,
+    /// The file's name, as uploaded.
+    pub file_name: String,
 }
 
 /// The cell's completed uploads and the object store they live in.
@@ -446,6 +448,8 @@ pub trait Uploads {
 pub struct NornDatasetLoad {
     /// The dataset's object type.
     pub object_type: String,
+    /// The `upload` connection the load is reported under (SYNC-REPORT-1).
+    pub connection_id: String,
     /// The load identity; answers over the dataset name it.
     pub load: String,
     /// The file's durable URI.
@@ -469,7 +473,9 @@ pub struct NornDatasetLoad {
 /// the object through a presigned URL, verifies its SHA-256, types every row,
 /// and quarantines a row it cannot type (or that misses a required value)
 /// with its reason. The load becomes the dataset's current one; each row
-/// traces to `(uri, sha256, row)`. Only an admin or owner may load.
+/// traces to `(uri, sha256, row)`. Decided like any upload load
+/// (`SyncSource("upload")`); the load is reported as a run of the type's
+/// `upload` connection, as the cell's own observations (SYNC-REPORT-1).
 ///
 /// # Errors
 /// A denied caller (one opaque 403), an unknown upload or type (404), a
@@ -484,23 +490,74 @@ pub fn load_dataset<E: SqlEngine>(
     transport: &dyn Transport,
     now_ms: u64,
 ) -> Result<NornDatasetLoad, Refusal> {
-    crate::definition_routes::authorize(host, scope, actor, Operation::WriteDefinitions)?;
+    crate::definition_routes::authorize(
+        host,
+        scope,
+        actor,
+        Operation::SyncSource("upload".to_owned()),
+    )?;
     let request: DatasetLoadRequest =
         serde_json::from_str(body).map_err(|e| Refusal::invalid(e.to_string()))?;
-    let not_found = || {
-        Refusal::new(
-            http::StatusCode::NOT_FOUND,
-            "dataset.not_found",
-            "no such upload or type",
-            "load a completed upload into an admitted object type",
-        )
-    };
-    let record = uploads.record(&request.upload_id).ok_or_else(not_found)?;
+    let record = uploads
+        .record(&request.upload_id)
+        .ok_or_else(dataset_not_found)?;
+    let loaded = load_upload(host, &request.object_type, &record, uploads, transport, now_ms)?;
+    // The type's upload connection, whichever path loads it: an `:define`d
+    // type `upload.<Name>` reports where a cell load of it does.
+    let named = request.object_type.strip_prefix("upload.");
+    let connection_id = format!(
+        "upload.{}",
+        named.unwrap_or(&request.object_type).to_ascii_lowercase()
+    );
+    // Reported after the cell is released: the report commits through it.
+    crate::sources::report_upload(
+        host,
+        &crate::sources::UploadRun {
+            id: &connection_id,
+            label: &record.file_name,
+            uri: &record.uri,
+            sha256: &record.sha256,
+            mapping: "",
+            actor: actor.unwrap_or_default(),
+            started_ms: now_ms,
+            ended_ms: now_ms.saturating_add(loaded.millis),
+            counts: (
+                loaded.rows.saturating_add(loaded.rejected),
+                loaded.rows,
+                loaded.rejected,
+            ),
+            reasons: loaded.reasons.clone(),
+        },
+    );
+    Ok(NornDatasetLoad {
+        object_type: request.object_type,
+        connection_id,
+        load: loaded.load,
+        uri: record.uri,
+        sha256: record.sha256,
+        rows: loaded.rows,
+        rejected: loaded.rejected,
+        reasons: loaded.reasons,
+        bytes: loaded.bytes,
+        millis: loaded.millis,
+    })
+}
+
+/// Load `record` into the engine as the dataset `object_type` and record it
+/// as the type's current load.
+fn load_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+    record: &UploadRecord,
+    uploads: &dyn Uploads,
+    transport: &dyn Transport,
+    now_ms: u64,
+) -> Result<LoadResponse, Refusal> {
     let guard = host.cell()?;
     let store = guard.store();
     let table = store
-        .analytics_table(&request.object_type)
-        .map_err(|_unknown| not_found())?;
+        .analytics_table(object_type)
+        .map_err(|_unknown| dataset_not_found())?;
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
@@ -543,7 +600,7 @@ pub fn load_dataset<E: SqlEngine>(
     let recorded_at = store.verified_head().map_err(Refusal::host)?.commits;
     store
         .record_analytics_dataset(
-            &request.object_type,
+            object_type,
             &DatasetRecord {
                 load: loaded.load.clone(),
                 uri: record.uri.clone(),
@@ -555,17 +612,16 @@ pub fn load_dataset<E: SqlEngine>(
             },
         )
         .map_err(Refusal::host)?;
-    Ok(NornDatasetLoad {
-        object_type: request.object_type,
-        load: loaded.load,
-        uri: record.uri,
-        sha256: record.sha256,
-        rows: loaded.rows,
-        rejected: loaded.rejected,
-        reasons: loaded.reasons,
-        bytes: loaded.bytes,
-        millis: loaded.millis,
-    })
+    Ok(loaded)
+}
+
+fn dataset_not_found() -> Refusal {
+    Refusal::new(
+        http::StatusCode::NOT_FOUND,
+        "dataset.not_found",
+        "no such upload or type",
+        "load a completed upload into an admitted object type",
+    )
 }
 
 /// HOST-READ-5 on the engine (D102): the profile of every row of

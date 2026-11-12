@@ -777,3 +777,145 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
         json!({"after": [last.version, last.source_id], "limit": 100})
     );
 }
+
+/// Admits `SyncSource("upload")` for `loader` alone.
+struct UploadsOnly;
+
+impl norn_api::authz::Authorizer for UploadsOnly {
+    fn authorize(
+        &self,
+        request: &norn_api::authz::AccessRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        match (&request.operation, request.actor) {
+            (norn_api::authz::Operation::SyncSource(target), Some("loader"))
+                if target == "upload" =>
+            {
+                Ok(())
+            }
+            _ => Err(norn_api::authz::read_denied()),
+        }
+    }
+}
+
+/// One completed upload, `u1`.
+struct OneUpload;
+
+impl norn_api::analytics_routes::Uploads for OneUpload {
+    fn record(&self, id: &str) -> Option<norn_api::analytics_routes::UploadRecord> {
+        (id == "u1").then(|| norn_api::analytics_routes::UploadRecord {
+            uri: "s3://uploads/demo/items.csv".into(),
+            sha256: "ab".repeat(32),
+            content_type: "text/csv".into(),
+            file_name: "items.csv".into(),
+        })
+    }
+    fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
+        Some(format!("https://objects.example/{}", &uri["s3://".len()..]))
+    }
+}
+
+/// An engine that types three rows of every load and quarantines one.
+#[derive(Default)]
+struct ThreeAndOne(std::sync::Mutex<Vec<norn_cell::analytics::LoadRequest>>);
+
+impl norn_api::analytics_routes::Transport for ThreeAndOne {
+    fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        None
+    }
+    fn call(
+        &self,
+        call: &norn_api::analytics_routes::EngineCall,
+    ) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        assert_eq!(call.op, "load");
+        let request: norn_cell::analytics::LoadRequest =
+            serde_json::from_str(&call.body).expect("a load");
+        let answer = norn_cell::analytics::LoadResponse {
+            load: request.load.clone(),
+            rows: 3,
+            rejected: 1,
+            reasons: BTreeMap::from([("bulk.type".to_owned(), 1)]),
+            bytes: 64,
+            millis: 5,
+        };
+        self.0.lock().expect("calls").push(request);
+        Some(norn_api::analytics_routes::EngineAnswer {
+            op: call.op.clone(),
+            digest: call.digest.clone(),
+            status: 200,
+            body: serde_json::to_string(&answer).expect("answer"),
+        })
+    }
+}
+
+/// BULK-LOAD-1 + SYNC-REPORT-1: a dataset load is decided like any upload
+/// load, reaches the engine with a presigned URL, and is reported as a run of
+/// the type's `upload` connection.
+#[test]
+fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = host().with_authorizer(UploadsOnly);
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = json!({"uploadId": "u1", "objectType": "canon.Item"}).to_string();
+    let engine = ThreeAndOne::default();
+    for actor in [None, Some("viewer")] {
+        let refused = load_dataset(&host, &scope, actor, &body, &OneUpload, &engine, 0)
+            .expect_err("only an upload loader loads");
+        assert_eq!(refused.status, 403, "{actor:?}");
+    }
+    assert!(engine.0.lock().expect("calls").is_empty());
+    let loaded = load_dataset(
+        &host,
+        &scope,
+        Some("loader"),
+        &body,
+        &OneUpload,
+        &engine,
+        EXTRACTED_AT_MS,
+    )
+    .expect("loaded");
+    assert_eq!(
+        (loaded.connection_id.as_str(), loaded.rows, loaded.rejected),
+        ("upload.canon.item", 3, 1)
+    );
+    let calls = engine.0.lock().expect("calls");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].file.url, "https://objects.example/uploads/demo/items.csv");
+    assert_eq!(calls[0].table.name, "canon.Item");
+    let text = |object: &norn_ir::RuntimeObject, field: &str| {
+        object
+            .get(field)
+            .and_then(RuntimeValue::as_str)
+            .map(str::to_owned)
+    };
+    let connection = host
+        .host_object("source.Connection", "upload.canon.item")
+        .expect("read")
+        .expect("the upload connection");
+    for (field, value) in [
+        ("system", "upload"),
+        ("label", "items.csv"),
+        ("target", "s3://uploads/demo/items.csv"),
+        ("auth", "presigned_upload"),
+        ("status", "partial"),
+        ("last_trigger", "upload"),
+        ("quarantine_reasons", "bulk.type=1"),
+        ("mapping_id", ""),
+        ("source_schema_id", ""),
+    ] {
+        assert_eq!(text(&connection, field).as_deref(), Some(value), "{field}");
+    }
+    let run = host
+        .host_object("source.SyncRun", &format!("upload.canon.item/{EXTRACTED_AT_MS}"))
+        .expect("read")
+        .expect("the load's run");
+    assert_eq!(text(&run, "run_by").as_deref(), Some("loader"));
+    assert_eq!(text(&run, "outcome").as_deref(), Some("partial"));
+    let count = |field: &str| run.get(field).and_then(RuntimeValue::as_i64);
+    assert_eq!(
+        (count("rows_read"), count("rows_landed"), count("rows_quarantined")),
+        (Some(4), Some(3), Some(1))
+    );
+}
