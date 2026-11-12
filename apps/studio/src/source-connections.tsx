@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { systemName } from "./lib/catalog.ts"
+import { UploadCsv } from "./upload-csv.tsx"
 
 /** The platform sources pack's connection type: one record per connected system or upload. */
 const CONNECTION_TYPE = "source.Connection"
@@ -64,7 +65,7 @@ export function SourceConnections() {
   })
   const notInstalled = connections.error instanceof CellRefusal && connections.error.status === 404
   return (
-    <Panel icon={Cable} label="Connections">
+    <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {connections.isPending && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well><EmptyState icon={Cable} title="No connections">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</EmptyState></Well>
