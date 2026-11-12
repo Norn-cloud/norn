@@ -246,7 +246,8 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser"])
+        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 

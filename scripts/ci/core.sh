@@ -11,7 +11,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features wasm clippy doc guards integration browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc guards integration browser formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -91,7 +91,7 @@ use_jsonschema() {
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && $1 != browser && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       use_jsonschema
@@ -186,9 +186,12 @@ PY
       cargo test --locked -p norn-canonical -p norn-checker
       cargo test --locked -p norn-canonical -p norn-checker --features norn-canonical/preserve-order-probe
       cargo test --locked -p norn-canonical -p norn-ir -p norn-checker --features serde_json/arbitrary_precision
-      # The workspace never enables the optional DuckDB backend, so a change
-      # that breaks it compiles everywhere else; check it here (#513).
-      cargo check --locked -p norn-cell --features duckdb
+      ;;
+    duckdb)
+      # The workspace never enables the optional DuckDB backend, so a change that breaks it
+      # compiles everywhere else (#513, #1152). Build it and run its integration test; full
+      # plans run this phase, and affected plans run it whenever norn-cell is reached.
+      cargo test --locked -p norn-cell --features duckdb --test duckdb_question
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -329,14 +332,15 @@ known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
 # Warm nextest runtimes and phase seconds: Boat run 41541177097;
-# heavy-3 and integration: repaired Boat run 41542781995. `phase/features` adds the
-# DuckDB backend's cold bundled C++ build (`cargo check -p norn-cell --features duckdb`,
-# measured on a default Boat VM, #1206): it is not cached, so it is charged in full.
+# heavy-3 and integration: repaired Boat run 41542781995. `phase/duckdb` is the DuckDB
+# backend's cold bundled C++ build plus norn-cell and its integration test, timed once on a
+# default Boat VM from an empty target (#1206): sccache does not cache the C++, so it is
+# charged in full.
 weights = {
     "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 89,
     "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
     "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
-    "phase/doctest": 6, "phase/features": 510, "phase/wasm": 97,
+    "phase/doctest": 6, "phase/features": 239, "phase/duckdb": 280, "phase/wasm": 97,
     "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
     "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
     # Estimate until the first Studio browser rows run in CI (#1113).
@@ -490,7 +494,9 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
                   if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
-done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"] + browser,
+# The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
+duckdb = ["duckdb"] if "norn-cell" in reached else []
+done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
