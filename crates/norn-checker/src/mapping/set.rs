@@ -285,11 +285,7 @@ fn path_findings(
                 crate::DiagnosticSeverity::Info,
                 format!(
                     "{}; obligations={}; inputs={pins:?}",
-                    if evidence.certified {
-                        "certified"
-                    } else {
-                        "bounded-no-counterexample"
-                    },
+                    evidence.evidence.as_str(),
                     evidence.obligations
                 ),
                 None,

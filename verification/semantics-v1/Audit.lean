@@ -25,3 +25,4 @@ import NornSem.Exchange
 #print axioms Norn.Sem.Law.Tree.WellFormed.unambiguous
 #print axioms Norn.Sem.Obligation.exceptionTrees_sound
 #print axioms Norn.Sem.Exchange.check_sound
+#print axioms Norn.Sem.Exchange.check_accepts_copy

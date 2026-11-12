@@ -58,8 +58,9 @@ fn agrees(name: &str) -> Option<bool> {
     Some(match name {
         // A source theory making `S` diagonal preserves the target EGD.
         "accepts-valid" => copy(&functional, &[vec![step(0, &[2, 3])]]),
-        // An EGD step whose body is absent from the state proves nothing.
-        "egd-skips-body" => !copy(&unrelated, &[vec![step(0, &[0, 1])]]),
+        // An EGD step whose body is absent from the state proves nothing:
+        // the state holds `S(0, 1)` up to classes, never `S(1, 0)`.
+        "egd-skips-body" => !copy(&functional, &[vec![step(0, &[1, 0])]]),
         // A state atom of another relation does not match the body.
         "has-ignores-relation" => !copy(&unrelated, &[vec![step(0, &[0, 1])]]),
         // A TGD's existential variable is a fresh element, never an old one.

@@ -16,11 +16,18 @@
 //!
 //! The bounded counterexample search stays in place for refutation, and for
 //! every obligation this module cannot certify.
+//!
+//! The search is bounded twice. Its own limits (`MAX_CASES`, `MAX_STEPS`,
+//! `MAX_ATOMS`, counted before anything is enumerated) make it give up, and the
+//! caller falls back to the bounded search. Every match attempt and chase step
+//! is also charged to the admission's `AdmissionWork`; exhausting that refuses
+//! the admission, as it does in the search.
 
 mod check;
 
 use std::collections::BTreeMap;
 
+use super::chase::{AdmissionWork, ChaseError};
 use super::theory::{Atom as NamedAtom, Dependency, Term, Theory};
 use check::check;
 use check::{
@@ -32,25 +39,48 @@ use check::{
 const MAX_CASES: usize = 64;
 const MAX_STEPS: usize = 512;
 const MAX_ATOMS: usize = 2048;
+const MAX_MATCHES: usize = 4096;
+
+/// The number of rule choices `case_choices` would enumerate, or `None` when
+/// it exceeds `MAX_CASES`. Counted without building any choice.
+fn case_count(rules: &[Rule], body: &[Atom]) -> Option<usize> {
+    let mut count = 1_usize;
+    for atom in body {
+        let producers = rules
+            .iter()
+            .filter(|rule| rule.head.rel == atom.rel && rule.head.args.len() == atom.args.len())
+            .count();
+        count = count.checked_mul(producers)?;
+        if count > MAX_CASES {
+            return None;
+        }
+    }
+    Some(count)
+}
 
 /// Every assignment of `body`'s variables to elements that matches it in
-/// `state`, up to `limit`.
-fn matches(state: &State, body: &[Atom], limit: usize) -> Vec<Vec<usize>> {
+/// `state`, up to `MAX_MATCHES`. Each fact tried is charged to `work`.
+fn matches(
+    state: &State,
+    body: &[Atom],
+    work: &AdmissionWork,
+) -> Result<Vec<Vec<usize>>, ChaseError> {
     fn go(
         state: &State,
         body: &[Atom],
         asg: &mut Vec<Option<usize>>,
         out: &mut Vec<Vec<usize>>,
-        limit: usize,
-    ) {
-        if out.len() >= limit {
-            return;
+        work: &AdmissionWork,
+    ) -> Result<(), ChaseError> {
+        if out.len() >= MAX_MATCHES {
+            return Ok(());
         }
         let Some((atom, rest)) = body.split_first() else {
             out.push(asg.iter().map(|e| e.unwrap_or(0)).collect());
-            return;
+            return Ok(());
         };
         for fact in &state.atoms {
+            work.charge()?;
             let es = &fact.args;
             if fact.rel != atom.rel || es.len() != atom.args.len() {
                 continue;
@@ -72,91 +102,121 @@ fn matches(state: &State, body: &[Atom], limit: usize) -> Vec<Vec<usize>> {
                 }
             }
             if ok {
-                go(state, rest, asg, out, limit);
+                go(state, rest, asg, out, work)?;
             }
             *asg = saved;
         }
+        Ok(())
     }
     let size = width(body).unwrap_or(1);
     let mut out = Vec::new();
-    go(state, body, &mut vec![None; size], &mut out, limit);
-    out
+    go(state, body, &mut vec![None; size], &mut out, work)?;
+    Ok(out)
 }
 
 /// Whether a TGD's head already holds for some extension of `asg`.
-fn head_holds(state: &State, body: &[Atom], head: &[Atom], asg: &[usize]) -> bool {
+fn head_holds(
+    state: &State,
+    body: &[Atom],
+    head: &[Atom],
+    asg: &[usize],
+    work: &AdmissionWork,
+) -> Result<bool, ChaseError> {
     let mut all = body.to_vec();
     all.extend(head.iter().cloned());
-    matches(state, &all, 4096).iter().any(|found| {
+    Ok(matches(state, &all, work)?.iter().any(|found| {
         body.iter().flat_map(|atom| atom.args.iter()).all(|v| {
             rep_of(&state.rep, value_at(found, *v)) == rep_of(&state.rep, value_at(asg, *v))
         })
-    })
+    }))
 }
 
-/// Chase one case until `left` and `right` merge, recording each step.
-fn chase_case(theory: &[Dep], mut state: State, left: usize, right: usize) -> Option<Vec<Step>> {
-    let mut trace = Vec::new();
-    while rep_of(&state.rep, left) != rep_of(&state.rep, right) {
-        if trace.len() >= MAX_STEPS || state.atoms.len() >= MAX_ATOMS {
-            return None;
-        }
-        let mut progressed = false;
-        'deps: for (index, dep) in theory.iter().enumerate() {
-            match dep {
-                Dep::Egd {
-                    body,
-                    left: l,
-                    right: r,
-                } => {
-                    for asg in matches(&state, body, 4096) {
-                        if rep_of(&state.rep, value_at(&asg, *l))
-                            != rep_of(&state.rep, value_at(&asg, *r))
-                        {
-                            let step = Step { dep: index, asg };
-                            state = apply(theory, state, &step)?;
-                            trace.push(step);
-                            progressed = true;
-                            break 'deps;
-                        }
+/// The next step the chase can take from `state`, if any.
+fn next_step(
+    theory: &[Dep],
+    state: &State,
+    work: &AdmissionWork,
+) -> Result<Option<Step>, ChaseError> {
+    for (index, dep) in theory.iter().enumerate() {
+        match dep {
+            Dep::Egd { body, left, right } => {
+                for asg in matches(state, body, work)? {
+                    if rep_of(&state.rep, value_at(&asg, *left))
+                        != rep_of(&state.rep, value_at(&asg, *right))
+                    {
+                        return Ok(Some(Step { dep: index, asg }));
                     }
                 }
-                Dep::Tgd { body, head } => {
-                    for asg in matches(&state, body, 4096) {
-                        if !head_holds(&state, body, head, &asg) {
-                            let step = Step { dep: index, asg };
-                            state = apply(theory, state, &step)?;
-                            trace.push(step);
-                            progressed = true;
-                            break 'deps;
-                        }
+            }
+            Dep::Tgd { body, head } => {
+                for asg in matches(state, body, work)? {
+                    if !head_holds(state, body, head, &asg, work)? {
+                        return Ok(Some(Step { dep: index, asg }));
                     }
                 }
             }
         }
-        if !progressed {
-            return None;
-        }
     }
-    Some(trace)
+    Ok(None)
 }
 
-/// Untrusted search: a certificate for the target EGD, or `None` when the
+/// Chase one case until `left` and `right` merge, recording each step.
+/// `Ok(None)` gives up; `Err` is exhausted admission work.
+fn chase_case(
+    theory: &[Dep],
+    mut state: State,
+    left: usize,
+    right: usize,
+    work: &AdmissionWork,
+) -> Result<Option<Vec<Step>>, ChaseError> {
+    let mut trace = Vec::new();
+    while rep_of(&state.rep, left) != rep_of(&state.rep, right) {
+        if trace.len() >= MAX_STEPS || state.atoms.len() >= MAX_ATOMS {
+            return Ok(None);
+        }
+        let Some(step) = next_step(theory, &state, work)? else {
+            return Ok(None);
+        };
+        // Applying the step here, and once more in `check`, each scan the state.
+        work.charge_units(state.atoms.len().saturating_mul(2).saturating_add(2))?;
+        let Some(next) = apply(theory, state, &step) else {
+            return Ok(None);
+        };
+        state = next;
+        trace.push(step);
+    }
+    Ok(Some(trace))
+}
+
+/// Untrusted search: a certificate for the target EGD, or `Ok(None)` when the
 /// search gives up. Its output still has to pass [`check`].
+///
+/// # Errors
+/// The admission's work allowance is exhausted.
 pub(crate) fn certify(
     theory: &[Dep],
     rules: &[Rule],
     body: &[Atom],
     left: usize,
     right: usize,
-) -> Option<Vec<Vec<Step>>> {
-    let cs = case_choices(rules, body);
-    if cs.len() > MAX_CASES {
-        return None;
+    work: &AdmissionWork,
+) -> Result<Option<Vec<Vec<Step>>>, ChaseError> {
+    // Refuse to enumerate a product of choices beyond the limit.
+    if case_count(rules, body).is_none() {
+        return Ok(None);
     }
-    cs.iter()
-        .map(|choice| chase_case(theory, initial(rules, body, choice)?, left, right))
-        .collect()
+    let mut traces = Vec::new();
+    for choice in case_choices(rules, body) {
+        work.charge_units(choice.len().saturating_add(1))?;
+        let Some(state) = initial(rules, body, &choice) else {
+            return Ok(None);
+        };
+        let Some(trace) = chase_case(theory, state, left, right, work)? else {
+            return Ok(None);
+        };
+        traces.push(trace);
+    }
+    Ok(Some(traces))
 }
 
 /// Interns relation names and each dependency's variables.
@@ -242,10 +302,18 @@ impl Interner {
 
 /// Certify every dependency of `target` (all EGDs) under `source` and the
 /// mapping rules `mapping`: `true` only when every certificate passes the
-/// trusted [`check`]. Anything this module does not model (constants,
-/// target TGDs, non-full mapping rules, search limits) returns `false`, and
-/// the caller keeps its bounded evidence.
-pub(crate) fn certified(source: &Theory, mapping: &Theory, target: &Theory) -> bool {
+/// proved [`check`]. Anything this module does not model (constants, target
+/// TGDs, non-full mapping rules, search limits) returns `false`, and the caller
+/// keeps its bounded evidence.
+///
+/// # Errors
+/// The admission's work allowance is exhausted; the admission refuses.
+pub(crate) fn certified(
+    source: &Theory,
+    mapping: &Theory,
+    target: &Theory,
+    work: &AdmissionWork,
+) -> Result<bool, ChaseError> {
     let mut interner = Interner::default();
     let Some(theory) = source
         .dependencies
@@ -253,7 +321,7 @@ pub(crate) fn certified(source: &Theory, mapping: &Theory, target: &Theory) -> b
         .map(|d| interner.dependency(d))
         .collect::<Option<Vec<_>>>()
     else {
-        return false;
+        return Ok(false);
     };
     let Some(rules) = mapping
         .dependencies
@@ -261,13 +329,18 @@ pub(crate) fn certified(source: &Theory, mapping: &Theory, target: &Theory) -> b
         .map(|d| interner.rule(d))
         .collect::<Option<Vec<_>>>()
     else {
-        return false;
+        return Ok(false);
     };
-    target.dependencies.iter().all(|dependency| {
+    for dependency in &target.dependencies {
         let Some(Dep::Egd { body, left, right }) = interner.dependency(dependency) else {
-            return false;
+            return Ok(false);
         };
-        certify(&theory, &rules, &body, left, right)
-            .is_some_and(|traces| check(&theory, &rules, &body, left, right, &traces))
-    })
+        let Some(traces) = certify(&theory, &rules, &body, left, right, work)? else {
+            return Ok(false);
+        };
+        if !check(&theory, &rules, &body, left, right, &traces) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

@@ -625,4 +625,13 @@ theorem check_sound (theory : List Dep) (rules : List Rule) (body : List Atom) (
     rw [hagree l (by rw [hnext]; omega), hagree r (by rw [hnext]; omega)] at heq
     simpa only [h, if_pos hl', if_pos hr'] using heq
 
+/-- **`check` accepts a real certificate.** The mapping copies `S` (relation 0)
+    to `T` (relation 1), the source theory makes `S` diagonal, and the one
+    case's trace applies that EGD to the copied atom; so `check_sound` is not
+    vacuous. -/
+theorem check_accepts_copy :
+    check [.egd [⟨0, [0, 1]⟩] 0 1] [⟨[⟨0, [0, 1]⟩], ⟨1, [0, 1]⟩⟩] [⟨1, [0, 1]⟩] 0 1
+      [[⟨0, [2, 3]⟩]] = true := by
+  decide
+
 end Norn.Sem.Exchange

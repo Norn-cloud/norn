@@ -59,6 +59,16 @@ elaborate "$semantics" "$result/baseline"
 (cd "$lean_root" && LEAN_PATH="$result/baseline" lake env lean -DwarningAsError=true \
   "$semantics/Audit.lean") > "$result/axioms.txt"
 diff -u "$semantics/axioms.txt" "$result/axioms.txt"
+# The full statement (`#check @name`, proofs and deep terms printed, never
+# elided) of every audited theorem must equal the committed record, so no
+# audited statement changes unseen.
+{
+  printf 'import NornSem.Obligation\nimport NornSem.Exchange\n'
+  printf 'set_option pp.proofs true\nset_option pp.deepTerms true\n'
+  sed -n "s/^'\([^']*\)' .*/#check @\1/p" "$result/axioms.txt"
+} | (cd "$lean_root" && LEAN_PATH="$result/baseline" lake env lean -DwarningAsError=true --stdin) \
+  > "$result/statements.txt"
+diff -u "$semantics/statements.txt" "$result/statements.txt"
 echo "semantics-v1: every module elaborates; the axiom inventory is exact"
 
 # Each mutant weakens one definition so that a stated theorem becomes false.

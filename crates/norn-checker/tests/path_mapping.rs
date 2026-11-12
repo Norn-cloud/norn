@@ -757,3 +757,53 @@ fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
         );
     }
 }
+
+/// A self-link with two images under one long path equation has 2^32 rule
+/// choices. The certificate attempt counts them and gives up before
+/// enumerating, so admission still answers within its budget.
+#[test]
+fn many_rule_choices_are_counted_not_enumerated() {
+    let node = |ns: &str, equations: Value| -> Vec<ArtifactEnvelope> {
+        let mut payload = json!({"entityVersion": "2.0", "objectType": {
+            "name": format!("{ns}.Node"), "links": [link("next", &format!("{ns}.Node"))]}});
+        if !equations.is_null() {
+            payload["extensions"] = json!({"norn.path-equations/1.0.0": equations});
+        }
+        vec![
+            serde_json::from_value(json!({
+                "irVersion": "0.1", "artifactId": format!("{ns}.Node.entity"), "kind": "entity",
+                "namespace": ns, "name": "Node", "version": "0.1.0", "lifecycle": "draft",
+                "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
+                "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                "payload": payload
+            }))
+            .unwrap(),
+        ]
+    };
+    let path = vec!["next"; 16];
+    let target = node("t", json!([{"id": "loop", "left": path, "right": path}]));
+    let image = json!({"concept": "t.Node", "link": "next", "path": ["next"]});
+    let mapping: PathMapping = serde_json::from_value(json!({
+        "id": "doubled", "objects": {"t.Node": "s.Node"}, "links": [image.clone(), image]
+    }))
+    .unwrap();
+    let result = admit_path_mapping(
+        &node("s", Value::Null),
+        &target,
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    );
+    match result {
+        Ok(evidence) => assert_eq!(
+            evidence.evidence,
+            norn_checker::consistency::PreservationClass::BoundedNoCounterexample
+        ),
+        Err(findings) => assert!(
+            findings
+                .iter()
+                .all(|d| d.code.as_str() == codes::CHASE_REFUSED),
+            "{findings:?}"
+        ),
+    }
+}

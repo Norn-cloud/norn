@@ -56,8 +56,9 @@ export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCRE
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
 
 # pin_statements <search> <module> <audit output>: record the full statement
-# (`#check @name`) of every theorem the audit names. The record must equal the
-# committed one, so no audited statement changes unseen.
+# (`#check @name`, proofs and deep terms printed, never elided) of every theorem
+# the audit names. The record must equal the committed one, so no audited
+# statement changes unseen.
 statements="$result/statements.txt"
 mkdir -p "$result"
 : > "$statements"
@@ -65,7 +66,8 @@ pin_statements() {
   local search="$1" module="$2" names
   names="$(sed -n "s/^'\([^']*\)' .*/#check @\1/p" <<< "$3")"
   test -n "$names" || return 0
-  printf 'import %s\n%s\n' "$module" "$names" |
+  printf 'import %s\nset_option pp.proofs true\nset_option pp.deepTerms true\n%s\n' \
+    "$module" "$names" |
     (cd "$lean_root" && LEAN_PATH="$search:$result/common" lake env lean \
       -DwarningAsError=true --stdin) >> "$statements"
 }
