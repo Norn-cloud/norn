@@ -20,11 +20,12 @@ use norn_api::definition_routes::{
 };
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
+use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, list_metrics, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -118,6 +119,8 @@ routes! {
     DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
     /// `GET /v1/objects/{type}`.
     Objects => ("GET", "/v1/objects/{type}"),
+    /// `GET /v1/objects/{type}:profile`.
+    ObjectProfile => ("GET", "/v1/objects/{type}:profile"),
     /// `GET /v1/objects/{type}/{id}`.
     Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
@@ -132,6 +135,8 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `GET /v1/questions:metrics`.
+    QuestionsMetrics => ("GET", "/v1/questions:metrics"),
 }
 
 impl Route {
@@ -143,6 +148,7 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
             _ => {}
         }
         if let Some(route) = definitions_route(path) {
@@ -161,8 +167,9 @@ impl Route {
                 _ => None,
             };
         }
-        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+        if let Some((kind, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
             return Some(match (id, leaf) {
+                (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
                 (None, _) => Self::Objects,
                 (Some(_), None) => Self::Object,
                 (Some(_), Some("links")) => Self::ObjectLinks,
@@ -231,7 +238,10 @@ pub fn handle_all<E: SqlEngine>(
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
     let question = question_path(path);
-    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let ad_hoc = matches!(
+        path,
+        "/v1/questions:evaluate" | "/v1/questions:trace" | "/v1/questions:metrics"
+    );
     let object = path.strip_prefix("/v1/objects/").and_then(object_path);
     let action = path
         .strip_prefix("/v1/actions/")
@@ -278,19 +288,9 @@ pub fn handle_all<E: SqlEngine>(
                     get_answer(host, &scope, actor, name, named(runtime))
                 })
                 .and_then(|document| document_json(&document)),
-            (Some((name, _)), Some(runtime)) => {
-                parse(query, &["orgId", "environmentId", "lineageRef", "bucket"])
-                    .and_then(|mut fields| {
-                        let query = TraceQuery {
-                            org_id: fields.remove("orgId"),
-                            environment_id: fields.remove("environmentId"),
-                            lineage_ref: fields.remove("lineageRef"),
-                            bucket: fields.remove("bucket"),
-                        };
-                        get_numeric_trace(host, &query, actor, name, named(runtime))
-                    })
-                    .and_then(|document| document_json(&document))
-            }
+            (Some((name, _)), Some(runtime)) => trace_query(query)
+                .and_then(|query| get_numeric_trace(host, &query, actor, name, named(runtime)))
+                .and_then(|document| document_json(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,
                 "question.not_found",
@@ -311,6 +311,42 @@ pub fn handle_all<E: SqlEngine>(
     }
 }
 
+/// The coordinates of `GET /v1/questions/{question}/trace`: scope, the
+/// answer's handle and bucket, and optionally the answer's `knownAsOf` and
+/// `nowMs` to trace it as it was given.
+fn trace_query(query: &str) -> Result<TraceQuery, Refusal> {
+    let mut fields = parse(
+        query,
+        &[
+            "orgId",
+            "environmentId",
+            "lineageRef",
+            "bucket",
+            "knownAsOf",
+            "nowMs",
+        ],
+    )?;
+    let mut number = |name: &str| {
+        fields
+            .remove(name)
+            .map(|text| {
+                text.parse::<u64>()
+                    .map_err(|_invalid| Refusal::invalid(format!("{name} is not a whole number")))
+            })
+            .transpose()
+    };
+    let known_as_of = number("knownAsOf")?;
+    let now_ms = number("nowMs")?;
+    Ok(TraceQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        lineage_ref: fields.remove("lineageRef"),
+        bucket: fields.remove("bucket"),
+        known_as_of,
+        now_ms,
+    })
+}
+
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
 /// string and carrying the `QuestionIR` in a JSON body.
 fn ad_hoc_question<E: SqlEngine>(
@@ -322,12 +358,13 @@ fn ad_hoc_question<E: SqlEngine>(
     query: &str,
     body: &str,
 ) -> Result<String, Refusal> {
-    if method != "POST" {
+    let listing = path == "/v1/questions:metrics";
+    if method != if listing { "GET" } else { "POST" } {
         return Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "ad-hoc questions are submitted with POST",
+            "ad-hoc questions are submitted with POST; their metrics are listed with GET",
         ));
     }
     let fields = parse(query, &["orgId", "environmentId"])?;
@@ -339,6 +376,9 @@ fn ad_hoc_question<E: SqlEngine>(
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(norn_api::authz::read_denied());
     };
+    if listing {
+        return document_json(&list_metrics(host, &scope, actor, runtime)?);
+    }
     let malformed = |error: serde_json::Error| {
         Refusal::invalid(format!(
             "the request body is not a valid submission: {error}"
@@ -423,6 +463,27 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     Some((kind, id, leaf))
 }
 
+/// HOST-READ-5: `GET /v1/objects/{type}:profile`, scoped by the query string.
+fn profiled<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&get_object_profile(
+        host,
+        &scope,
+        actor,
+        object_type,
+        &CellObjectAccess,
+    )?)
+}
+
 /// HOST-READ-3/4: `GET /v1/objects/{type}` (a grid query),
 /// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
 /// the query string.
@@ -442,6 +503,9 @@ fn objects<E: SqlEngine>(
             .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
     let object_type = decoded(object_type)?;
+    if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
+        return profiled(host, actor, kind, query);
+    }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
             query,

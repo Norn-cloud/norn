@@ -36,6 +36,8 @@ struct Bounded {
     rows: u32,
     buckets: usize,
     ungranted: Option<&'static str>,
+    /// The metric space in place of the analytics cell's own, when set.
+    definitions: Option<Vec<MetricDefinition>>,
 }
 
 impl QuestionRuntime<NativeEngine> for Bounded {
@@ -82,7 +84,9 @@ impl QuestionRuntime<NativeEngine> for Bounded {
 
 impl AdHocQuestions<NativeEngine> for Bounded {
     fn definitions(&self) -> &[MetricDefinition] {
-        AdHocQuestions::<NativeEngine>::definitions(&self.inner)
+        self.definitions
+            .as_deref()
+            .unwrap_or_else(|| AdHocQuestions::<NativeEngine>::definitions(&self.inner))
     }
     fn catalog(&self) -> &EffectiveCatalog {
         AdHocQuestions::<NativeEngine>::catalog(&self.inner)
@@ -122,6 +126,7 @@ fn cell() -> Cell {
             rows: analytics::AD_HOC_MAX_ROWS,
             buckets: analytics::AD_HOC_MAX_BUCKETS,
             ungranted: None,
+            definitions: None,
         },
         principals,
     }
@@ -298,7 +303,9 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     let baseline = evaluate(&cell, None, &question("gold"));
     assert_eq!(baseline.status, 403);
     let mut inadmissible = question("gold");
-    inadmissible["groupBy"] = json!([{"path": {"property": "occurred_at"}, "grain": "day"}]);
+    // Outside the bounded profile: an ordering filter.
+    inadmissible["filter"] =
+        json!([{"path": {"property": "metal"}, "operator": "gt", "value": "gold"}]);
     // Anonymous, inadmissible: the denial, not the 422.
     assert_eq!(evaluate(&cell, None, &inadmissible).body, baseline.body);
     // A declared metric the caller holds no grant on — here the ratio's
@@ -329,6 +336,50 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
             .iter()
             .all(|d| d["code"].is_string() && d["severity"].is_string())
     );
+}
+
+/// A ratio reads both of its operands: a caller who may read the numerator's
+/// type but not the denominator's gets the opaque denial, decided before
+/// admission, never an aggregate over the type they cannot read.
+#[test]
+fn a_ratio_is_refused_unless_the_denominators_type_is_readable_too() {
+    let mut cell = cell();
+    let granted = evaluate(&cell, ADMIN, &question("gold"));
+    assert_eq!(granted.status, 200, "{}", granted.body);
+    let baseline = evaluate(&cell, None, &question("gold"));
+    assert_eq!(baseline.status, 403);
+    let mut definitions = AdHocQuestions::<NativeEngine>::definitions(&cell.runtime.inner).to_vec();
+    let ratio = definitions
+        .iter()
+        .find(|definition| definition.name == "demo.yield")
+        .unwrap();
+    let (numerator, denominator) = (
+        ratio.type_params.numerator.clone().unwrap(),
+        ratio.type_params.denominator.clone().unwrap(),
+    );
+    let operand = definitions
+        .iter_mut()
+        .find(|definition| definition.name == denominator)
+        .unwrap();
+    operand
+        .type_params
+        .metric_aggregation_params
+        .as_mut()
+        .unwrap()
+        .semantic_model = norn_ir::ObjectTypeName("demo.Unreadable".into());
+    // The numerator still sums the type the caller reads.
+    assert!(definitions.iter().any(|definition| {
+        definition.name == numerator
+            && definition
+                .type_params
+                .metric_aggregation_params
+                .as_ref()
+                .is_some_and(|params| params.semantic_model.0 == analytics::TYPE)
+    }));
+    cell.runtime.definitions = Some(definitions);
+    let refused = evaluate(&cell, ADMIN, &question("gold"));
+    assert_eq!(refused.status, 403, "{}", refused.body);
+    assert_eq!(refused.body, baseline.body);
 }
 
 #[test]

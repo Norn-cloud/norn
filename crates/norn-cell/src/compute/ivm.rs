@@ -54,15 +54,21 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        let (snapshot, source_pins, receipt_pin) =
-            store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
+        let (snapshot, source_pins, receipt_pin) = store.question_snapshot_at_with(
+            plan,
+            context,
+            knowledge,
+            false,
+            visible,
+            |snapshot, _| {
                 let reader = store.read();
                 let pins = reader.question_source_pins(&snapshot.finding_members)?;
                 let receipt = reader
                     .receipt_at(snapshot.result.revision.commits)?
                     .map(|r| r.hash);
                 Ok((snapshot, pins, receipt))
-            })?;
+            },
+        )?;
         let mut totals = Totals::default();
         for (_, value) in snapshot.contributions.values() {
             totals.adjust(value, false)?;
