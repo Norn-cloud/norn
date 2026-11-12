@@ -239,7 +239,10 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .iter()
         .map(|path| {
             path.canonicalize().map_err(|error| {
-                Failure::setup("norn.dev.load_missing", format!("{}: {error}", path.display()))
+                Failure::setup(
+                    "norn.dev.load_missing",
+                    format!("{}: {error}", path.display()),
+                )
             })
         })
         .collect::<Result<Vec<_>, _>>()?;

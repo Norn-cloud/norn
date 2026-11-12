@@ -51,8 +51,10 @@ struct Snapshot {
 }
 
 fn snapshot(path: &Path) -> Result<Snapshot, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let document: Value = serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let document: Value =
+        serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
     let named = |key: &str| document.get(key).and_then(Value::as_str).map(str::to_owned);
     let system = named("profile").and_then(|profile| {
         profile
@@ -62,10 +64,24 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
     });
     let source = named("source")
         .or_else(|| system.as_ref().map(|system| format!("synthetic-{system}")))
-        .ok_or_else(|| format!("{}: name its \"source\" (or use a synthetic-<system>-three profile)", path.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "{}: name its \"source\" (or use a synthetic-<system>-three profile)",
+                path.display()
+            )
+        })?;
     let mapping = named("mapping")
-        .or_else(|| system.as_ref().map(|system| format!("{system}.three.mapping")))
-        .ok_or_else(|| format!("{}: name its \"mapping\" (or use a synthetic-<system>-three profile)", path.display()))?;
+        .or_else(|| {
+            system
+                .as_ref()
+                .map(|system| format!("{system}.three.mapping"))
+        })
+        .ok_or_else(|| {
+            format!(
+                "{}: name its \"mapping\" (or use a synthetic-<system>-three profile)",
+                path.display()
+            )
+        })?;
     // The mapping's source schema pins the connector instance it accepts.
     let instance = named("connectorInstance").unwrap_or_else(|| "demo".to_owned());
     let rows = document
@@ -77,11 +93,20 @@ fn snapshot(path: &Path) -> Result<Snapshot, String> {
             let dataset = row.get("dataset").and_then(Value::as_str);
             match (dataset, row.get("record")) {
                 (Some(dataset), Some(record)) => Ok((dataset.to_owned(), record.clone())),
-                _ => Err(format!("{}: every snapshot row has a dataset and a record", path.display())),
+                _ => Err(format!(
+                    "{}: every snapshot row has a dataset and a record",
+                    path.display()
+                )),
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Snapshot { path: path.to_owned(), source, mapping, instance, rows })
+    Ok(Snapshot {
+        path: path.to_owned(),
+        source,
+        mapping,
+        instance,
+        rows,
+    })
 }
 
 /// The raw observation of one recorded row, as a connector extract writes it.
@@ -92,7 +117,8 @@ fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeVa
         .and_then(Value::as_str)
         .ok_or("a recorded row needs an \"id\" or \"name\"")?
         .to_owned();
-    let payload = RuntimeValue::from_json_text(record.to_string()).map_err(|error| error.to_string())?;
+    let payload =
+        RuntimeValue::from_json_text(record.to_string()).map_err(|error| error.to_string())?;
     let digest = norn_ir::canonical::HashProfile::Norn1
         .hash_json(serde_json::to_string(&payload).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
@@ -122,11 +148,14 @@ fn raw(source: &str, mapping: &str, record: &Value) -> Result<Observed<RuntimeVa
 /// Load every snapshot into `store` through the mapping path and give the
 /// store back, ready to be served.
 pub(crate) fn load(
-    mut store: CellStore<NativeEngine>,
+    store: CellStore<NativeEngine>,
     scope: &str,
     paths: &[PathBuf],
 ) -> Result<(CellStore<NativeEngine>, Loaded), String> {
-    let snapshots = paths.iter().map(|path| snapshot(path)).collect::<Result<Vec<_>, _>>()?;
+    let snapshots = paths
+        .iter()
+        .map(|path| snapshot(path))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
         SqliteCell::new(store, scope, |_| BTreeMap::new()).map_err(|error| error.to_string())?;
     let mut mapped: BTreeMap<String, (usize, usize)> = BTreeMap::new();
@@ -151,9 +180,9 @@ pub(crate) fn load(
             let (id, _new) = cell
                 .inject_mapping_bundle(&raw(&snapshot.source, &snapshot.mapping, record)?, &input)
                 .map_err(|error| format!("{file}: {dataset} {label} not captured: {error}"))?;
-            let processed = cell
-                .process_mapping_bundle(&id)
-                .map_err(|error| format!("{file}: {dataset} {label} was refused by the mapping: {error}"))?;
+            let processed = cell.process_mapping_bundle(&id).map_err(|error| {
+                format!("{file}: {dataset} {label} was refused by the mapping: {error}")
+            })?;
             let entry = mapped.entry(file.clone()).or_default();
             entry.0 = entry.0.saturating_add(1);
             if processed {
