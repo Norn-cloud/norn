@@ -624,6 +624,78 @@ unknown (`None`), never safety proof evidence. This closure check grants no
 runtime access or availability witness. Named scenarios cover complete grants,
 an undeclared policy action, duplicate roots and sampled undeclared identities.
 
+### Pointwise laws over a to-one link (LAW-LINK-1, #343)
+
+A pointwise law (an `always` or `never` predicate, with an optional Boolean
+condition) may read the properties of the object its subject reaches through
+one declared **functional forward link**: a link the subject's effective
+contract declares with `to: one`, whose target is one concrete object type or
+an interface. The expression names it as `self.<link>.<property>`. A path of
+more than one link, a to-many link, an inverse link and a link the subject
+does not declare all refuse admission with `law.model.unknown_binding`. The
+read is one hop and does not chain.
+
+**Absent target.** When the subject has no live target on that link, every
+`self.<link>.<property>` read is `null`. The law then behaves as it does
+today for a null property: a condition that reads the link is false, and a
+predicate must handle `null` itself. The typed form makes it explicit with
+`when: self => self.<link> !== null`. A missing target never satisfies a law
+by itself, and it never refuses on its own.
+
+**One snapshot.** The evaluator reads the subject and its target in the same
+snapshot the commit is checked against. For a native write, that is the
+proposed state after every write in the commit, so a commit that changes
+both sides is checked once, on its result. For an observed fact, it is the
+cell's state when the observation is admitted. The target's read is added to
+the commit's read set, so a concurrent change to the target refuses the
+commit as stale and never admits it against an old value.
+
+**Both sides govern.** A law over `self.<link>` is a constraint on the
+subject *and* on every object that can be its target.
+
+- **Native writes.** A native write to a target re-evaluates the law for every
+  live subject linked to it, inside the same commit, and refuses atomically if
+  any instance is violated (`core.laws.violated`, pinned to the law). The
+  footprint is bounded: past `MAX_LINK_LAW_SUBJECTS` (4,096) linked subjects
+  the write refuses with `core.compute.bound_exceeded`; it is never checked
+  partially.
+- **Observed facts.** The same re-evaluation runs when an observed fact
+  changes a target. A violated instance is a finding on the *subject*, pinned
+  to the law, and quarantines it as LAW-COMMIT-1 does.
+
+**Recovery.** A finding under a link law resolves when the subject's current
+values and its target's current values satisfy the law again, whichever side
+changed. Re-evaluation uses the retained definition model the finding was
+pinned to (OBS-RECOVERY-UPGRADE). Changing the link itself is a change to
+the subject.
+
+**Evidence.** A finding carries both evidence digests, the subject's values
+and the target's values, and the target's fact reference, so a review read
+can show "the document's total 720 against ledger entry JE-0042's 72.00".
+Generated obligations treat the target type's writers as writers of the
+law: each one gets a preservation obligation (PROOF-STALE applies when any of
+them changes).
+
+**Not in this unit.** Aggregates over to-many links (sum of lines as stored
+objects) remain B4. A link law spanning cells refuses (the authoring rule
+against atomic cross-cell laws).
+
+Named scenarios:
+
+- **LAW-LINK-OBSERVED:** A scanned invoice linked to a posted ledger entry of
+  72.00 is imported with a total of 720. It gets a finding pinned to the law
+  and is quarantined. A correction to 72.00 resolves the finding.
+- **LAW-LINK-TARGET-WRITE:** A native adjustment of the linked ledger entry
+  that would contradict an admitted document refuses atomically, and nothing
+  is written.
+- **LAW-LINK-ABSENT:** A document without a linked entry is admitted. Once the
+  link is added, the law applies on that commit.
+- **LAW-LINK-BOUND:** A target with more linked subjects than the bound
+  refuses the write with `core.compute.bound_exceeded`; it is never checked
+  partially.
+- **LAW-LINK-ADMISSION:** Multi-hop paths, to-many links, inverse links and
+  undeclared links refuse admission.
+
 ### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
 
 Severity controls display, never governing authority. Every verified governing-law
