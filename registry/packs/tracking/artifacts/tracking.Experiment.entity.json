@@ -1,0 +1,61 @@
+{
+  "artifactId": "tracking.Experiment.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Experiment",
+  "namespace": "tracking",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "experiment_id"
+          ]
+        }
+      ],
+      "name": "tracking.Experiment",
+      "properties": [
+        {
+          "id": "experiment_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "artifact_location",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "creation_time",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "tags",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.Experiment.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

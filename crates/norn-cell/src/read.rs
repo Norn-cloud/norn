@@ -641,7 +641,7 @@ pub struct PendingCommand {
 /// so queue selection skips parked rows without loading them. A string
 /// comparison is false for a non-string or missing member, exactly as
 /// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
-const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IS 'norn.decision' AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
+const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IN ('norn.decision', 'norn.action') AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
 
 /// PARKED-1: whether `command` waits outside the FIFO perform queue.
 #[must_use]

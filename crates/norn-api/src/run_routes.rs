@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::engine::SqlEngine;
-use norn_cell::flow_run::{FlowRef, RunRow, RunStart};
+use norn_cell::flow_run::{FlowRef, RunRow, RunStart, RunStarter};
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuleRoot, RuntimeValue};
 use norn_kernel::{DecisionTurn, EnvelopeLimits, FactKey, LogicalTime, TypeCatalog, World};
@@ -411,6 +411,9 @@ pub fn start_run<E: SqlEngine>(
     body: &StartRunRequest,
     access: ReadAccess<'_>,
     now: LogicalTime,
+    // The verified principal the host recorded for this request: the run's
+    // action steps act under exactly it (ACTION-STEP-1).
+    starter: Option<RunStarter>,
 ) -> Result<(StatusCode, RunDocument), Refusal> {
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
@@ -452,7 +455,7 @@ pub fn start_run<E: SqlEngine>(
         };
     }
     let now = crate::actions::turn_clock(&mut cell, now)?;
-    commit_start(&mut cell, &flow, &body.run_id, now)?;
+    commit_start(&mut cell, &flow, &body.run_id, now, starter)?;
     let row = cell
         .store()
         .read()
@@ -482,6 +485,7 @@ fn commit_start<E: SqlEngine>(
     flow: &InstalledFlow,
     run_id: &str,
     now: LogicalTime,
+    starter: Option<RunStarter>,
 ) -> Result<(), Refusal> {
     let output = norn_kernel::flow_turn::start(&flow.rule, &flow.environment_hash, run_id)
         .map_err(|error| turn_refused(error.code(), "the flow refused to start"))?;
@@ -514,6 +518,7 @@ fn commit_start<E: SqlEngine>(
         },
         object_type: flow.object_type.clone(),
         state_property: flow.view.state_property.clone(),
+        started_by: starter,
     };
     cell.commit_run_start(commit, &start).map_err(|error| {
         let norn_kernel::CommitError::Host(host_error) = error else {
