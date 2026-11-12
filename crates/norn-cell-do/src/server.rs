@@ -153,6 +153,19 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/sources/{id}:sync`, dispatched by the published host's entry
+    /// point (`connect`), which runs the sync's fetch loop (#921).
+    SourceSync => ("POST", "/v1/sources/{id}:sync"),
+    /// `POST /v1/uploads:begin`, dispatched by the entry point (`connect`).
+    UploadBegin => ("POST", "/v1/uploads:begin"),
+    /// `POST /v1/uploads:read`, dispatched by the entry point (`connect`).
+    UploadRead => ("POST", "/v1/uploads:read"),
+    /// `POST /v1/uploads/{id}:complete`, dispatched by the entry point (`connect`).
+    UploadComplete => ("POST", "/v1/uploads/{id}:complete"),
+    /// `POST /v1/uploads/{id}:load`, dispatched by the entry point (`connect`).
+    UploadLoad => ("POST", "/v1/uploads/{id}:load"),
+    /// `POST /v1/uploads/{id}:define`, dispatched by the entry point (`connect`).
+    UploadDefine => ("POST", "/v1/uploads/{id}:define"),
     /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
     Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
@@ -170,11 +183,30 @@ routes! {
 }
 
 impl Route {
+    /// Whether the published host's entry point dispatches this route itself
+    /// (the access view; the cell's source and upload routes, which need its
+    /// fetch loop), so this dispatcher never serves it.
+    #[must_use]
+    pub const fn entry_point(self) -> bool {
+        matches!(
+            self,
+            Self::Access
+                | Self::SourceSync
+                | Self::UploadBegin
+                | Self::UploadRead
+                | Self::UploadComplete
+                | Self::UploadLoad
+                | Self::UploadDefine
+        )
+    }
+
     /// The route a request path names, if any.
     #[must_use]
     pub fn of(path: &str) -> Option<Self> {
         match path {
             "/v1/access" => return Some(Self::Access),
+            "/v1/uploads:begin" => return Some(Self::UploadBegin),
+            "/v1/uploads:read" => return Some(Self::UploadRead),
             "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
@@ -228,6 +260,23 @@ impl Route {
                 (Some(_), Some("history")) => Self::ObjectHistory,
                 (Some(_), Some(_)) => return None,
             });
+        }
+        if let Some(id) = path
+            .strip_prefix("/v1/sources/")
+            .and_then(|rest| rest.strip_suffix(":sync"))
+        {
+            return (!id.is_empty() && !id.contains('/')).then_some(Self::SourceSync);
+        }
+        if let Some((id, verb)) = path
+            .strip_prefix("/v1/uploads/")
+            .and_then(|rest| rest.split_once(':'))
+        {
+            return match verb {
+                "complete" if !id.is_empty() && !id.contains('/') => Some(Self::UploadComplete),
+                "load" if !id.is_empty() && !id.contains('/') => Some(Self::UploadLoad),
+                "define" if !id.is_empty() && !id.contains('/') => Some(Self::UploadDefine),
+                _ => None,
+            };
         }
         path.strip_prefix("/v1/actions/")
             .filter(|id| !id.is_empty() && !id.contains('/'))
@@ -303,13 +352,20 @@ pub fn handle_all<E: SqlEngine>(
 /// is absent.
 #[must_use]
 pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
-    respond(route::<E>(
-        None,
-        None,
-        &DefinitionKinds::default(),
-        None,
-        request,
-    ))
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
@@ -356,7 +412,7 @@ fn route<E: SqlEngine>(
     // name is not found. `/v1/access` is dispatched by the published host's
     // entry point, never here.
     let route_of = Route::of(path);
-    let served = route_of.is_some_and(|route| route != Route::Access);
+    let served = route_of.is_some_and(|route| !route.entry_point());
     if !served {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,

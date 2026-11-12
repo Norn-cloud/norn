@@ -33,6 +33,8 @@ export interface Env {
   readonly TOOL_GATEWAY_CLIENT_SECRET?: string
   /** "on" serves /mcp to assistants people connect, with Studio as their OAuth server (migration 0007). */
   readonly STUDIO_MCP?: string
+  /** Invite-only sign-up: the comma-separated addresses that may create an account. */
+  readonly STUDIO_SIGNUP_EMAILS?: string
   /** The dashboard assistant's model (#923): the AI Gateway URL (it names the account) and its run-only token; both or neither. */
   readonly AI_GATEWAY_URL?: string
   readonly AI_GATEWAY_TOKEN?: string
@@ -75,7 +77,7 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -106,6 +108,9 @@ async function me(request: Request, env: Env): Promise<Response> {
 }
 
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
+/** The invited addresses, lower-case; undefined (open sign-up) when the setting is absent. */
+export const signUpEmails = (env: Pick<Env, "STUDIO_SIGNUP_EMAILS">): readonly string[] | undefined =>
+  env.STUDIO_SIGNUP_EMAILS === undefined ? undefined : env.STUDIO_SIGNUP_EMAILS.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
 
 /** OAuth discovery for assistants: the authorization server's and the MCP resource's metadata (RFC 8414, RFC 9728). */
 const OAUTH_DISCOVERY = new Set([

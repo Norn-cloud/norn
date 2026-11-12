@@ -29,6 +29,11 @@ use norn_api::scope::CellScope;
 use norn_ir::access::{AccessIr, AccessRule, AccessScope, ScopeDimension};
 use norn_ir::{IrVersion01, ObjectTypeDef};
 use norn_kernel::authz::{self, ActorKind, AuthzSchema, CapabilityGrant, Pdp, ScopeKey};
+use norn_kernel::{
+    ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+};
+
+use crate::actions::ActionPolicy;
 
 use crate::seed::SeedError;
 
@@ -264,6 +269,10 @@ impl ReadRules {
     }
 }
 
+/// The cell's action policy for its active definitions, replaced when they
+/// change; `None` serves no action.
+pub type ActionSlot = Arc<RwLock<Option<Arc<ActionPolicy>>>>;
+
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
     /// The compiled rules with no grant; each request adds its caller's.
@@ -271,6 +280,7 @@ pub struct ReadPolicy {
     key: ScopeKey,
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
+    actions: ActionSlot,
 }
 
 /// The physical scope as the PDP's scope key.
@@ -300,7 +310,60 @@ impl ReadPolicy {
             key: scope_key(scope),
             table,
             caller: Arc::default(),
+            actions: Arc::default(),
         })
+    }
+
+    /// The slot this cell's action policy is installed into; empty until the
+    /// host installs one, and then no action is served.
+    #[must_use]
+    pub fn action_slot(&self) -> ActionSlot {
+        Arc::clone(&self.actions)
+    }
+
+    /// The installed action policy, if any.
+    fn action_policy(&self) -> Option<Arc<ActionPolicy>> {
+        self.actions.read().ok().and_then(|slot| slot.clone())
+    }
+
+    /// The request's verified principal, when it is `actor` and the declared
+    /// table grants it something in this cell.
+    fn member(&self, actor: &str) -> Option<Caller> {
+        self.caller
+            .current()
+            .filter(|caller| caller.subject_id == actor)
+            .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
+    }
+
+    /// Whether the request's verified principal may read objects of
+    /// `object_type` at all. The kernel's own call records (who called which
+    /// action, with which input and idempotency key) are read by the table's
+    /// definition writers (admin, owner) only: a member or viewer never sees
+    /// another caller's inputs or keys. Every other type follows the grants.
+    fn reads_type(&self, subject: &str, object_type: &str) -> bool {
+        let kernel_record = object_type == norn_kernel::ACTION_CALL_TYPE
+            || object_type == norn_kernel::OWNED_ROWS_TYPE;
+        !kernel_record
+            || self
+                .caller
+                .current()
+                .filter(|caller| caller.subject_id == subject)
+                .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+    }
+
+    /// An object read inside an action: the caller's Values grant on the
+    /// object's type and id, decided by the read PDP.
+    fn action_reads(&self, actor: &str, object_type: &str, id: &str) -> bool {
+        let Some(pdp) = self
+            .pdp_for(actor)
+            .filter(|_| self.reads_type(actor, object_type))
+        else {
+            return false;
+        };
+        let mut request =
+            collection_access_key(&self.key, actor, ReadCapability::Values, object_type);
+        id.clone_into(&mut request.resource.id);
+        authz::authorize(&pdp, &request).is_ok()
     }
 
     /// Read the request's verified principal from `slot` instead of this
@@ -392,16 +455,26 @@ impl Authorizer for ReadPolicy {
             Operation::ReadDefinitions => request
                 .actor
                 .is_some_and(|actor| self.pdp_for(actor).is_some()),
-            Operation::WriteDefinitions => request.actor.is_some_and(|actor| {
-                self.caller
-                    .current()
-                    .filter(|caller| caller.subject_id == actor)
-                    .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
-            }),
+            Operation::WriteDefinitions | Operation::SyncSource(_) => {
+                request.actor.is_some_and(|actor| {
+                    self.caller
+                        .current()
+                        .filter(|caller| caller.subject_id == actor)
+                        .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+                })
+            }
             Operation::ProvisionCell => request
                 .actor
                 .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
-            Operation::CallAction(_) => false,
+            // The gate: a verified member of the cell's organization, and an
+            // action the scope's policy governs. The kernel callback below
+            // decides the call itself, per target.
+            Operation::CallAction(ref action_id) => request.actor.is_some_and(|actor| {
+                self.member(actor).is_some()
+                    && self
+                        .action_policy()
+                        .is_some_and(|policy| policy.callable(action_id))
+            }),
             Operation::StartRun(_) => request.actor.is_some_and(|actor| {
                 self.caller
                     .current()
@@ -432,9 +505,48 @@ impl Authorizer for ReadPolicy {
         let _kept = self.base.recompile(object_types);
     }
 
+    fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        let denied = || ActionDenial::Forbidden {
+            reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+        };
+        let (Some(caller), Some(policy)) = (self.member(request.actor), self.action_policy())
+        else {
+            return Err(denied());
+        };
+        policy.decide(&caller, request)
+    }
+
+    fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        if self.action_reads(
+            request.actor,
+            request.target.object_type.as_str(),
+            &request.target.key,
+        ) {
+            Ok(())
+        } else {
+            Err(ActionDenial::Invisible)
+        }
+    }
+
+    fn action_read_type(
+        &self,
+        request: &ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        let object_type = request.object_type.as_str();
+        if self.action_reads(request.actor, object_type, object_type) {
+            Ok(())
+        } else {
+            Err(ActionDenial::Invisible)
+        }
+    }
+
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
-            && request.access.action_id == READ_ACTION;
+            && request.access.action_id == READ_ACTION
+            && self.reads_type(
+                &request.access.principal.subject_id,
+                &request.access.resource.object_type,
+            );
         let allowed = asked
             && self
                 .pdp_for(&request.access.principal.subject_id)
@@ -456,7 +568,16 @@ pub fn collection_access(
     capability: ReadCapability,
     object_type: &str,
 ) -> norn_kernel::authz::AccessRequest {
-    let key = scope_key(scope);
+    collection_access_key(&scope_key(scope), subject, capability, object_type)
+}
+
+fn collection_access_key(
+    key: &ScopeKey,
+    subject: &str,
+    capability: ReadCapability,
+    object_type: &str,
+) -> norn_kernel::authz::AccessRequest {
+    let key = key.clone();
     norn_kernel::authz::AccessRequest {
         principal: norn_kernel::authz::PrincipalInput {
             subject_id: subject.into(),

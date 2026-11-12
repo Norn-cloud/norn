@@ -30,8 +30,13 @@ export function useEvidenceActions(objectType: string, id: string) {
   const [acting, setActing] = useState<OpenAction | null>(null)
   const references = catalog.data ? referencesOf(catalog.data.document) : []
   const offered = actions.data?.kind === "catalog" ? actions.data.items : []
-  const actionFor = (evidence: { readonly ref: { readonly objectType: string; readonly id: string } }): ReactNode => {
-    const fits = offered.flatMap((action) => references
+  const actionFor = (evidence: { readonly ref: { readonly objectType: string; readonly id: string }; readonly subjectProperty: string }): ReactNode => {
+    // Offered only where the action takes the very value the evidence is for: its subject property is one of the action's inputs.
+    const takes = (action: (typeof offered)[number]) => {
+      const properties = (action.inputSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {}
+      return Object.hasOwn(properties, evidence.subjectProperty)
+    }
+    const fits = offered.filter(takes).flatMap((action) => references
       .filter((reference) => reference.actionId === action.actionId && reference.objectType === evidence.ref.objectType)
       .map((reference) => ({ action, reference })))
     return fits.length === 0 ? null : (

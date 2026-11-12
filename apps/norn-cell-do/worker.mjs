@@ -77,6 +77,12 @@ export class Cell {
       // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
       // analytics cell refuses to open without one of at least 32 bytes.
       this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, jwks?.at ?? Date.now());
+      // #921: the connections (NORN_SOURCES) and the secrets and storage settings they name stay in the cell.
+      try {
+        this.cell.configureConnect(this.env.NORN_SOURCES ?? "[]", connectVars(this.env));
+      } catch (error) {
+        console.error(`source connections not configured: ${error}`);
+      }
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -114,8 +120,77 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    // A continuation (an upload's object read): fetch exactly what the cell planned, hand it back.
+    while (reply.thenToken) {
+      const { status, bytes } = await perform(JSON.parse(reply.thenRequest));
+      reply = this.cell.resume(reply.thenToken, status, bytes, Date.now());
+    }
+    if (reply.startSync) this.keep(this.runSync(reply.startSync));
+    // SYNC-ONE-1: the due-check and its claim are one synchronous cell call, so two requests never start one connection twice.
+    const due = this.cell.syncDue(Date.now());
+    if (due) this.keep(this.runSync(due));
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
+  /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
+  async runSync(id) {
+    let step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+    while (step.request || step.continue) {
+      if (step.continue) {
+        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped chunks.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+        continue;
+      }
+      const { status, bytes } = await perform(step.request);
+      step = JSON.parse(this.cell.syncStep(id, status, bytes, Date.now()));
+    }
+  }
+  /** Keep background work alive past the reply where the runtime offers it. */
+  keep(promise) {
+    const guarded = promise.catch((error) => console.error(`source sync failed: ${error}`));
+    if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
+  }
+}
+
+// A source page or an uploaded object, read once and bounded (bytes).
+const MAX_SOURCE_BODY = 20 * 1024 * 1024;
+// One outbound source or storage request may take this long.
+const SOURCE_FETCH_TIMEOUT_MS = 30_000;
+
+/** The server variables the cell's connections and uploads read, by name: secrets and storage settings only. Never logged. */
+function connectVars(env) {
+  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_")))));
+}
+
+/** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */
+async function perform(request) {
+  try {
+    const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body ?? undefined, redirect: "manual", signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS) });
+    const bytes = await readBoundedBytes(response, MAX_SOURCE_BODY);
+    return bytes === null ? { status: 413, bytes: new Uint8Array() } : { status: response.status, bytes };
+  } catch {
+    // A network failure is a refused read: status 0, no body.
+    return { status: 0, bytes: new Uint8Array() };
+  }
+}
+
+/** A response body as bytes, counted as they arrive; null once it passes `limit` (the stream is cancelled). */
+async function readBoundedBytes(response, limit) {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return new Uint8Array();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new Uint8Array(await new Blob(chunks).arrayBuffer());
 }
 
 /** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
