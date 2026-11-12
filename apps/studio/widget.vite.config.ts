@@ -43,6 +43,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), singleFile()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   base: "./",
+  // The widget is one file; Studio's public/ icons stay with the app.
+  publicDir: false,
   build: {
     outDir: "dist/widgets",
     emptyOutDir: true,
