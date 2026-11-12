@@ -1244,7 +1244,12 @@ impl EffectiveProperty {
 fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> EffectiveKind {
     match resolved.resolution {
         TypeResolution::Base(base) => EffectiveKind::Base(
-            crate::property_types::with_additivity(base, resolved.additivity()).into_owned(),
+            crate::property_types::with_contract(
+                base,
+                resolved.additivity(),
+                resolved.unit_source(),
+            )
+            .into_owned(),
         ),
         TypeResolution::Registry => resolved
             .names

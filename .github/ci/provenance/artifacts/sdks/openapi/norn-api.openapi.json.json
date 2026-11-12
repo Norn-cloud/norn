@@ -1,5 +1,5 @@
 {
-  "sha256": "483224c8cb35bfc2c3335c3ffad38c6aa5cb7b2f3242e47ccc0fcdd065aad658",
+  "sha256": "ed170cf3d6b6e834d286e7681746d13b46b570db6acc40045cb3cd515c3d0cb8",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -15,7 +15,6 @@
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/object_profile.rs",
     "crates/norn-api/src/openapi.rs",
-    "crates/norn-api/src/provision.rs",
     "crates/norn-api/src/question_routes.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
@@ -74,7 +73,8 @@
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",
-    "scripts/ci/core.sh"
+    "scripts/ci/core.sh",
+    "crates/norn-api/src/provision.rs"
   ],
   "rights_evidence": [
     {

@@ -115,6 +115,7 @@ fn every_binding_and_option_changes_the_hash() {
         currency_source: None,
         rounding: None,
         per_unit: None,
+        unit_source: Vec::new(),
     };
     assert_ne!(changed.env().content_sha256().unwrap(), base_hash);
 }
@@ -525,6 +526,7 @@ fn derivation_fails_closed() {
     model.property_types[2].property_type = PropertyType::Ref {
         name: norn_ir::PropertyTypeName("commerce.short_note".into()),
         additivity: norn_ir::PropertyAdditivity::Undeclared {},
+        unit_source: Vec::new(),
     };
     assert!(
         derive(&model)
@@ -930,6 +932,7 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
             rounding: Some(mode),
             currency_source: None,
             per_unit: None,
+            unit_source: Vec::new(),
         };
         assert_eq!(field(&model.env(), "retail.Sku", "price").0, decimal(mode));
         let env = fields(decimal(mode));
