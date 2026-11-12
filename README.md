@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-2,166 records across 143 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+2,181 records across 158 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -101,6 +101,26 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 | `fork.proto.storage_vs_full.f100` | 0.135 | percent (single) | boat | 1 | 0.135 / 0.135 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.storage_vs_full.f1000` | 0.136 | percent (single) | boat | 1 | 0.136 / 0.136 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
 | `fork.proto.storage_vs_full.f20` | 0.136 | percent (single) | boat | 1 | 0.136 / 0.136 | ▁ | `05c8c6dbbb` | [link](https://github.com/Norn-cloud/norn-platform/issues/3148#issuecomment-6794396872) |
+
+## host
+
+| Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
+|---|---:|---|---|---:|---|---|---|---|
+| `host.celld.commit_definitions_install.ms` | 56.26 | ms (p50) | boat | 1 | 56.26 / 56.26 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.commit_one_row.ms` | 4.92 | ms (p50) | boat | 1 | 4.92 / 4.92 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.definitions_read.ms` | 63.12 | ms (p50) | boat | 1 | 63.12 / 63.12 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.idle_wake_analytics.ms` | 342.3 | ms (single) | boat | 1 | 342.3 / 342.3 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.object_read.ms` | 18.23 | ms (p50) | boat | 1 | 18.23 / 18.23 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.pss_per_cell.bytes` | 2,569,011 | bytes (mean) | boat | 1 | 2,569,011 / 2,569,011 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.celld.question_answer.ms` | 428.1 | ms (p50) | boat | 1 | 428.1 / 428.1 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.commit_definitions_install.ms` | 50.74 | ms (p50) | boat | 1 | 50.74 / 50.74 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.commit_one_row.ms` | 7.35 | ms (p50) | boat | 1 | 7.35 / 7.35 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.definitions_read.ms` | 54.15 | ms (p50) | boat | 1 | 54.15 / 54.15 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.duckdb_question_1m.ms` | 11.25 | ms (p50) | boat | 1 | 11.25 / 11.25 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.idle_wake_analytics.ms` | 3198 | ms (single) | boat | 1 | 3198 / 3198 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.object_read.ms` | 18.47 | ms (p50) | boat | 1 | 18.47 / 18.47 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.pss_per_cell.bytes` | 6,773,801 | bytes (mean) | boat | 1 | 6,773,801 / 6,773,801 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
+| `host.orange.question_answer.ms` | 344.7 | ms (p50) | boat | 1 | 344.7 / 344.7 | ▁ | `a31a47c47a` | [link](https://github.com/Norn-cloud/norn/issues/1130) |
 
 ## Proof gates
 
@@ -269,6 +289,21 @@ What limits each metric's latest value, in the measurer's words.
 - `fork.proto.storage_vs_full.f100`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f1000`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
 - `fork.proto.storage_vs_full.f20`: D81 prototype on a synthetic cell-shaped database, not the real CellStore. measured_at is when the result was posted; the run time was not stated. The 4 KiB page is the unit: a small change costs one page per B-tree touched (table, index, ledger, plus page 1), about 1.3–2 pages per commit after sharing. Total store growth against N full copies.
+- `host.celld.commit_definitions_install.ms`: checker admission + receipt dominate; storage adds a few ms
+- `host.celld.commit_one_row.ms`: one-row transactionSync in a plain DO over HTTP; Orange adds background flush to the engine log + output gate
+- `host.celld.definitions_read.ms`: wasm build+serialize of the 43-artifact definitions document; loopback, sequential
+- `host.celld.idle_wake_analytics.ms`: first answer after 15 s idle; Orange stops idle actors after 10 s so the cell reopens (full ledger verify, ~320 commits)
+- `host.celld.object_read.ms`: router + DO hop + a few SQL reads; loopback, sequential
+- `host.celld.pss_per_cell.bytes`: PSS delta of the whole runtime tree over 20 extra demo cells, all awake
+- `host.celld.question_answer.ms`: question evaluated in wasm on every request (no cache) + lineage hashing
+- `host.orange.commit_definitions_install.ms`: checker admission + receipt dominate; storage adds a few ms
+- `host.orange.commit_one_row.ms`: one-row transactionSync in a plain DO over HTTP; Orange adds background flush to the engine log + output gate
+- `host.orange.definitions_read.ms`: wasm build+serialize of the 43-artifact definitions document; loopback, sequential
+- `host.orange.duckdb_question_1m.ms`: @duckdb/node-api 2.0.0-r.1 in-memory inside a DO, 4 threads; lost after 10 s idle
+- `host.orange.idle_wake_analytics.ms`: first answer after 15 s idle; Orange stops idle actors after 10 s so the cell reopens (full ledger verify, ~320 commits)
+- `host.orange.object_read.ms`: router + DO hop + a few SQL reads; loopback, sequential
+- `host.orange.pss_per_cell.bytes`: PSS delta of the whole runtime tree over 20 extra demo cells, all awake
+- `host.orange.question_answer.ms`: question evaluated in wasm on every request (no cache) + lineage hashing
 - `proof.gate.artifact_governance_extraction.peak_mem_mib`: free -m used, sampled once a minute during the cold run (hax extraction of norn-ir): a lower bound of the true peak, for every process on the VM. Explains why default (8 GiB) VMs hung on this gate.
 - `proof.gate.artifact_governance_extraction.s`: Second run on the same VM: the first run (197 s, cold build of norn-ir) failed only on a workspace-path check caused by a symlinked checkout; this run reused that build. One run. Two default (8 GiB) VMs became unresponsive on this gate.
 - `proof.gate.checker-certificates-correspondence.s`: one run, wall clock incl. Mathlib/Aeneas olean import and every mutant re-extraction; same VM ran the four gates sequentially; Lean import is IO-bound on 8 GB (about 40-100 s per process)
