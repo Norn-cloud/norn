@@ -1185,9 +1185,16 @@ mod ontology_derived_measures {
             else {
                 panic!("input quantity")
             };
+            let balance = matches!(class, PropertyAdditivity::SemiAdditive {});
             *additivity = class;
             artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
-            assert!(space(&artifacts).candidates().is_empty());
+            let space = space(&artifacts);
+            // A balance yields only its as-of snapshots (METRIC-SNAPSHOT-ASOF-1), never a sum or ratio.
+            assert_eq!(!space.candidates().is_empty(), balance);
+            assert!(space.candidates().iter().all(|candidate| {
+                matches!(candidate.definition.norn.additivity, MetricAdditivity::SemiAdditive { .. })
+                    && candidate.definition.type_params.expr.as_deref() == Some("input")
+            }));
         }
     }
 

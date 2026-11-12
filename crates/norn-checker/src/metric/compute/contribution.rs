@@ -264,11 +264,11 @@ fn periods(start: Instant, end: Instant, grain: TimeGrain) -> Result<Vec<Period>
         if next != label {
             periods.push((Some(std::mem::replace(&mut label, next)), (day, 0)));
             if periods.len() >= MAX_AS_OF_BUCKETS {
-                return Err("core.compute.bound_exceeded");
+                return Err(UNSUPPORTED_ENGINE);
             }
         }
     }
-    Err("core.compute.bound_exceeded")
+    Err(UNSUPPORTED_ENGINE)
 }
 
 fn value<'a>(

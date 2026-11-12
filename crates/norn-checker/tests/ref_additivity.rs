@@ -7,7 +7,8 @@
 
 //! METRIC-ADDITIVITY-REF-1: a `ref` declares additivity at its use site. A
 //! flow quantity sharing a value type with a stock derives a sum over its own
-//! time property; the stock does not. The law's three refusals are checked
+//! time property; the stock derives only its as-of snapshot
+//! (METRIC-SNAPSHOT-ASOF-1). The law's three refusals are checked
 //! over every pair of declared classes (exhaustive over the four non-ratio
 //! classes, which is the whole finite space the refinement rule ranges over).
 //! METRIC-UNIT-PARTITION-1 is checked over every free/grouped/eq/ne choice for
@@ -103,7 +104,7 @@ fn admitted() -> Vec<ArtifactEnvelope> {
 }
 
 #[test]
-fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_does_not() {
+fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_only_its_snapshot() {
     let artifacts = admitted();
     assert_eq!(errors(&artifacts), BTreeSet::new());
     let space = derive_metric_space(
@@ -135,16 +136,29 @@ fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_does_not() {
                     .property
                     .as_str()
                     .to_owned(),
+                matches!(
+                    candidate.definition.norn.additivity,
+                    norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
+                ),
             )
         })
         .collect();
     assert_eq!(
         derived,
-        BTreeSet::from([(
-            "demo.Delivery".to_owned(),
-            "quantity".to_owned(),
-            "occurred_at".to_owned()
-        )])
+        BTreeSet::from([
+            (
+                "demo.Delivery".to_owned(),
+                "quantity".to_owned(),
+                "occurred_at".to_owned(),
+                false
+            ),
+            (
+                "demo.Holding".to_owned(),
+                "quantity".to_owned(),
+                "as_of".to_owned(),
+                true
+            ),
+        ])
     );
 }
 

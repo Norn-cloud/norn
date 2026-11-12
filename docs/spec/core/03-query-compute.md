@@ -42,11 +42,12 @@ provenance use the following checked derivation contract.
 **METRIC-SNAPSHOT-ASOF-1:** a semi-additive measure (a stock or balance) is
 aggregated as a snapshot. Its metric declares `semi_additive` over time with
 the `last` reduction, and a `non_additive_dimension` naming the metric's time
-dimension with `window_choice: max`. Its `window_groupings` name the subject;
-empty means the measured object's identity. A subject's series is the stored
+dimension with `window_choice: max` and no `window_groupings`: the subject is
+the measured object's identity (other subject keys keep refusing). A
+subject's series is the stored
 versions of the measured object, ordered in valid time by the metric's time
-property, with ties going to the later version. Each output bucket is an ISO
-week of the question window, clipped to the window. A question that is
+property, with ties going to the later version. Each output bucket is a civil period of the question's time grouping (day,
+ISO week, month, quarter or year), clipped to the window. A question that is
 ungrouped, or grouped by a non-time property, has one bucket ending at the
 window's end. In each bucket a subject takes its last version at or before the
 bucket's end (the end is exclusive). That value carries forward into later
@@ -58,9 +59,9 @@ skipped and counted, and METRIC-UNIT-PARTITION-1 applies. A semi-additive
 measure aggregated any other way still refuses
 `question.validation.snapshot_aggregation`. For every semi-additive numeric
 property with a direct time property, METRIC-DERIVE-1 also derives this
-snapshot metric ("<property>, as of <time>"). The exact engine supports only
-identity subjects, the week grain on the metric's own time property, no
-ratios, no reaggregation and no knowledge cutoff; anything else refuses as an
+snapshot metric ("<property>, as of <time>"). A time grouping must be on the
+metric's own time property, at any grain; the exact engine refuses ratios,
+reaggregation, a knowledge cutoff and more than 1024 periods as an
 unsupported engine shape.
 
 Named scenarios: **METRIC-ASOF-CARRY** (a subject's last value fills later
@@ -95,7 +96,7 @@ read an inline one; `semi_additive` never yields a sum over time.
 
 Named scenarios: **METRIC-REF-FLOW-DERIVES** (a flow `ref` declared additive
 derives one sum per direct time property, and a semi-additive stock of the same
-value type derives none), **METRIC-REF-REFINES** (every requirement × member
+value type derives only its as-of snapshot), **METRIC-REF-REFINES** (every requirement × member
 class pair is admitted exactly when the requirement is undeclared or equal),
 **METRIC-REF-NUMERIC** and **METRIC-REF-CONFLICT** (use-site additivity on a
 non-numeric type, or against a declared one, refuses), and

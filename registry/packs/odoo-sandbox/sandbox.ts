@@ -322,8 +322,10 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
-        // Odoo stores `write_date` in UTC without an offset.
-        {property: "observed_at", value: "timestamp(join(split(input.write_date, ' '), 'T') + 'Z')"},
+        // Odoo's `write_date` ("YYYY-MM-DD HH:MM:SS", UTC) to the day: the mapping profile cannot rebuild
+        // the time of day, every snapshot grain is at least a day, and same-day changes keep their order
+        // by version (this feed commits in `write_date` order).
+        {property: "observed_at", value: "timestamp(take(input.write_date, 10) + 'T00:00:00Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},

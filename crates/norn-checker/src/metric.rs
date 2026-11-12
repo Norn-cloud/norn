@@ -1135,9 +1135,11 @@ impl<'a> Checker<'a> {
             if !visited.insert((source.name.as_str(), symmetric)) {
                 continue;
             }
-            // METRIC-SNAPSHOT-ASOF-1: only the declared last-value snapshot aggregates a balance.
+            // METRIC-SNAPSHOT-ASOF-1: only the declared last-value snapshot of each
+            // measured object aggregates a balance; other subject keys keep refusing.
             if matches!(source.additivity, MetricAdditivity::SemiAdditive { .. })
                 && !(source.snapshot
+                    && source.snapshot_groupings.is_empty()
                     && source.additivity
                         == (MetricAdditivity::SemiAdditive {
                             over: norn_ir::metric::AdditivityAxis::Time,

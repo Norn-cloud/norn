@@ -281,8 +281,10 @@ export const SandboxMapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
-        // Frappe's `modified` is the site's local time without an offset; the sandbox site runs in UTC.
-        {property: "observed_at", value: "timestamp(join(split(input.modified, ' '), 'T') + 'Z')"},
+        // Frappe's `modified` ("YYYY-MM-DD HH:MM:SS.ffffff", the site's UTC time) to the day: the mapping
+        // profile cannot rebuild the time of day, every snapshot grain is at least a day, and same-day
+        // changes keep their order by version (this feed commits in `modified` order).
+        {property: "observed_at", value: "timestamp(take(input.modified, 10) + 'T00:00:00Z')"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},
