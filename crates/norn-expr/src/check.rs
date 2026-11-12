@@ -1639,24 +1639,34 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `ty`, without its `Optional`, when the guarding condition proved
-    /// `node`'s literal read path non-null and no closure alias shadows its root.
-    fn narrowed(&self, node: &Node<'_>, ty: T) -> T {
-        let T::Optional(inner) = &ty else {
-            return ty;
-        };
+    /// Whether the guarding condition proved `node`'s literal read path
+    /// non-null, and no closure alias shadows its root.
+    fn guarded(&self, node: &Node<'_>) -> bool {
+        if self.non_null.is_empty() {
+            return false;
+        }
         let Some(path) = crate::reads::literal_path(node) else {
-            return ty;
+            return false;
         };
         let shadowed = self
             .scopes
             .iter()
             .any(|scope| scope.alias.as_deref() == path.first().map(String::as_str));
-        if !shadowed && self.non_null.contains(&path) {
-            (**inner).clone()
-        } else {
-            ty
+        !shadowed && self.non_null.contains(&path)
+    }
+
+    /// The record a member read goes through: a guarded path reads as
+    /// non-null (`self.link.amount` under `self.link != null`); the path's
+    /// own type is unchanged, so `self.link ?? x` still type-checks.
+    fn member_base(&mut self, target: &Node<'_>) -> Option<T> {
+        if !self.guarded(target) {
+            return self.value(target, None);
         }
+        let ty = self.infer(target, None)?;
+        if let T::Optional(inner) = &ty {
+            return Some((**inner).clone());
+        }
+        Some(ty)
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {
@@ -2048,9 +2058,7 @@ impl<'a> Checker<'a> {
             Node::Parenthesized(inner) => self.infer(inner, expected),
             Node::Array(items) => self.list(node, items, expected),
             Node::Object(entries) => self.record(entries, expected),
-            Node::Identifier(name) => self
-                .identifier(node, name)
-                .map(|ty| self.narrowed(node, ty)),
+            Node::Identifier(name) => self.identifier(node, name),
             Node::Pointer => match self.scopes.last() {
                 Some(scope) => Some(scope.element.clone()),
                 None => self.unsupported(node, "`#` outside a closure"),
@@ -2058,9 +2066,7 @@ impl<'a> Checker<'a> {
             Node::Member {
                 node: target,
                 property,
-            } => self
-                .member(node, target, property)
-                .map(|ty| self.narrowed(node, ty)),
+            } => self.member(node, target, property),
             Node::Unary {
                 node: operand,
                 operator,
@@ -2303,7 +2309,7 @@ impl<'a> Checker<'a> {
     }
 
     fn member(&mut self, node: &Node<'_>, target: &Node<'_>, property: &Node<'_>) -> Option<T> {
-        let base = self.value(target, None)?;
+        let base = self.member_base(target)?;
         // Every read on a list is an index read, a string key included
         // (`[1]['0']`: zen reads `null`).
         if let T::List(item) = base {
