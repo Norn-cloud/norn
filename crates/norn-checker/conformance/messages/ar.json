@@ -318,6 +318,10 @@
       "message": "الاستخدام: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]",
       "review": "needs_review"
     },
+    "cli.setup.checker_unavailable": {
+      "message": "حزمة WASM الخاصة بالمدقِّق غير متاحة؛ ابنِها واضبط NORN_CHECKER_WASM_PKG.",
+      "review": "needs_review"
+    },
     "cli.setup.host_unavailable": {
       "message": "لا يوجد مضيف Norn محلي؛ ابنِه بالأمر `cargo build -p norn-cell-do --bin norn-dev-host` واضبط NORN_DEV_HOST_BIN على target/debug/norn-dev-host.",
       "review": "needs_review"
@@ -894,8 +898,20 @@
       "message": "الشكل الزمني للقانون غير مدعوم: {$detail}",
       "review": "needs_review"
     },
+    "law.wording.duplicate_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: duplicate_locale",
+      "review": "needs_review"
+    },
     "law.wording.incomplete_locale": {
       "message": "لغة متطلَّب معلَنة تنقصها خانة أو تسمية أو مصطلح يحتاجه عرضها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.wording.invalid_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: invalid_locale",
+      "review": "needs_review"
+    },
+    "law.wording.unknown_locale": {
+      "message": "رُفضت خريطة لغات الصياغة المراجَعة: unknown_locale",
       "review": "needs_review"
     },
     "layout.validation.invalid_inline_field": {
