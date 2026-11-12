@@ -560,7 +560,12 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         ("canon.Posting", "amount", "occurred_at", false),
         // A settlement is summed per currency by its optional event's time; one
         // without an event is counted as unlinked, never bucketed.
-        ("canon.SettlementObservation", "amount", "occurred_at", false),
+        (
+            "canon.SettlementObservation",
+            "amount",
+            "occurred_at",
+            false,
+        ),
     ]
     .map(|(model, measure, time, snapshot)| {
         (
