@@ -1,0 +1,350 @@
+//! HOST-ACTION-2 (#1252): on a provisioned tenant cell, `POST
+//! /v1/actions/{actionId}` is decided by the scope's own policy through the
+//! kernel PDP, for the principal a verified host token names.
+//!
+//! - A policy that grants only `admin` admits an admin, and refuses member,
+//!   viewer, owner, a service principal and another organization's admin.
+//! - A service principal holds only the roles the declared table lets a
+//!   service hold (`member`, `viewer`); a policy naming `member` admits it.
+//! - An action without an `access` ref is uncallable; a policy cannot grant an
+//!   action another policy governs; a pin to another policy version refuses.
+//! - Every refusal is the one opaque action denial, the same bytes as for an
+//!   action that does not exist, and commits nothing.
+//!
+//! These are refusal-path and isolation pins on a new authority (D79): each
+//! names one decision of the server's permission system.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "action correspondence"
+)]
+
+use std::path::Path;
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signer, SigningKey};
+use norn_api::provision::PROVISION_PATH;
+use norn_api::scope::CellScope;
+use norn_cell::StoreOptions;
+use norn_cell::engine::NativeEngine;
+use norn_cell_do::actions::ActionPolicy;
+use norn_cell_do::base;
+use norn_cell_do::policy::DEMO_GRANTS;
+use norn_cell_do::principal::TokenPrincipals;
+use norn_cell_do::server::{Request, Response};
+use norn_cell_do::tenant::Tenant;
+use serde_json::{Value, json};
+
+const ISSUER: &str = "https://studio-preview.example";
+const NOW: u64 = 1_800_000_000;
+const MELT_ACTION: &str = "constitution.melt.convert";
+const MELT: &str = "constitution.Melt";
+const POLICY: &str = "constitution.melt.access.policy";
+const HANDLE_KEY: [u8; 32] = [7; 32];
+
+fn key() -> SigningKey {
+    SigningKey::from_bytes(&[1; 32])
+}
+
+fn jwks() -> String {
+    json!({ "keys": [{ "kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "kid": "k1",
+                       "x": URL_SAFE_NO_PAD.encode(key().verifying_key().as_bytes()) }] })
+    .to_string()
+}
+
+fn token(kind: &str, org: &str, role: &str) -> String {
+    let amr = if kind == "service" {
+        "api_key"
+    } else {
+        "password"
+    };
+    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": format!("{kind}-{role}-of-{org}"),
+            "iat": NOW - 10, "exp": NOW + 290,
+            "norn": { "kind": kind, "org": org, "role": role, "amr": amr } });
+    let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": "k1" }).to_string());
+    let body = URL_SAFE_NO_PAD.encode(claims.to_string());
+    let signature = key().sign(format!("{head}.{body}").as_bytes());
+    format!(
+        "Bearer {head}.{body}.{}",
+        URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    )
+}
+
+fn user(role: &str) -> String {
+    token("user", "org_a", role)
+}
+
+fn scope() -> CellScope {
+    CellScope {
+        org_id: "org_a".into(),
+        environment_id: "prod".into(),
+    }
+}
+
+const QUERY: &str = "orgId=org_a&environmentId=prod";
+
+/// The melt artifacts, re-scoped to the tenant, with the action's `access`
+/// set by `access` (or removed).
+fn melt(access: Option<&Value>) -> Vec<Value> {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../norn-cell/tests/fixtures/constitution.json"
+    ))
+    .unwrap();
+    fixture["withLoss"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .cloned()
+        .map(|mut artifact| {
+            artifact["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+            if artifact["kind"] == "action" {
+                let payload = artifact["payload"].as_object_mut().unwrap();
+                payload.remove("access");
+                if let Some(access) = access {
+                    payload.insert("access".into(), access.clone());
+                }
+            }
+            artifact
+        })
+        .collect()
+}
+
+/// A policy artifact `id` whose one rule lets `roles` call `actions` on melts.
+fn policy(id: &str, actions: &[&str], roles: &[&str]) -> Value {
+    let policy_id = id.trim_end_matches(".policy");
+    json!({
+        "artifactId": id, "dependencies": [], "irVersion": "0.1", "kind": "policy",
+        "lifecycle": "active", "name": "Melt access", "namespace": "constitution",
+        "payload": { "accessVersion": "0.1", "policyId": policy_id, "rules": [{
+            "ruleId": "callers", "actions": actions, "resourceType": MELT,
+            "scope": { "dimensions": ["org", "environment"] },
+            "allOf": [{ "role": { "anyOf": roles } }] }] },
+        "provenance": { "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" },
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "version": "1.0.0"
+    })
+}
+
+fn access() -> Value {
+    json!({ "artifactId": POLICY, "version": "1.0.0" })
+}
+
+struct Cell {
+    tenant: Tenant<NativeEngine>,
+    tokens: TokenPrincipals,
+}
+
+impl Cell {
+    fn call(&mut self, method: &str, path: &str, auth: Option<&str>, body: &str) -> Response {
+        self.tenant.handle(
+            &self.tokens,
+            &Request {
+                method,
+                path,
+                query: QUERY,
+                authorization: auth,
+                now: NOW,
+                body,
+            },
+        )
+    }
+
+    fn melt(&mut self, action: &str, auth: Option<&str>, id: &str) -> Response {
+        let body = format!(
+            r#"{{"input":{{"id":"{id}","input_fine_g":"100","output_fine_g":"98"}},"idempotencyKey":"{id}"}}"#
+        );
+        self.call("POST", &format!("/v1/actions/{action}"), auth, &body)
+    }
+
+    fn melts(&mut self) -> Value {
+        let page = self.call(
+            "GET",
+            &format!("/v1/objects/{MELT}"),
+            Some(&user("admin")),
+            "",
+        );
+        assert_eq!(page.status, 200, "{}", page.body);
+        serde_json::from_str(&page.body).unwrap()
+    }
+}
+
+/// A tenant cell at `path` provisioned by its owner with `artifacts`.
+fn provisioned(path: &Path, artifacts: &[Value]) -> Cell {
+    let file = path.to_owned();
+    let tenant = Tenant::open(
+        scope(),
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&file, StoreOptions::default()).map_err(|error| error.to_string())
+        }),
+        Some(&HANDLE_KEY),
+    )
+    .unwrap();
+    let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope(), tenant.caller(), NOW).unwrap();
+    let mut cell = Cell { tenant, tokens };
+    let body = json!({
+        "baseSha256": base::trusted_base().unwrap().sha256(),
+        "artifacts": artifacts,
+    })
+    .to_string();
+    let response = cell.call("POST", PROVISION_PATH, Some(&user("owner")), &body);
+    assert_eq!(response.status, 200, "{}", response.body);
+    cell
+}
+
+fn with_policy(roles: &[&str]) -> Vec<Value> {
+    let mut artifacts = melt(Some(&access()));
+    artifacts.push(policy(POLICY, &[MELT_ACTION], roles));
+    artifacts
+}
+
+/// What a call to an action that does not exist answers: the one denial.
+fn denial(cell: &mut Cell) -> Response {
+    let response = cell.melt("constitution.no_such_action", Some(&user("admin")), "x");
+    assert_eq!(response.status, 403);
+    response
+}
+
+#[test]
+fn the_scopes_policy_decides_a_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    let denied = denial(&mut cell);
+    let refused: [(&str, Option<String>); 8] = [
+        ("anonymous", None),
+        ("member", Some(user("member"))),
+        ("viewer", Some(user("viewer"))),
+        ("owner", Some(user("owner"))),
+        ("service member", Some(token("service", "org_a", "member"))),
+        ("service admin", Some(token("service", "org_a", "admin"))),
+        (
+            "another organization's admin",
+            Some(token("user", "org_b", "admin")),
+        ),
+        ("not a token", Some("Bearer nonsense".to_owned())),
+    ];
+    for (who, auth) in &refused {
+        let response = cell.melt(
+            MELT_ACTION,
+            auth.as_deref(),
+            &format!("refused-{}", who.len()),
+        );
+        assert_eq!(response, denied, "{who}");
+    }
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
+    let admin = cell.melt(MELT_ACTION, Some(&user("admin")), "m1");
+    assert_eq!(admin.status, 200, "{}", admin.body);
+    let receipt: Value = serde_json::from_str(&admin.body).unwrap();
+    assert_eq!(receipt["outcome"], "committed", "{receipt}");
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+    // The same call replays; nobody else's attempt commits anything.
+    let again = cell.melt(MELT_ACTION, Some(&user("admin")), "m1");
+    assert_eq!(
+        serde_json::from_str::<Value>(&again.body).unwrap()["outcome"],
+        "replayed"
+    );
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+}
+
+/// A service principal holds only service roles (`member`, `viewer`); a
+/// policy that names `member` admits it, as it admits a member user.
+#[test]
+fn a_member_policy_admits_members_and_member_services() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("a.sqlite"),
+        &with_policy(&["member"]),
+    );
+    let denied = denial(&mut cell);
+    for (auth, id) in [
+        (user("member"), "u"),
+        (token("service", "org_a", "member"), "s"),
+    ] {
+        let response = cell.melt(MELT_ACTION, Some(&auth), id);
+        assert_eq!(response.status, 200, "{}", response.body);
+    }
+    for auth in [
+        user("viewer"),
+        token("service", "org_a", "viewer"),
+        user("admin"),
+    ] {
+        assert_eq!(cell.melt(MELT_ACTION, Some(&auth), "v"), denied);
+    }
+}
+
+/// An action is callable only through the policy its own `access` ref names.
+#[test]
+fn an_action_is_callable_only_through_its_own_policy() {
+    let directory = tempfile::tempdir().unwrap();
+    let other = "constitution.other.access.policy";
+    let cases: [(&str, Vec<Value>); 3] = [
+        ("no access ref", {
+            let mut artifacts = melt(None);
+            artifacts.push(policy(POLICY, &[MELT_ACTION], &["admin"]));
+            artifacts
+        }),
+        ("another policy grants it", {
+            let mut artifacts = melt(Some(&access()));
+            artifacts.push(policy(POLICY, &[MELT_ACTION], &["owner"]));
+            artifacts.push(policy(other, &[MELT_ACTION], &["admin"]));
+            artifacts
+        }),
+        ("pinned to another version", {
+            let mut artifacts = melt(Some(&json!({ "artifactId": POLICY, "version": "9.9.9" })));
+            artifacts.push(policy(POLICY, &[MELT_ACTION], &["admin"]));
+            artifacts
+        }),
+    ];
+    for (index, (case, artifacts)) in cases.iter().enumerate() {
+        let mut cell = provisioned(&directory.path().join(format!("{index}.sqlite")), artifacts);
+        let denied = denial(&mut cell);
+        assert_eq!(
+            cell.melt(MELT_ACTION, Some(&user("admin")), "m"),
+            denied,
+            "{case}"
+        );
+        assert_eq!(
+            cell.melts()["records"].as_array().map(Vec::len),
+            Some(0),
+            "{case}"
+        );
+    }
+}
+
+/// A referenced policy that does not compile yields an error, never a
+/// policy: the host then serves no action.
+#[test]
+fn a_policy_that_does_not_compile_yields_none() {
+    let mut artifacts = melt(Some(&access()));
+    let mut broken = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    broken["payload"]["rules"][0]["resourceType"] = json!("constitution.NoSuchType");
+    artifacts.push(broken);
+    let envelopes: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(Value::Array(artifacts)).unwrap();
+    let mut all: Vec<norn_ir::ArtifactEnvelope> = base::SOURCES
+        .iter()
+        .map(|text| serde_json::from_str(text).unwrap())
+        .collect();
+    all.extend(envelopes);
+    let model = norn_api::kernel_set::kernel_model(&all).unwrap();
+    assert!(ActionPolicy::compile(&model, &all, &scope()).is_err());
+    // Without a policy that names it, nothing is callable at all.
+    let unreferenced = melt(None);
+    let envelopes: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(Value::Array(unreferenced)).unwrap();
+    assert!(
+        ActionPolicy::compile(&model, &envelopes, &scope())
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// The cell registers the compiled-in built-ins, and only them.
+#[test]
+fn the_compiled_in_builtins_are_registered() {
+    assert!(norn_cell::builtin_registered("norn.decision", 1));
+    assert!(!norn_cell::builtin_registered("norn.decision", 2));
+    assert!(!norn_cell::builtin_registered("tenant.anything", 1));
+}
