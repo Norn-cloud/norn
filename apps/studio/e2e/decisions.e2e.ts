@@ -179,9 +179,9 @@ test("run view: a waiting run links to its decision; Run again starts a new run 
   await expect(page.getByText("There is no such run you can read.")).toBeVisible()
 })
 
-test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again with plain 200s", async ({ page }) => {
+test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again when the cell says it changed", async ({ page }) => {
   await session(page)
-  await decisionCell(page, { legacy: true })
+  const cell = await decisionCell(page, { legacy: true })
   let reads = 0
   page.on("request", (request) => { if (request.url().includes("/api/host/v1/runs/run_restock_7")) reads += 1 })
   await page.goto("/runs/run_restock_7")
@@ -193,6 +193,10 @@ test("run view, first cut: without steps the run shows its state, flow and gener
   await expect(page.getByRole("list", { name: "Steps" })).toHaveCount(0)
   await expect(page.getByText("In progress")).toBeVisible()
   await shoot(page, "run-first-cut")
+  // Nothing polls (UI-LIVE-1): a commit that changes the run is announced on the live socket and read once.
+  await page.waitForTimeout(3_000)
+  expect(reads).toBe(1)
+  cell.runs.get("run_restock_7")!.steps.find((s) => s.status === "waiting")!.status = "running"
   await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(1)
 })
 
@@ -204,7 +208,7 @@ test("run view, first cut: a run the cell calls terminal reads as ended and is n
   await page.goto("/runs/run_count_3")
   await expect(page.getByText("Ended", { exact: true })).toBeVisible()
   await expect(page.getByText("Live")).toHaveCount(0)
-  await page.waitForTimeout(7_000) // longer than the 5 s beat of a run still in progress
+  await page.waitForTimeout(7_000) // an ended run is not watched: no socket subscription, no read
   expect(reads).toBe(1)
 })
 

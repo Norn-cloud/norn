@@ -1,4 +1,4 @@
-import type { Page, Route } from "@playwright/test"
+import type { Page, Route, WebSocketRoute } from "@playwright/test"
 
 /**
  * A stand-in for RUNS's decision and run routes (decisions contract v1, as RUNS approved it):
@@ -153,6 +153,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       // The run goes on: the next steps run while Studio reads it again, then it succeeds.
       for (const s of run.steps) if (s.status === "pending") Object.assign(s, { status: "running", startedAtMs: now })
     }
+    push()
     const result = { outcome: "decided", decision: { id, choice: parsed.choice, ...parsed.note ? { note: parsed.note } : {}, decidedBy: "you", decidedAtMs: now }, receipt: { receiptHash: hash(seq), commitSeq: seq, recordedAtMs: now }, run: { id: decision.runId, state: "running" } }
     keys.set(key, { id, body: JSON.stringify(rest), result })
     return route.fulfill({ json: result })
@@ -177,16 +178,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     const id = decodeURIComponent(url.pathname.split("/v1/runs/")[1] ?? "")
     const run = runs.get(id)
     if (!run) return refuse(route, 404, "run.not_found", "There is no such run you can read.")
-    // A running run moves one step per read, so live refresh has something to show.
     run.reads += 1
-    const active = run.steps.find((s) => s.status === "running")
-    if (active && run.reads > 1) {
-      seq += 1
-      Object.assign(active, { status: "done", endedAtMs: now + run.reads * 1000, receipts: [{ kind: active.kind === "succeed" ? "commit" : "function", receiptHash: hash(seq), commitSeq: seq, recordedAtMs: now + run.reads * 1000, executor: "the cell" }] })
-      const next = run.steps.find((s) => s.status === "pending")
-      if (next) Object.assign(next, { status: "running", startedAtMs: now + run.reads * 1000 })
-      run.version += 1
-    }
     if (options.legacy) {
       // RUNS's first cut: no steps, no decision, no ETag; `terminal` says when the run has ended.
       const { steps: _steps, decision: _decision, ...first } = document(run)
@@ -196,6 +188,50 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     if (route.request().headers()["if-none-match"] === etag) return route.fulfill({ status: 304, headers: { etag } })
     return route.fulfill({ json: document(run), headers: { etag } })
   })
+
+  // Live reads (UI-LIVE-1): the stand-in's own socket. A subscription gets the route's current
+  // version at once and again whenever a commit here changes it; nothing is sent otherwise.
+  const subs = new Map<string, { ws: WebSocketRoute; path: string; digest: string }>()
+  const versionOf = (path: string): string => {
+    const url = new URL(path, "https://cell")
+    if (url.pathname.startsWith("/v1/runs/")) {
+      const run = runs.get(decodeURIComponent(url.pathname.slice("/v1/runs/".length)))
+      return run ? `${run.version}:${run.steps.map((s) => s.status).join(",")}` : "404"
+    }
+    if (url.pathname === "/v1/decisions") return open().map((d) => d.id).join(",")
+    return "404"
+  }
+  const push = () => {
+    for (const [id, sub] of subs) {
+      const digest = versionOf(sub.path)
+      if (digest === sub.digest) continue
+      sub.digest = digest
+      sub.ws.send(JSON.stringify({ type: "snapshot", id, status: digest === "404" ? 404 : 200, digest, body: null }))
+    }
+  }
+  await page.routeWebSocket("**/api/host/v1/subscribe**", (ws) => {
+    ws.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; id: string; path: string }
+      if (message.type === "unsubscribe") { subs.delete(message.id); return }
+      subs.set(message.id, { ws, path: message.path, digest: "" })
+      push()
+    })
+    ws.onClose(() => { for (const [id, sub] of subs) if (sub.ws === ws) subs.delete(id) })
+  })
+  // A running run finishes one step a second on the stand-in's own clock, and says so on the socket.
+  const ticker = setInterval(() => {
+    for (const run of runs.values()) {
+      const active = run.steps.find((s) => s.status === "running")
+      if (!active) continue
+      seq += 1
+      Object.assign(active, { status: "done", endedAtMs: now, receipts: [{ kind: active.kind === "succeed" ? "commit" : "function", receiptHash: hash(seq), commitSeq: seq, recordedAtMs: now, executor: "the cell" }] })
+      const next = run.steps.find((s) => s.status === "pending")
+      if (next) Object.assign(next, { status: "running", startedAtMs: now })
+      run.version += 1
+    }
+    push()
+  }, 1000)
+  page.on("close", () => clearInterval(ticker))
 
   function document(run: StoredRun) {
     const waiting = run.steps.find((s) => s.status === "waiting")
@@ -207,7 +243,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
 
   return {
     calls, runs,
-    resolveElsewhere: (id, by, choice) => { const d = decisions.find((x) => x.id === id); if (d) d.resolved = { resolution: "decided", by, atMs: now, ...choice === undefined ? {} : { choice } } },
+    resolveElsewhere: (id, by, choice) => { const d = decisions.find((x) => x.id === id); if (d) d.resolved = { resolution: "decided", by, atMs: now, ...choice === undefined ? {} : { choice } }; push() },
     advance: (ms) => { now += ms },
     failNext: () => { fail = true },
   }

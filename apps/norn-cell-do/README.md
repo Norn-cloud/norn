@@ -3,6 +3,11 @@
 The Workers/Durable Objects host: one Norn tenant cell per Durable Object
 (#728, #819). It runs unchanged on self-hosted celld, workerd and Cloudflare.
 
+- `subscribe.mjs`: live reads (`norn.live/1`). A hibernating WebSocket on
+  `/v1/subscribe` names GET routes; after every commit the cell answers each
+  one again as its subscriber and sends only changed answers. The cell's own
+  handler and authorization decide every answer; an expired token closes the
+  socket (4401) and the client reconnects with a fresh one.
 - `worker.mjs`: the router picks the cell's object by its `CellScope` key; the
   `Cell` object holds one Rust `NornCell` over its own DO SQLite storage.
 - The Rust side is `crates/norn-cell-do`: provisioning, principal resolution,
@@ -13,7 +18,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
