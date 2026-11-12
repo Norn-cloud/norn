@@ -1192,8 +1192,10 @@ mod ontology_derived_measures {
             // A balance yields only its as-of snapshots (METRIC-SNAPSHOT-ASOF-1), never a sum or ratio.
             assert_eq!(!space.candidates().is_empty(), balance);
             assert!(space.candidates().iter().all(|candidate| {
-                matches!(candidate.definition.norn.additivity, MetricAdditivity::SemiAdditive { .. })
-                    && candidate.definition.type_params.expr.as_deref() == Some("input")
+                matches!(
+                    candidate.definition.norn.additivity,
+                    MetricAdditivity::SemiAdditive { .. }
+                ) && candidate.definition.type_params.expr.as_deref() == Some("input")
             }));
         }
     }
