@@ -8,12 +8,12 @@
 //! [`collection_access`]. A caller with no verified principal reads nothing.
 //!
 //! ACTION-STEP-1: a run's `norn.action@1` steps act under the verified
-//! principal who started the run, for the whole run. [`handle_runs`] records
-//! that principal from the request's caller slot when a run starts, and after
+//! principal who started the run, for the whole run. The dispatch records
+//! that principal from the resolver's caller slot when a run starts, and after
 //! a start or a decision runs the run's pending action steps with the starter
-//! made the slot's caller for each one call, restored on every path. A host
-//! without a caller slot records no starter, and its runs' action steps are
-//! denied.
+//! made the slot's caller for each one call, restored on every path. A
+//! resolver without a caller slot records no starter, and its runs' action
+//! steps are denied.
 
 use std::collections::BTreeMap;
 
@@ -30,28 +30,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 
 use crate::policy::{Caller, CallerSlot, collection_access};
-use crate::principal::{PrincipalResolver, RequestScope};
 use crate::server::{Request, Response, document_json, parse};
-
-/// Serve `request` when its path is a run or decision route, for a host
-/// that knows the slot its policy reads the verified caller from: resolve the
-/// request's principal (for exactly this request), serve the route, and run
-/// the run's action steps under its recorded starter. `None` for every other
-/// path, before any principal is resolved.
-pub fn handle_runs<E: SqlEngine>(
-    host: &DevHost<E>,
-    principals: &dyn PrincipalResolver,
-    questions: Option<&dyn AdHocQuestions<E>>,
-    caller: &CallerSlot,
-    request: &Request<'_>,
-) -> Option<Response> {
-    if runs_route(request.path).is_none() && decisions_route(request.path).is_none() {
-        return None;
-    }
-    let _request = RequestScope::new(principals);
-    let actor = principals.resolve(request.authorization, request.now);
-    dispatch(host, questions, Some(caller), actor.as_deref(), request)
-}
 
 /// Serve `request` when its path is a run or decision route; `None` for
 /// every other path. `questions` is the cell's receipt-disclosure authority
