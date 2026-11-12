@@ -12,6 +12,7 @@ import { useView, type View } from "@/lib/view"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
 import { LawsPanel } from "./laws.tsx"
+import { SourceConnections } from "./source-connections.tsx"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
@@ -32,12 +33,13 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
 export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
 function Systems({ catalog }: { readonly catalog: Catalog }) {
-  const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
+  const concepts = catalog.concepts.filter(({ definition }) => definition === "object type")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
   return (
     <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       <Panel icon={Database} label="Connected systems">
         <Well className="divide-y">
+          {catalog.systems.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
           {catalog.systems.map((system) => (
             <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
               <span className="min-w-0">
@@ -274,6 +276,7 @@ export function SourcesPage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
+        {read.data?.origin === "live" && <SourceConnections />}
         <Systems catalog={catalog} />
         <Panel icon={Shapes} label="The business model">
           <Well className="space-y-6 p-4">
@@ -283,7 +286,7 @@ export function SourcesPage() {
               <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
                 className="border-border bg-background ps-9 dark:bg-background" />
             </label>
-            {OVERVIEW_GROUPS.map(({ label, has }) => (
+            {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || catalog.concepts.some(has)).map(({ label, has }) => (
               <div key={label} className="space-y-3">
                 <h3 className="text-meta font-medium text-muted-foreground">{label}</h3>
                 {catalog.concepts.some((concept) => has(concept) && matches(concept))
