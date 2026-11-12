@@ -146,6 +146,8 @@ test("an approval-gated call commits nothing: it waits for a decider, reads noth
   const [pending, cmds] = update(sending, { kind: "answered", result: { kind: "pending", decision: { id: "d1", expiresAtMs: 5 } } })
   expect(pending.phase).toEqual({ kind: "pending", decision: { id: "d1", expiresAtMs: 5 } })
   expect(cmds).toEqual([])
+  // The sent call stays the only one under its key: nothing is sent again from here but a new draft.
+  expect(update(pending, { kind: "submit", input: '{"other":1}' })).toEqual([pending, []])
   const [again] = update(pending, { kind: "again", key: "k1" })
   expect(again.phase.kind).toBe("editing")
   expect(again.key).toBe("k1")

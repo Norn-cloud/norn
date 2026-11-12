@@ -92,7 +92,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       return [{ ...state, phase: next, key: msg.key }, []]
     }
     case "submit": {
-      if (inFlight(state) || phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
+      if (inFlight(state) || phase.kind === "done" || phase.kind === "pending" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
       if (state.target.risky && phase.kind !== "confirm") return [{ ...state, phase: { kind: "confirm" } }, []]
       return [{ ...state, phase: { kind: "sending" }, sent: { input: msg.input, key: state.key } }, [call(state.target.actionId, msg.input, state.key)]]
     }
