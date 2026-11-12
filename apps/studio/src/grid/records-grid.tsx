@@ -237,7 +237,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
-          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review.</p>
+          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
         <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">

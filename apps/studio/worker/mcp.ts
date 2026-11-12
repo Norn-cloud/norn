@@ -1,6 +1,7 @@
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import { MCP_PATH, ORG_CLAIM, activeMembership, mcpResource, type Auth } from "./auth.ts"
 import { hostToken, type NornActor } from "./actor.ts"
+import { viewPage } from "./widget-page.ts"
 
 /**
  * The MCP endpoint people add to an assistant they already use (Claude, ChatGPT):
@@ -89,6 +90,62 @@ export interface McpEdge {
   readonly baseURL: string
   readonly trustedOrigins: readonly string[]
   readonly host: Fetcher | undefined
+  /** Studio's built assets, which hold the widget page (dist/widgets/norn.html). */
+  readonly assets: Fetcher
+}
+
+/**
+ * The widgets a chat renders (MCP Apps): one static, data-free page per view, the same file
+ * Studio builds, served as `ui://norn/<view>.html`. The cell's tools name these URIs; the
+ * page asks for data only through those tools. Like Studio's own /assets, it carries no data
+ * and decides nothing, so the edge serves it rather than the cell.
+ */
+export const WIDGET_VIEWS = ["answer", "lineage", "dashboard", "receipt"] as const
+export const UI_MIME_TYPE = "text/html;profile=mcp-app"
+export const widgetUri = (view: (typeof WIDGET_VIEWS)[number]) => `ui://norn/${view}.html`
+const WIDGET_TITLES: Readonly<Record<(typeof WIDGET_VIEWS)[number], string>> = {
+  answer: "Norn answer",
+  lineage: "Norn lineage",
+  dashboard: "Norn proposal",
+  receipt: "Norn action receipt",
+}
+/** The sandbox the widget needs: inline script and style only, no connections, no frames. */
+const WIDGET_META = { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } }
+
+const rpcResult = (id: unknown, result: unknown) => json(200, { jsonrpc: "2.0", id, result })
+const rpcFailure = (id: unknown, code: number, message: string, data?: unknown) => json(200, { jsonrpc: "2.0", id, error: { code, message, ...data === undefined ? {} : { data } } })
+
+/** The widget page for one view, naming the view and Studio's origin for its links; null when this build has none. */
+export async function widgetPage(edge: Pick<McpEdge, "assets" | "baseURL">, view: (typeof WIDGET_VIEWS)[number]): Promise<string | null> {
+  const response = await edge.assets.fetch(new Request(new URL("/widgets/norn.html", edge.baseURL)))
+  if (!response.ok) return null
+  return viewPage(await response.text(), view, new URL(edge.baseURL).origin)
+}
+
+const RESOURCE_METHODS = new Set(["resources/list", "resources/read", "resources/templates/list"])
+
+/** Answer a resources request for the widget pages; anything else is not a resource this server has. */
+async function serveResource(message: { readonly id?: unknown; readonly method: string; readonly params?: { readonly uri?: unknown } }, edge: McpEdge): Promise<Response> {
+  if (message.id === undefined) return new Response(null, { status: 202 })
+  if (message.method === "resources/templates/list") return rpcResult(message.id, { resourceTemplates: [] })
+  if (message.method === "resources/list") {
+    return rpcResult(message.id, { resources: WIDGET_VIEWS.map((view) => ({ uri: widgetUri(view), name: `norn-${view}`, title: WIDGET_TITLES[view], mimeType: UI_MIME_TYPE, _meta: WIDGET_META })) })
+  }
+  const view = WIDGET_VIEWS.find((candidate) => widgetUri(candidate) === message.params?.uri)
+  if (view === undefined) return rpcFailure(message.id, -32002, "Resource not found", { uri: message.params?.uri ?? null })
+  const page = await widgetPage(edge, view)
+  if (page === null) return rpcFailure(message.id, -32002, "This deployment has no widget build", { uri: widgetUri(view) })
+  return rpcResult(message.id, { contents: [{ uri: widgetUri(view), mimeType: UI_MIME_TYPE, text: page, _meta: WIDGET_META }] })
+}
+
+/** The JSON-RPC message's id, method and params, or null when the body is not one message. */
+function parsed(body: string): { readonly id?: unknown; readonly method: string; readonly params?: { readonly uri?: unknown } } | null {
+  try {
+    const message = JSON.parse(body) as { id?: unknown; method?: unknown; params?: { uri?: unknown } } | null
+    return message !== null && typeof message === "object" && typeof message.method === "string" ? { id: message.id, method: message.method, params: message.params } : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -110,6 +167,8 @@ export async function serveMcp(request: Request, edge: McpEdge): Promise<Respons
   if (edge.host === undefined) return rpcError(503, "No Norn host is connected to this deployment.")
   const body = await bounded(request, MAX_MESSAGE_BYTES)
   if (body === null) return rpcError(413, "The MCP message is too large.")
+  const message = parsed(body)
+  if (message !== null && RESOURCE_METHODS.has(message.method)) return serveResource(message, edge)
   const scope = new URLSearchParams({ orgId: actor.orgId, environmentId: actor.environmentId })
   const forwarded = await edge.host.fetch(new Request(`https://norn-host/v1/mcp?${scope}`, {
     method: "POST",

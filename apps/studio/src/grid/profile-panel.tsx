@@ -10,15 +10,38 @@ import { profiled, readProfile, type ObjectProfile, type PropertyProfile } from 
 
 const percent = (part: number, whole: number) => whole === 0 ? "—" : `${((part / whole) * 100).toFixed(part === 0 || part === whole ? 0 : 1)}%`
 
-/** A histogram as bars of their counts; each bar's bounds are the values the cell sent for it. */
+/** A bin's bounds on one axis, for drawing only: numbers as they are, dates as days. */
+const position = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : typeof value === "string" && !Number.isNaN(Date.parse(value)) ? Date.parse(value) / 86_400_000 : undefined
+
+/**
+ * How tall each bin draws. Equal-population bins hold the same count by construction, so their
+ * height is density (count over the bin's width) and the distribution's shape shows; any other
+ * histogram draws its counts. A bin narrower than a tenth of an even split draws at that width.
+ * Drawing only: every figure shown is the cell's exact text.
+ */
+function heights(histogram: NonNullable<PropertyProfile["histogram"]>): readonly number[] {
+  const counts = histogram.bins.map(({ count }) => count)
+  if (histogram.kind !== "equal_population") return counts
+  const lows = histogram.bins.map(({ lower }) => position(lower))
+  const highs = histogram.bins.map(({ upper }) => position(upper))
+  const first = lows[0]
+  const last = highs.at(-1)
+  if (first === undefined || last === undefined || lows.some((low) => low === undefined) || highs.some((high) => high === undefined) || last <= first) return counts
+  const floor = (last - first) / (histogram.bins.length * 10)
+  return histogram.bins.map(({ count }, index) => count / Math.max(floor, (highs[index] ?? 0) - (lows[index] ?? 0)))
+}
+
+/** A histogram as bars; each bar's bounds and count are the values the cell sent for it. */
 function Bars({ read, at, histogram }: { readonly read: Read<ObjectProfile>; readonly at: string; readonly histogram: NonNullable<PropertyProfile["histogram"]> }) {
-  const most = Math.max(1, ...histogram.bins.map(({ count }) => count))
+  const drawn = heights(histogram)
+  const most = Math.max(Number.MIN_VALUE, ...drawn)
   return (
     <div className="flex h-8 w-40 items-end gap-px" role="img" aria-label={`${histogram.bins.length} bins, ${histogram.kind.replaceAll("_", " ")}`}>
       {histogram.bins.map((bin, index) => {
         const lower = profiled(read, `${at}/histogram/bins/${index}/lower`, bin.lower)
         const upper = profiled(read, `${at}/histogram/bins/${index}/upper`, bin.upper)
-        return <div key={index} title={`${lower === upper ? lower : `${lower} to ${upper}`}: ${bin.count}`} className="min-w-1 flex-1 rounded-t-sm bg-chart-1/70" style={{ height: `${Math.max(4, (bin.count / most) * 100)}%` }} />
+        return <div key={index} title={`${lower === upper ? lower : `${lower} to ${upper}`}: ${bin.count}`} className="min-w-1 flex-1 rounded-t-sm bg-chart-1/70" style={{ height: `${Math.max(4, ((drawn[index] ?? 0) / most) * 100)}%` }} />
       })}
     </div>
   )

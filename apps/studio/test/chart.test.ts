@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chartEmpty, chartFrame } from "../src/lib/chart.ts"
+import { chartEmpty, chartFrame, pieSlices } from "../src/lib/chart.ts"
 
 test("ratios plot as whole percents padded by one point", () => {
   const frame = chartFrame([
@@ -30,4 +30,15 @@ test("an all-suppressed answer is not called empty", () => {
   expect(chartEmpty([suppressed])).toContain("suppressed")
   expect(chartEmpty([suppressed])).not.toContain("no answers")
   expect(chartEmpty([{ label: "Week", value: "unavailable", totals: ["0 g", "0 g"] }])).toContain("No week")
+})
+
+test("a pie is drawn only from a whole: no suppressed or negative part, a total above zero; each share is of that total", () => {
+  const part = (label: string, value: string) => ({ label, value, totals: [`${value} g`] })
+  const slices = pieSlices([part("gold", "30"), part("silver", "10"), part("copper", "0")])
+  if (typeof slices === "string") throw new Error(slices)
+  expect(slices.map(({ label, exact, share }) => [label, exact, share])).toEqual([["gold", "30", "75.0%"], ["silver", "10", "25.0%"], ["copper", "0", "0.0%"]])
+  expect(pieSlices([])).toContain("no answers")
+  expect(pieSlices([part("gold", "3"), { ...part("silver", "unavailable"), suppressed: true }])).toContain("suppressed")
+  expect(pieSlices([part("gold", "3"), part("loss", "-1")])).toContain("negative")
+  expect(pieSlices([part("gold", "0"), part("silver", "0")])).toContain("zero")
 })

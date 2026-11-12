@@ -160,6 +160,8 @@ impl NornCell {
                 // Sign-offs verify against the checker's words, as Studio shows
                 // them; D59: a flow is installed by signing the server's words for it.
                 .with_restater(norn_api::definition_routes::checker_restatement)
+                // A flow's performs may name a registered built-in.
+                .with_builtins(norn_cell::builtin_registered)
                 // A binding runs as a role of the cell's declared grant table.
                 .with_roles(
                     crate::policy::DEMO_GRANTS

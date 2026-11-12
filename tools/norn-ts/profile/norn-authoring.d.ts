@@ -156,6 +156,24 @@ declare module "@norn/authoring" {
     /** Syntax only: authored modules and callbacks never execute. */
     function question(meta: QuestionMeta): QuestionDefinition
 
+    /** Candidate dashboard definition; the cell's checker admits each tile's question and view. */
+    interface DashboardDefinition { readonly _tag: "NornDashboard" }
+    interface DashboardTile {
+      readonly title: string
+      /** A Norn.question declared in the same module. */
+      readonly question: QuestionDefinition
+      /** number: one value (no group-by); pie: parts of one whole (one summable measure by a category). */
+      readonly view: "number" | "line" | "area" | "bar" | "pie" | "table"
+      /** Half or full width; numbers and pies default to half, the rest to full. */
+      readonly width?: "half" | "full"
+    }
+    interface DashboardMeta {
+      readonly title: string
+      readonly tiles: ReadonlyArray<DashboardTile>
+    }
+    /** Syntax only: lowers to the cell's `dashboard` definition, admitted like one built in Studio. */
+    function dashboard(meta: DashboardMeta): DashboardDefinition
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}

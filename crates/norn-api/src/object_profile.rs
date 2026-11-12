@@ -409,7 +409,7 @@ fn fill(out: &mut NornPropertyProfile, sorted: &[RuntimeValue]) {
 /// A denied gate (the opaque 403), an undeclared type (404), an engine that
 /// cannot prove one snapshot (503), a commit while the snapshot was read
 /// (409 `object.snapshot_moved`, `retryable`), or a host failure.
-#[utoipa::path(get, path = "/v1/objects/{type}:profile", params(("type" = String, Path, description = "The concept to profile."), ("orgId" = String, Query), ("environmentId" = String, Query)), responses((status = 200, description = "The profile of the caller's authorized snapshot.", body = NornObjectProfile), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The snapshot moved while it was read; retry.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(get, path = "/v1/objects/{type}:profile", tag = "crate::object_routes", params(("type" = String, Path, description = "The concept to profile."), ("orgId" = String, Query), ("environmentId" = String, Query)), responses((status = 200, description = "The profile of the caller's authorized snapshot.", body = NornObjectProfile), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The snapshot moved while it was read; retry.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_object_profile<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,

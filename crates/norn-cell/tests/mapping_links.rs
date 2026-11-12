@@ -63,6 +63,8 @@ fn setup(path: &Path) -> Cell {
 }
 
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
+    // Every plan in these tests is also checked against the wide journal scope.
+    norn_cell::check_link_plans_against_wide_scope(true);
     let mut artifacts = fixture_artifacts();
     edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
@@ -820,4 +822,110 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
         provider(&cell),
         BTreeSet::from(["demo/party/custodian".into()])
     );
+}
+
+/// Absence through the mapping path, for uploaded data. A nullable property
+/// mapped to no value (`canon.OrderLine.currency`, mapped from `null`) is
+/// stored as no value and reads back as null: not "", not 0. A null in a
+/// source field the source schema declares `required` (`Sales Order Item.unit`)
+/// is refused and nothing is written, so an uploader declares the columns that
+/// may be empty as `required: false` (the checker then types them nullable).
+#[test]
+fn absence_maps_to_null_and_a_required_source_field_refuses_it() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("nulls.sqlite"));
+    let source = fixture("erpnext");
+    for row in source["snapshot"].as_array().expect("rows") {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    assert_eq!(count_snapshot(&cell), (10, 0));
+    let line = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.OrderLine", "demo/order/1/line/1")
+        .expect("read")
+        .expect("order line");
+    let currency = line.values.get("currency");
+    assert!(
+        currency.is_none_or(|value| matches!(value, RuntimeValue::Null)),
+        "currency reads back as null, got {currency:?}"
+    );
+    assert!(
+        line.values
+            .get("unit")
+            .is_some_and(|value| !matches!(value, RuntimeValue::Null)),
+        "present values are untouched"
+    );
+
+    let mut row = source["snapshot"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .expect("order row")
+        .clone();
+    row["record"]["unit"] = Value::Null;
+    let id = retain_in(&mut cell, "erpnext", &row, "1", "snapshot");
+    assert!(
+        cell.process_mapping_bundle(&id).is_err(),
+        "a null in a required source field is refused"
+    );
+    let unchanged = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.OrderLine", "demo/order/1/line/1")
+        .expect("read")
+        .expect("order line");
+    assert_eq!(unchanged.version, line.version, "nothing was written");
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    /// The narrowed link plan equals the wide one (checked inside every
+    /// mapping commit) over generated histories: deliveries in any order,
+    /// re-pointed claims, redeliveries of older versions and, on the to-many
+    /// `peers` link, cleared claims; for the production links (`from: one`
+    /// owner) and the added `from: many` relation.
+    #[test]
+    fn obs_link_narrowed_plans_equal_wide_plans(
+        many in proptest::bool::ANY,
+        steps in proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..18),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("shadow.sqlite");
+        let mut cell = if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) };
+        let source = fixture("erpnext");
+        let rows = source["snapshot"].as_array().expect("rows").clone();
+        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
+        for (row, party, version) in steps {
+            // The erpnext snapshot has seven rows; `row` is drawn from 0..7.
+            let mut row = rows[usize::from(row)].clone();
+            let record = row["record"].as_object_mut().expect("record");
+            let party = parties[usize::from(party)];
+            if record.contains_key("provider_ref") && party != "clear" {
+                record.insert("provider_ref".into(), json!(party));
+            }
+            if many && record.contains_key("owner_ref") {
+                record.insert("owner_ref".into(), json!(party));
+            }
+            // A refusal of an unsupported profile is a valid outcome; a plan
+            // mismatch surfaces as an encoding error and fails here.
+            let event = version.to_string();
+            let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                capture(&mut cell, "erpnext", &row, &event)
+            }));
+            if let Err(panic) = captured {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
+                proptest::prop_assert!(
+                    !message.contains("narrowed link plan differs"),
+                    "{message}"
+                );
+                break;
+            }
+        }
+    }
 }

@@ -1,8 +1,10 @@
 //! Fetch dispatch over `norn_api`'s shared, authorized services: the read
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
-//! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `/v1/definitions/{id}:retire`), the one governed action route,
+//! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
+//! `GET /v1/runs/{id}`); and `POST /v1/mcp`, whose tools call these same
+//! routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -29,7 +31,7 @@ use norn_api::object_review::{
 use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
-    evaluate_question, get_answer, get_numeric_trace, list_metrics, trace_ad_hoc,
+    evaluate_question, get_answer, get_numeric_trace, list_metrics, question_catalog, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -147,8 +149,16 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
+    Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
     QuestionsMetrics => ("GET", "/v1/questions:metrics"),
+    /// `POST /v1/runs` (RUN-ROUTES-1).
+    RunStart => ("POST", "/v1/runs"),
+    /// `GET /v1/runs/{id}` (RUN-ROUTES-1).
+    Run => ("GET", "/v1/runs/{id}"),
+    /// `GET /v1/questions:catalog`.
+    QuestionsCatalog => ("GET", "/v1/questions:catalog"),
 }
 
 impl Route {
@@ -161,8 +171,17 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            crate::mcp::MCP_PATH => return Some(Self::Mcp),
             "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
+            "/v1/runs" => return Some(Self::RunStart),
+            "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
             _ => {}
+        }
+        if path
+            .strip_prefix("/v1/runs/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        {
+            return Some(Self::Run);
         }
         if let Some(route) = definitions_route(path) {
             return Some(match route {
@@ -249,10 +268,17 @@ pub fn handle_all<E: SqlEngine>(
         now,
         body,
     } = *request;
+    // MCP resolves its caller per tool call, through these same routes.
+    if path == crate::mcp::MCP_PATH {
+        return crate::mcp::serve(host, principals, questions, kinds, request);
+    }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
+    if let Some(response) = crate::runs::dispatch(host, actor, request) {
+        return response;
+    }
     let question = question_path(path);
     let ad_hoc = matches!(
         path,
@@ -281,6 +307,8 @@ pub fn handle_all<E: SqlEngine>(
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
+    } else if path == "/v1/questions:catalog" {
+        ad_hoc_catalog(host, questions, actor, method, query)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -383,6 +411,35 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// `GET /v1/questions:catalog`, scoped by the query string: what this caller
+/// may build an ad-hoc question from. A cell without a question runtime
+/// answers the one denial.
+fn ad_hoc_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the question catalog is read with GET",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let Some(runtime) = questions else {
+        return Err(norn_api::authz::read_denied());
+    };
+    document_json(&question_catalog(host, &scope, actor, runtime)?)
 }
 
 /// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
@@ -855,7 +912,7 @@ fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<
     runtime
 }
 
-fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
+pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
     serde_json::to_string(document).map_err(Refusal::host)
 }
 
@@ -878,7 +935,10 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 }
 
 /// A bounded query string with only `allowed` keys, each at most once.
-fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
+pub(crate) fn parse(
+    query: &str,
+    allowed: &[&'static str],
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
     parse_within(query, allowed, MAX_QUERY_BYTES)
 }
 

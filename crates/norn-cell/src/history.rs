@@ -349,7 +349,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .map(|evidence| evidence.receipt)
     }
 
-    fn fact_version_evidence(
+    /// One exact committed fact version with its emitting receipt, both
+    /// authenticated: the snapshot and the receipt's hashed world and write
+    /// span agree with the requested identity and version.
+    ///
+    /// # Errors
+    /// Missing/corrupt snapshot, lookup or receipt; engine failures.
+    pub fn fact_version_evidence(
         &self,
         world: &str,
         object_type: &str,

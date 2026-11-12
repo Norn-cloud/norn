@@ -227,3 +227,37 @@ test("only the known assistants' callbacks and metadata documents are accepted",
   await fetchClientMetadata("https://chatgpt.com/oauth/client.json", undefined, counting)
   expect(fetched).toBe(1)
 })
+
+test("the widget pages are served as ui:// resources, to a granted assistant only", async () => {
+  const env = stage()
+  const page = '<!doctype html><html><head><meta charset="utf-8" /><meta name="norn-widget" content="1" /></head><body>widget …</body></html>'
+  const assets = { fetch: async (request: Request) => new Response(new URL(request.url).pathname === "/widgets/norn.html" ? page : "<!doctype html>studio") } as unknown as Fetcher
+  const withWidget = { ...env, ASSETS: assets }
+  const { cookie } = await person(withWidget, "wi@example.com")
+  const { accessToken } = await grant(withWidget, cookie)
+  expect((await mcp(withWidget, null, { jsonrpc: "2.0", id: 1, method: "resources/list" })).status).toBe(401)
+
+  const list = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 2, method: "resources/list" })).json()) as { result: { resources: { uri: string; mimeType: string }[] } }
+  expect(list.result.resources.map(({ uri }) => uri)).toEqual(["ui://norn/answer.html", "ui://norn/lineage.html", "ui://norn/dashboard.html", "ui://norn/receipt.html"])
+  expect(list.result.resources.every(({ mimeType }) => mimeType === "text/html;profile=mcp-app")).toBe(true)
+
+  const read = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "ui://norn/lineage.html" } })).json()) as { result: { contents: { uri: string; text: string; _meta: { ui: { csp: { connectDomains: string[] } } } }[] } }
+  const [content] = read.result.contents
+  expect(content?.uri).toBe("ui://norn/lineage.html")
+  // The charset declaration stays first; the view and origin follow it.
+  expect(content?.text).toStartWith('<!doctype html><html><head><meta charset="utf-8" /><meta name="norn-view" content="lineage">')
+  expect(content?.text).toContain(`<meta name="norn-studio" content="${ORIGIN}">`)
+  expect(content?._meta.ui.csp.connectDomains).toEqual([])
+
+  const unknown = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 4, method: "resources/read", params: { uri: "ui://norn/other.html" } })).json()) as { error: { code: number } }
+  expect(unknown.error.code).toBe(-32002)
+  // A build without the widget never passes Studio's single-page fallback off as one.
+  const none = (await (await mcp(env, accessToken, { jsonrpc: "2.0", id: 5, method: "resources/read", params: { uri: "ui://norn/answer.html" } })).json()) as { error: { code: number } }
+  expect(none.error.code).toBe(-32002)
+  // A page that does not declare UTF-8 first is not served as a widget.
+  const undeclared = { ...env, ASSETS: { fetch: async () => new Response('<!doctype html><html><head><meta name="norn-widget" content="1" /></head><body>w</body></html>') } as unknown as Fetcher }
+  const refused = (await (await mcp(undeclared, accessToken, { jsonrpc: "2.0", id: 6, method: "resources/read", params: { uri: "ui://norn/answer.html" } })).json()) as { error: { code: number } }
+  expect(refused.error.code).toBe(-32002)
+  // Static pages are the edge's; nothing about them reaches the cell.
+  expect(env.forwarded).toHaveLength(0)
+})

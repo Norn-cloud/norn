@@ -188,6 +188,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over
+         *     stateless Streamable HTTP; `tools/list` is the caller's tool catalog.
+         * @description # Errors
+         *     Serialization failure; protocol and backend refusals stay on the wire.
+         */
+        post: operations["post_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}": {
         parameters: {
             query?: never;
@@ -421,6 +443,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/questions:catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+         *     an ad-hoc question is built from, for this caller (D67: only what the
+         *     caller may read the population of).
+         *     # Errors
+         *     No actor or a scope that is not this cell's (one opaque 403), or a host
+         *     failure reading the model.
+         */
+        get: operations["question_catalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions:evaluate": {
         parameters: {
             query?: never;
@@ -487,6 +533,52 @@ export interface paths {
          *     As [`evaluate_question`], and as [`get_numeric_trace`] for the trace.
          */
         post: operations["trace_ad_hoc"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/runs`: start a run of an installed flow.
+         * @description # Errors
+         *     Missing or foreign scope or a denied caller (one opaque 403), an invalid
+         *     body, an unknown or retired flow (`run.flow_not_found`), a run id already
+         *     started for another flow (`run.exists`), a refused start turn
+         *     (`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),
+         *     a concurrent change (`run.start_conflict`), or a host failure.
+         */
+        post: operations["start_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/runs/{id}`.
+         * @description # Errors
+         *     Missing or foreign scope; `run.not_found` for an absent or unreadable run.
+         */
+        get: operations["get_run"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -577,6 +669,25 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /**
+         * @description One object type an ad-hoc question may range over, with every effective
+         *     property and its resolved type (`null` for a registry or unresolved type).
+         */
+        CatalogObjectType: {
+            /** @description The object type's name: a question's `objectSet`. */
+            name: string;
+            /** @description Its effective properties, in declaration order. */
+            properties: components["schemas"]["CatalogProperty"][];
+        };
+        /** @description One effective property: its id and its resolved type, as declared. */
+        CatalogProperty: {
+            /** @description The property id: what a group-by or filter path names. */
+            id: string;
+            /** @description The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type. */
+            type?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -726,6 +837,47 @@ export interface components {
              * @enum {string}
              */
             layoutVersion: "0.1";
+        };
+        /** @description A JSON-RPC protocol error, carrying the shared refusal as its data. */
+        McpError: {
+            /**
+             * Format: int32
+             * @description The JSON-RPC error code.
+             */
+            code: number;
+            /** @description The refusal. */
+            data: components["schemas"]["Refusal"];
+            /** @description The refusal's message. */
+            message: string;
+        };
+        /**
+         * @description `POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,
+         *     over its stateless Streamable HTTP transport. The tool catalog is not
+         *     listed here: `tools/list` returns it, projected from what the cell declares.
+         */
+        McpMessage: {
+            /** @description A string or number; absent for a notification. */
+            id?: string | number;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /** @description `initialize`, `ping`, `tools/list`, `tools/call` or a notification. */
+            method: string;
+            /** @description The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`. */
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id. */
+        McpReply: {
+            error?: components["schemas"]["McpError"] | null;
+            /** @description A string or number; absent for a notification. */
+            id: string | number;
+            /** @description Always `2.0`. */
+            jsonrpc: string;
+            /** @description The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal. */
+            result?: {
+                [key: string]: unknown;
+            };
         };
         /** @description One field produced by an ordered action input derivation. */
         NornActionActionDerivedValue: {
@@ -9817,6 +9969,12 @@ export interface components {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
             /**
+             * @description Per operand, in `totals` order: how many members' measured value was
+             *     null. A null is skipped by the sum, never read as 0. Absent when no
+             *     value was null, and when the bucket is suppressed.
+             */
+            nullCounts?: number[];
+            /**
              * @description DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
              *     has fewer members than the server's declared minimum, so `totals` is
              *     empty and `value` null; membership stays. Absent when false.
@@ -9898,6 +10056,32 @@ export interface components {
                 commit: string;
             };
         };
+        /**
+         * @description `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+         *     from, and what this cell's engine admits. Every metric and object type
+         *     listed is one the caller may read the population of (D67): a ratio only
+         *     when both its operands are, a type only when it is a readable metric's
+         *     population. Nothing listed is a promise: `:evaluate` still admits.
+         */
+        QuestionCatalog: {
+            /**
+             * @description Calendar grains a group-by may bucket a time property by; a group-by
+             *     without a grain groups by the property's values.
+             */
+            grains: string[];
+            /** @description Most buckets one answer may have (above it, 413). */
+            maxBuckets: number;
+            /** @description Most group-bys one question may have. */
+            maxGroupBy: number;
+            /** @description The listed metrics, as declared, in name order. */
+            metrics: {
+                [key: string]: unknown;
+            }[];
+            /** @description The object types the listed metrics range over. */
+            objectTypes: components["schemas"]["CatalogObjectType"][];
+            /** @description Filter operators the engine admits. */
+            operators: string[];
+        };
         /** @description A refused request. */
         Refusal: ({
             /**
@@ -9976,6 +10160,104 @@ export interface components {
              */
             expectedVersion: number;
         };
+        /** @description One run, as the routes return it. */
+        RunDocument: {
+            /**
+             * Format: int64
+             * @description Start time (logical milliseconds).
+             */
+            createdAtMs: number;
+            /**
+             * Format: int64
+             * @description The starting commit.
+             */
+            createdCommitSeq: number;
+            /** @description The flow it runs. */
+            flow: components["schemas"]["RunFlow"];
+            /**
+             * Format: int64
+             * @description Its generation.
+             */
+            generation: number;
+            /** @description The run id. */
+            id: string;
+            /** @description The run's object type. */
+            objectType: string;
+            /** @description Its lifecycle state; `null` once the run object is deleted. */
+            state?: string | null;
+            /** @description The steps the run reached, in order. */
+            steps: components["schemas"]["RunStep"][];
+            /** @description The run has ended and will not change. */
+            terminal: boolean;
+            /**
+             * Format: int64
+             * @description Last write time (logical milliseconds).
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description The last commit that wrote the run object.
+             */
+            updatedCommitSeq: number;
+            /**
+             * Format: int64
+             * @description The run object's version.
+             */
+            version: number;
+        };
+        /** @description The flow a run executes. */
+        RunFlow: {
+            /** @description The flow's definition id. */
+            id: string;
+            /** @description The flow's `decide` rule artifact id (`<id>.flow.rule`). */
+            ruleId: string;
+            /** @description The flow's display title, when it has one. */
+            title?: string | null;
+            /** @description The rule version the run is pinned to. */
+            version: string;
+        };
+        /** @description One step of a run's timeline. */
+        RunStep: {
+            /**
+             * Format: int64
+             * @description When the run left it.
+             */
+            endedAtMs?: number | null;
+            error?: components["schemas"]["RunStepError"] | null;
+            /** @description The flow's step id (`succeed` or `fail` for the run's end). */
+            id: string;
+            /** @description What the step is. */
+            kind: components["schemas"]["RunStepKind"];
+            /** @description The step's display label from the flow, when it has one. */
+            label?: string | null;
+            /** @description The step's receipts the caller may see; none are disclosed yet. */
+            receipts: components["schemas"]["StepReceipt"][];
+            /**
+             * Format: int64
+             * @description When the run reached it (logical milliseconds).
+             */
+            startedAtMs?: number | null;
+            /** @description Where it stands. */
+            status: components["schemas"]["RunStepStatus"];
+            waitingOn?: components["schemas"]["StepWait"] | null;
+        };
+        /** @description Why a step or run failed. */
+        RunStepError: {
+            /** @description The failed lifecycle state. */
+            code: string;
+            /** @description Display words. */
+            message: string;
+        };
+        /**
+         * @description What a step is.
+         * @enum {string}
+         */
+        RunStepKind: "perform" | "decide" | "wait" | "succeed" | "fail";
+        /**
+         * @description Where a step stands.
+         * @enum {string}
+         */
+        RunStepStatus: "running" | "waiting" | "done" | "failed";
         /** @description A recorded sign-off: every field set by the host. */
         SignoffDocument: {
             /** @description Lower-case hex SHA-256 of the host-recomputed restatement. */
@@ -9993,6 +10275,48 @@ export interface components {
             /** @description Lower-case hex SHA-256 of the UTF-8 restatement. */
             restatementSha256: string;
         };
+        /** @description `POST /v1/runs` body. */
+        StartRunRequest: {
+            /**
+             * @description The installed flow's definition id (`flow.id`); its rule is
+             *     `<flow>.flow.rule`.
+             */
+            flow: string;
+            /**
+             * @description The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry
+             *     with the same id and flow returns the existing run.
+             */
+            runId: string;
+        };
+        /** @description One receipt behind a step, as the caller may see it. */
+        StepReceipt: {
+            /**
+             * Format: int64
+             * @description The commit.
+             */
+            commitSeq: number;
+            /** @description Who acted, in display words, never an id. */
+            executor?: string | null;
+            /** @description What it records. */
+            kind: components["schemas"]["StepReceiptKind"];
+            /** @description The receipt hash, or its keyed handle (D53). */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description When it was recorded (logical milliseconds).
+             */
+            recordedAtMs: number;
+        };
+        /**
+         * @description What a step receipt records.
+         * @enum {string}
+         */
+        StepReceiptKind: "function" | "decision" | "commit";
+        /**
+         * @description What a waiting step waits on.
+         * @enum {string}
+         */
+        StepWait: "decision" | "executor" | "timer";
     };
     responses: never;
     parameters: never;
@@ -10581,6 +10905,78 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    post_message: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpMessage"];
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpReply"];
+                };
+            };
+            /** @description A notification was accepted; there is no body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11467,6 +11863,58 @@ export interface operations {
             };
         };
     };
+    question_catalog: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The question catalog for this caller. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionCatalog"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     evaluate_question: {
         parameters: {
             query: {
@@ -11640,6 +12088,162 @@ export interface operations {
             };
             /** @description The request was refused by a typed compute refusal. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    start_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRunRequest"];
+            };
+        };
+        responses: {
+            /** @description A retry with the same run id and flow: the existing run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The run started. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such installed flow. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The run id is taken, or the cell changed while the run started. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The flow refused to start. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_run: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The run id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDocument"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description No such run is visible to the caller. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

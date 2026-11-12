@@ -926,6 +926,106 @@
         ]
       }
     },
+    "/v1/mcp": {
+      "post": {
+        "tags": [
+          "crate::mcp"
+        ],
+        "summary": "`POST /v1/mcp`: one Model Context Protocol message (JSON-RPC 2.0) over\nstateless Streamable HTTP; `tools/list` is the caller's tool catalog.",
+        "description": "# Errors\nSerialization failure; protocol and backend refusals stay on the wire.",
+        "operationId": "post_message",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The JSON-RPC reply. `tools/list` is the catalog of the caller's tools; a tool call answers with the route's own document or refusal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpReply"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "A notification was accepted; there is no body."
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The request was refused: the route takes POST.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/objects/{type}": {
       "get": {
         "tags": [
@@ -1782,7 +1882,7 @@
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
-          "crate::object_profile"
+          "crate::object_routes"
         ],
         "summary": "HOST-READ-5: profile the caller's authorized snapshot of `object_type`.",
         "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an engine that\ncannot prove one snapshot (503), a commit while the snapshot was read\n(409 `object.snapshot_moved`, `retryable`), or a host failure.",
@@ -2235,6 +2335,82 @@
         ]
       }
     },
+    "/v1/questions:catalog": {
+      "get": {
+        "tags": [
+          "crate::question_routes"
+        ],
+        "summary": "`GET /v1/questions:catalog`: the metrics, object types and engine bounds\nan ad-hoc question is built from, for this caller (D67: only what the\ncaller may read the population of).\n# Errors\nNo actor or a scope that is not this cell's (one opaque 403), or a host\nfailure reading the model.",
+        "operationId": "question_catalog",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The question catalog for this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionCatalog"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/questions:evaluate": {
       "post": {
         "tags": [
@@ -2512,6 +2688,229 @@
           }
         ]
       }
+    },
+    "/v1/runs": {
+      "post": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`POST /v1/runs`: start a run of an installed flow.",
+        "description": "# Errors\nMissing or foreign scope or a denied caller (one opaque 403), an invalid\nbody, an unknown or retired flow (`run.flow_not_found`), a run id already\nstarted for another flow (`run.exists`), a refused start turn\n(`run.start_refused`, `run.flow_inadmissible`, or the kernel's own code),\na concurrent change (`run.start_conflict`), or a host failure.",
+        "operationId": "start_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A retry with the same run id and flow: the existing run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such installed flow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run id is taken, or the cell changed while the run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The flow refused to start.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "tags": [
+          "crate::run_routes"
+        ],
+        "summary": "`GET /v1/runs/{id}`.",
+        "description": "# Errors\nMissing or foreign scope; `run.not_found` for an absent or unreadable run.",
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The run id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run is visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2688,6 +3087,48 @@
               "null"
             ],
             "description": "Lower-case hex SHA-256 of `restatement`; null with it."
+          }
+        }
+      },
+      "CatalogObjectType": {
+        "type": "object",
+        "description": "One object type an ad-hoc question may range over, with every effective\nproperty and its resolved type (`null` for a registry or unresolved type).",
+        "required": [
+          "name",
+          "properties"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The object type's name: a question's `objectSet`."
+          },
+          "properties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProperty"
+            },
+            "description": "Its effective properties, in declaration order."
+          }
+        }
+      },
+      "CatalogProperty": {
+        "type": "object",
+        "description": "One effective property: its id and its resolved type, as declared.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The property id: what a group-by or filter path names."
+          },
+          "type": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+            "additionalProperties": true
           }
         }
       },
@@ -3034,6 +3475,97 @@
           }
         },
         "additionalProperties": false
+      },
+      "McpError": {
+        "type": "object",
+        "description": "A JSON-RPC protocol error, carrying the shared refusal as its data.",
+        "required": [
+          "code",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The JSON-RPC error code."
+          },
+          "data": {
+            "$ref": "#/components/schemas/Refusal",
+            "description": "The refusal."
+          },
+          "message": {
+            "type": "string",
+            "description": "The refusal's message."
+          }
+        }
+      },
+      "McpMessage": {
+        "type": "object",
+        "description": "`POST /v1/mcp`: one JSON-RPC 2.0 message of the Model Context Protocol,\nover its stateless Streamable HTTP transport. The tool catalog is not\nlisted here: `tools/list` returns it, projected from what the cell declares.",
+        "required": [
+          "jsonrpc",
+          "method"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
+          },
+          "jsonrpc": {
+            "type": "string",
+            "description": "Always `2.0`."
+          },
+          "method": {
+            "type": "string",
+            "description": "`initialize`, `ping`, `tools/list`, `tools/call` or a notification."
+          },
+          "params": {
+            "type": "object",
+            "description": "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "McpReply": {
+        "type": "object",
+        "description": "The JSON-RPC 2.0 reply to one [`McpMessage`] that carried an id.",
+        "required": [
+          "jsonrpc",
+          "id"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/McpError",
+                "description": "A protocol error: malformed message, unknown method or tool."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "A string or number; absent for a notification."
+          },
+          "jsonrpc": {
+            "type": "string",
+            "description": "Always `2.0`."
+          },
+          "result": {
+            "type": "object",
+            "description": "The method's result. A tool's refusal is a result with `isError: true` whose `structuredContent` is the route's own refusal.",
+            "additionalProperties": true
+          }
+        }
       },
       "NornActionActionDerivedValue": {
         "type": "object",
@@ -26785,6 +27317,15 @@
               "type": "string"
             }
           },
+          "nullCounts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "description": "Per operand, in `totals` order: how many members' measured value was\nnull. A null is skipped by the sum, never read as 0. Absent when no\nvalue was null, and when the bucket is suppressed."
+          },
           "suppressed": {
             "type": "boolean",
             "description": "DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket\nhas fewer members than the server's declared minimum, so `totals` is\nempty and `value` null; membership stays. Absent when false."
@@ -27022,6 +27563,60 @@
         ],
         "description": "An execution world."
       },
+      "QuestionCatalog": {
+        "type": "object",
+        "description": "`GET /v1/questions:catalog`: what this caller may build an ad-hoc question\nfrom, and what this cell's engine admits. Every metric and object type\nlisted is one the caller may read the population of (D67): a ratio only\nwhen both its operands are, a type only when it is a readable metric's\npopulation. Nothing listed is a promise: `:evaluate` still admits.",
+        "required": [
+          "objectTypes",
+          "metrics",
+          "grains",
+          "operators",
+          "maxGroupBy",
+          "maxBuckets"
+        ],
+        "properties": {
+          "grains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Calendar grains a group-by may bucket a time property by; a group-by\nwithout a grain groups by the property's values."
+          },
+          "maxBuckets": {
+            "type": "integer",
+            "description": "Most buckets one answer may have (above it, 413).",
+            "minimum": 0
+          },
+          "maxGroupBy": {
+            "type": "integer",
+            "description": "Most group-bys one question may have.",
+            "minimum": 0
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+              "additionalProperties": true
+            },
+            "description": "The listed metrics, as declared, in name order."
+          },
+          "objectTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogObjectType"
+            },
+            "description": "The object types the listed metrics range over."
+          },
+          "operators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter operators the engine admits."
+          }
+        }
+      },
       "Refusal": {
         "allOf": [
           {
@@ -27209,6 +27804,238 @@
         },
         "additionalProperties": false
       },
+      "RunDocument": {
+        "type": "object",
+        "description": "One run, as the routes return it.",
+        "required": [
+          "id",
+          "generation",
+          "flow",
+          "objectType",
+          "version",
+          "createdAtMs",
+          "createdCommitSeq",
+          "updatedAtMs",
+          "updatedCommitSeq",
+          "terminal",
+          "steps"
+        ],
+        "properties": {
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start time (logical milliseconds).",
+            "minimum": 0
+          },
+          "createdCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The starting commit.",
+            "minimum": 0
+          },
+          "flow": {
+            "$ref": "#/components/schemas/RunFlow",
+            "description": "The flow it runs."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its generation.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The run id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The run's object type."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its lifecycle state; `null` once the run object is deleted."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "description": "The steps the run reached, in order."
+          },
+          "terminal": {
+            "type": "boolean",
+            "description": "The run has ended and will not change."
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last write time (logical milliseconds).",
+            "minimum": 0
+          },
+          "updatedCommitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last commit that wrote the run object.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run object's version.",
+            "minimum": 0
+          }
+        }
+      },
+      "RunFlow": {
+        "type": "object",
+        "description": "The flow a run executes.",
+        "required": [
+          "id",
+          "ruleId",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The flow's definition id."
+          },
+          "ruleId": {
+            "type": "string",
+            "description": "The flow's `decide` rule artifact id (`<id>.flow.rule`)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The flow's display title, when it has one."
+          },
+          "version": {
+            "type": "string",
+            "description": "The rule version the run is pinned to."
+          }
+        }
+      },
+      "RunStep": {
+        "type": "object",
+        "description": "One step of a run's timeline.",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "receipts"
+        ],
+        "properties": {
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run left it.",
+            "minimum": 0
+          },
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStepError",
+                "description": "Why it failed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The flow's step id (`succeed` or `fail` for the run's end)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunStepKind",
+            "description": "What the step is."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step's display label from the flow, when it has one."
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StepReceipt"
+            },
+            "description": "The step's receipts the caller may see; none are disclosed yet."
+          },
+          "startedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the run reached it (logical milliseconds).",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStepStatus",
+            "description": "Where it stands."
+          },
+          "waitingOn": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StepWait",
+                "description": "What a waiting step waits on."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RunStepError": {
+        "type": "object",
+        "description": "Why a step or run failed.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The failed lifecycle state."
+          },
+          "message": {
+            "type": "string",
+            "description": "Display words."
+          }
+        }
+      },
+      "RunStepKind": {
+        "type": "string",
+        "description": "What a step is.",
+        "enum": [
+          "perform",
+          "decide",
+          "wait",
+          "succeed",
+          "fail"
+        ]
+      },
+      "RunStepStatus": {
+        "type": "string",
+        "description": "Where a step stands.",
+        "enum": [
+          "running",
+          "waiting",
+          "done",
+          "failed"
+        ]
+      },
       "SignoffDocument": {
         "type": "object",
         "description": "A recorded sign-off: every field set by the host.",
@@ -27247,6 +28074,82 @@
           }
         },
         "additionalProperties": false
+      },
+      "StartRunRequest": {
+        "type": "object",
+        "description": "`POST /v1/runs` body.",
+        "required": [
+          "flow",
+          "runId"
+        ],
+        "properties": {
+          "flow": {
+            "type": "string",
+            "description": "The installed flow's definition id (`flow.id`); its rule is\n`<flow>.flow.rule`."
+          },
+          "runId": {
+            "type": "string",
+            "description": "The caller-chosen run id: `[A-Za-z0-9._:-]`, at most 128 bytes. A retry\nwith the same id and flow returns the existing run."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StepReceipt": {
+        "type": "object",
+        "description": "One receipt behind a step, as the caller may see it.",
+        "required": [
+          "kind",
+          "receiptHash",
+          "commitSeq",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit.",
+            "minimum": 0
+          },
+          "executor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who acted, in display words, never an id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StepReceiptKind",
+            "description": "What it records."
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt hash, or its keyed handle (D53)."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was recorded (logical milliseconds).",
+            "minimum": 0
+          }
+        }
+      },
+      "StepReceiptKind": {
+        "type": "string",
+        "description": "What a step receipt records.",
+        "enum": [
+          "function",
+          "decision",
+          "commit"
+        ]
+      },
+      "StepWait": {
+        "type": "string",
+        "description": "What a waiting step waits on.",
+        "enum": [
+          "decision",
+          "executor",
+          "timer"
+        ]
       }
     },
     "securitySchemes": {
