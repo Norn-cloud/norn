@@ -167,7 +167,9 @@ pub(crate) fn check_declaration(lifecycle: &Lifecycle, states: &[&str]) -> Vec<F
         let id = transition.id.as_str();
         let at = |member: &'static str| vec!["transitions", index.as_str(), member];
         match &transition.trigger {
-            Some(TransitionTrigger::Timer { millis }) if crate::deontic::canonical_positive_millis(millis).is_none() => {
+            Some(TransitionTrigger::Timer { millis })
+                if crate::deontic::canonical_positive_millis(millis).is_none() =>
+            {
                 out.push(finding(
                     codes::INVALID_TRIGGER,
                     format!("transition {id:?} has timer delay {millis:?}; use positive canonical milliseconds"),
