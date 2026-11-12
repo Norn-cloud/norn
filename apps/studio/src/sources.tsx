@@ -3,7 +3,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile } from "@/components/kpi-tile"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -40,7 +40,7 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   const outside = catalog.systems.filter((system) => !cellOwned(system))
   const own = catalog.systems.filter(cellOwned)
   return (
-    <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+    <div className="grid items-start gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
       <Panel icon={Database} label="Connected systems">
         <Well className="divide-y">
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
@@ -197,7 +197,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
   return (
     <article className="space-y-6">
       <header className="space-y-2">
-        <h1 lang={concept.titleLang} className="text-title font-medium">{concept.title}</h1>
+        <h1 lang={concept.titleLang} className="text-title font-semibold tracking-tight">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           {recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
@@ -275,13 +275,8 @@ export function SourcesPage() {
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-8">
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-title font-medium">Sources</h1>
-          {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
-        </div>
-        <p className="max-w-2xl text-muted-foreground">Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
-      </div>
+      <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
+        description="Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered." />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>

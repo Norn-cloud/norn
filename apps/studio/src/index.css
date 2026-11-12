@@ -226,6 +226,10 @@
   html { @apply font-sans; font-size: 90%; }
   body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.02em; }
+  /* The browser's own surfaces carry the palette too: selection, scrollbars, the caret. */
+  ::selection { background: color-mix(in oklab, var(--ring) 24%, transparent); }
+  * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent; }
+  input, textarea { caret-color: var(--ring); }
 }
 
 /* Shiki's dual themes: each token carries both colours; the page's scheme picks one. */

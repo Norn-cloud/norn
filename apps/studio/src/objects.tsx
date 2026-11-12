@@ -67,7 +67,7 @@ export function ObjectPage() {
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="text-meta text-muted-foreground">{concept?.title ?? conceptTitle(name)}</div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-title font-medium">{data ? recordName(data.object.document) : id}</h1>
+            <h1 className="text-title font-semibold tracking-tight">{data ? recordName(data.object.document) : id}</h1>
             {data?.object.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
           </div>
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
