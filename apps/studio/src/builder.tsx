@@ -288,7 +288,7 @@ export function QuestionBuilderPage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">New question</h1>
+        <h1 className="text-title font-semibold tracking-tight">New question</h1>
         <p className="max-w-2xl text-muted-foreground">Pick what to measure, how to group it, which records count and over which dates. The server checks it before anything is run.</p>
       </div>
       {catalog.isPending && <p className="text-muted-foreground">Reading the catalogue…</p>}

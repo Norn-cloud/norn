@@ -35,6 +35,13 @@ const STATUS: Record<string, { readonly label: string; readonly variant: "second
   never: { label: "Not synced yet", variant: "outline" },
 }
 
+/** An instant the cell sent, in the reader's own words; the exact text stays on hover. */
+function Instant({ iso }: { readonly iso: string | null | undefined }) {
+  if (!iso) return <>—</>
+  const at = new Date(iso)
+  return Number.isNaN(at.getTime()) ? <>{iso}</> : <time dateTime={iso} title={iso}>{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>
+}
+
 /** A count as the cell sent it, by its exact text. */
 const count = (read: Read<Page>, index: number, key: string, value: unknown) =>
   value === null || value === undefined ? "—" : read.numbers.get(`/records/${index}/values/${key}`) ?? String(value)
@@ -102,9 +109,9 @@ export function SourceConnections() {
                   <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
-                    {values.last_error_code && <div className="max-w-56 pt-1 text-xs text-destructive" title={values.last_error_message ?? undefined}><span className="font-mono">{values.last_error_code}</span>{values.last_error_message ? `: ${values.last_error_message}` : ""}</div>}
+                    {values.last_error_code && <div className="max-w-64 pt-1 text-xs whitespace-normal text-destructive" title={values.last_error_message ?? undefined}><span className="font-mono">{values.last_error_code}</span>{values.last_error_message ? `: ${values.last_error_message}` : ""}</div>}
                   </TableCell>
-                  <TableCell className="text-sm">{values.status === "syncing" ? <>started {values.last_sync_started_at}</> : values.last_sync_ended_at ?? "—"}</TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">{values.status === "syncing" ? <>started <Instant iso={values.last_sync_started_at} /></> : <Instant iso={values.last_sync_ended_at} />}</TableCell>
                   <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>

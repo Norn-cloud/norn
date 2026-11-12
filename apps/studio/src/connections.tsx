@@ -112,7 +112,7 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Connections</h1>
+        <h1 className="text-title font-semibold tracking-tight">Connections</h1>
         <p className="max-w-2xl text-muted-foreground">Sign in to the tool gateway and connect the accounts your tools use. Credentials stay in the gateway; Norn keeps only the tool bindings your organization makes.</p>
       </div>
       <Panel icon={Plug} label="Tool gateway" action={status.data?.gateway ?? undefined}>

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
-import { EmptyState, Panel } from "@/components/panel"
+import { EmptyState, PageHeader, Panel } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -86,11 +86,8 @@ export function DashboardsPage() {
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity, enabled: cellAvailable })
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-title font-medium">Dashboards</h1>
-        <p className="max-w-2xl text-muted-foreground">Saved sets of questions. Each is a definition the cell checks before it is kept.</p>
-        <Button size="sm" disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>
-      </div>
+      <PageHeader title="Dashboards" description="Saved sets of questions. Each is a definition the cell checks before it is kept."
+        actions={<Button size="sm" disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
       {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}
@@ -99,7 +96,7 @@ export function DashboardsPage() {
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
-      {rows?.length === 0 && <EmptyState icon={LayoutDashboard}>No dashboards saved yet.</EmptyState>}
+      {rows?.length === 0 && <EmptyState icon={LayoutDashboard} title="No dashboards yet">Save a set of questions as a dashboard; the cell checks it before it is kept.</EmptyState>}
       {rows?.map((stored) => (
         <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
           <div className="flex items-center gap-1">
@@ -260,7 +257,7 @@ export function DashboardEditorPage() {
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-medium">{title}</h1>
+        <h1 className="text-title font-semibold tracking-tight">{title}</h1>
         {id !== undefined && <Button asChild variant="outline" size="sm" className="ms-auto"><Link to="/dashboards/$id" params={{ id }}><Eye />View</Link></Button>}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
@@ -330,7 +327,7 @@ export function DashboardBoardPage() {
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-medium">{board?.dashboard.title || "Dashboard"}</h1>
+        <h1 className="text-title font-semibold tracking-tight">{board?.dashboard.title || "Dashboard"}</h1>
         {board && <Badge variant="outline">Version {board.version}</Badge>}
         {board?.dashboard.origin?.by === "assistant" && <Badge variant="secondary" title={board.dashboard.origin.request ? `Asked: ${board.dashboard.origin.request}` : undefined}><Sparkles />Proposed by the assistant</Badge>}
         {board && (

@@ -23,7 +23,7 @@ export function RecordsPage() {
       {catalog && concept !== undefined && concept.definition !== "object type" && <EmptyState icon={Shapes}>{concept.title} is a shared interface; it has no records of its own.</EmptyState>}
       {concept?.definition === "object type" && <>
         <header className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-xl font-medium">{concept.title}</h1>
+          <h1 className="text-title font-semibold tracking-tight">{concept.title}</h1>
           <span className="font-mono text-meta text-muted-foreground">{concept.name}</span>
           <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-meta underline-offset-4 hover:underline">Definition</Link>
         </header>
