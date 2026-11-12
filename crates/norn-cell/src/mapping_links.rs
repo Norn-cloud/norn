@@ -16,6 +16,16 @@ use norn_kernel::{
 use std::collections::{BTreeMap, BTreeSet};
 
 type MappingCommit = CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>;
+
+static WIDE_SCOPE_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Also plan every mapping bundle's links over the wide journal scope (every
+/// record and claim key at both ends) and refuse if the narrowed plan differs.
+/// For tests: it makes every plan cost what it did before the narrowing.
+#[doc(hidden)]
+pub fn check_link_plans_against_wide_scope(on: bool) {
+    WIDE_SCOPE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
 const MAX_CLAIM_BUNDLES: usize = 1000;
 const MAX_CLAIM_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CLAIMS: usize = 20_000;
@@ -38,18 +48,38 @@ enum Standing {
 }
 
 /// Edge changes for one bundle and the claims that must back them.
+#[derive(Debug, PartialEq)]
 pub(crate) struct LinkPlan {
     pub(crate) links: Vec<LinkWrite>,
     fresh: Vec<ObservedLinkClaim>,
     sealed: Vec<ObservedLinkClaim>,
 }
 
-fn touches(claim: &ObservedLinkClaim, scope: &BTreeSet<String>) -> bool {
-    scope.contains(&claim.source_key)
+/// The keys a journal read selects on, by the side of a claim they match.
+#[derive(Clone, Default)]
+pub(crate) struct ClaimScope {
+    /// Claims whose source is one of these.
+    pub(crate) sources: BTreeSet<String>,
+    /// Claims whose target is one of these.
+    pub(crate) targets: BTreeSet<String>,
+}
+
+impl ClaimScope {
+    /// Claims touching these keys at either end.
+    fn either(keys: BTreeSet<String>) -> Self {
+        Self {
+            sources: keys.clone(),
+            targets: keys,
+        }
+    }
+}
+
+fn touches(claim: &ObservedLinkClaim, scope: &ClaimScope) -> bool {
+    scope.sources.contains(&claim.source_key)
         || claim
             .target
             .as_ref()
-            .is_some_and(|t| scope.contains(&t.key))
+            .is_some_and(|t| scope.targets.contains(&t.key))
 }
 
 fn source_version(bundle: &MappingBundle) -> Result<&str, CellError> {
@@ -111,18 +141,23 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// The claim budgets bound this selection, so unrelated bundles never exhaust them.
     fn claim_bundles(
         &self,
-        scope: Option<&BTreeSet<String>>,
+        scope: Option<&ClaimScope>,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
         let selected = self.with_source_dispute_index(|index| {
             let mut selected = BTreeMap::new();
-            for (key, entries) in &index.claim_endpoints {
-                if scope.is_none_or(|scope| scope.contains(key)) {
-                    selected.extend(
-                        entries
-                            .iter()
-                            .map(|(identity, bytes)| (identity.clone(), *bytes)),
-                    );
+            for (side, keys) in [
+                (&index.claim_sources, scope.map(|scope| &scope.sources)),
+                (&index.claim_targets, scope.map(|scope| &scope.targets)),
+            ] {
+                for (key, entries) in side {
+                    if keys.is_none_or(|keys| keys.contains(key)) {
+                        selected.extend(
+                            entries
+                                .iter()
+                                .map(|(identity, bytes)| (identity.clone(), *bytes)),
+                        );
+                    }
                 }
             }
             selected
@@ -167,7 +202,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     fn claim_journal(
         &self,
         current: Option<&MappingBundle>,
-        scope: Option<&BTreeSet<String>>,
+        scope: Option<&ClaimScope>,
     ) -> Result<Vec<Entry>, CellError> {
         let mut cache = BTreeMap::new();
         let selection = match scope {
@@ -178,7 +213,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     let bundle = self.claim_bundle(&id)?;
                     for claim in bundle.link_claims()? {
                         if touches(&claim, scope) {
-                            closed.insert(claim.source_key);
+                            closed.sources.insert(claim.source_key);
                         }
                     }
                     cache.insert(id, bundle);
@@ -190,7 +225,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .flatten()
                 {
                     if touches(&claim, scope) {
-                        closed.insert(claim.source_key);
+                        closed.sources.insert(claim.source_key);
                     }
                 }
                 Some(closed)
@@ -266,7 +301,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let key = model.canonical_link(key);
-        let scope = BTreeSet::from([key.source.key.clone(), key.target.key.clone()]);
+        let scope = ClaimScope::either(BTreeSet::from([
+            key.source.key.clone(),
+            key.target.key.clone(),
+        ]));
         let entries = self.claim_journal(None, Some(&scope))?;
         Ok(Self::distinct(entries.into_iter().filter(|e| {
             e.claim.target.as_ref().is_some_and(|target| {
@@ -289,16 +327,76 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
         let model = CommitModel::new(&catalog);
-        // A plan changes only links touching this commit's objects or this bundle's claims.
-        let scope: BTreeSet<String> = bundle
-            .records
-            .iter()
-            .map(|record| record.key.clone())
-            .chain(bundle.link_claims()?.into_iter().flat_map(|claim| {
-                std::iter::once(claim.source_key).chain(claim.target.map(|t| t.key))
-            }))
-            .collect();
-        let entries = self.claim_journal(Some(bundle), Some(&scope))?;
+        let plan = self.link_plan_over(bundle, commit, model, &self.plan_scope(bundle, model)?)?;
+        // Equivalence check for the narrowed scope (tests turn it on): the same
+        // plan over the wide scope, every record and claim key at both ends.
+        if WIDE_SCOPE_CHECK.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut keys = BTreeSet::new();
+            for record in &bundle.records {
+                keys.insert(record.key.clone());
+            }
+            for claim in bundle.link_claims()? {
+                keys.insert(claim.source_key);
+                keys.extend(claim.target.map(|t| t.key));
+            }
+            let wide = self.link_plan_over(bundle, commit, model, &ClaimScope::either(keys))?;
+            if wide != plan {
+                return Err(CellError::Encoding(format!(
+                    "the narrowed link plan differs from the wide one: {plan:?} != {wide:?}"
+                )));
+            }
+        }
+        Ok(plan)
+    }
+
+    /// The journal scope a bundle's plan reads.
+    fn plan_scope(
+        &self,
+        bundle: &MappingBundle,
+        model: CommitModel<'_, '_>,
+    ) -> Result<ClaimScope, CellError> {
+        // A plan changes only links touching this commit's objects or this
+        // bundle's claims. Sources: every record and every claim source, so
+        // each changed (source, role) group is read whole. Targets, only where
+        // another source's claim can change something:
+        // - a claim's target when the link admits one source per target
+        //   (`from: one`): there claims to the same target compete;
+        // - a record's object that is absent before this commit: claims that
+        //   waited on it as a target (OBS-LINK-PENDING-1) may now resolve.
+        // A group reached only through a shared `from: many` target, or
+        // through a target that was already present, keeps its standings
+        // (`standings` is per (source, role)) and its endpoint presence, so it
+        // writes no link and is never sealed: leaving it out changes no plan,
+        // while reading it cost time linear in the target's other claims.
+        let mut scope = ClaimScope::default();
+        for record in &bundle.records {
+            scope.sources.insert(record.key.clone());
+            let key = FactKey::new(record.object_type.as_str(), &record.key);
+            if GuardView(self).concrete(&model.canonical(&key))?.is_none() {
+                scope.targets.insert(record.key.clone());
+            }
+        }
+        for claim in bundle.link_claims()? {
+            let exclusive = model
+                .link(&claim.source_type, claim.role.as_str())
+                .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+            if let Some(target) = claim.target.filter(|_| exclusive) {
+                scope.targets.insert(target.key);
+            }
+            scope.sources.insert(claim.source_key);
+        }
+        Ok(scope)
+    }
+
+    /// The plan over one journal scope.
+    fn link_plan_over<E, C, T>(
+        &self,
+        bundle: &MappingBundle,
+        commit: &CellCommit<E, C, T>,
+        model: CommitModel<'_, '_>,
+        scope: &ClaimScope,
+    ) -> Result<LinkPlan, CellError> {
+        let entries = self.claim_journal(Some(bundle), Some(scope))?;
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };
@@ -545,7 +643,7 @@ mod tests {
         }
         consumed(&store, 1003, "demo/\"quoted\"");
         let reader = store.read();
-        let scope = BTreeSet::from(["demo/\"quoted\"".to_owned()]);
+        let scope = ClaimScope::either(BTreeSet::from(["demo/\"quoted\"".to_owned()]));
         assert_eq!(
             reader
                 .claim_bundles(Some(&scope), MAX_CLAIM_BUNDLES)

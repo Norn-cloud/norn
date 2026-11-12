@@ -2,7 +2,8 @@
 //! routes, F2b's ad-hoc questions, the retained-definition routes
 //! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
 //! `/v1/definitions/{id}:retire`), and the one governed action route,
-//! `POST /v1/actions/{actionId}`.
+//! `POST /v1/actions/{actionId}`; and `POST /v1/mcp`, whose tools call these
+//! same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
 //! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
@@ -147,6 +148,8 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `POST /v1/mcp`: MCP, whose tools call these same routes ([`crate::mcp`]).
+    Mcp => ("POST", "/v1/mcp"),
     /// `GET /v1/questions:metrics`.
     QuestionsMetrics => ("GET", "/v1/questions:metrics"),
 }
@@ -161,6 +164,7 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            crate::mcp::MCP_PATH => return Some(Self::Mcp),
             "/v1/questions:metrics" => return Some(Self::QuestionsMetrics),
             _ => {}
         }
@@ -249,6 +253,10 @@ pub fn handle_all<E: SqlEngine>(
         now,
         body,
     } = *request;
+    // MCP resolves its caller per tool call, through these same routes.
+    if path == crate::mcp::MCP_PATH {
+        return crate::mcp::serve(host, principals, questions, kinds, request);
+    }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);

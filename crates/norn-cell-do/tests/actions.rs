@@ -642,3 +642,75 @@ fn the_catalog_refuses_as_a_call_would() {
         400
     );
 }
+
+/// MCP (#744): the action's projected tool calls the same governed service as
+/// `POST /v1/actions/{id}`: one commit, one receipt, the same refusals.
+#[test]
+fn an_mcp_action_tool_calls_the_same_governed_service() {
+    let cell = cell();
+    let rpc = |auth: &str, message: &Value| {
+        let (status, body) = send_raw(
+            &cell,
+            "POST",
+            "/v1/mcp",
+            SCOPE,
+            Some(auth),
+            &message.to_string(),
+        );
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<Value>(&body).unwrap()
+    };
+    let tool_of = |auth: &str| {
+        rpc(
+            auth,
+            &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}}),
+        )["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["_meta"]["norn/actionId"] == "constitution.melt.convert")
+            .cloned()
+    };
+    let tool = tool_of(OPERATOR).expect("the operator may call the melt action");
+    let name = tool["name"].as_str().unwrap().to_owned();
+    assert!(name.starts_with("act_constitution_melt_convert"), "{name}");
+    assert_eq!(tool["_meta"]["ui"]["resourceUri"], "ui://norn/receipt.html");
+    assert_eq!(tool["inputSchema"]["type"], "object");
+
+    let key = "4b7a2c1e-0000-4000-8000-0000000000aa";
+    let invoke = |auth: &str, id: &str, key: &str| {
+        rpc(
+            auth,
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": name, "arguments": {"id": id, "input_fine_g": "12", "output_fine_g": "10"},
+                "_meta": {"norn/idempotencyKey": key}
+            }}),
+        )
+    };
+    let called = invoke(OPERATOR, "melt-9", key);
+    assert_eq!(called["result"]["isError"], false, "{called}");
+    let receipt = called["result"]["structuredContent"].clone();
+    assert_eq!(receipt["outcome"], "committed");
+    // The same call over HTTP is the same call: the original receipt, no second commit.
+    let (status, replayed) = post(&cell, Some(OPERATOR), &melt_body("melt-9", "12", "10", key));
+    assert_eq!(status, 200);
+    assert_eq!(replayed["outcome"], "replayed");
+    assert_eq!(replayed["receipt"], receipt["receipt"]);
+
+    // A viewer is refused exactly as a direct call is, or is never offered the tool.
+    let (_, direct) = post(
+        &cell,
+        Some(VIEWER),
+        &melt_body("melt-10", "12", "10", "k-viewer"),
+    );
+    if tool_of(VIEWER).is_some() {
+        let refused = invoke(VIEWER, "melt-10", "k-viewer");
+        assert_eq!(refused["result"]["isError"], true, "{refused}");
+        assert_eq!(refused["result"]["structuredContent"], direct);
+    } else {
+        assert_eq!(
+            invoke(VIEWER, "melt-10", "k-viewer")["error"]["code"],
+            -32602
+        );
+    }
+}
