@@ -178,7 +178,6 @@ struct Bindings {
 
 fn parse_node(
     start: &quick_xml::events::BytesStart<'_>,
-    decoder: quick_xml::encoding::Decoder,
     nodes: &[XsdNode],
     stack: &[usize],
     path: &str,
@@ -189,11 +188,10 @@ fn parse_node(
     let mut declarations = Vec::new();
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|e| e.to_string())?;
-        let key = std::str::from_utf8(attribute.key.as_ref())
-            .map_err(|e| e.to_string())?
-            .to_owned();
+        // quick-xml 0.42 stores names and values as UTF-8 text: no decoding step.
+        let key = attribute.key.as_ref().to_owned();
         let value = attribute
-            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(|e| e.to_string())?
             .into_owned();
         let prefix = if key == "xmlns" {
@@ -250,7 +248,12 @@ fn parse_node(
             bound,
         })
     };
-    let name = expanded(start.name().as_ref(), &scope, false, &mut bindings.expanded)?;
+    let name = expanded(
+        start.name().as_ref().as_bytes(),
+        &scope,
+        false,
+        &mut bindings.expanded,
+    )?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
         let key = expanded(key.as_bytes(), &scope, true, &mut bindings.expanded)?;
@@ -298,14 +301,7 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
                     return Err("XML node limit".into());
                 }
                 let index = nodes.len();
-                let node = parse_node(
-                    &start,
-                    reader.decoder(),
-                    &nodes,
-                    &stack,
-                    file.path,
-                    &mut bindings,
-                )?;
+                let node = parse_node(&start, &nodes, &stack, file.path, &mut bindings)?;
                 nodes.push(node);
                 if !empty {
                     stack.push(index);
@@ -315,9 +311,7 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
                 stack.pop().ok_or("unexpected close")?;
             }
             Event::Text(text) => {
-                let value = text
-                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
-                    .map_err(|e| e.to_string())?;
+                let value = text.xml_content(quick_xml::XmlVersion::Implicit1_0);
                 if let Some(node) = stack.last().and_then(|i| nodes.get_mut(*i)) {
                     node.text.push_str(&value);
                 } else if !value.trim().is_empty() {
@@ -326,18 +320,18 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
             }
             Event::CData(text) => {
                 if let Some(node) = stack.last().and_then(|i| nodes.get_mut(*i)) {
-                    node.text
-                        .push_str(&text.decode().map_err(|e| e.to_string())?);
+                    // The section's text as written, as 0.41's `decode()` returned it.
+                    node.text.push_str(&text);
                 }
             }
             Event::Decl(decl) => {
-                if decl.version().map_err(|e| e.to_string())?.as_ref() != b"1.0" {
+                if decl.version().map_err(|e| e.to_string())? != "1.0" {
                     return Err("only XML 1.0 is supported".into());
                 }
             }
             Event::DocType(_) => return Err("DTD is unsupported".into()),
             Event::GeneralRef(reference) => {
-                let name = std::str::from_utf8(reference.as_ref()).map_err(|e| e.to_string())?;
+                let name: &str = reference.as_ref();
                 let encoded = format!("&{name};");
                 let decoded = quick_xml::escape::unescape(&encoded).map_err(|e| e.to_string())?;
                 if let Some(node) = stack.last().and_then(|i| nodes.get_mut(*i)) {
@@ -878,4 +872,73 @@ pub fn repeating_fields(schema: &SourceSchemaIr) -> BTreeSet<(String, String)> {
         .filter(|field| names.contains(field.name.as_str()))
         .map(|field| (field.dataset.clone(), field.name.clone()))
         .collect()
+}
+
+/// Pins how XML text and attribute values decode, across quick-xml upgrades (#1266): the same
+/// block passes on 0.41 and 0.42.
+#[cfg(test)]
+mod decoding_tests {
+    use super::{XsdFile, XsdNode, parse};
+
+    fn nodes(xml: &str) -> Vec<XsdNode> {
+        parse(XsdFile {
+            path: "https://example.test/decoding.xsd",
+            bytes: xml.as_bytes(),
+        })
+        .expect("parses")
+    }
+
+    fn find<'a>(nodes: &'a [XsdNode], local: &str) -> &'a XsdNode {
+        nodes
+            .iter()
+            .find(|node| node.is(local))
+            .expect("node present")
+    }
+
+    const OPEN: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">"#;
+
+    #[test]
+    fn attribute_values_resolve_references_and_normalize_whitespace() {
+        // Entity and character references resolve; a literal tab or newline becomes a
+        // space (attribute-value normalization), a referenced tab stays a tab.
+        let xml = format!(
+            "{OPEN}<xs:simpleType name=\"S\"><xs:restriction base=\"xs:string\">\
+             <xs:enumeration value=\"a&amp;b&lt;c&#x41;&#9;d\te\nf\r\ng\"/>\
+             </xs:restriction></xs:simpleType></xs:schema>"
+        );
+        assert_eq!(
+            find(&nodes(&xml), "enumeration").attr("value"),
+            "a&b<cA\td e f g"
+        );
+    }
+
+    #[test]
+    fn text_resolves_references_normalizes_line_ends_and_keeps_cdata_as_written() {
+        let xml = format!(
+            "{OPEN}<xs:annotation><xs:documentation>x &amp; y &#x42;&lt;\r\nline\
+             <![CDATA[ <raw>&amp;\r\n ]]>z</xs:documentation></xs:annotation></xs:schema>"
+        );
+        assert_eq!(
+            find(&nodes(&xml), "documentation").text,
+            "x & y B<\nline <raw>&amp;\r\n z"
+        );
+    }
+
+    #[test]
+    fn only_xml_1_0_declarations_are_admitted() {
+        let body = "<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"/>";
+        assert!(
+            parse(XsdFile {
+                path: "a.xsd",
+                bytes: format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{body}").as_bytes(),
+            })
+            .is_ok()
+        );
+        let refused = parse(XsdFile {
+            path: "a.xsd",
+            bytes: format!("<?xml version=\"1.1\"?>{body}").as_bytes(),
+        })
+        .expect_err("XML 1.1 is refused");
+        assert_eq!(refused, "only XML 1.0 is supported");
+    }
 }
