@@ -2,6 +2,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
+    clippy::unwrap_in_result,
     missing_docs,
     reason = "integration-test crate"
 )]
