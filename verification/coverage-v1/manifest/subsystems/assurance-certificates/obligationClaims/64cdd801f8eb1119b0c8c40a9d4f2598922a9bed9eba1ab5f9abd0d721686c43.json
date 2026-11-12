@@ -5,7 +5,7 @@
     "runtime": "missing",
     "model": "missing",
     "proof": "reference_proved",
-    "residual": "Given the two local Correct equations, composition preserves the abstract one-step maintenance equation (#714/#770). Rust operator certificates, lowering and runtime correspondence are not covered.",
+    "residual": "Given the two local Correct equations, composition preserves the abstract one-step maintenance equation (#714/#770). Rust operator certificates, lowering and runtime correspondence are not covered. Aeneas/Lean (scripts/verify-checker-certificates-aeneas.sh) proves that the extracted production per-node decision (metric/compute/certificate/decision.rs) returns exactly the written verdicts for every operator list, and that every node it proves maintains incrementally for every lawful interpretation (IVM correctness); faithful operator lowering and runtime correspondence stay unclaimed, and the claim stays reference_proved until runner receipts (#969).",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.runtime"

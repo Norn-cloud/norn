@@ -26,7 +26,7 @@ test("a concept states its facts, relationships and parents as declared", () => 
   ])
   const field = (id: string) => holding?.fields.find((candidate) => candidate.id === id)
   expect(field("quantity")?.type).toBe("Exact number, 6 decimal places")
-  expect(field("stock_cost")).toEqual({ id: "stock_cost", type: "Exact number, 6 decimal places, currency from cost currency", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" }, scalar: { kind: "decimal" } })
+  expect(field("stock_cost")).toEqual({ id: "stock_cost", label: "stock cost", labelLang: "en", valueLabels: new Map(), type: "Exact number, 6 decimal places, currency from cost currency", optional: true, decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" }, scalar: { kind: "decimal" } })
   expect(field("quantity_basis")?.type).toBe("One of: on hand, available")
 })
 

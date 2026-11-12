@@ -338,7 +338,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
-        | ArtifactPayload::DefinedConcept(_) => {}
+        | ArtifactPayload::DefinedConcept(_)
+        | ArtifactPayload::Labels(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -417,6 +418,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
         ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
+        ArtifactKind::Labels => "labels.validation.invalid_payload",
     }
 }
 
@@ -1510,6 +1512,227 @@ fn validate_closed_action_schema(
     );
 }
 
+/// The extension member an `ActionIR` input root may carry.
+const X_NORN: &str = "x-norn";
+/// The longest input title or group title, in characters after trimming.
+const MAX_INPUT_TITLE_CHARS: usize = 120;
+/// The longest input description, in characters after trimming.
+const MAX_INPUT_DESCRIPTION_CHARS: usize = 2000;
+
+/// Stable `ActionIR` input-dialect codes (D66).
+pub mod input_codes {
+    /// A `title` or `description` is not a bounded display string.
+    pub const LABEL_INVALID: &str = "action.validation.input_label_invalid";
+    /// `x-norn.groups` is not a list of `{id, title, fields}`.
+    pub const GROUP_INVALID_SHAPE: &str = "action.validation.input_group_invalid_shape";
+    /// Two groups share an id.
+    pub const GROUP_DUPLICATE_ID: &str = "action.validation.input_group_duplicate_id";
+    /// A group title is not a bounded display string.
+    pub const GROUP_TITLE_INVALID: &str = "action.validation.input_group_title_invalid";
+    /// A group field does not resolve to an input property.
+    pub const GROUP_UNKNOWN_FIELD: &str = "action.validation.input_group_unknown_field";
+    /// A field appears in more than one group.
+    pub const GROUP_FIELD_REGROUPED: &str = "action.validation.input_group_field_regrouped";
+}
+
+/// Whether `text` is a display string of 1 to `max` characters after
+/// trimming; `multiline` admits line breaks, never other control characters.
+fn display_text(text: Option<&str>, max: usize, multiline: bool) -> bool {
+    text.map(str::trim).is_some_and(|text| {
+        (1..=max).contains(&text.chars().count())
+            && !text
+                .chars()
+                .any(|c| c.is_control() && !(multiline && matches!(c, '\n' | '\r' | '\t')))
+    })
+}
+
+/// D66: an input node's optional `title` and `description` are display-only
+/// strings; they never change what the action admits.
+fn validate_input_labels(
+    schema: &BTreeMap<String, JsonValue>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    for (key, max, multiline) in [
+        ("title", MAX_INPUT_TITLE_CHARS, false),
+        ("description", MAX_INPUT_DESCRIPTION_CHARS, true),
+    ] {
+        if let Some(value) = schema.get(key)
+            && !display_text(value.as_string(), max, multiline)
+        {
+            diagnostics.push(invalid_diagnostic(
+                input_codes::LABEL_INVALID,
+                format!("{key} is a string of 1 to {max} characters after trimming, without control characters"),
+                format!("{path}.{key}"),
+                artifact_id,
+            ));
+        }
+    }
+}
+
+/// The property schema an RFC 6901 `pointer` names through `properties`.
+fn input_property<'s>(
+    schema: &'s BTreeMap<String, JsonValue>,
+    pointer: &str,
+) -> Option<&'s JsonValue> {
+    let rest = pointer.strip_prefix('/')?;
+    let mut node = schema;
+    let mut found = None;
+    for token in rest.split('/') {
+        let name = token.replace("~1", "/").replace("~0", "~");
+        let property = node
+            .get("properties")
+            .and_then(JsonValue::as_object)
+            .and_then(|properties| properties.get(&name))?;
+        found = Some(property);
+        node = property.as_object().unwrap_or(&EMPTY_SCHEMA);
+    }
+    found
+}
+
+static EMPTY_SCHEMA: BTreeMap<String, JsonValue> = BTreeMap::new();
+
+/// D66: `x-norn.groups: [{id, title, fields: [pointer]}]` on the input root.
+/// Ids are unique, titles bounded, every pointer names an input property, and
+/// no field is in two groups.
+fn validate_input_groups(
+    schema: &BTreeMap<String, JsonValue>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(extension) = schema.get(X_NORN) else {
+        return;
+    };
+    let at = format!("{path}.{X_NORN}");
+    let push = |diagnostics: &mut Vec<Diagnostic>, code: &str, message: String, at: String| {
+        diagnostics.push(invalid_diagnostic(code, message, at, artifact_id));
+    };
+    let Some(extension) = extension.as_object() else {
+        push(
+            diagnostics,
+            input_codes::GROUP_INVALID_SHAPE,
+            "x-norn is an object".to_owned(),
+            at,
+        );
+        return;
+    };
+    if let Some(unknown) = extension.keys().find(|key| key.as_str() != "groups") {
+        push(
+            diagnostics,
+            input_codes::GROUP_INVALID_SHAPE,
+            format!("x-norn admits only groups, not {unknown:?}"),
+            format!("{at}.{unknown}"),
+        );
+    }
+    let Some(groups) = extension.get("groups") else {
+        return;
+    };
+    let Some(groups) = groups.as_array() else {
+        push(
+            diagnostics,
+            input_codes::GROUP_INVALID_SHAPE,
+            "groups is an array".to_owned(),
+            format!("{at}.groups"),
+        );
+        return;
+    };
+    let mut ids = BTreeSet::new();
+    let mut grouped = BTreeSet::new();
+    for (index, group) in groups.iter().enumerate() {
+        let group_at = format!("{at}.groups[{index}]");
+        let Some(group) = group.as_object() else {
+            push(
+                diagnostics,
+                input_codes::GROUP_INVALID_SHAPE,
+                "a group is {id, title, fields}".to_owned(),
+                group_at,
+            );
+            continue;
+        };
+        if let Some(unknown) = group
+            .keys()
+            .find(|key| !matches!(key.as_str(), "id" | "title" | "fields"))
+        {
+            push(
+                diagnostics,
+                input_codes::GROUP_INVALID_SHAPE,
+                format!("a group has id, title and fields, not {unknown:?}"),
+                format!("{group_at}.{unknown}"),
+            );
+        }
+        match group.get("id").and_then(JsonValue::as_string) {
+            Some(id) if !id.trim().is_empty() => {
+                if !ids.insert(id) {
+                    push(
+                        diagnostics,
+                        input_codes::GROUP_DUPLICATE_ID,
+                        format!("group id {id:?} is used twice"),
+                        format!("{group_at}.id"),
+                    );
+                }
+            }
+            _ => push(
+                diagnostics,
+                input_codes::GROUP_INVALID_SHAPE,
+                "a group id is a non-blank string".to_owned(),
+                format!("{group_at}.id"),
+            ),
+        }
+        if !display_text(
+            group.get("title").and_then(JsonValue::as_string),
+            MAX_INPUT_TITLE_CHARS,
+            false,
+        ) {
+            push(
+                diagnostics,
+                input_codes::GROUP_TITLE_INVALID,
+                format!(
+                    "a group title is 1 to {MAX_INPUT_TITLE_CHARS} characters after trimming, without control characters"
+                ),
+                format!("{group_at}.title"),
+            );
+        }
+        let Some(fields) = group.get("fields").and_then(JsonValue::as_array) else {
+            push(
+                diagnostics,
+                input_codes::GROUP_INVALID_SHAPE,
+                "a group's fields is an array of pointers".to_owned(),
+                format!("{group_at}.fields"),
+            );
+            continue;
+        };
+        for (f, field) in fields.iter().enumerate() {
+            let field_at = format!("{group_at}.fields[{f}]");
+            let Some(pointer) = field.as_string() else {
+                push(
+                    diagnostics,
+                    input_codes::GROUP_INVALID_SHAPE,
+                    "a field is an RFC 6901 pointer".to_owned(),
+                    field_at,
+                );
+                continue;
+            };
+            if input_property(schema, pointer).is_none() {
+                push(
+                    diagnostics,
+                    input_codes::GROUP_UNKNOWN_FIELD,
+                    format!("{pointer:?} is not an input property"),
+                    field_at,
+                );
+            } else if !grouped.insert(pointer) {
+                push(
+                    diagnostics,
+                    input_codes::GROUP_FIELD_REGROUPED,
+                    format!("{pointer:?} is already in a group"),
+                    field_at,
+                );
+            }
+        }
+    }
+}
+
 /// A closed schema's string `enum`: a non-empty list of distinct strings.
 fn validate_string_enum(
     values: &JsonValue,
@@ -1668,23 +1891,35 @@ pub(crate) fn validate_closed_schema(
     {
         diagnostics.push(invalid_diagnostic(code, error.reason, path, artifact_id));
     }
-    let allowed: &[&str] = match schema_type {
-        "number" if matches!(profile.unions, ClosedSchemaUnions::ActionInput) => {
-            &["type", "nornType", "description"]
-        }
-        "number" => &["type", "nornType"],
-        "object" => &["type", "properties", "required", "additionalProperties"],
-        "array" => &["type", "items"],
+    let action_input = matches!(profile.unions, ClosedSchemaUnions::ActionInput);
+    let mut allowed: Vec<&str> = match schema_type {
+        "number" => vec!["type", "nornType"],
+        "object" => vec!["type", "properties", "required", "additionalProperties"],
+        "array" => vec!["type", "items"],
+        // An ActionIR input may declare a string enum; the artifact-set check
+        // requires it to be a subset of the enum property it writes.
         "string"
             if profile.string_enums
+                || action_input
                 || profile.subject == "ActionIR"
                     && value.is_some_and(norn_expr::schema::fixed_currency_schema) =>
         {
-            &["type", "enum"]
+            vec!["type", "enum"]
         }
-        _ => &["type"],
+        _ => vec!["type"],
     };
-    reject_unknown_object_fields(schema, allowed, path, diagnostics, artifact_id, code);
+    if action_input {
+        // Display-only labels: they change no admission semantics.
+        allowed.extend(["title", "description"]);
+        if schema_type == "object" && depth == 0 {
+            allowed.push(X_NORN);
+        }
+        validate_input_labels(schema, path, diagnostics, artifact_id);
+        if schema_type == "object" && depth == 0 {
+            validate_input_groups(schema, path, diagnostics, artifact_id);
+        }
+    }
+    reject_unknown_object_fields(schema, &allowed, path, diagnostics, artifact_id, code);
     if schema
         .get("description")
         .is_some_and(|description| description.as_string().is_none())
@@ -5463,6 +5698,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
+        ArtifactKind::Labels => "labels",
     }
 }
 

@@ -17,43 +17,10 @@ pub enum Correspondence {
     Unknown(&'static str),
 }
 
-/// Closed homomorphisms; these are mathematical operations, not user assertions.
-#[derive(Debug, Clone, Copy)]
-pub enum Homomorphism {
-    /// Fixed predicate on rows, extended by signed multiplicity.
-    Select,
-    /// Fixed row mapping, summing multiplicities on collisions.
-    Project,
-    /// Exact keyed sum, without rounding.
-    GroupSum,
-    /// Natural multiplicity sum; valid only for insert-only changes.
-    MonoidSum,
-}
+/// The extracted, proved per-node decision (#718 U5).
+pub mod decision;
 
-/// One dependency-ordered operator. References must point strictly backwards.
-#[derive(Debug, Clone)]
-pub enum Operator {
-    /// Signed multiset input (Z-set).
-    Input,
-    /// A declared closed homomorphism, including folds with these exact laws.
-    Homomorphism {
-        /// Prior operator index.
-        input: usize,
-        /// Absent declarations never inherit a law from sampled behavior.
-        law: Option<Homomorphism>,
-    },
-    /// Bilinear equijoin, with coefficients for J(dL,R), J(L,dR), J(dL,dR).
-    Join {
-        /// Prior left operator.
-        left: usize,
-        /// Prior right operator.
-        right: usize,
-        /// Old snapshots on both sides; the cross term is mandatory.
-        coefficients: [i8; 3],
-    },
-    /// Semantics outside the supported fragment.
-    Unknown,
-}
+pub use decision::{Homomorphism, Operator};
 
 /// Evidence about equations only. No variant grants a runtime proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,46 +42,23 @@ pub enum Algebraic {
 /// Signed changes include deletion and replacement; monoids alone do not suffice.
 #[must_use]
 pub fn check(operators: &[Operator], signed_changes: bool) -> Vec<Algebraic> {
-    if operators.len() > 256 {
-        return vec![Algebraic::Unknown("operator budget exceeded"); operators.len()];
-    }
-    let mut results = Vec::with_capacity(operators.len());
-    for (index, operator) in operators.iter().enumerate() {
-        let dependency =
-            |id: usize| id < index && results.get(id) == Some(&Algebraic::ProvedAlgebraic);
-        let result = match operator {
-            Operator::Input => Algebraic::ProvedAlgebraic,
-            Operator::Homomorphism { input, law } if dependency(*input) => match law {
-                None => Algebraic::Unknown("undeclared fold homomorphism"),
-                Some(Homomorphism::MonoidSum) if signed_changes => {
-                    Algebraic::Unknown("monoid law does not support deletions")
-                }
-                Some(
-                    Homomorphism::Select
-                    | Homomorphism::Project
-                    | Homomorphism::GroupSum
-                    | Homomorphism::MonoidSum,
-                ) => Algebraic::ProvedAlgebraic,
-            },
-            Operator::Join {
-                left,
-                right,
-                coefficients,
-            } if dependency(*left) && dependency(*right) => coefficients
-                .iter()
-                .position(|coefficient| *coefficient != 1)
-                .map_or(Algebraic::ProvedAlgebraic, |term| Algebraic::Refuted {
-                    operator: index,
-                    term,
-                }),
-            Operator::Unknown => Algebraic::Unknown("unsupported operator"),
-            Operator::Homomorphism { .. } | Operator::Join { .. } => {
+    decision::check(operators, signed_changes)
+        .into_iter()
+        .enumerate()
+        .map(|(operator, verdict)| match verdict {
+            decision::Verdict::Proved => Algebraic::ProvedAlgebraic,
+            decision::Verdict::Refuted(term) => Algebraic::Refuted { operator, term },
+            decision::Verdict::OverBudget => Algebraic::Unknown("operator budget exceeded"),
+            decision::Verdict::UndeclaredFold => Algebraic::Unknown("undeclared fold homomorphism"),
+            decision::Verdict::MonoidUnderDeletions => {
+                Algebraic::Unknown("monoid law does not support deletions")
+            }
+            decision::Verdict::Unsupported => Algebraic::Unknown("unsupported operator"),
+            decision::Verdict::InvalidDependency => {
                 Algebraic::Unknown("uncertified or invalid dependency")
             }
-        };
-        results.push(result);
-    }
-    results
+        })
+        .collect()
 }
 
 /// Plan-bound certificate of maintained sufficient statistics, not ratio finalization.

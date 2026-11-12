@@ -525,6 +525,50 @@ impl NativeEngine {
     }
 }
 
+/// The copying reference fork (FORK-PIN-1): SQLite's online backup copies
+/// every committed page into a new in-memory database with the same
+/// configuration. It is the oracle a copy-on-write engine must match.
+#[cfg(feature = "native")]
+impl crate::fork::ForkEngine for NativeEngine {
+    fn fork_engine(&self) -> Result<Self, CellError> {
+        if !self.conn.is_autocommit() {
+            return Err(CellError::Engine(
+                "a fork copies committed state; a transaction is open".to_owned(),
+            ));
+        }
+        let mut conn = rusqlite::Connection::open_in_memory()?;
+        {
+            let backup = rusqlite::backup::Backup::new(&self.conn, &mut conn)?;
+            if backup.step(-1)? != rusqlite::backup::StepResult::Done {
+                return Err(CellError::Engine(
+                    "fork copy did not complete in one step".to_owned(),
+                ));
+            }
+        }
+        conn.execute_batch("PRAGMA foreign_keys = ON")?;
+        Self::configured(conn)
+    }
+}
+
+/// Test support: copy committed state to a file, as a fork copies it.
+#[cfg(all(test, feature = "native"))]
+impl NativeEngine {
+    pub(crate) fn backup_to_file(&self, path: &std::path::Path) -> Result<(), CellError> {
+        let mut file = rusqlite::Connection::open(path)?;
+        let done = {
+            let backup = rusqlite::backup::Backup::new(&self.conn, &mut file)?;
+            backup.step(-1)?
+        };
+        if done == rusqlite::backup::StepResult::Done {
+            Ok(())
+        } else {
+            Err(CellError::Engine(
+                "backup did not complete in one step".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(feature = "native")]
 struct UserSql<'a>(&'a std::sync::atomic::AtomicBool);
 

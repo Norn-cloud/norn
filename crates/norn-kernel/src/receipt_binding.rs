@@ -2,6 +2,10 @@
 //! Binding does not consume a receipt. The action commit must fence its acceptance
 //! reads and record consumption atomically; this is not publication authority.
 
+use crate::receipt_decision::{
+    AcceptedPins, BindingPins, CommitPinRefusal, CommitPins, ConsumedResult, commit_pins_bind,
+    pins_bind,
+};
 use crate::result_reconciliation::Acceptance;
 use norn_ir::{
     RuntimeValue,
@@ -218,6 +222,33 @@ impl<T> ReceiptBinding<T> {
         &self.manifest
     }
 
+    /// RUN-BIND-1: the receipt binds exactly the action's commit: it executed
+    /// `declared_manifest`, under `target_run`, at the generation its result
+    /// record and command state carry.
+    ///
+    /// # Errors
+    /// [`ReceiptRefusal::BindingMismatch`] for another manifest, then
+    /// [`ReceiptRefusal::RunMismatch`] for another run or generation.
+    pub(crate) fn check_commit(
+        &self,
+        declared_manifest: &Digest,
+        target_run: &str,
+    ) -> Result<(), ReceiptRefusal> {
+        commit_pins_bind(&CommitPins {
+            manifest: &self.manifest,
+            declared_manifest,
+            run: self.run.id.as_str(),
+            target: target_run,
+            run_generation: self.run.generation,
+            record_generation: self.acceptance.record.generation.0,
+            state_generation: self.acceptance.state.generation.0,
+        })
+        .map_err(|refusal| match refusal {
+            CommitPinRefusal::ManifestMismatch => ReceiptRefusal::BindingMismatch,
+            CommitPinRefusal::RunMismatch => ReceiptRefusal::RunMismatch,
+        })
+    }
+
     /// Move the typed result and its exact receipt/acceptance pins into preparation.
     #[must_use]
     pub fn into_parts(self) -> (Digest, T, Acceptance) {
@@ -254,27 +285,44 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
     }
     let digest = receipt.content_digest()?;
     let result_identity = receipt.result_identity()?;
-    if digest != reference.0
-        || digest != record.receipt
-        || result_identity != record.result_identity
-        || record.command.0 != receipt.command_id
-        || record.generation.0 != receipt.run.generation
-        || record.attempt != receipt.attempt
-        || acceptance.state.generation != record.generation
-        // The delivery it consumes is this command's result at this
-        // generation, never another pending delivery (RECEIPT-CONSUME-1).
-        || acceptance.consumed
-            != (crate::cell_host::Consumed::Result {
-                command: record.command.clone(),
-                generation: record.generation,
-            })
-        || acceptance.state.cancelled
-        || acceptance.state.accepted.as_ref().is_none_or(|accepted| {
-            accepted.receipt != digest
-                || accepted.result_identity != result_identity
-                || accepted.generation != record.generation
-        })
-    {
+    let consumed = match &acceptance.consumed {
+        crate::cell_host::Consumed::Result {
+            command,
+            generation,
+        } => Some(ConsumedResult {
+            command: &command.0,
+            generation: generation.0,
+        }),
+        crate::cell_host::Consumed::Timer { .. }
+        | crate::cell_host::Consumed::Observation { .. } => None,
+    };
+    let accepted = acceptance
+        .state
+        .accepted
+        .as_ref()
+        .map(|accepted| AcceptedPins {
+            receipt: &accepted.receipt,
+            result_identity: &accepted.result_identity,
+            generation: accepted.generation.0,
+        });
+    let pins = BindingPins {
+        requested: &reference.0,
+        receipt_digest: &digest,
+        receipt_result_identity: &result_identity,
+        receipt_command: &receipt.command_id,
+        receipt_generation: receipt.run.generation,
+        receipt_attempt: receipt.attempt,
+        record_receipt: &record.receipt,
+        record_result_identity: &record.result_identity,
+        record_command: &record.command.0,
+        record_generation: record.generation.0,
+        record_attempt: record.attempt,
+        state_generation: acceptance.state.generation.0,
+        state_cancelled: acceptance.state.cancelled,
+        consumed,
+        accepted,
+    };
+    if !pins_bind(&pins) {
         return Err(ReceiptBindingError::Mismatch);
     }
     let FunctionOutcome::Success(success) = &receipt.outcome else {

@@ -60,6 +60,8 @@ pub mod entity_model;
 pub mod envelope;
 pub mod exact_rational;
 mod finite;
+/// The `perform` records of a lowered flow's decide rule.
+pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
@@ -68,6 +70,7 @@ pub mod incremental;
 mod inheritance;
 pub mod interfaces;
 pub mod jdm_profile;
+pub mod labels;
 pub mod layout;
 pub mod lifecycle_writes;
 pub mod lifecycles;

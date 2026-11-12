@@ -59,6 +59,8 @@ pub mod authz;
 mod authz_action;
 pub mod cell_host;
 mod commit_check;
+mod commit_order;
+mod commit_versions;
 mod decider;
 pub mod decision_commit;
 mod effect;
@@ -77,7 +79,9 @@ pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
+mod receipt_decision;
 pub mod refusal;
+mod replay_decision;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
 pub mod timer_schedule;
@@ -139,3 +143,7 @@ mod action_quantity;
 pub mod execution_profile;
 
 mod profile_ownership;
+
+/// Versioned single-cell read evidence and context validation.
+pub mod read_envelope;
+mod read_token_check;

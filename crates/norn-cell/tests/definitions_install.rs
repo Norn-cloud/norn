@@ -4400,15 +4400,26 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
         exporter.append(&record).await.expect("export");
     }
     let restored_path = dir.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &restored_path,
-        candidate.clone(),
-        "org_demo/dev",
-        &BTreeMap::from([("scope".into(), "org_demo/dev".into())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".into(), "org_demo/dev".into())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &restored_path,
+            candidate.clone(),
+            "org_demo/dev",
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore recomputes original fingerprint");
     let mut restored: norn_cell::SqliteCell<String, String, String> = norn_cell::SqliteCell::new(
         CellStore::open(&restored_path, candidate, StoreOptions::default())

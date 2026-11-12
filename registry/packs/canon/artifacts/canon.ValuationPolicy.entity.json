@@ -1,0 +1,57 @@
+{
+  "artifactId": "canon.ValuationPolicy.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock valuation policy",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "name": "canon.ValuationPolicy",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.ValuationPolicy.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

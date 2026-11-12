@@ -1,0 +1,33 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "7:14 effect/Schema#Struct",
+    "7:38 effect/Schema#Int",
+    "7:55 effect/Schema#String",
+    "8:15 effect/Schema#Struct",
+    "8:39 effect/Schema#Literals",
+    "8:89 effect/Schema#String",
+    "8:114 effect/Schema#String",
+    "8:136 effect/Schema#ArraySchema",
+    "10:28 @norn/authoring#Norn.type",
+    "14:15 effect/Schema#Struct",
+    "14:40 effect/Schema#String",
+    "14:63 effect/Schema#Int",
+    "14:80 effect/Schema#String",
+    "18:29 @norn/authoring#Norn.type",
+    "22:15 effect/Schema#Struct",
+    "22:41 effect/Schema#String",
+    "22:64 effect/Schema#Literals",
+    "22:114 @norn/authoring#Norn.date",
+    "22:137 @norn/authoring#Norn.date",
+    "27:73 @norn/authoring#Norn.expression",
+    "27:162 @norn/authoring#Norn.daysBetween",
+    "31:25 @norn/authoring#Norn.law",
+    "44:16 @norn/authoring#Norn.expression",
+    "48:19 @norn/authoring#Norn.expression",
+    "49:9 @norn/authoring#Norn.sum",
+    "52:12 @norn/authoring#Norn.addDays",
+    "52:49 @norn/authoring#Norn.parseDate"
+  ]
+}

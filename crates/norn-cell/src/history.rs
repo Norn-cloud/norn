@@ -2007,8 +2007,10 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
+        let cell_id = crate::cell_identity::from_bindings(&first.bindings)?.ok_or_else(refused)?;
         let mut store =
-            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?)?;
+            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?, &cell_id)?;
+        store.require_cell_id(&cell_id)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }

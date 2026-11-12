@@ -13,6 +13,8 @@ import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from
 import { transport } from "./lib/transport.ts"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import type { MenuEntry } from "./shell.tsx"
+import { Iso } from "@/components/iso"
+import { directionOf, useLocale } from "@/lib/locale"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
@@ -51,17 +53,21 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
 }
 
 /** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
-const about = (concept: Concept, view: View) => view === "technical" ? concept.description ?? concept.summary : concept.summary
+const about = (concept: Concept, view: View): { readonly text: string; readonly lang: string } | undefined => {
+  // The registry's own description is English; a summary carries the language it was written in.
+  if (view === "technical" && concept.description !== undefined) return { text: concept.description, lang: "en" }
+  return concept.summary === undefined ? undefined : { text: concept.summary, lang: concept.summaryLang }
+}
 
 function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   const { view } = useView()
   return (
-    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
-          <CardTitle>{concept.title}</CardTitle>
-          <CardDescription className="line-clamp-2 min-h-[2lh]">{about(concept, view)}</CardDescription>
+          <CardTitle lang={concept.titleLang}>{concept.title}</CardTitle>
+          <CardDescription lang={about(concept, view)?.lang} className="line-clamp-2 min-h-[2lh]">{about(concept, view)?.text}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
           <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
@@ -118,6 +124,43 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
   )
 }
 
+/** A type's facts in the reader's language; Technical adds each fact's id, isolated. */
+export function FactsTable({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {
+  const { locale } = useLocale()
+  const comma = locale === "ar" ? "، " : ", "
+  return (
+    <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
+      {concept.fields.map((field) => (
+        <TableRow key={field.id}>
+          <TableCell className="font-medium">
+            <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
+            {field.optional && <span className="text-muted-foreground"> (optional)</span>}
+            {technical && <> <Iso className="font-mono text-xs text-muted-foreground">{field.id}</Iso></>}
+          </TableCell>
+          <TableCell className="whitespace-normal text-muted-foreground">
+            {field.scalar.kind === "enum" && field.valueLabels !== undefined && field.valueLabels.size > 0
+              // Every declared value, in order: its label, or the stored value itself (marked English) when it has none.
+              ? <span dir={directionOf(locale)} data-values={field.scalar.values.length}>{field.scalar.values.map((value, index) => {
+                const label = field.valueLabels?.get(value)
+                return (
+                  // An explicit direction: a value shown only as its id has no strong character of the page's
+                  // script, and would otherwise order its own separator left to right.
+                  <span key={value} dir={directionOf(locale)}>
+                    {index > 0 && comma}
+                    {label !== undefined
+                      ? <>{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</>
+                      : technical ? <Iso lang="en" className="font-mono text-xs">{value}</Iso> : <bdi lang="en">{value.replaceAll("_", " ")}</bdi>}
+                  </span>
+                )
+              })}</span>
+              : <span>{field.type}</span>}
+          </TableCell>
+        </TableRow>
+      ))}
+    </DenseTable>
+  )
+}
+
 /** One object type as a record page: what it is, its fields, links, rules and where its records come from. */
 function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; readonly concept: Concept }) {
   const link = (target: string) => catalog.byName.has(target)
@@ -129,26 +172,17 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
   return (
     <article className="space-y-6">
       <header className="space-y-2">
-        <h1 className="text-title font-medium">{concept.title}</h1>
+        <h1 lang={concept.titleLang} className="text-title font-medium">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
-          {view === "technical" && <span className="font-mono">{concept.name}</span>}
+          {view === "technical" && <Iso className="font-mono">{concept.name}</Iso>}
         </div>
-        {text !== undefined && <p className="max-w-2xl text-muted-foreground">{text}</p>}
+        {text !== undefined && <p lang={text.lang} className="max-w-2xl text-muted-foreground">{text.text}</p>}
         {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
       </header>
       <Panel icon={Shapes} label="Facts recorded">
-        <div className="p-1">
-          <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
-            {concept.fields.map((field) => (
-              <TableRow key={field.id}>
-                <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
-                <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
-              </TableRow>
-            ))}
-          </DenseTable>
-        </div>
+        <div className="p-1"><FactsTable concept={concept} technical={view === "technical"} /></div>
       </Panel>
       {concept.relationships.length > 0 && (
         <Panel icon={Shapes} label="Links">
@@ -201,7 +235,8 @@ const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept
 /** The object types and shared interfaces, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  const { locale } = useLocale()
+  const catalog = useMemo(() => read.data && catalogOf(read.data.document, locale), [read.data, locale])
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
     .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType" as const })))
 }
@@ -209,7 +244,8 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {
   const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  const { locale } = useLocale()
+  const catalog = useMemo(() => read.data && catalogOf(read.data.document, locale), [read.data, locale])
   return { read, catalog }
 }
 
@@ -217,7 +253,7 @@ export function SourcesPage() {
   const { read, catalog } = useCatalog()
   const [search, setSearch] = useState("")
   const { view } = useView()
-  const matches = (concept: Concept) => `${concept.title} ${about(concept, view) ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
+  const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-8">
       <div className="space-y-2">

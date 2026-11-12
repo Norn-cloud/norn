@@ -4,6 +4,38 @@
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
   {
+    "code": "action.validation.input_enum_not_subset",
+    "fix": "Limit the input's enum to values its target property declares, or declare the missing values on the property."
+  },
+  {
+    "code": "action.validation.input_enum_unbound",
+    "fix": "Remove the enum from the input, or write the input to an enum property."
+  },
+  {
+    "code": "action.validation.input_group_duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "action.validation.input_group_field_regrouped",
+    "fix": "List each input field in at most one group."
+  },
+  {
+    "code": "action.validation.input_group_invalid_shape",
+    "fix": "Declare x-norn.groups as a list of {id, title, fields}."
+  },
+  {
+    "code": "action.validation.input_group_title_invalid",
+    "fix": "Give the group a title of at least one character and at most the reported length."
+  },
+  {
+    "code": "action.validation.input_group_unknown_field",
+    "fix": "List only declared input properties in the group's fields."
+  },
+  {
+    "code": "action.validation.input_label_invalid",
+    "fix": "Give the label at least one character, at most the reported length, and no control characters."
+  },
+  {
     "code": "action.validation.invalid_effect_program",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
@@ -770,6 +802,50 @@
   {
     "code": "ir.validation.unsupported_version",
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "labels.admission.conflicting_label",
+    "no_fix": "Two labels artifacts label the same target in the same locale; which wording stands is an authoring decision."
+  },
+  {
+    "code": "labels.admission.unknown_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "labels.lint.missing_label",
+    "fix": "Add a label in the reported locale for each listed definition."
+  },
+  {
+    "code": "labels.validation.bidi_control",
+    "fix": "Remove the bidi embedding, override or isolate control characters from the text."
+  },
+  {
+    "code": "labels.validation.blank_text",
+    "fix": "Give every entry a non-blank label, and remove blank descriptions."
+  },
+  {
+    "code": "labels.validation.duplicate_locale",
+    "fix": "Keep one entry per locale, comparing tags without case."
+  },
+  {
+    "code": "labels.validation.duplicate_target",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "labels.validation.invalid_locale",
+    "fix": "Use a well-formed BCP 47 language tag for the locale."
+  },
+  {
+    "code": "labels.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "labels.validation.not_nfc",
+    "fix": "Normalize the label or description to Unicode NFC."
+  },
+  {
+    "code": "labels.validation.unlabelled_locale",
+    "fix": "Add a label for the locale the description or review state names, or remove that locale."
   },
   {
     "code": "law.exception.cycle",

@@ -157,7 +157,8 @@ impl NornCell {
             object_types,
             // Dashboards are built in; agents wait for lane CANVAS's checker.
             kinds: DefinitionKinds::default()
-                // Sign-offs verify against the checker's words, as Studio shows them.
+                // Sign-offs verify against the checker's words, as Studio shows
+                // them; D59: a flow is installed by signing the server's words for it.
                 .with_restater(norn_api::definition_routes::checker_restatement)
                 // A binding runs as a role of the cell's declared grant table.
                 .with_roles(

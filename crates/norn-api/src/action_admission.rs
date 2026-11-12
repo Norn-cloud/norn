@@ -149,7 +149,8 @@ impl RetainedActions {
                 | ArtifactKind::SourceSchema
                 | ArtifactKind::Mapping
                 | ArtifactKind::Law
-                | ArtifactKind::DefinedConcept => {}
+                | ArtifactKind::DefinedConcept
+                | ArtifactKind::Labels => {}
             }
         }
         let receipt: serde_json::Value = serde_json::from_str(
