@@ -301,9 +301,9 @@ fn ancestors_hold<T: PartialEq>(
         let Some(next) = position(ids, parent) else {
             return false;
         };
-        if !matches!(matched.get(next), Some(true)) {
+        let Some(&true) = matched.get(next) else {
             return false;
-        }
+        };
         node = next;
         let Some(next_steps) = steps.checked_add(1) else {
             return false;
@@ -325,11 +325,15 @@ pub(crate) fn applied_exceptions<T: PartialEq>(
     applied: &mut [bool],
 ) {
     let mut index = 0_usize;
-    while let Some(slot) = applied.get_mut(index) {
-        *slot = matches!(
-            (matched.get(index), level.get(index)),
-            (Some(true), Some(false))
-        ) && ancestors_hold(law, ids, parents, matched, index);
+    while index < applied.len() {
+        let marked = if let (Some(true), Some(false)) = (matched.get(index), level.get(index)) {
+            ancestors_hold(law, ids, parents, matched, index)
+        } else {
+            false
+        };
+        if let Some(slot) = applied.get_mut(index) {
+            *slot = marked;
+        }
         let Some(next) = index.checked_add(1) else {
             return;
         };

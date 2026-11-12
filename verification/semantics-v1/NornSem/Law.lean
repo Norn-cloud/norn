@@ -28,7 +28,9 @@ the law), the following hold:
 **Never binds beyond the bare law:** `binds_bare` and `holdsOn_of_bare` show that an
 exception tree never makes a law bind where the bare law does not, so it never
 adds a requirement. `lifts_needs_top_condition` shows that lifting needs a
-first-level exception whose condition holds.
+first-level exception whose condition holds. This is *not* monotone in the
+tree: `nested_exception_can_lift` adds one exception under another and lifts
+the law where the smaller tree did not.
 -/
 
 namespace Norn.Sem
@@ -281,6 +283,71 @@ theorem lifts_needs_top_condition [DecidableEq Id] (T : Tree Id σ) (x : σ) (f 
 /-- An empty tree never lifts. -/
 theorem lifts_nil [DecidableEq Id] (root : Id) (x : σ) (f : ℕ) : (Tree.mk root ([] : List (Exception Id σ))).lifts x f root = false := by
   cases f <;> simp [lifts]
+
+/-- Every exception strictly above `i` on its path to the law has a holding
+    condition at `x`. A decision reports an exception as applied when it
+    applies (under the stable labelling) and its ancestors all hold, so an
+    exception below one whose condition fails is never reported. -/
+inductive AboveHolds (T : Tree Id σ) (x : σ) : Id → Prop
+  | top {e : Exception Id σ} : e ∈ T.nodes → e.overrides = T.root → AboveHolds T x e.id
+  | up {e c : Exception Id σ} : e ∈ T.nodes → c ∈ T.nodes → e.overrides = c.id →
+      c.condition x = true → AboveHolds T x c.id → AboveHolds T x e.id
+
+theorem AboveHolds.inv {T : Tree Id σ} {x : σ} {i : Id} (h : T.AboveHolds x i) :
+    (∃ e ∈ T.nodes, e.id = i ∧ e.overrides = T.root) ∨
+      ∃ e ∈ T.nodes, ∃ c ∈ T.nodes, e.id = i ∧ e.overrides = c.id ∧
+        c.condition x = true ∧ T.AboveHolds x c.id := by
+  cases h with
+  | top he hr => exact Or.inl ⟨_, he, rfl, hr⟩
+  | up he hc hov hcond h => exact Or.inr ⟨_, he, _, hc, rfl, hov, hcond, h⟩
+
+/-- The exceptions a decision reports as applied under labelling `A`. -/
+def Reported (T : Tree Id σ) (x : σ) (A : Id → Prop) (i : Id) : Prop :=
+  A i ∧ T.AboveHolds x i
+
+/-- `law ← a`. -/
+def nestA : Exception ℕ Unit := ⟨1, 0, fun _ => true⟩
+/-- `a ← b`. -/
+def nestB : Exception ℕ Unit := ⟨2, 1, fun _ => true⟩
+/-- `b ← c`. -/
+def nestC : Exception ℕ Unit := ⟨3, 2, fun _ => true⟩
+
+/-- Nesting does not narrow monotonically. Adding an exception under an
+    exception can lift the law where the smaller tree did not: under
+    `law ← a ← b`, `b` applies and stops `a`, but a new `c` under `b` stops
+    `b`, so `a` applies again and lifts the law. Exceptions only narrow
+    relative to the bare law (`Law.binds_bare`), not relative to a subtree. -/
+theorem nested_exception_can_lift :
+    ∃ T T' : Tree ℕ Unit, T.WellFormed ∧ T'.WellFormed ∧ T'.root = T.root ∧
+      (∀ e ∈ T.nodes, e ∈ T'.nodes) ∧
+      T.lifts () (T.nodes.length + 1) T.root = false ∧
+      T'.lifts () (T'.nodes.length + 1) T'.root = true := by
+  have ra : ∀ ns : List (Exception ℕ Unit), nestA ∈ ns → (Tree.mk 0 ns).ReachesIn 1 1 :=
+    fun _ ha => .step (e := nestA) ha .root
+  have rb : ∀ ns : List (Exception ℕ Unit), nestA ∈ ns → nestB ∈ ns →
+      (Tree.mk 0 ns).ReachesIn 2 2 :=
+    fun ns ha hb => .step (e := nestB) hb (ra ns ha)
+  have rc : ∀ ns : List (Exception ℕ Unit), nestA ∈ ns → nestB ∈ ns → nestC ∈ ns →
+      (Tree.mk 0 ns).ReachesIn 3 3 :=
+    fun ns ha hb hc => .step (e := nestC) hc (rb ns ha hb)
+  refine ⟨⟨0, [nestA, nestB]⟩, ⟨0, [nestA, nestB, nestC]⟩, ⟨by decide, by decide, by decide, ?_⟩,
+    ⟨by decide, by decide, by decide, ?_⟩, rfl, ?_, by decide, by decide⟩
+  · intro e he
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl
+    · exact ⟨1, ra _ (by simp)⟩
+    · exact ⟨2, rb _ (by simp) (by simp)⟩
+  · intro e he
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he
+    rcases he with rfl | rfl | rfl
+    · exact ⟨1, ra _ (by simp)⟩
+    · exact ⟨2, rb _ (by simp) (by simp)⟩
+    · exact ⟨3, rc _ (by simp) (by simp) (by simp)⟩
+  · intro e he
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at he ⊢
+    rcases he with rfl | rfl
+    · exact Or.inl rfl
+    · exact Or.inr (Or.inl rfl)
 
 end Tree
 

@@ -54,6 +54,23 @@ lean_root="$aeneas_root/backends/lean"
 test "$(tr -d '\r\n' < "$lean_root/lean-toolchain")" = leanprover/lean4:v4.31.0
 export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCREMENTAL=0
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
+
+# pin_statements <search> <module> <audit output>: record the full statement
+# (`#check @name`, proofs and deep terms printed, never elided) of every theorem
+# the audit names. The record must equal the committed one, so no audited
+# statement changes unseen.
+statements="$result/statements.txt"
+mkdir -p "$result"
+: > "$statements"
+pin_statements() {
+  local search="$1" module="$2" names
+  names="$(sed -n "s/^'\([^']*\)' .*/#check @\1/p" <<< "$3")"
+  test -n "$names" || return 0
+  printf 'import %s\nset_option pp.proofs true\nset_option pp.deepTerms true\n%s\n' \
+    "$module" "$names" |
+    (cd "$lean_root" && LEAN_PATH="$search:$result/common" lake env lean \
+      -DwarningAsError=true --stdin) >> "$statements"
+}
 mkdir -p "$result/common"
 
 # fragment <name>: "<crate> <source> <start-from>..." for one extracted core.
@@ -112,6 +129,7 @@ expect_output() {
     exit "$status"
   fi
   test "$output" = "$expected"
+  pin_statements "$search" "${module//\//.}" "$output"
 }
 
 (cd "$lean_root" && lake build Aeneas)
@@ -223,6 +241,7 @@ expect_output Checker/Obligations/FrameProof "$common/Checker/Obligations/FrameP
   "'Norn.Checker.Obligations.discharges_sound' depends on axioms: [propext, Classical.choice, Quot.sound]" \
   "'Norn.Checker.Obligations.frame_witnesses' depends on axioms: [propext, Classical.choice, Quot.sound]")"
 
+diff -u "$proof_root/Checker/Certificates/statements.txt" "$statements"
 # Check the exact propositions, not only the theorem names or an exit code. The
 # extractions share generated instance names, so each family is checked alone.
 check_props() {
@@ -491,11 +510,12 @@ for name in LensVectors AlgebraVectors ConservationVectors FrameVectors; do
 done
 echo "checker-certificates: production certificate checkers and frame decision proved against the written semantics"
 
-# Mutants are applied to a hard-linked copy of the checker sources; the edited
+# Mutants are applied to a hard-linked copy of the checker sources (a plain
+# copy when the result root is on another filesystem); the edited
 # file is replaced, never written through, so the checkout is untouched.
 tree="$result/mutants/tree"
 mkdir -p "$tree/crates/norn-checker"
-cp -al "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/"
+cp -al "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/" 2>/dev/null || { rm -rf "$tree/crates/norn-checker/src"; cp -a "$repo_root/crates/norn-checker/src" "$tree/crates/norn-checker/"; }
 python3 - "$tree" "$result/mutants" "$lens_source" "$algebra_source" "$conservation_source" \
   "$frame_source" <<'PYMUTANTS' > "$result/mutants/list"
 import sys

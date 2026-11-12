@@ -278,6 +278,36 @@ theorem write_loop
         rw [if_pos (by omega), if_neg hki, List.getElem?_set_self (by omega)]
       · rw [if_neg (by omega), if_neg hki]
 
+/-- `write_loop` for a loop whose state is `(slice, index)`. -/
+theorem write_loop'
+    (body : Slice Bool → Usize → Result (ControlFlow (Slice Bool × Usize) (Slice Bool)))
+    (len : ℕ) (value : ℕ → Bool)
+    (hstep : ∀ (i : Usize) (s : Slice Bool), i.val < len → s.val.length = len →
+      ∃ z : Usize, ∃ s' : Slice Bool, z.val = i.val + 1 ∧ s'.val = s.val.set i.val (value i.val) ∧
+        body s i = ok (cont (s', z)))
+    (hend : ∀ (i : Usize) (s : Slice Bool), len ≤ i.val → s.val.length = len →
+      body s i = ok (done s)) (n : ℕ) :
+    ∀ (i : Usize) (s : Slice Bool), len - i.val = n → s.val.length = len →
+      ∃ s' : Slice Bool, loop (fun (s, i) => body s i) (s, i) = ok s' ∧ s'.val.length = len ∧
+        ∀ k < len, s'.val[k]? = if k < i.val then s.val[k]? else some (value k) := by
+  induction n with
+  | zero =>
+    intro i s hn hs
+    refine ⟨s, loop_done (hend i s (by omega) hs), hs, fun k hk => ?_⟩
+    rw [if_pos (by omega)]
+  | succ n ih =>
+    intro i s hn hs
+    obtain ⟨z, s', hz, hs', hb⟩ := hstep i s (by omega) hs
+    obtain ⟨t, ht, htl, htv⟩ := ih z s' (by omega) (by rw [hs', List.length_set, hs])
+    refine ⟨t, (loop_cont hb).trans ht, htl, fun k hk => ?_⟩
+    rw [htv k hk, hs']
+    by_cases hki : k < i.val
+    · rw [if_pos (by omega), if_pos hki, getElem?_set_of_lt _ _ hki]
+    · by_cases hke : k = i.val
+      · subst hke
+        rw [if_pos (by omega), if_neg hki, List.getElem?_set_self (by omega)]
+      · rw [if_neg (by omega), if_neg hki]
+
 /-! ## The fold -/
 
 /-- Some exception overriding `v` has a holding condition and is not lifted in
@@ -495,13 +525,15 @@ theorem lifted_loop_spec (hl : Lawful inst) (law : T) (ids parents : Slice T) (m
       level.val = ids.val.map (fun x => (foldTree law ids parents matched).lifts () round.val x) →
       next.val.length = ids.val.length →
       ∃ b l' n', lifted_loop inst law ids parents matched level next round = ok (b, l', n') ∧
-        b = (foldTree law ids parents matched).lifts () (ids.val.length + 1) law := by
+        b = (foldTree law ids parents matched).lifts () (ids.val.length + 1) law ∧
+        l'.val = ids.val.map
+          (fun x => (foldTree law ids parents matched).lifts () ids.val.length x) := by
   induction m with
   | zero =>
     intro level next round hm hr hlev hnext
     have hrn : round.val = ids.val.length := by omega
     obtain ⟨b, hb, hiff⟩ := overridden_spec hl law parents matched level
-    refine ⟨b, level, next, ?_, ?_⟩
+    refine ⟨b, level, next, ?_, ?_, by rw [hlev, hrn]⟩
     · have hnot : ¬ round < Slice.len ids := fun h => by
         have h' : round.val < (Slice.len ids).val := h
         simp at h'
@@ -528,9 +560,9 @@ theorem lifted_loop_spec (hl : Lawful inst) (law : T) (ids parents : Slice T) (m
         rw [hlev, over_iff law v ids parents matched hp] at hiff
         exact Bool.eq_iff_iff.mpr hiff
       · rw [List.getElem?_eq_none (by omega), List.getElem?_eq_none (by simp; omega)]
-    obtain ⟨b, l', n', hrun, hb⟩ :=
+    obtain ⟨b, l', n', hrun, hb, hl'⟩ :=
       ih l1 n1 z (by omega) (by omega) (by rw [hl1v, hnext1, hzv]) (by omega)
-    refine ⟨b, l', n', ?_, hb⟩
+    refine ⟨b, l', n', ?_, hb, hl'⟩
     have hlt : round < Slice.len ids := by
       show round.val < (Slice.len ids).val
       simp
@@ -547,7 +579,9 @@ theorem lifted_correct (hl : Lawful inst) (law : T) (ids parents : Slice T)
     (matched level next : Slice Bool) (hp : parents.val.length = ids.val.length)
     (hlv : level.val.length = ids.val.length) (hnx : next.val.length = ids.val.length) :
     ∃ b l' n', lifted inst law ids parents matched level next = ok (b, l', n') ∧
-      b = (foldTree law ids parents matched).lifts () (ids.val.length + 1) law := by
+      b = (foldTree law ids parents matched).lifts () (ids.val.length + 1) law ∧
+      l'.val = ids.val.map
+        (fun x => (foldTree law ids parents matched).lifts () ids.val.length x) := by
   obtain ⟨l0, hl0, hl0v⟩ := clear_level_spec level
   have hz : l0.val = ids.val.map
       (fun x => (foldTree law ids parents matched).lifts () (0#usize).val x) := by
@@ -559,9 +593,9 @@ theorem lifted_correct (hl : Lawful inst) (law : T) (ids parents : Slice T)
       simp [Tree.lifts]
     · rw [if_neg hk, List.getElem?_eq_none (by omega)]
       rfl
-  obtain ⟨b, l', n', hrun, hb⟩ :=
+  obtain ⟨b, l', n', hrun, hb, hl'⟩ :=
     lifted_loop_spec hl law ids parents matched hp _ l0 next 0#usize rfl (by simp) hz hnx
-  exact ⟨b, l', n', by unfold lifted; simp [hl0, hrun], hb⟩
+  exact ⟨b, l', n', by unfold lifted; simp [hl0, hrun], hb, hl'⟩
 
 /-! ## The shape check -/
 
@@ -1128,11 +1162,292 @@ theorem lifted_sound (hl : Lawful inst) (law : T) (ids parents : Slice T)
     (fun k (_ : Unit) => matched.val.getD k false)
   rw [hadmit] at hr
   have wf := (hiff.mp (Result.ok.inj hr).symm).2
-  obtain ⟨b, l', n', hrun, hb⟩ := lifted_correct hl law ids parents matched level next hp hlv hnx
+  obtain ⟨b, l', n', hrun, hb, -⟩ :=
+    lifted_correct hl law ids parents matched level next hp hlv hnx
   have hlen : (foldTree law ids parents matched).nodes.length = ids.val.length := by
     simp [foldTree, treeWith_length, hp]
   refine ⟨b, l', n', hrun, ?_⟩
   rw [hb, Tree.lifted_iff wf hA, hlen]
   rfl
+
+/-! ## The applied set -/
+
+theorem ancestors_loop_spec (hl : Lawful inst) (law : T) (ids parents : Slice T)
+    (matched : Slice Bool) (hp : parents.val.length = ids.val.length) (hnd : ids.val.Nodup)
+    (hroot : law ∉ ids.val)
+    (hdang : ∀ k < parents.val.length, ¬ Dangling law ids.val parents.val k)
+    (hbound : ids.val.length ≤ 64) (d : ℕ) :
+    ∀ node steps : Usize, ∀ hn : node.val < ids.val.length,
+      (foldTree law ids parents matched).ReachesIn ids.val[node.val] d →
+      d + steps.val ≤ ids.val.length + 1 →
+      ∃ b, ancestors_hold_loop inst law ids parents matched node steps = ok b ∧
+        (b = true ↔ (foldTree law ids parents matched).AboveHolds () ids.val[node.val]) := by
+  induction d with
+  | zero =>
+    intro node steps hn hd _
+    obtain ⟨d', hd', -⟩ := (reach_step law ids.val parents.val _ hp hnd hroot hn 0).mp hd
+    omega
+  | succ d ih =>
+    intro node steps hn hd hle
+    obtain ⟨d', hdd, hpd⟩ := (reach_step law ids.val parents.val _ hp hnd hroot hn _).mp hd
+    have hdd' : d' = d := by omega
+    rw [hdd'] at hpd
+    have hsle : steps ≤ Slice.len ids := by
+      show steps.val ≤ (Slice.len ids).val
+      simp
+      omega
+    have hx : parents.val[node.val]? = some parents.val[node.val] :=
+      List.getElem?_eq_getElem (by omega)
+    have hmem : (⟨ids.val[node.val], parents.val[node.val],
+        fun _ => matched.val.getD node.val false⟩ : Exception T Unit) ∈
+          (foldTree law ids parents matched).nodes :=
+      (mem_treeWith _ _ _ _ hp).mpr ⟨node.val, hn, rfl⟩
+    by_cases hpl : parents.val[node.val] = law
+    · refine ⟨true, ?_, ?_⟩
+      · unfold ancestors_hold_loop
+        rw [loop.eq_1]
+        simp [ancestors_hold_loop.body, hsle, hx, hpl, hl.eq]
+      · simp only [true_iff]
+        exact .top hmem hpl
+    · have hin : ¬ ∀ m < ids.val.length, ids.val[m]? ≠ some parents.val[node.val] :=
+        fun hall => hdang node.val (by omega) ⟨_, hx, hpl, hall⟩
+      obtain ⟨r, hr, hf⟩ := position_spec hl ids parents.val[node.val]
+      have hrn : r ≠ none := fun e => hin ((firstWith_none hf).mp e)
+      obtain ⟨j, rfl⟩ := Option.ne_none_iff_exists'.mp hrn
+      obtain ⟨hjl, hjv, -⟩ := hf
+      have hpj : parents.val[node.val] = ids.val[j.val] := by
+        rw [List.getElem?_eq_getElem hjl] at hjv
+        exact (Option.some.inj hjv).symm
+      have hjmem : (⟨ids.val[j.val], parents.val[j.val],
+          fun _ => matched.val.getD j.val false⟩ : Exception T Unit) ∈
+            (foldTree law ids parents matched).nodes :=
+        (mem_treeWith _ _ _ _ hp).mpr ⟨j.val, hjl, rfl⟩
+      have habove : (foldTree law ids parents matched).AboveHolds () ids.val[node.val] ↔
+          matched.val.getD j.val false = true ∧
+            (foldTree law ids parents matched).AboveHolds () ids.val[j.val] := by
+        constructor
+        · intro h
+          rcases h.inv with ⟨e, he, hid, hr'⟩ | ⟨e, he, c, hc, hid, hov, hcond, hab⟩
+          · obtain ⟨k, hk, rfl⟩ := (mem_treeWith _ _ _ _ hp).mp he
+            have hkn := nodup_getElem_inj hnd hk hn hid
+            subst hkn
+            exact absurd hr' hpl
+          · obtain ⟨k, hk, rfl⟩ := (mem_treeWith _ _ _ _ hp).mp he
+            have hkn := nodup_getElem_inj hnd hk hn hid
+            subst hkn
+            obtain ⟨m, hm, rfl⟩ := (mem_treeWith _ _ _ _ hp).mp hc
+            have hmj : m = j.val := nodup_getElem_inj hnd hm hjl (hov.symm.trans hpj)
+            subst hmj
+            exact ⟨hcond, hab⟩
+        · rintro ⟨hc, hab⟩
+          exact .up hmem hjmem hpj hc hab
+      cases hm : matched.val[j.val]? with
+      | none =>
+        refine ⟨false, ?_, ?_⟩
+        · unfold ancestors_hold_loop
+          rw [loop.eq_1]
+          simp [ancestors_hold_loop.body, hsle, hx, hpl, hl.eq, hr, hm]
+        · rw [habove]
+          simp [List.getD_eq_getElem?_getD, hm]
+      | some v =>
+        cases v with
+        | false =>
+          refine ⟨false, ?_, ?_⟩
+          · unfold ancestors_hold_loop
+            rw [loop.eq_1]
+            simp [ancestors_hold_loop.body, hsle, hx, hpl, hl.eq, hr, hm]
+          · rw [habove]
+            simp [List.getD_eq_getElem?_getD, hm]
+        | true =>
+          obtain ⟨z, hz, hzv⟩ := checked_succ steps (by have := usize_max_ge; omega)
+          have hjd : (foldTree law ids parents matched).ReachesIn ids.val[j.val] d := by
+            rw [← hpj]
+            exact hpd
+          obtain ⟨b, hb, hiff⟩ := ih j z hjl hjd (by omega)
+          refine ⟨b, ?_, ?_⟩
+          · unfold ancestors_hold_loop
+            rw [loop_cont (x' := (j, z))]
+            · unfold ancestors_hold_loop at hb
+              exact hb
+            · simp [ancestors_hold_loop.body, hsle, hx, hpl, hl.eq, hr, hm, hz, lift]
+          · rw [hiff, habove]
+            simp [List.getD_eq_getElem?_getD, hm]
+
+theorem ancestors_hold_spec (hl : Lawful inst) (law : T) (ids parents : Slice T)
+    (matched : Slice Bool) (hp : parents.val.length = ids.val.length) (hnd : ids.val.Nodup)
+    (hroot : law ∉ ids.val)
+    (hdang : ∀ k < parents.val.length, ¬ Dangling law ids.val parents.val k)
+    (hbound : ids.val.length ≤ 64) (k : Usize) (hk : k.val < ids.val.length)
+    (hreach : ∃ d, (foldTree law ids parents matched).ReachesIn ids.val[k.val] d) :
+    ∃ b, ancestors_hold inst law ids parents matched k = ok b ∧
+      (b = true ↔ (foldTree law ids parents matched).AboveHolds () ids.val[k.val]) := by
+  obtain ⟨d, hd⟩ := hreach
+  have hids := treeWith_ids law ids.val parents.val (fun k (_ : Unit) => matched.val.getD k false) hp
+  have hlen := hd.le_length (by rw [hids]; exact hnd) (by rw [hids, treeWith_root]; exact hroot)
+  rw [treeWith_length, hp, Nat.min_self] at hlen
+  obtain ⟨b, hb, hiff⟩ := ancestors_loop_spec hl law ids parents matched hp hnd hroot hdang
+    hbound d k 0#usize hk hd (by simp; omega)
+  exact ⟨b, by unfold ancestors_hold; exact hb, hiff⟩
+
+/-- Exception `k` holds, is not lifted in `level`, and every exception above it holds. -/
+def Marked (law : T) (ids parents : Slice T) (matched level : Slice Bool) (k : ℕ) : Prop :=
+  ∃ hk : k < ids.val.length, matched.val[k]? = some true ∧ level.val[k]? = some false ∧
+    (foldTree law ids parents matched).AboveHolds () ids.val[k]
+
+theorem applied_exceptions_spec (hl : Lawful inst) (law : T) (ids parents : Slice T)
+    (matched level applied : Slice Bool) (hp : parents.val.length = ids.val.length)
+    (hnd : ids.val.Nodup) (hroot : law ∉ ids.val)
+    (hdang : ∀ k < parents.val.length, ¬ Dangling law ids.val parents.val k)
+    (hbound : ids.val.length ≤ 64)
+    (hreach : ∀ k (hk : k < ids.val.length),
+      ∃ d, (foldTree law ids parents matched).ReachesIn ids.val[k] d)
+    (ha : applied.val.length = ids.val.length) :
+    ∃ a', applied_exceptions inst law ids parents matched level applied = ok a' ∧
+      a'.val.length = ids.val.length ∧
+      ∀ k < ids.val.length, ∃ c, a'.val[k]? = some c ∧
+        (c = true ↔ Marked law ids parents matched level k) := by
+  classical
+  let value : ℕ → Bool := fun k => decide (Marked law ids parents matched level k)
+  have hstep : ∀ (i : Usize) (s : Slice Bool), i.val < ids.val.length →
+      s.val.length = ids.val.length →
+      ∃ z : Usize, ∃ s' : Slice Bool, z.val = i.val + 1 ∧
+        s'.val = s.val.set i.val (value i.val) ∧
+        applied_exceptions_loop.body inst law ids parents matched level s i = ok (cont (s', z)) := by
+    intro i s hi hs
+    have hlt : i < Slice.len s := by
+      show i.val < (Slice.len s).val
+      simp
+      omega
+    have hsx : s.val[i.val]? = some s.val[i.val] := List.getElem?_eq_getElem (by omega)
+    obtain ⟨z, hz, hzv⟩ := checked_succ i (by have := slice_len_le ids; omega)
+    obtain ⟨b, hb, hiff⟩ := ancestors_hold_spec hl law ids parents matched hp hnd hroot hdang
+      hbound i hi (hreach i.val hi)
+    by_cases hc : matched.val[i.val]? = some true ∧ level.val[i.val]? = some false
+    · obtain ⟨hm, hlv⟩ := hc
+      refine ⟨z, s.set_opt i (some b), hzv, ?_, ?_⟩
+      · rw [Slice.set_opt_val_eq, set_opt_some]
+        congr 1
+        apply Bool.eq_iff_iff.mpr
+        rw [hiff]
+        simp only [value, decide_eq_true_eq, Marked, hm, hlv, true_and]
+        exact ⟨fun h => ⟨hi, h⟩, fun ⟨_, h⟩ => h⟩
+      · simp [applied_exceptions_loop.body, hlt, hm, hlv, hb, hsx, hz, lift]
+    · refine ⟨z, s.set_opt i (some false), hzv, ?_, ?_⟩
+      · rw [Slice.set_opt_val_eq, set_opt_some]
+        congr 1
+        symm
+        simp only [value, decide_eq_false_iff_not, Marked]
+        rintro ⟨-, h1, h2, -⟩
+        exact hc ⟨h1, h2⟩
+      · cases hm : matched.val[i.val]? with
+        | none => simp [applied_exceptions_loop.body, hlt, hm, hsx, hz, lift]
+        | some v =>
+          cases hlv : level.val[i.val]? with
+          | none => simp [applied_exceptions_loop.body, hlt, hm, hlv, hsx, hz, lift]
+          | some w =>
+            cases v <;> cases w
+            · simp [applied_exceptions_loop.body, hlt, hm, hlv, hsx, hz, lift]
+            · simp [applied_exceptions_loop.body, hlt, hm, hlv, hsx, hz, lift]
+            · exact absurd ⟨hm, hlv⟩ hc
+            · simp [applied_exceptions_loop.body, hlt, hm, hlv, hsx, hz, lift]
+  have hend : ∀ (i : Usize) (s : Slice Bool), ids.val.length ≤ i.val →
+      s.val.length = ids.val.length →
+      applied_exceptions_loop.body inst law ids parents matched level s i = ok (done s) := by
+    intro i s hi hs
+    have hnot : ¬ i < Slice.len s := fun h => by
+      have h' : i.val < (Slice.len s).val := h
+      simp at h'
+      omega
+    simp [applied_exceptions_loop.body, hnot]
+  obtain ⟨s', hs', hlen, hval⟩ := write_loop' _ _ value hstep hend _ 0#usize applied rfl ha
+  refine ⟨s', by unfold applied_exceptions applied_exceptions_loop; exact hs', hlen,
+    fun k hk => ⟨value k, by rw [hval k hk, if_neg (by simp)], ?_⟩⟩
+  simp only [value, decide_eq_true_eq]
+
+omit [DecidableEq T] in
+theorem wf_no_dangling {σ : Type} (law : T) (ids parents : List T) (cond : ℕ → σ → Bool)
+    (hp : parents.length = ids.length) (wf : (treeWith law ids parents cond).WellFormed) :
+    ∀ k < parents.length, ¬ Dangling law ids parents k := by
+  have hids := treeWith_ids law ids parents cond hp
+  have hnd := wf.nodup
+  have hroot := wf.rootFresh
+  rw [hids] at hnd hroot
+  rintro k hk ⟨p, hpk, hpl, hpn⟩
+  have hki : k < ids.length := by omega
+  obtain ⟨d, hd⟩ := wf.reaches _ ((mem_treeWith _ _ _ cond hp).mpr ⟨k, hki, rfl⟩)
+  obtain ⟨d', -, hr'⟩ := (reach_step law ids parents cond hp hnd hroot hki d).mp hd
+  rw [List.getElem?_eq_getElem hk] at hpk
+  have hpe := Option.some.inj hpk
+  rcases hr'.inv with ⟨hroot', -⟩ | ⟨e, he, -, hid, -, -⟩
+  · exact hpl (by rw [← hpe]; exact hroot')
+  · obtain ⟨c, hc, rfl⟩ := (mem_treeWith _ _ _ _ hp).mp he
+    exact hpn c hc (by rw [List.getElem?_eq_getElem hc, ← hpe, hid])
+
+/-- **The applied set.** On a tree the production `check_shape` admits, after
+    the production `lifted`, `applied_exceptions` marks exception `k` exactly
+    when the tree's stable labelling applies it and every exception above it
+    holds (`Tree.Reported`). -/
+theorem applied_sound (hl : Lawful inst) (law : T) (ids parents : Slice T)
+    (declared matched level next applied : Slice Bool)
+    (hp : parents.val.length = ids.val.length) (hd : declared.val.length = ids.val.length)
+    (hlv : level.val.length = ids.val.length) (hnx : next.val.length = ids.val.length)
+    (ha : applied.val.length = ids.val.length)
+    (hadmit : check_shape inst law ids parents declared = ok (.Ok ()))
+    {b : Bool} {l' n' : Slice Bool}
+    (hrun : lifted inst law ids parents matched level next = ok (b, l', n'))
+    {A : T → Prop} (hA : (foldTree law ids parents matched).Stable () A) :
+    ∃ a', applied_exceptions inst law ids parents matched l' applied = ok a' ∧
+      ∀ k (hk : k < ids.val.length), ∃ c, a'.val[k]? = some c ∧
+        (c = true ↔ (foldTree law ids parents matched).Reported () A ids.val[k]) := by
+  obtain ⟨r, hr, hiff⟩ := check_shape_correct hl law ids parents declared hp hd
+    (fun k (_ : Unit) => matched.val.getD k false)
+  rw [hadmit] at hr
+  have wf := (hiff.mp (Result.ok.inj hr).symm).2
+  have hids := treeWith_ids law ids.val parents.val (fun k (_ : Unit) => matched.val.getD k false) hp
+  have hlen : (foldTree law ids parents matched).nodes.length = ids.val.length := by
+    simp [foldTree, treeWith_length, hp]
+  have hnd := wf.nodup
+  have hroot := wf.rootFresh
+  rw [hids] at hnd hroot
+  have hbound : ids.val.length ≤ 64 := by
+    have := wf.bounded
+    rw [hlen] at this
+    simpa [Tree.maxExceptions] using this
+  obtain ⟨b', l'', n'', hrun', -, hl''⟩ :=
+    lifted_correct hl law ids parents matched level next hp hlv hnx
+  rw [hrun] at hrun'
+  have heq := Result.ok.inj hrun'
+  simp only [Prod.mk.injEq] at heq
+  obtain ⟨-, rfl, -⟩ := heq
+  have hreach : ∀ k (hk : k < ids.val.length),
+      ∃ d, (foldTree law ids parents matched).ReachesIn ids.val[k] d :=
+    fun k hk => wf.reaches _ ((mem_treeWith _ _ _ _ hp).mpr ⟨k, hk, rfl⟩)
+  obtain ⟨a', ha', -, hval⟩ := applied_exceptions_spec hl law ids parents matched l' applied hp
+    hnd hroot (wf_no_dangling _ _ _ _ hp wf) hbound hreach ha
+  refine ⟨a', ha', fun k hk => ?_⟩
+  obtain ⟨c, hc, hciff⟩ := hval k hk
+  refine ⟨c, hc, hciff.trans ?_⟩
+  have hmem : (⟨ids.val[k], parents.val[k], fun _ => matched.val.getD k false⟩ :
+      Exception T Unit) ∈ (foldTree law ids parents matched).nodes :=
+    (mem_treeWith _ _ _ _ hp).mpr ⟨k, hk, rfl⟩
+  have hAk : A ids.val[k] ↔ matched.val.getD k false = true ∧
+      (foldTree law ids parents matched).lifts () ids.val.length ids.val[k] = false := by
+    have hu := Tree.stable_unique wf hA (Tree.stable_star wf ()) _ hmem
+    rw [hu, Tree.star_iff wf () hmem, hlen]
+  have hlk : l'.val[k]? =
+      some ((foldTree law ids parents matched).lifts () ids.val.length ids.val[k]) := by
+    rw [hl'', List.getElem?_map, List.getElem?_eq_getElem hk]
+    rfl
+  have hmk : matched.val[k]? = some true ↔ matched.val.getD k false = true := by
+    rw [List.getD_eq_getElem?_getD]
+    cases matched.val[k]? <;> simp
+  unfold Marked Tree.Reported
+  constructor
+  · rintro ⟨_, hm, hlvk, hab⟩
+    rw [hlk] at hlvk
+    exact ⟨hAk.mpr ⟨hmk.mp hm, Option.some.inj hlvk⟩, hab⟩
+  · rintro ⟨hA', hab⟩
+    obtain ⟨hm, hlv⟩ := hAk.mp hA'
+    exact ⟨hk, hmk.mpr hm, by rw [hlk, hlv], hab⟩
 
 end Norn.Checker.LawExceptions

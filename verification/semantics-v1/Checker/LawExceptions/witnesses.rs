@@ -3,7 +3,7 @@
 //! Each witness's expected result is the one the Lean theorems fix
 //! (`check_shape_correct`: `Ok` exactly on a well-formed tree; `check_shape_refusal`:
 //! the first failing check names its first offending declaration; `lifted_correct`:
-//! the semantic fold at fuel `|ids| + 1`). `scripts/verify-law-exceptions-aeneas.sh`
+//! the semantic fold at fuel `|ids| + 1`; `applied_sound`: the reported set). `scripts/verify-law-exceptions-aeneas.sh`
 //! compiles this file beside a copy of `shape.rs` and requires the production
 //! file to agree on every witness and each mutant to disagree on its own.
 
@@ -24,6 +24,15 @@ fn lifted(ids: &[&str], parents: &[&str], matched: &[bool]) -> bool {
     let mut level = vec![false; ids.len()];
     let mut next = vec![false; ids.len()];
     shape::lifted(&"law", ids, parents, matched, &mut level, &mut next)
+}
+
+fn applied(ids: &[&str], parents: &[&str], matched: &[bool]) -> Vec<bool> {
+    let mut level = vec![false; ids.len()];
+    let mut next = vec![false; ids.len()];
+    shape::lifted(&"law", ids, parents, matched, &mut level, &mut next);
+    let mut applied = vec![false; ids.len()];
+    shape::applied_exceptions(&"law", ids, parents, matched, &level, &mut applied);
+    applied
 }
 
 /// Whether the code under test returns the result the theorems fix on the
@@ -52,11 +61,19 @@ fn agrees(name: &str) -> Option<bool> {
         "fold-ignores-condition" => !lifted(&["a"], &["law"], &[false]),
         // Fuel |ids| + 1 on an oscillating input: L3(law) = ¬L2(a) = true.
         "fold-one-round-short" => lifted(&["a", "a"], &["law", "a"], &[true, true]),
+        // `b` holds under `a`, whose condition fails: nothing is reported.
+        "applied-skips-ancestors" | "ancestors-ignore-condition" => {
+            applied(&["a", "b"], &["law", "a"], &[false, true]) == [false, false]
+        }
+        // `b` stops `a`: only `b` is reported.
+        "applied-ignores-level" => {
+            applied(&["a", "b"], &["law", "a"], &[true, true]) == [false, true]
+        }
         _ => return None,
     })
 }
 
-const ALL: [&str; 8] = [
+const ALL: [&str; 11] = [
     "invalid-allows-law-id",
     "invalid-allows-duplicates",
     "cycle-walk-too-short",
@@ -65,6 +82,9 @@ const ALL: [&str; 8] = [
     "fold-negation-dropped",
     "fold-ignores-condition",
     "fold-one-round-short",
+    "applied-skips-ancestors",
+    "ancestors-ignore-condition",
+    "applied-ignores-level",
 ];
 
 /// `all`: exit 0 when every witness agrees (the production file).
