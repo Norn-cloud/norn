@@ -5,6 +5,8 @@ pub mod action_admission;
 pub mod actions;
 /// Typed-question answer documents.
 pub mod answers;
+/// The `approval` retained-definition kind (APPROVAL-1).
+pub mod approval_definitions;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
 pub mod clock;
