@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Background, Handle, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
@@ -12,9 +12,15 @@ import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { Automations } from "./automations.tsx"
-import { useRunTypeTitles } from "./lib/flows.ts"
+import { flowName, useRunTypeFlows, type RunFlow } from "./lib/flows.ts"
+import { useView } from "@/lib/view"
 
-const state = (name: string) => words(name)
+/**
+ * How a lifecycle's states and steps are named: in words by default; a generated flow's run in the
+ * flow's own step labels (the raw names stay under Technical).
+ */
+const Names = createContext<(name: string) => string>(words)
+const useNames = () => use(Names)
 
 type Pick = (id: string | undefined) => void
 type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
@@ -95,6 +101,7 @@ function moveFrom(tree: Tree, at: string, key: string): string | undefined {
 
 /** The lifecycle as a left-to-right decision tree: hover or pin an element to light its path from the start and its next options. */
 function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; readonly pinned: string | undefined; readonly onPin: Pick }) {
+  const state = useNames()
   const { lifecycle } = workflow
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [hover, setHover] = useState<string>()
@@ -168,6 +175,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
 
 /** The pinned element's place on its path, as a breadcrumb. */
 function Breadcrumb({ tree, pinned }: { readonly tree: Tree; readonly pinned: string }) {
+  const state = useNames()
   const back = backOf(tree, pinned)
   const path = back ? [...pathTo(tree, back.from).path, pinned] : pathTo(tree, pinned).path
   const name = (id: string) => {
@@ -197,6 +205,7 @@ function Condition({ transition }: { readonly transition: Workflow["steps"][numb
 
 /** The focused step: what it changes, when it is allowed, what fires it and the laws that govern it. */
 function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly step: Workflow["steps"][number] }) {
+  const state = useNames()
   const { transition, actions } = step
   return (
     <div className="grid gap-4 p-4 text-sm md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1">
@@ -235,8 +244,10 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
   )
 }
 
-function WorkflowCard({ workflow, title, recorded }: { readonly workflow: Workflow; readonly title: string; readonly recorded: boolean }) {
+function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: Workflow; readonly title: string; readonly flow: RunFlow | undefined; readonly recorded: boolean }) {
   const { lifecycle } = workflow
+  const { view } = useView()
+  const state = useMemo(() => (name: string) => (view !== "technical" && flow ? flowName(flow, name) : undefined) ?? words(name), [flow, view])
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [pinned, setPinned] = useState<string>()
   const node = tree.nodes.find(({ id }) => id === pinned)
@@ -244,6 +255,7 @@ function WorkflowCard({ workflow, title, recorded }: { readonly workflow: Workfl
   const stepped = node?.kind === "step" ? node.transition : back?.transition
   const step = stepped && workflow.steps.find(({ transition }) => transition.id === stepped.id)
   return (
+    <Names value={state}>
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -251,7 +263,7 @@ function WorkflowCard({ workflow, title, recorded }: { readonly workflow: Workfl
           {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <p className="text-meta text-muted-foreground">
-          {[workflow.description,
+          {[view !== "technical" && flow ? `Each run of the ${flow.title.toLowerCase()} automation moves through these states.` : workflow.description,
             `Starts as ${lifecycle.initial.map(state).join(" or ")}.`,
             lifecycle.terminal?.length ? `Ends as ${lifecycle.terminal.map(state).join(" or ")}.` : undefined,
             lifecycle.immutable?.length ? `Its details are locked while ${lifecycle.immutable.map(state).join(" or ")}.` : undefined,
@@ -272,11 +284,13 @@ function WorkflowCard({ workflow, title, recorded }: { readonly workflow: Workfl
         </Panel>
       </div>
     </section>
+    </Names>
   )
 }
 
 /** A pinned state: the steps that reach it and leave it, and whether it ends or locks the record. */
 function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonly name: string }) {
+  const state = useNames()
   const into = workflow.steps.filter(({ transition }) => transition.to === name).map(({ transition }) => state(transition.id))
   const out = workflow.steps.filter(({ transition }) => transition.from.includes(name)).map(({ transition }) => `${state(transition.id)} → ${state(transition.to)}`)
   return (
@@ -292,19 +306,19 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
 const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
 
 /** A workflow's name: the title of the flow whose runs it is, or its object type in words. */
-const titleOf = (workflow: Workflow, flows: ReadonlyMap<string, string>) => flows.get(workflow.objectType) ?? words(workflow.objectType)
+const titleOf = (workflow: Workflow, flows: ReadonlyMap<string, RunFlow>) => flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
 
 /** The admitted lifecycles, for the submenu island. */
 export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
-  const flows = useRunTypeTitles()
+  const flows = useRunTypeFlows()
   return definitions.data && workflows(definitions.data.map(({ document }) => document))
     .map((workflow) => ({ href: `#${anchor(workflow)}`, label: titleOf(workflow, flows) }))
 }
 
 export function WorkflowsPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
-  const flows = useRunTypeTitles()
+  const flows = useRunTypeFlows()
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -315,7 +329,7 @@ export function WorkflowsPage() {
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
       {definitions.data && workflows(definitions.data.map(({ document }) => document)).map((workflow) => (
-        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
+        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} flow={flows.get(workflow.objectType)} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
       ))}
     </section>
   )
