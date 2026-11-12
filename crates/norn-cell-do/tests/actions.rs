@@ -382,11 +382,18 @@ fn studio_refusals_match_the_client_contract() {
         "stale",
         &send(&cell, "POST", ROUTE, pinned, Some(OPERATOR), &body),
     );
-    // The action catalog Studio reads first is not a route the cell serves.
+    // A path under the action route that names no route is not served.
     served(
         &fixture,
         "routeNotFound",
-        &send(&cell, "GET", "/v1/actions", SCOPE, Some(OPERATOR), ""),
+        &send(
+            &cell,
+            "GET",
+            "/v1/actions/constitution.melt.convert/history",
+            SCOPE,
+            Some(OPERATOR),
+            "",
+        ),
     );
     // Nothing above committed.
     let (status, first) = post(&cell, Some(OPERATOR), &body);
@@ -485,4 +492,153 @@ fn the_route_refuses_before_any_effect() {
     assert_eq!(status, 200, "{first}");
     assert_eq!(first["outcome"], "committed");
     assert_eq!(first["version"], 1);
+}
+
+/// ACTION-CATALOG-1: a server policy whose call gate admits only
+/// `operator@demo`; every other decision is the cell policy's.
+struct OperatorCalls(CellPolicy);
+
+impl Authorizer for OperatorCalls {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        match (&request.operation, request.actor) {
+            (Operation::CallAction(_), Some("operator@demo")) => Ok(()),
+            (Operation::CallAction(_), _) => DenyAll.authorize(request),
+            _ => self.0.authorize(request),
+        }
+    }
+    fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        self.0.action(request)
+    }
+    fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        self.0.action_read(request)
+    }
+    fn action_read_type(
+        &self,
+        request: &ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        self.0.action_read_type(request)
+    }
+}
+
+fn catalog(cell: &Cell, authorization: Option<&str>, query: &str) -> (u16, Value) {
+    send(cell, "GET", "/v1/actions", query, authorization, "")
+}
+
+fn listed(document: &Value) -> Vec<&str> {
+    document["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["actionId"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn the_catalog_lists_each_action_as_a_form_reads_it() {
+    let cell = cell();
+    let (status, document) = catalog(&cell, Some(OPERATOR), SCOPE);
+    assert_eq!(status, 200, "{document}");
+    assert!(document["definitionsVersion"].as_u64().is_some());
+    assert_eq!(
+        document["items"][0],
+        json!({
+            "actionId": MELT_ACTION,
+            "title": "Record a fine-metal conversion",
+            "description": document["items"][0]["description"],
+            "objectKind": MELT,
+            "effect": "upsert_input_object",
+            "objectIdField": "id",
+            "inputSchema": document["items"][0]["inputSchema"],
+            "uiEffects": {"irreversible": false, "destructive": false, "money": []},
+        })
+    );
+    assert_eq!(document["items"][0]["inputSchema"]["type"], "object");
+    let (_, other) = catalog(
+        &cell,
+        Some(OPERATOR),
+        &format!("{SCOPE}&objectKind=constitution.Other"),
+    );
+    assert!(listed(&other).is_empty());
+    let (_, melts) = catalog(&cell, Some(OPERATOR), &format!("{SCOPE}&objectKind={MELT}"));
+    assert_eq!(listed(&melts), [MELT_ACTION]);
+}
+
+#[test]
+fn the_catalog_is_the_call_gate_and_never_a_grant() {
+    // The cell policy's gate admits any verified principal, so the viewer is
+    // listed the action; the kernel's PDP still refuses its call.
+    let open = cell();
+    let (_, viewer) = catalog(&open, Some(VIEWER), SCOPE);
+    assert_eq!(listed(&viewer), [MELT_ACTION]);
+    let (status, refused) = post(
+        &open,
+        Some(VIEWER),
+        &melt_body("melt-v", "12", "10", "viewer-1"),
+    );
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (403, Some("authz.denied"))
+    );
+
+    // A gate that refuses the viewer lists nothing to it, and a direct call it
+    // was never offered is refused as well.
+    let store = melt_store(
+        DERIVES_LOSS,
+        norn_api::action_admission::prepare_action_model,
+    );
+    let policy = OperatorCalls(CellPolicy::compile(&store));
+    let scope = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    let gated = Cell {
+        host: DevHost::from_store(store, scope, |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(policy),
+        principals: FixturePrincipals::new(NAMES, Arc::new(CallerSlot::default())),
+        handles: Handles(EffectiveCatalog::default()),
+    };
+    let (status, viewer) = catalog(&gated, Some(VIEWER), SCOPE);
+    assert_eq!(status, 200);
+    assert!(listed(&viewer).is_empty());
+    let (status, refused) = post(
+        &gated,
+        Some(VIEWER),
+        &melt_body("melt-g", "12", "10", "viewer-2"),
+    );
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (403, Some("authz.denied"))
+    );
+    let (_, operator) = catalog(&gated, Some(OPERATOR), SCOPE);
+    assert_eq!(listed(&operator), [MELT_ACTION]);
+}
+
+#[test]
+fn the_catalog_refuses_as_a_call_would() {
+    let cell = cell();
+    let denied =
+        |(status, document): (u16, Value)| (status, document["code"].as_str().map(str::to_owned));
+    let forbidden = (403, Some("authz.denied".to_owned()));
+    assert_eq!(denied(catalog(&cell, None, SCOPE)), forbidden);
+    assert_eq!(
+        denied(catalog(&cell, Some("Bearer fixture:nobody@demo"), SCOPE)),
+        forbidden
+    );
+    assert_eq!(
+        denied(catalog(
+            &cell,
+            Some(OPERATOR),
+            "orgId=org_other&environmentId=dev"
+        )),
+        forbidden
+    );
+    assert_eq!(
+        send(&cell, "POST", "/v1/actions", SCOPE, Some(OPERATOR), "{}").0,
+        405
+    );
+    assert_eq!(
+        catalog(&cell, Some(OPERATOR), &format!("{SCOPE}&role=admin")).0,
+        400
+    );
 }
