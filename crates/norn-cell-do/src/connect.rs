@@ -16,6 +16,9 @@
 //! - `/v1/uploads/{id}:load`: [`LoadRequest`]; installs and loads.
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
+//! - `/v1/observations:load`: one page of a recorded export
+//!   ([`crate::recorded`], at most [`norn_api::host::PAGE_ROWS`] rows) through
+//!   the admitted mappings → each row's outcome.
 //!
 //! CONNECT-AUTH-1: every route is decided by the cell's policy as
 //! `Operation::SyncSource` before anything else; a denied caller, or a scope
@@ -198,6 +201,7 @@ enum Route<'a> {
     Complete(&'a str),
     Load(&'a str),
     Read,
+    Observations,
 }
 
 fn route_of(path: &str) -> Option<Route<'_>> {
@@ -206,6 +210,9 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
     if path == "/v1/uploads:read" {
         return Some(Route::Read);
+    }
+    if path == "/v1/observations:load" {
+        return Some(Route::Observations);
     }
     if let Some(rest) = path.strip_prefix("/v1/sources/") {
         let id = rest.strip_suffix(":sync")?;
@@ -386,6 +393,7 @@ impl Connect {
         let target = match &route {
             Route::Sync(id) => (*id).to_owned(),
             Route::Begin | Route::Complete(_) | Route::Load(_) | Route::Read => "upload".to_owned(),
+            Route::Observations => "observations".to_owned(),
         };
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
         let allowed = host.filter(|host| {
@@ -434,6 +442,7 @@ impl Connect {
                 Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
             },
             Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
+            Route::Observations => Routed::reply(load_observations(host, request.body)),
         })
     }
 
@@ -769,6 +778,10 @@ mod tests {
         assert!(matches!(route_of("/v1/uploads:begin"), Some(Route::Begin)));
         assert!(matches!(route_of("/v1/uploads:read"), Some(Route::Read)));
         assert!(matches!(
+            route_of("/v1/observations:load"),
+            Some(Route::Observations)
+        ));
+        assert!(matches!(
             route_of("/v1/uploads/abc:complete"),
             Some(Route::Complete("abc"))
         ));
@@ -868,4 +881,63 @@ mod tests {
             "s3://documents-bucket/synthetic/scans/receipt-01.pdf"
         );
     }
+}
+
+/// `POST /v1/observations:load`: one page of a recorded export, captured and
+/// mapped through the cell's admitted mappings exactly as a source sync's
+/// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
+/// refuses stays in the inbox as quarantined evidence, with its reasons.
+fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
+    let answer = |refusal: &Refusal| Response {
+        status: refusal.status,
+        body: serde_json::to_string(refusal).unwrap_or_default(),
+    };
+    let recorded = match serde_json::from_str::<Value>(body)
+        .map_err(|error| error.to_string())
+        .and_then(|document| crate::recorded::Recorded::parse(&document))
+    {
+        Ok(recorded) => recorded,
+        Err(error) => return answer(&Refusal::invalid(error)),
+    };
+    if recorded.rows.is_empty() || recorded.rows.len() > norn_api::host::PAGE_ROWS {
+        return answer(&Refusal::invalid(format!(
+            "a load carries 1 to {} rows; send a longer export in slices",
+            norn_api::host::PAGE_ROWS
+        )));
+    }
+    let rows = match recorded.observations() {
+        Ok(rows) => rows,
+        Err(error) => return answer(&Refusal::invalid(error)),
+    };
+    let ingested = match host.ingest(&rows) {
+        Ok(ingested) => ingested,
+        Err(refusal) => return answer(&refusal),
+    };
+    let (mut landed, mut already, mut quarantined) = (0_usize, 0_usize, 0_usize);
+    let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
+    for row in &ingested {
+        match &row.outcome {
+            norn_cell::MappingOutcome::Landed => landed = landed.saturating_add(1),
+            norn_cell::MappingOutcome::AlreadyLanded => already = already.saturating_add(1),
+            norn_cell::MappingOutcome::Quarantined(codes) => {
+                quarantined = quarantined.saturating_add(1);
+                for code in codes {
+                    let n = reasons.entry(code.clone()).or_insert(0);
+                    *n = n.saturating_add(1);
+                }
+            }
+        }
+    }
+    json_response(
+        200,
+        &json!({
+            "source": recorded.source,
+            "mapping": recorded.mapping,
+            "rows": ingested.len(),
+            "landed": landed,
+            "alreadyLanded": already,
+            "quarantined": quarantined,
+            "quarantineReasons": reasons,
+        }),
+    )
 }
