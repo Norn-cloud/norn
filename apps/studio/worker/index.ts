@@ -4,6 +4,7 @@ import { passwordScrypt } from "./password.ts"
 import { connectors } from "./connectors.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
+import { cellScope } from "./scope.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -29,6 +30,14 @@ export interface Env {
   readonly TOOL_GATEWAY_URL?: string
   readonly TOOL_GATEWAY_CLIENT_ID?: string
   readonly TOOL_GATEWAY_CLIENT_SECRET?: string
+  /** The dashboard assistant's model (#923): the AI Gateway URL (it names the account) and its run-only token; both or neither. */
+  readonly AI_GATEWAY_URL?: string
+  readonly AI_GATEWAY_TOKEN?: string
+  /** Claude through the gateway (default claude-sonnet-5-5), and the Workers AI fallback. */
+  readonly AGENT_MODEL?: string
+  readonly AGENT_FALLBACK_MODEL?: string
+  /** What the assistant may spend in all, in dollars (default 20). */
+  readonly AGENT_SPEND_CAP_USD?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -124,6 +133,24 @@ export default {
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
+    }
+    // The dashboard assistant: it acts only as the signed-in person, through the cell's own admission.
+    if (pathname === "/api/agent/dashboards" || pathname.startsWith("/api/agent/dashboards/")) {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "The assistant acts for a signed-in person only.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
+      const scope = await cellScope(auth(env), actor.orgId)
+      if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      // Loaded on first use, never with the Worker: sign-in must not pay for the assistant.
+      const [{ assistant }, { configuredModel }] = await Promise.all([import("./assistant.ts"), import("./model.ts")])
+      const cap = Number(env.AGENT_SPEND_CAP_USD ?? "20")
+      return assistant(request, pathname.slice("/api/agent/dashboards".length), {
+        db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor),
+        scope: { orgId: actor.orgId, environmentId: scope.environmentId, userId: actor.subjectId },
+        model: configuredModel(env), capMicroUsd: Math.round((Number.isFinite(cap) && cap >= 0 ? cap : 20) * 1_000_000), now: Date.now(),
+      })
     }
     if (pathname.startsWith("/api/connectors/")) {
       // A gateway URL without its OAuth client is not a gateway this stage can use.
