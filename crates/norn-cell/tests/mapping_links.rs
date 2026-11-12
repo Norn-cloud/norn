@@ -838,7 +838,11 @@ fn a_null_source_field_lands_as_null_on_a_nullable_property() {
         }
         capture(&mut cell, "erpnext", &row, "snapshot");
     }
-    assert_eq!(count_snapshot(&cell), (10, 0), "every row captured, none quarantined");
+    assert_eq!(
+        count_snapshot(&cell),
+        (10, 0),
+        "every row captured, none quarantined"
+    );
     let line = cell
         .store()
         .read()
@@ -853,7 +857,9 @@ fn a_null_source_field_lands_as_null_on_a_nullable_property() {
         );
     }
     assert!(
-        line.values.get("quantity").is_some_and(|value| !matches!(value, RuntimeValue::Null)),
+        line.values
+            .get("quantity")
+            .is_some_and(|value| !matches!(value, RuntimeValue::Null)),
         "present values are untouched"
     );
 }
