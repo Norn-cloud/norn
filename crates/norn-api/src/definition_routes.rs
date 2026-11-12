@@ -232,6 +232,7 @@ pub fn checker_restatement(
             restate_dashboard(&payload, metrics).map_err(|error| error.to_string())
         }
         "flow" => crate::flow_definitions::restate(canonical),
+        "approval" => crate::approval_definitions::restate(canonical),
         other => Err(format!("{other} has no restatement")),
     }
 }
@@ -428,6 +429,11 @@ pub struct DefinitionSummary {
     /// With `uses`: the binding version this flow's performs are pinned to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
+    /// For a flow: whether the caller may start a run of it now, decided by
+    /// exactly the gate `POST /v1/runs` applies (an active flow and the host's
+    /// `StartRun` decision). Absent for other kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_start: Option<bool>,
 }
 
 /// One page of definitions, ordered by id.
@@ -692,12 +698,20 @@ fn validate<E: SqlEngine>(
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
             findings.extend(crate::binding_definitions::check(payload.get(), &roles));
         }
+        "approval" => {
+            let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+            let (actions, gated) = approval_context(host, id)?;
+            findings.extend(crate::approval_definitions::check(
+                &value, &actions, &roles, &gated,
+            ));
+        }
         other => return Err(kind_unknown(other)),
     }
     // A saved question's title is its QuestionIR name; a binding's its label.
     let title_member = match kind {
         "question" => "name",
         "binding" => "label",
+        "approval" => "action",
         _ => "title",
     };
     let title = value
@@ -747,6 +761,50 @@ fn active_binding_versions<E: SqlEngine>(
 ) -> Result<std::collections::BTreeMap<String, u64>, Refusal> {
     let cell = host.cell()?;
     binding_versions(&cell.store().read())
+}
+
+/// The admitted action ids of the active definitions, and the actions an
+/// active approval other than `id` already gates.
+fn approval_context<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let actions = reader
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+        .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
+        .transpose()
+        .map_err(Refusal::host)?
+        .unwrap_or_default()
+        .iter()
+        .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
+        .filter_map(|artifact| {
+            artifact
+                .pointer("/payload/actionId")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect();
+    let mut gated = BTreeSet::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = reader
+            .retained_definitions("approval", false, after.as_deref(), MAX_LIST_LIMIT)
+            .map_err(Refusal::host)?;
+        for record in page.iter().filter(|record| record.definition.id != id) {
+            let payload: Value =
+                serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
+            if let Some(action) = payload.get("action").and_then(Value::as_str) {
+                gated.insert(action.to_owned());
+            }
+        }
+        if page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX) {
+            return Ok((actions, gated));
+        }
+        after = page.last().map(|record| record.definition.id.clone());
+    }
 }
 
 /// As [`active_binding_versions`], from a reader the caller already holds.
@@ -1421,7 +1479,8 @@ pub fn install_definition<E: SqlEngine>(
     // Fable S7: nothing checks a sign-off when a run starts, so a flow is
     // installed only once a signer signs its words. A cell that cannot
     // restate a flow cannot install one (fail closed).
-    if request.kind == "flow" && request.signoff.is_none() {
+    // An approval changes who may complete an action: signed, like a flow.
+    if matches!(request.kind.as_str(), "flow" | "approval") && request.signoff.is_none() {
         return Err(if kinds.restater.is_some() {
             Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -1709,10 +1768,17 @@ pub fn list_definitions<E: SqlEngine>(
     } else {
         None
     };
+    let starts = |row: &RetainedDefinitionRecord| {
+        (row.definition.kind == "flow").then(|| {
+            row.definition.lifecycle == norn_cell::retained::RetainedLifecycle::Active
+                && crate::run_routes::may_start(host, actor.unwrap_or_default(), &row.definition.id)
+        })
+    };
     Ok(DefinitionPage {
         items: rows
             .into_iter()
             .map(|(row, pinned_version)| DefinitionSummary {
+                can_start: starts(&row),
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,

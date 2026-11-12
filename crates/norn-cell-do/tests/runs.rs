@@ -241,6 +241,27 @@ fn starts_are_decided_by_the_declared_starters_and_refuse_with_typed_codes() {
     );
 }
 
+/// RUN-CAN-START: a flow listing says, per caller, exactly what
+/// `POST /v1/runs` then decides: the same host decision, never a second check.
+#[test]
+fn a_flow_listing_says_who_may_start_it() {
+    let cell = cell();
+    install(&cell, "norn.decision");
+    for (auth, run) in [(ADMIN, "run-a"), (MEMBER, "run-m"), (GUEST, "run-g")] {
+        let (status, page) = get(&cell, "/v1/definitions:list", "&kind=flow", auth);
+        assert_eq!(status, 200, "{page}");
+        let flow = &page["items"][0];
+        assert_eq!(flow["id"], json!(FLOW_ID), "{page}");
+        let can_start = flow["canStart"].as_bool().expect("a flow says canStart");
+        let (status, started) = start(&cell, auth, FLOW_ID, run);
+        assert_eq!(status == 201, can_start, "{auth:?}: {started}");
+    }
+    let (_, guest) = get(&cell, "/v1/definitions:list", "&kind=flow", GUEST);
+    assert_eq!(guest["items"][0]["canStart"], json!(false));
+    let (_, admin) = get(&cell, "/v1/definitions:list", "&kind=flow", ADMIN);
+    assert_eq!(admin["items"][0]["canStart"], json!(true));
+}
+
 /// RUN-READ-GATED: a reader without Values on the Run type gets exactly the
 /// absent run's refusal.
 #[test]
