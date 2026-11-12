@@ -52,7 +52,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     for system in SYSTEMS {
         for kind in ["source", "mapping", "connector"] {
             set.push(artifact(&format!(
-                "registry/packs/{system}/artifacts/{system}.sandbox.{kind}.json"
+                "registry/packs/{system}-sandbox/artifacts/{system}.sandbox.{kind}.json"
             )));
         }
     }
@@ -148,7 +148,7 @@ fn host() -> DevHost<norn_cell::engine::NativeEngine> {
 
 fn profile(system: &str) -> PullProfile {
     let connector = artifact(&format!(
-        "registry/packs/{system}/artifacts/{system}.sandbox.connector.json"
+        "registry/packs/{system}-sandbox/artifacts/{system}.sandbox.connector.json"
     ));
     let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
     PullProfile::from_connector(&payload)
@@ -312,11 +312,15 @@ fn a_row_without_a_canonical_reference_is_quarantined_with_its_reason() {
 fn sandbox_mappings_pin_their_source_schemas() {
     let pairs = [
         (
-            "erpnext",
+            "erpnext-sandbox",
             "erpnext.sandbox",
-            "registry/packs/erpnext/sandbox.ts",
+            "registry/packs/erpnext-sandbox/sandbox.ts",
         ),
-        ("odoo", "odoo.sandbox", "registry/packs/odoo/sandbox.ts"),
+        (
+            "odoo-sandbox",
+            "odoo.sandbox",
+            "registry/packs/odoo-sandbox/sandbox.ts",
+        ),
         (
             "sources",
             "norn.connect",
