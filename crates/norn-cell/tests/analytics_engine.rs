@@ -1854,3 +1854,110 @@ mod alias_names {
         }
     }
 }
+
+/// ASOF-KNOWLEDGE-1 on the engine: a question asked as known at an earlier
+/// commit is answered from the mirror at that frontier, in the exact engine's
+/// historical envelope, after later corrections and retractions.
+mod known_at {
+    use super::{
+        CLOCK, CommitBatch, METALS, TIMES, WORLD, by_metal, code, engine, row, shaped, sync, tenant,
+    };
+    use norn_cell::KnowledgeCutoff;
+    use norn_cell::compute::{Engine as Answered, HistoricalQuestionResult};
+    use norn_checker::metric::compute::QuestionPlan;
+
+    fn exact(
+        store: &norn_cell::CellStore,
+        plan: &QuestionPlan,
+        context: norn_cell::compute::QueryContext,
+        cutoff: KnowledgeCutoff,
+    ) -> Result<HistoricalQuestionResult, String> {
+        store
+            .evaluate_question_known_at(plan, context, cutoff, |_| Ok(true))
+            .map_err(|e| code(&e))
+    }
+
+    fn on_engine(
+        store: &norn_cell::CellStore,
+        engine: &norn_cell::analytics::engine::Engine,
+        plan: &QuestionPlan,
+        context: norn_cell::compute::QueryContext,
+        cutoff: KnowledgeCutoff,
+    ) -> Result<HistoricalQuestionResult, String> {
+        sync(store, engine, &context.world);
+        let prepared = store
+            .analytics_prepare_known_at(plan, context.clone(), &tenant(), cutoff)
+            .map_err(|e| code(&e))?;
+        let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+        let mut answer = store
+            .analytics_answer_known_at(prepared, response)
+            .map_err(|e| code(&e))?;
+        answer.result.source_disagreements = store
+            .answer_source_disagreements(
+                plan,
+                &answer.result.context.clone(),
+                (answer.result.known_as_of, Some(cutoff)),
+                &mut |_| Ok(true),
+            )
+            .map_err(|e| code(&e))?;
+        Ok(answer)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn answers_known_at_every_earlier_commit_match_the_exact_engine(
+            steps in proptest::collection::vec(
+                (0u8..8, proptest::option::of((-5000i64..5000, 0usize..5, 0usize..4))),
+                1..10,
+            ),
+            shape in 0u8..3,
+        ) {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = match shape {
+                0 => by_metal(true, 100),
+                1 => by_metal(false, 100),
+                _ => shaped(true, 100, &serde_json::json!([{"path": {"property": "occurred_at"}, "grain": "week"}])),
+            };
+            let mut cutoffs = Vec::new();
+            for (tick, (id, edit)) in (1u64..).zip(steps) {
+                let write = match edit {
+                    Some((input, at, metal)) => row(&format!("G{id}"), input, Some(input / 3), TIMES[at], METALS[metal]),
+                    None => norn_cell::FactWriteRow::Delete { object_type: super::TYPE.into(), key: format!("G{id}") },
+                };
+                let at = CLOCK.checked_add(tick).expect("clock");
+                if store.commit(&CommitBatch {
+                    world: WORLD.into(),
+                    scope: "synthetic".into(),
+                    logical_time: at,
+                    writes: vec![write],
+                    ..CommitBatch::default()
+                }).is_ok() {
+                    let frontier = store.verified_head().expect("head").commits;
+                    cutoffs.push(KnowledgeCutoff {
+                        recorded_at: norn_kernel::LogicalTime::from_millis(at),
+                        frontier,
+                    });
+                }
+            }
+            for cutoff in cutoffs {
+                let mut context = context.clone();
+                context.now_ms = cutoff.recorded_at.as_millis();
+                let want = exact(&store, &plan, context.clone(), cutoff);
+                let got = on_engine(&store, &engine, &plan, context, cutoff);
+                match (want, got) {
+                    (Ok(want), Ok(mut got)) => {
+                        proptest::prop_assert_eq!(got.result.engine, Answered::Duckdb);
+                        got.result.engine = Answered::Cell;
+                        proptest::prop_assert_eq!(
+                            serde_json::to_value(&got).expect("wire"),
+                            serde_json::to_value(&want).expect("wire")
+                        );
+                    }
+                    (Err(want), Err(got)) => proptest::prop_assert_eq!(got, want),
+                    (want, got) => proptest::prop_assert!(false, "engines disagree at {cutoff:?}: exact {want:?}, engine {got:?}"),
+                }
+            }
+        }
+    }
+}

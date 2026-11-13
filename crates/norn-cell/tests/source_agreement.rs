@@ -427,18 +427,24 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
     // The engine path counts with the same host function (exact/DuckDB parity).
     assert_eq!(
         cell.store()
-            .answer_source_disagreements(&plan, &after.context, after.known_as_of, &mut |_| Ok(
-                true
-            ))
+            .answer_source_disagreements(
+                &plan,
+                &after.context,
+                (after.known_as_of, None),
+                &mut |_| Ok(true)
+            )
             .expect("engine-path counts"),
         after.source_disagreements
     );
     // SOURCE-AGREE-FRONTIER: the earlier answer's frontier still has none.
     assert_eq!(
         cell.store()
-            .answer_source_disagreements(&plan, &before.context, before.known_as_of, &mut |_| Ok(
-                true
-            ))
+            .answer_source_disagreements(
+                &plan,
+                &before.context,
+                (before.known_as_of, None),
+                &mut |_| Ok(true)
+            )
             .expect("earlier frontier"),
         None
     );

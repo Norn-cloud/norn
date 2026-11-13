@@ -285,7 +285,7 @@ pub(crate) fn question_budget() -> Result<DecodeBudget, CellError> {
     Ok(DecodeBudget::new(&limits))
 }
 
-fn check_question_cutoff(
+pub(crate) fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
 ) -> Result<(), CellError> {
@@ -342,7 +342,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// SOURCE-AGREE-1 on an answer another engine computed (D102): the same
     /// counts [`Self::evaluate_question`] reports, read in one transaction at
     /// `known_as_of`, with membership decided as the exact engine decides it
-    /// and each disagreement's two versions gated by `visible`.
+    /// (as known at `cutoff`, when the answer is at one) and each
+    /// disagreement's two versions gated by `visible`.
     ///
     /// # Errors
     /// Unproven history, an exhausted budget, or a gate's error.
@@ -350,29 +351,109 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         plan: &QuestionPlan,
         context: &QueryContext,
-        known_as_of: u64,
+        (known_as_of, cutoff): (u64, Option<crate::KnowledgeCutoff>),
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Option<crate::source_agreement::SourceDisagreementCounts>, CellError> {
         self.conn.transaction(|| {
             let reader = self.read();
             let mut budget = question_budget()?;
             let grain = plan.grain().as_str();
+            let frontier_receipt = match cutoff {
+                Some(cutoff) => historical::frame(&reader, cutoff, context.now_ms, &mut budget)?.1,
+                None => None,
+            };
+            let mut history = reader.history_read_seeded(frontier_receipt);
+            let model = self.model().model_hash().to_owned();
             let mut member = |id: &str| -> Result<bool, CellError> {
-                let Some(record) = reader.object(&context.world, grain, id)? else {
-                    return Ok(false);
+                let selected = match cutoff {
+                    Some(cutoff) => historical::historical_record(
+                        &mut history,
+                        &context.world,
+                        grain,
+                        id,
+                        cutoff,
+                        &model,
+                        &mut budget,
+                    )?,
+                    None => reader.object_with_budget(&context.world, grain, id, &mut budget)?,
+                };
+                let record = match selected {
+                    BudgetedRead::Found(record) => record,
+                    BudgetedRead::Missing => return Ok(false),
+                    BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
                 };
                 let (entries, _) = subject_contributions(
                     &reader,
                     plan,
                     context,
                     (id, &record),
-                    None,
+                    cutoff,
                     &mut budget,
                 )?;
                 Ok(!entries.is_empty())
             };
             reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
         })
+    }
+
+    /// ASOF-KNOWLEDGE-1 for another engine (D102): the head and receipt a
+    /// knowledge cutoff is pinned to, read at its own clock `now`.
+    ///
+    /// # Errors
+    /// A clock that is not the cutoff's, or an unproven frontier.
+    pub(crate) fn knowledge_frame(
+        &self,
+        cutoff: crate::KnowledgeCutoff,
+        now: u64,
+    ) -> Result<(LedgerHead, Option<String>), CellError> {
+        let reader = self.read();
+        let mut budget = question_budget()?;
+        let (head, receipt) = historical::frame(&reader, cutoff, now, &mut budget)?;
+        Ok((head, receipt.map(|receipt| receipt.hash)))
+    }
+
+    /// The exclusions of `candidates` as known at `cutoff`: each subject's
+    /// version then, and its findings committed by the frontier, exactly as
+    /// the exact engine reads them at a cutoff.
+    ///
+    /// # Errors
+    /// A version committed under another model, an exhausted budget, or a
+    /// store error.
+    pub(crate) fn exclusions_known_at(
+        &self,
+        world: &str,
+        grain: &str,
+        candidates: BTreeSet<String>,
+        cutoff: crate::KnowledgeCutoff,
+    ) -> Result<BTreeMap<String, String>, CellError> {
+        let reader = self.read();
+        let mut budget = question_budget()?;
+        let (_, frontier_receipt) =
+            historical::frame(&reader, cutoff, cutoff.recorded_at.as_millis(), &mut budget)?;
+        let mut history = reader.history_read_seeded(frontier_receipt);
+        let mut exclusions = BTreeMap::new();
+        for key in candidates {
+            let record = match historical::historical_record(
+                &mut history,
+                world,
+                grain,
+                &key,
+                cutoff,
+                self.model().model_hash(),
+                &mut budget,
+            )? {
+                BudgetedRead::Found(record) => record,
+                BudgetedRead::Missing => continue,
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            };
+            if let Some(finding) = reader
+                .question_findings(world, &record, Some(cutoff.frontier))?
+                .first()
+            {
+                exclusions.insert(key, finding.id.clone());
+            }
+        }
+        Ok(exclusions)
     }
 
     fn question_snapshot(

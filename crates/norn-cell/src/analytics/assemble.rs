@@ -67,6 +67,8 @@ pub struct Prepared {
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
+    /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
+    known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -83,16 +85,55 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         tenant: &TenantId,
     ) -> Result<Prepared, CellError> {
+        self.prepare_at(plan, context, tenant, None)
+    }
+
+    /// ASOF-KNOWLEDGE-1 on the engine: prepare `plan` as known at `cutoff`,
+    /// read at the cutoff's own clock (`context.now_ms`). The mirror answers
+    /// at the cutoff's frontier; findings exclude as they stood then; a
+    /// version committed under another model refuses, as the exact engine
+    /// refuses it.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_prepare`], a clock that is not the cutoff's, an
+    /// unproven frontier, or a loaded dataset (it has no history).
+    pub fn analytics_prepare_known_at(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        tenant: &TenantId,
+        cutoff: crate::KnowledgeCutoff,
+    ) -> Result<Prepared, CellError> {
+        self.prepare_at(plan, context, tenant, Some(cutoff))
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one preparation, current or at a cutoff"
+    )]
+    fn prepare_at(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        tenant: &TenantId,
+        cutoff: Option<crate::KnowledgeCutoff>,
+    ) -> Result<Prepared, CellError> {
         self.check_question_scope(&context.scope)?;
-        if matches!(
-            plan.question().freshness,
-            norn_ir::metric::FreshnessPolicy::AsOf { .. }
-        ) {
+        if cutoff.is_none()
+            && matches!(
+                plan.question().freshness,
+                norn_ir::metric::FreshnessPolicy::AsOf { .. }
+            )
+        {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
+        crate::compute::check_question_cutoff(plan, cutoff)?;
         let bound = self.check_question_plan(plan)?;
         let mut query = lower(plan)?;
-        let revision = self.verified_head()?;
+        let (revision, receipt) = match cutoff {
+            Some(cutoff) => self.knowledge_frame(cutoff, context.now_ms)?,
+            None => (self.verified_head()?, None),
+        };
         let grain = plan.grain().as_str();
         // METRIC-GRAIN-LINK-1: the link's mirrored table and its target's root.
         if let Some(link) = &mut query.time_link {
@@ -111,6 +152,9 @@ impl<E: SqlEngine> CellStore<E> {
         // BULK-LINEAGE-1: a loaded dataset is read at its current load; its
         // rows are not cell facts, so no finding excludes them.
         let (source, exclusions) = if let Some(dataset) = self.analytics_dataset(grain)? {
+            if cutoff.is_some() {
+                return Err(refused(UNSUPPORTED_ENGINE));
+            }
             (
                 Source::Dataset {
                     table: grain.to_owned(),
@@ -119,19 +163,26 @@ impl<E: SqlEngine> CellStore<E> {
                 BTreeMap::new(),
             )
         } else {
-            let exclusions = self.analytics_exclusions(&context.world, grain)?;
+            let candidates = self.analytics_exclusion_candidates(&context.world, grain)?;
+            let exclusions = match cutoff {
+                Some(cutoff) => {
+                    self.exclusions_known_at(&context.world, grain, candidates, cutoff)?
+                }
+                None => self.analytics_exclusions_of(&context.world, grain, candidates)?,
+            };
             (
                 Source::Mirror {
                     world: context.world.clone(),
                     table: grain.to_owned(),
-                    frontier: revision.commits,
+                    frontier: cutoff.map_or(revision.commits, |cutoff| cutoff.frontier),
                     scope: context.scope.clone(),
                     excluded: exclusions.keys().cloned().collect(),
+                    model: cutoff.map(|_| self.model().model_hash().to_owned()),
                 },
                 exclusions,
             )
         };
-        let (query_pin, definition_pin) = self.question_pins(plan, None)?;
+        let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
@@ -146,6 +197,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
+            known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
     }
 
@@ -180,6 +232,7 @@ impl<E: SqlEngine> CellStore<E> {
                 frontier: head,
                 scope: scope.to_owned(),
                 excluded: exclusions.into_keys().collect(),
+                model: None,
             },
             format!("c{head}"),
         ))
@@ -201,6 +254,17 @@ impl<E: SqlEngine> CellStore<E> {
         world: &str,
         grain: &str,
     ) -> Result<BTreeMap<String, String>, CellError> {
+        let candidates = self.analytics_exclusion_candidates(world, grain)?;
+        self.analytics_exclusions_of(world, grain, candidates)
+    }
+
+    /// The grain's subjects any finding has named: those a quarantine can
+    /// exclude, now or at a cutoff.
+    fn analytics_exclusion_candidates(
+        &self,
+        world: &str,
+        grain: &str,
+    ) -> Result<BTreeSet<String>, CellError> {
         let model = self.model();
         let reader = self.read();
         let mut candidates = BTreeSet::new();
@@ -220,6 +284,17 @@ impl<E: SqlEngine> CellStore<E> {
         if world == crate::MAIN_WORLD {
             candidates.extend(reader.source_finding_keys(grain)?);
         }
+        Ok(candidates)
+    }
+
+    /// The current exclusions among `candidates`.
+    fn analytics_exclusions_of(
+        &self,
+        world: &str,
+        grain: &str,
+        candidates: BTreeSet<String>,
+    ) -> Result<BTreeMap<String, String>, CellError> {
+        let reader = self.read();
         let mut exclusions = BTreeMap::new();
         for key in candidates {
             if let Some(record) = reader.object(world, grain, &key)?
@@ -243,7 +318,9 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<QueryResult, CellError> {
-        if self.verified_head()? != prepared.revision {
+        // A cutoff's history is immutable; a current answer is exact only at
+        // the head it was prepared at.
+        if prepared.known_at.is_none() && self.verified_head()? != prepared.revision {
             return Err(refused("core.compute.stale_input"));
         }
         let Prepared {
@@ -254,6 +331,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
+            known_at: _,
         } = prepared;
         let present: BTreeSet<&String> = response.excluded.iter().collect();
         exclusions.retain(|id, _| present.contains(id));
@@ -290,6 +368,34 @@ impl<E: SqlEngine> CellStore<E> {
             &result.rows,
         ))?;
         Ok(result)
+    }
+}
+
+impl<E: SqlEngine> CellStore<E> {
+    /// ASOF-KNOWLEDGE-1 on the engine: verify the engine's answer to a
+    /// prepared cutoff into the exact engine's historical envelope.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_answer`], or a preparation without a cutoff.
+    pub fn analytics_answer_known_at(
+        &self,
+        prepared: Prepared,
+        response: EvaluateResponse,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        let (cutoff, receipt) = prepared
+            .known_at
+            .clone()
+            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        let result = self.analytics_answer(prepared, response)?;
+        Ok(crate::compute::HistoricalQuestionResult {
+            world: norn_kernel::World::Historical {
+                commit: norn_kernel::CommitId(
+                    receipt.unwrap_or_else(|| crate::system::GENESIS_HASH.into()),
+                ),
+            },
+            knowledge_time_ms: cutoff.recorded_at.as_millis(),
+            result,
+        })
     }
 }
 

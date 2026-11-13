@@ -96,7 +96,8 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// QUERY-ENGINE-1: evaluate an admitted plan's current answer. The default
     /// is the native exact engine. A host may choose another engine that
     /// returns the same rows; the result's `engine` names the one that
-    /// answered. Answers at a knowledge cutoff always use the native engine.
+    /// answered. Answers at a knowledge cutoff go through
+    /// [`Self::evaluate_known_at`].
     /// # Errors
     /// A typed compute refusal, or a host engine failure.
     fn evaluate(
@@ -107,6 +108,21 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<QueryResult, CellError> {
         store.evaluate_question(plan, context, visible)
+    }
+    /// ASOF-KNOWLEDGE-1: evaluate an admitted plan as known at `cutoff`. The
+    /// default is the native exact engine; a host may choose another engine
+    /// that returns the same historical envelope.
+    /// # Errors
+    /// A typed compute refusal, or a host engine failure.
+    fn evaluate_known_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: norn_cell::KnowledgeCutoff,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
+        store.evaluate_question_known_at(plan, context, cutoff, visible)
     }
 }
 
@@ -217,9 +233,8 @@ fn answer_plan<E: SqlEngine>(
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let mut answer = match snapshot.cutoff {
-        Some(cutoff) => cell
-            .store()
-            .evaluate_question_known_at(plan, snapshot.context, cutoff, visible)
+        Some(cutoff) => runtime
+            .evaluate_known_at(cell.store(), plan, snapshot.context, cutoff, &mut visible)
             .map(QuestionAnswer::Historical),
         None => runtime
             .evaluate(cell.store(), plan, snapshot.context, &mut visible)

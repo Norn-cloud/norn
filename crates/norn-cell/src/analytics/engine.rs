@@ -276,6 +276,20 @@ impl Engine {
             if bad > 0 {
                 return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
             }
+            // ASOF-KNOWLEDGE-1: a version committed under another model is not
+            // read as this one (the exact engine refuses it the same way).
+            if let Some(model) = &scope.model {
+                let other = Frag::fmt(
+                    &format!(
+                        "SELECT count(*) FROM {} WHERE {{}} AND \":model\" <> {{}}",
+                        scope.table
+                    ),
+                    &[&scope.all, &Frag::bind("?", Sql::Text(model.clone()))],
+                );
+                if query_u64(conn, &other)? > 0 {
+                    return Err(refusal(UNSUPPORTED, "a version of another model"));
+                }
+            }
             let excluded = scope.excluded_present(conn)?;
             if let Some(link) = &request.query.time_link {
                 check_link(conn, &scope, link)?;
@@ -601,6 +615,7 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> 
                 ":scope VARCHAR",
                 ":type VARCHAR",
                 ":bad BOOLEAN",
+                ":model VARCHAR",
             ]
             .iter()
             .map(|c| {
@@ -728,6 +743,7 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
             format!("{} VARCHAR", ident(":type")),
             format!("{} BOOLEAN", ident(":bad")),
             format!("{} BOOLEAN", ident(":tomb")),
+            format!("{} VARCHAR", ident(":model")),
         ];
         for column in &table.columns {
             stage_columns.push(format!("{} VARCHAR", ident(&column.id)));
@@ -758,6 +774,7 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
                     Sql::Text(row.object_type.clone()),
                     Sql::Boolean(row.bad),
                     Sql::Boolean(tomb),
+                    Sql::Text(row.model.clone()),
                 ];
                 for index in 0..table.columns.len() {
                     let (text, secs, nanos) = row
@@ -795,8 +812,8 @@ fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
         let separator = if columns.is_empty() { "" } else { ", " };
         db(conn.execute(
             &format!(
-                "INSERT INTO {target} (\":w\", \":id\", \":v\", \":from\", \":to\", \":scope\", \":type\", \":bad\"{separator}{}) \
-                 SELECT ?, \":id\", \":v\", \":from\", lead(\":from\") OVER (PARTITION BY \":id\" ORDER BY \":v\", \":ord\"), \":scope\", \":type\", \":bad\"{separator}{} \
+                "INSERT INTO {target} (\":w\", \":id\", \":v\", \":from\", \":to\", \":scope\", \":type\", \":bad\", \":model\"{separator}{}) \
+                 SELECT ?, \":id\", \":v\", \":from\", lead(\":from\") OVER (PARTITION BY \":id\" ORDER BY \":v\", \":ord\"), \":scope\", \":type\", \":bad\", \":model\"{separator}{} \
                  FROM \":stage\" QUALIFY NOT \":tomb\"",
                 columns.join(", "),
                 values.join(", "),
@@ -872,6 +889,8 @@ struct Scope {
     excluded: Vec<String>,
     /// The mirror's world and the frontier read (mirror only).
     at: Option<(String, u64)>,
+    /// At a knowledge cutoff, the model every version read must be of.
+    model: Option<String>,
 }
 
 impl Scope {
@@ -882,6 +901,7 @@ impl Scope {
                 table,
                 frontier,
                 excluded,
+                model,
                 ..
             } => {
                 let reached: u64 = meta(conn, &format!("frontier:{world}"))?
@@ -916,6 +936,7 @@ impl Scope {
                     versions: Some(versions),
                     excluded: excluded.clone(),
                     at: Some((world.clone(), *frontier)),
+                    model: model.clone(),
                 })
             }
             Source::Dataset { table, load } => {
@@ -931,6 +952,7 @@ impl Scope {
                     versions: None,
                     excluded: Vec::new(),
                     at: None,
+                    model: None,
                 })
             }
         }

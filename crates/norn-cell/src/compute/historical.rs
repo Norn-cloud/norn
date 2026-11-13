@@ -51,7 +51,7 @@ pub(super) fn slice_pin(base: &str, cutoff: KnowledgeCutoff) -> Result<String, C
         "norn.query.asof/1",
     ))
 }
-pub(super) fn historical_record<E: SqlEngine>(
+pub(crate) fn historical_record<E: SqlEngine>(
     history: &mut crate::history::HistoryRead<'_, '_, E>,
     world: &str,
     kind: &str,
@@ -148,7 +148,7 @@ pub(super) fn query_pin(
         None => Ok(base),
     }
 }
-pub(super) fn frame<E: SqlEngine>(
+pub(crate) fn frame<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     cutoff: KnowledgeCutoff,
     now: u64,
