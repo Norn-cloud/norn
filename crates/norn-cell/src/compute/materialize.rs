@@ -264,7 +264,11 @@ impl<E: SqlEngine> CellStore<E> {
             table: "_norn_transform_materialization".to_owned(),
             column: "result".to_owned(),
         };
-        let result: TransformResult = serde_json::from_str(&text).map_err(|_error| corrupt())?;
+        // A result stored by an earlier envelope format is a cache miss: the
+        // read recomputes it. One that decodes must verify.
+        let Ok(result) = serde_json::from_str::<TransformResult>(&text) else {
+            return Ok(None);
+        };
         if crate::codec::hash_json(&result)? != result_digest || result.transform != transform {
             return Err(corrupt());
         }

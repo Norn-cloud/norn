@@ -124,6 +124,9 @@ pub struct NornTransformPage {
     pub excluded: u64,
     /// No input row was withheld or excluded.
     pub complete: bool,
+    /// Rows each plan node produced for this read, by node id: the plan's
+    /// volume under the reader's visibility.
+    pub node_rows: BTreeMap<String, u64>,
     /// Pass as `after` for the next page; null on the last page.
     #[schema(required = true, nullable = true)]
     pub next_after: Option<String>,
@@ -510,6 +513,7 @@ pub fn get_transform_rows<E: SqlEngine>(
         withheld: result.withheld.clone(),
         excluded: u64::try_from(result.exclusions.len()).unwrap_or(u64::MAX),
         complete: result.complete,
+        node_rows: result.node_rows.clone(),
         next_after,
     })
 }

@@ -87,6 +87,8 @@ pub struct TransformResult {
     pub complete: bool,
     /// Content-addressed rows, lineage and coverage.
     pub lineage_pin: String,
+    /// Rows each plan node produced, by node id: the plan's volume.
+    pub node_rows: BTreeMap<String, u64>,
 }
 
 /// One snapshot's readable rows, withheld counts, quarantine exclusions and
@@ -272,6 +274,7 @@ impl<E: SqlEngine> CellStore<E> {
             exclusions,
             complete,
             lineage_pin,
+            node_rows: output.node_rows,
         })
     }
 

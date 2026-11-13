@@ -193,6 +193,12 @@ fn a_transform_reads_the_cell_snapshot_with_row_lineage() {
     assert!(result.complete);
     assert_eq!(result.grain, ["region", "placed_at"]);
     assert_eq!(result.revision, store.verified_head().expect("head"));
+    // The plan's volume: the rows each node produced.
+    let output = u64::try_from(result.rows.len()).expect("rows");
+    assert_eq!(result.node_rows.get("order"), Some(&5));
+    assert_eq!(result.node_rows.get("customer"), Some(&2));
+    assert_eq!(result.node_rows.get("joined"), Some(&5));
+    assert_eq!(result.node_rows.get("ranked"), Some(&output));
     let north = row(&result, "north", "2026-11-02");
     assert_eq!(north.values["revenue"], decimal("15.5"));
     assert_eq!(north.values["orders"], decimal("2"));
