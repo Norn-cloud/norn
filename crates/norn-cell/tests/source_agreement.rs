@@ -352,7 +352,10 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     // A steward accepts it with a reason: acknowledged; reopened, open again.
     let id = finding.id.clone();
     review(&mut cell, &id, "accepted", 0);
-    assert_eq!(north_status(&cell, 0), DataQualityFindingStatus::Acknowledged);
+    assert_eq!(
+        north_status(&cell, 0),
+        DataQualityFindingStatus::Acknowledged
+    );
     review(&mut cell, &id, "reopened", 1);
     assert_eq!(north_status(&cell, 0), DataQualityFindingStatus::Open);
     load(&mut cell, "odoo");
