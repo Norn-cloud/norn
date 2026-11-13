@@ -1234,7 +1234,12 @@ fn a_linking_mapping_without_the_claim_type_is_refused() {
     let payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
     let decoded: norn_ir::mapping::MappingIr =
         serde_json::from_value(payload.clone()).expect("the mapping payload decodes");
-    let mapping = mapping_artifact(payload, false);
+    // A mapping that names the claim type as a dependency is already refused
+    // by resolution; this one leaves it out, as a hand-built set would.
+    let mut mapping = mapping_artifact(payload, false);
+    mapping
+        .dependencies
+        .retain(|dependency| dependency.artifact_id != "norn.ObservedLinkClaim.entity");
     let first_linking = decoded
         .maps
         .iter()
