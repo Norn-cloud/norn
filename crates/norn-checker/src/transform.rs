@@ -1088,7 +1088,13 @@ impl Builder<'_, '_> {
                 return None;
             }
         };
-        match norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits) {
+        // Admission runs the compile evaluation runs (VAL-EXACT-1): money
+        // compared with a bare number, or a per-row currency in arithmetic,
+        // refuses here rather than at every read.
+        let checked =
+            norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits)
+                .and_then(|checked| expression.check_admitted(&env, expected).map(|()| checked));
+        match checked {
             Ok(checked) => {
                 let inferred = checked.into_inferred();
                 Some((
@@ -2121,7 +2127,6 @@ impl Builder<'_, '_> {
     }
 }
 
-/// `input.<column>` exactly, with optional surrounding whitespace.
 /// The labels a node declares for the columns it defines: (column, label,
 /// pointer below the node).
 fn declared_labels(node: &ViewNode) -> Vec<(&str, &str, String)> {
@@ -2178,6 +2183,7 @@ fn declared_labels(node: &ViewNode) -> Vec<(&str, &str, String)> {
     labels
 }
 
+/// `input.<column>` exactly, with optional surrounding whitespace.
 fn passthrough(source: &str) -> Option<&str> {
     let name = source.trim().strip_prefix("input.")?;
     valid_name(name).then_some(name)

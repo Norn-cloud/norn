@@ -96,6 +96,7 @@ fn types() -> [Value; 2] {
             {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"},
                 "currencySource": {"property": "currency"}}},
             {"id": "currency", "type": {"kind": "enum", "values": [{"value": "USD"}, {"value": "EUR"}]}},
+            {"id": "status", "type": {"kind": "enum", "values": [{"value": "paid"}, {"value": "void"}]}},
             {"id": "placed_at", "type": {"kind": "timestamp", "timezone": "utc"}},
             {"id": "channel", "type": {"kind": "enum", "values": [{"value": "web"}, {"value": "store"}]}}
         ], "links": [{"id": "customer", "target": "shop.Customer",
@@ -146,7 +147,7 @@ fn definitions() -> Vec<Value> {
                 "calc": {"kind": "relational", "output": "ranked", "nodes": {
                     "order": {"op": "scan", "input": "order"},
                     "customer": {"op": "scan", "input": "customer"},
-                    "paid": {"op": "filter", "input": "order", "predicate": "input.amount > 0"},
+                    "paid": {"op": "filter", "input": "order", "predicate": "input.status == \"paid\""},
                     "joined": {"op": "join", "left": "paid", "right": "customer",
                         "on": {"link": {"column": "id", "link": "customer"}}, "kind": "left", "prefix": "customer_"},
                     "regional": {"op": "project", "input": "joined", "columns": [
@@ -211,6 +212,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-10-26T09:10:00Z",
             "web",
             "USD",
+            "paid",
         ),
         (
             "o-1002",
@@ -219,6 +221,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-10-27T11:00:00Z",
             "store",
             "USD",
+            "paid",
         ),
         (
             "o-1003",
@@ -227,6 +230,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-10-28T14:30:00Z",
             "web",
             "USD",
+            "paid",
         ),
         (
             "o-1004",
@@ -235,6 +239,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-10-29T08:45:00Z",
             "store",
             "USD",
+            "paid",
         ),
         (
             "o-1005",
@@ -243,6 +248,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-02T10:00:00Z",
             "web",
             "USD",
+            "paid",
         ),
         (
             "o-1006",
@@ -251,6 +257,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-03T16:20:00Z",
             "store",
             "USD",
+            "paid",
         ),
         (
             "o-1007",
@@ -259,6 +266,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-05T12:00:00Z",
             "web",
             "EUR",
+            "paid",
         ),
         (
             "o-1008",
@@ -267,6 +275,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-09T09:30:00Z",
             "web",
             "USD",
+            "paid",
         ),
         (
             "o-1009",
@@ -275,6 +284,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-10T15:00:00Z",
             "store",
             "USD",
+            "paid",
         ),
         (
             "o-1010",
@@ -283,6 +293,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-11T17:45:00Z",
             "web",
             "USD",
+            "paid",
         ),
         (
             "o-1011",
@@ -291,6 +302,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-11T18:05:00Z",
             "store",
             "USD",
+            "paid",
         ),
         (
             "o-1012",
@@ -299,6 +311,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             "2026-11-12T08:00:00Z",
             "web",
             "USD",
+            "void",
         ),
     ];
     {
@@ -332,7 +345,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
             })
             .collect();
         let mut links = Vec::new();
-        for (id, customer, amount, at, channel, currency) in orders {
+        for (id, customer, amount, at, channel, currency, status) in orders {
             writes.push(put(
                 "shop.Order",
                 id,
@@ -341,6 +354,7 @@ fn host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
                     ("placed_at", V::from(at)),
                     ("channel", V::from(channel)),
                     ("currency", V::from(currency)),
+                    ("status", V::from(status)),
                 ],
             ));
             if !customer.is_empty() {
