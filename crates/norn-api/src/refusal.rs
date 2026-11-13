@@ -108,7 +108,29 @@ pub struct Refusal {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
     pub restatement: Option<Box<RefusalRestatement>>,
+    /// INCIDENT-1: on an internal refusal, the id under which the host logged
+    /// its cause. The caller quotes it; the cause itself is never served.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incident_id: Option<String>,
+    /// The cause of an internal refusal, for the operator's log only: never
+    /// serialized, never compared.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub cause: Cause,
 }
+
+/// The operator-only cause of a refusal ([`Refusal::cause`]). Two refusals
+/// that differ only in their cause are the same refusal to a caller.
+#[derive(Debug, Clone, Default)]
+pub struct Cause(pub Option<String>);
+
+impl PartialEq for Cause {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Cause {}
 
 /// One checker finding in a refusal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -231,7 +253,24 @@ impl Refusal {
             explanation: explanation.into(),
             diagnostics: Vec::new(),
             restatement: None,
+            incident_id: None,
+            cause: Cause::default(),
         }
+    }
+
+    /// The same refusal remembering `cause` for the operator's log (an
+    /// internal refusal's error chain). Never served to the caller.
+    #[must_use]
+    pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
+        self.cause = Cause(Some(cause.to_string()));
+        self
+    }
+
+    /// Whether this refusal is an internal failure whose cause the host logs
+    /// under an incident id (INCIDENT-1).
+    #[must_use]
+    pub fn is_internal(&self) -> bool {
+        matches!(self.category, RefusalCategory::Internal)
     }
 
     /// The same refusal carrying checker findings, each pointer prefixed by
@@ -350,13 +389,14 @@ impl Refusal {
 
     /// A host failure (the request changed nothing).
     #[must_use]
-    pub fn host(_detail: impl std::fmt::Display) -> Self {
+    pub fn host(detail: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             codes::HOST_ERROR,
             "the cell host failed; nothing was committed",
             Self::UNPROVEN_DETAIL,
         )
+        .with_cause(detail)
     }
 }
 
@@ -372,4 +412,18 @@ fn refusal_reason_schema() -> utoipa::openapi::schema::Schema {
             )
             .build(),
     )
+}
+
+/// An error and every source under it, outermost first, as one line for the
+/// operator's log (INCIDENT-1).
+#[must_use]
+pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut line = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        line.push_str(": ");
+        line.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    line
 }

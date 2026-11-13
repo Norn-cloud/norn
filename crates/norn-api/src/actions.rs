@@ -307,7 +307,8 @@ fn kernel_refusal<E: SqlEngine>(
     ) {
         return action_denied();
     }
-    crate::refusal_disclosure::project_refusal(
+    let internal = refusal.category == norn_kernel::RefusalCategory::Internal;
+    let projected = crate::refusal_disclosure::project_refusal(
         host.authorizer.as_ref(),
         &RefusalDetailRequest {
             scope: host.scope(),
@@ -315,7 +316,14 @@ fn kernel_refusal<E: SqlEngine>(
             action_id,
         },
         refusal,
-    )
+    );
+    // INCIDENT-1: the kernel keeps only its fixed internal message; the
+    // operator's log gets the host error's whole source chain.
+    if internal {
+        projected.with_cause(crate::refusal::error_chain(error))
+    } else {
+        projected
+    }
 }
 
 /// What an approval gate (APPROVAL-1) does with a call.
