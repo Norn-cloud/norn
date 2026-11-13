@@ -1118,7 +1118,7 @@ fn a_paced_sync_maps_at_most_its_rows_per_step() {
     let dataset = profile("odoo").feeds[0].dataset.clone();
     let (status, body) = pages.remove(&dataset).expect("a recorded page");
     let rows = body
-        .pointer("/result/records")
+        .pointer("/records")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
     assert!(rows > 3, "{} has {rows} rows", first.url);
