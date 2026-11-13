@@ -11937,6 +11937,38 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "SOURCE-AGREE-1: two sources reported different values of a measure's\npartition source (its unit, currency or basis) for one subject, in\nconsecutive versions. Both reports are true facts about what each\nsource says; the subject is never excluded for it.",
+            "required": [
+              "kind",
+              "property",
+              "earlier",
+              "later"
+            ],
+            "properties": {
+              "earlier": {
+                "$ref": "#/components/schemas/NornIrSourceClaim",
+                "description": "The earlier version's source and value."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "source_disagreement"
+                ]
+              },
+              "later": {
+                "$ref": "#/components/schemas/NornIrSourceClaim",
+                "description": "The later version's source and value."
+              },
+              "property": {
+                "type": "string",
+                "description": "The partition-source property the sources disagree on.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "The result of evaluating a rule or constraint against data."
@@ -25017,6 +25049,29 @@
         },
         "additionalProperties": false
       },
+      "NornIrSourceClaim": {
+        "type": "object",
+        "description": "SOURCE-AGREE-1: what one source reported for a partition source, and the\nversion that recorded it.",
+        "required": [
+          "system",
+          "fact"
+        ],
+        "properties": {
+          "fact": {
+            "$ref": "#/components/schemas/NornIrFactRef",
+            "description": "The version that recorded it (its commit)."
+          },
+          "system": {
+            "type": "string",
+            "description": "The reporting source system (`SourceRecordRef::system`)."
+          },
+          "value": {
+            "type": "string",
+            "description": "The reported code, or `None` for null."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrSourceConstraint": {
         "type": "object",
         "description": "One declared or inferred constraint.",
@@ -31368,6 +31423,16 @@
               "type": "string"
             }
           },
+          "sourceDisagreements": {
+            "$ref": "#/components/schemas/NornSourceDisagreements",
+            "description": "SOURCE-AGREE-1: members two sources disagree on, by partition source,\nat this answer's frontier and visible to its reader. They are never\nexcluded. Absent when no member is disputed."
+          },
+          "unlinked": {
+            "type": "integer",
+            "format": "int64",
+            "description": "METRIC-GRAIN-LINK-1: rows that would count but whose optional time link\nis absent, so they have no time; skipped, never bucketed. Absent when zero.",
+            "minimum": 0
+          },
           "watermarks": {
             "type": "object",
             "description": "Watermarks for required dependencies: source → partition → watermark.",
@@ -31571,6 +31636,56 @@
             "description": "The property sorted on."
           }
         }
+      },
+      "NornSourceDisagreementGroup": {
+        "type": "object",
+        "description": "The disputed members of one partition source.",
+        "required": [
+          "property",
+          "subjects"
+        ],
+        "properties": {
+          "property": {
+            "type": "string",
+            "description": "The partition-source property, such as `quantity_basis`."
+          },
+          "subjects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Members with an open disagreement on it.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornSourceDisagreements": {
+        "type": "object",
+        "description": "SOURCE-AGREE-1: the members of an answer two sources disagree on, counted\nas HOST-READ-4b counts links.",
+        "required": [
+          "groups",
+          "complete",
+          "bound"
+        ],
+        "properties": {
+          "bound": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most subjects one read examines.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "True when every candidate was examined; false when the read stopped at\n`bound` subjects, and each count is then a lower bound."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornSourceDisagreementGroup"
+            },
+            "description": "One entry per partition source with at least one disputed member."
+          }
+        },
+        "additionalProperties": false
       },
       "NornTransformColumn": {
         "type": "object",
