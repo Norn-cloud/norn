@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.deadline_without_remedy",
+  "message": "a lifecycle timer leads to a state from which no ending is reachable: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

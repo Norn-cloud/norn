@@ -146,7 +146,9 @@ fn every_lifecycle_code_has_a_negative_fixture() {
     let registered: BTreeSet<String> = norn_checker::codes::REGISTRY
         .iter()
         .map(|entry| entry.code)
-        .filter(|code| code.starts_with("lifecycle."))
+        // `lifecycle.soundness.*` (LIFE-SOUND) codes are whole-graph findings with their own
+        // planted cases (`lifecycle_soundness` tests, the bounded graph, deontic gate tests).
+        .filter(|code| code.starts_with("lifecycle.validation."))
         .map(str::to_owned)
         .collect();
     assert_eq!(
