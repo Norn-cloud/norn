@@ -1,0 +1,46 @@
+{
+  "artifactId": "source.agreement.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Source disagreement steward",
+  "namespace": "source",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "source.agreement.access",
+    "rules": [
+      {
+        "actions": [
+          "source.agreement.accept",
+          "source.agreement.reopen"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "source.AgreementReview",
+        "ruleId": "steward",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.agreement.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

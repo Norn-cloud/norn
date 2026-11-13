@@ -1037,7 +1037,7 @@
       "tier": "T3",
       "severity": "warning",
       "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded.",
-      "fix": "Correct the source that reports the wrong value; the finding resolves when the record returns to the earlier report.",
+      "fix": "Correct the source that reports the wrong value, or accept the disagreement with a reason (source.agreement.accept); the finding resolves when the record returns to the earlier report.",
       "no_fix": null
     },
     {
