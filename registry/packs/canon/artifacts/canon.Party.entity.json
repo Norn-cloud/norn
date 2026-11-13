@@ -16,9 +16,6 @@
       "properties": [
         {
           "id": "display_name",
-          "markings": [
-            "pii.contact"
-          ],
           "type": {
             "kind": "ref",
             "name": "core.display_name"
