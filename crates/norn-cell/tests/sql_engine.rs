@@ -1295,10 +1295,10 @@ struct Cached(std::cell::RefCell<Option<((u64, u64), i64)>>);
 impl Cached {
     fn count(&self, engine: &impl SqlEngine) -> i64 {
         let revision = engine.read_cache_revision().expect("revision");
-        if let (Some(revision), Some((seen, count))) = (revision, *self.0.borrow()) {
-            if revision == seen {
-                return count;
-            }
+        if let (Some(revision), Some((seen, count))) = (revision, *self.0.borrow())
+            && revision == seen
+        {
+            return count;
         }
         let count: i64 = engine
             .query_row(
