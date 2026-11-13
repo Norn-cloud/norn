@@ -510,7 +510,8 @@ impl<E: SqlEngine> Tenant<E> {
                     self.table
                         .writes_definitions(&caller.roles)
                         .then_some(reason),
-                ),
+                )
+                .with_cause(reason),
             };
             server::respond(Err(refusal))
         } else if request.path == "/v1/access" {
@@ -590,7 +591,7 @@ impl<E: SqlEngine> Tenant<E> {
                     &scope,
                     actor,
                 )?;
-                return Err(provision::unopenable(Some(reason)));
+                return Err(provision::unopenable(Some(reason)).with_cause(reason));
             }
         }
         let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
