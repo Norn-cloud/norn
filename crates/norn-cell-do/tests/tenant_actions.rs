@@ -590,12 +590,23 @@ fn relationship_and_context_conditions_never_permit() {
 /// A call the policy grants still reads only what its caller may read: an
 /// action whose precondition slice reads an existing melt is refused to a
 /// viewer (the policy grants the call, but a viewer holds no Values grant on
-/// `constitution.Melt`) with the one opaque denial, and nothing commits.
+/// `constitution.Melt`) with the one opaque denial, and nothing commits; the
+/// same grant commits for a member, who holds Values.
 #[test]
 fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     const RECHECK: &str = "constitution.melt.recheck";
     let directory = tempfile::tempdir().unwrap();
     let mut artifacts = melt(Some(&access()));
+    // The melt records which earlier melt it rechecks (`of`), so the stored
+    // input fits the type and a granted call commits (the positive control).
+    for artifact in &mut artifacts {
+        if artifact["artifactId"] == "constitution.Melt.entity" {
+            artifact["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "id": "of", "type": { "kind": "text" }, "default": "" }));
+        }
+    }
     let mut recheck = artifacts
         .iter()
         .find(|artifact| artifact["kind"] == "action")
@@ -616,7 +627,7 @@ fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     let mut readers = rules["payload"]["rules"][0].clone();
     readers["ruleId"] = json!("readers");
     readers["actions"] = json!([RECHECK]);
-    readers["allOf"] = json!([{ "role": { "anyOf": ["viewer"] } }]);
+    readers["allOf"] = json!([{ "role": { "anyOf": ["viewer", "member"] } }]);
     rules["payload"]["rules"]
         .as_array_mut()
         .unwrap()
@@ -644,6 +655,11 @@ fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     let denied = denial(&mut cell);
     assert_eq!(recheck(&mut cell, "viewer", "v"), denied);
     assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+    // The positive control: the same grant commits for a member, who holds
+    // Values on `constitution.Melt`. Without the `readers` rule it would not.
+    let member = recheck(&mut cell, "member", "m");
+    assert_eq!(member.status, 200, "{}", member.body);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(2));
 }
 
 /// A referenced policy that does not compile leaves the cell serving no
@@ -671,4 +687,127 @@ fn a_policy_compile_failure_is_reported_to_the_operator() {
         "{reason:?}"
     );
     assert!(!denied.body.contains(reason.as_deref().unwrap_or_default()));
+}
+
+/// A dashboard tile's question, as Studio saves one: any `QuestionIR`.
+fn tile_question() -> Value {
+    let mut question: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/metrics/sales-by-store-day.question.json"
+    ))
+    .unwrap();
+    question["objectSet"] = json!(MELT);
+    question
+}
+
+/// A tenant cell keys receipt handles with the stage's lineage key but
+/// publishes no questions: an admin's dashboard with a question tile, or a
+/// saved question, is refused with the base's 422 finding
+/// `definition.question_unavailable`, never an authorization denial
+/// (#1297 r2 B1).
+#[test]
+fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    let dashboard = json!({ "kind": "dashboard", "id": "studio.dashboard.melts", "payload": {
+        "title": "Melts", "tiles": [{ "id": "t1", "title": "Loss", "question": tile_question(),
+            "view": { "kind": "chart", "chart": "line" }, "layout": { "x": 0, "y": 0, "w": 6, "h": 4 } }] } });
+    let question =
+        json!({ "kind": "question", "id": "studio.question.loss", "payload": tile_question() });
+    for (case, body) in [("dashboard", &dashboard), ("question", &question)] {
+        for path in ["/v1/definitions:admit", "/v1/definitions:install"] {
+            let response = cell.call("POST", path, Some(&user("admin")), &body.to_string());
+            let document: Value = serde_json::from_str(&response.body).unwrap();
+            let codes: Vec<&str> = document["diagnostics"]
+                .as_array()
+                .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
+                .unwrap_or_default();
+            // `:admit` reports its findings (200, not admitted); `:install`
+            // refuses with them (422).
+            let expected = if path.ends_with(":admit") { 200 } else { 422 };
+            assert_eq!(response.status, expected, "{case} {path}: {document}");
+            assert_ne!(
+                document["admitted"],
+                json!(true),
+                "{case} {path}: {document}"
+            );
+            assert!(
+                codes.contains(&"definition.question_unavailable"),
+                "{case} {path}: {document}"
+            );
+        }
+    }
+}
+
+/// `GET /v1/access` on a provisioned tenant cell answers every role the
+/// table grants: the kernel's call records (admin and owner only) are not
+/// among the collections it decides over (#1297 r2 B2).
+#[test]
+fn every_role_reads_its_access_on_a_tenant_cell() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    for (who, auth, values) in [
+        ("viewer", user("viewer"), false),
+        ("member", user("member"), true),
+        ("service member", token("service", "org_a", "member"), true),
+        ("service viewer", token("service", "org_a", "viewer"), false),
+        ("admin", user("admin"), true),
+        ("owner", user("owner"), true),
+    ] {
+        let response = cell.call("GET", "/v1/access", Some(&auth), "");
+        assert_eq!(response.status, 200, "{who}: {}", response.body);
+        let document: Value = serde_json::from_str(&response.body).unwrap();
+        let decision = |name: &str| document["capabilities"][name]["decision"].clone();
+        assert_eq!(decision("population"), json!("permit"), "{who}: {document}");
+        let expected = if values { "permit" } else { "deny" };
+        assert_eq!(decision("values"), json!(expected), "{who}: {document}");
+    }
+}
+
+/// A flow install adds its run type to a live tenant cell, and the read
+/// rules and `/v1/access` follow at once, with no restart (#1297 r2 S2).
+#[test]
+fn a_flow_install_is_readable_without_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    let runs = "/v1/objects/ops.ApproveRefundRun";
+    assert_ne!(cell.call("GET", runs, Some(&user("admin")), "").status, 200);
+    install_flow(&mut cell);
+    let after = cell.call("GET", runs, Some(&user("admin")), "");
+    assert_eq!(after.status, 200, "{}", after.body);
+    // The admin's grants now hold over the new collection too.
+    let access = cell.call("GET", "/v1/access", Some(&user("admin")), "");
+    assert_eq!(access.status, 200, "{}", access.body);
+    let document: Value = serde_json::from_str(&access.body).unwrap();
+    assert_eq!(
+        document["capabilities"]["values"]["decision"],
+        json!("permit"),
+        "{document}"
+    );
+}
+
+/// A `resource` condition never permits on a tenant cell: the host compiles
+/// policies without `EntityIR` projection metadata, so the policy does not
+/// compile (`authz.access.projection_required`), the cell serves no action
+/// (even to the admin the rule's role names), nothing commits, and the
+/// operator is told why.
+#[test]
+fn a_resource_condition_never_permits() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut artifacts = melt(Some(&access()));
+    let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    gated["payload"]["rules"][0]["allOf"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "resource": { "name": "id", "op": "eq", "value": "m" } }));
+    artifacts.push(gated);
+    let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
+    assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "m"), denied);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
+    let reason = cell.tenant.action_policy_error().unwrap_or_default();
+    assert!(
+        reason.contains("authz.access.projection_required"),
+        "{reason}"
+    );
 }

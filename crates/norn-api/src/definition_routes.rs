@@ -1009,7 +1009,7 @@ fn question_findings<E: SqlEngine>(
             }
             Some(Ok(question)) => question,
         };
-    let Some(runtime) = questions else {
+    let Some(runtime) = questions.filter(|runtime| runtime.publishes_questions()) else {
         findings.push(RefusalDiagnostic::error(
             codes::QUESTION_UNAVAILABLE,
             "this cell admits no ad-hoc questions",
