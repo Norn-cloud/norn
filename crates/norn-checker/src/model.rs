@@ -291,10 +291,10 @@ fn unsupported_output(property_type: &PropertyType) -> Option<String> {
         | PropertyType::Boolean {}
         | PropertyType::Enum { .. } => None,
         PropertyType::Decimal {
-            additivity: _,
-            scale: _,
-            rounding: _,
-            unit: _,
+            additivity: _additivity,
+            scale: _scale,
+            rounding: _rounding,
+            unit: _unit,
             currency_source,
             per_unit,
             unit_source,
@@ -881,18 +881,18 @@ fn column_mismatch(output: &PropertyType, column: &PropertyType) -> Option<Strin
             .then(kinds)
             .flatten(),
         PropertyType::Decimal {
-            additivity: _,
+            additivity: _additivity,
             scale: wanted_scale,
-            rounding: _,
+            rounding: _rounding,
             unit: wanted_unit,
-            currency_source: _,
-            per_unit: _,
-            unit_source: _,
+            currency_source: _currency_source,
+            per_unit: _per_unit,
+            unit_source: _unit_source,
         } => {
             let PropertyType::Decimal {
-                additivity: _,
+                additivity: _additivity,
                 scale,
-                rounding: _,
+                rounding: _rounding,
                 unit,
                 currency_source,
                 per_unit,
