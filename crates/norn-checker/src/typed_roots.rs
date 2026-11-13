@@ -3584,11 +3584,16 @@ mod tests {
         action["payload"]["inputSchema"] = json!({
             "type": "object", "properties": {}, "additionalProperties": false
         });
+        // Outputs admit a nullable scalar leaf, as inputs do (`Schema.NullOr`),
+        // and still refuse a nullable record.
         action["payload"]["outputSchema"] = json!({
             "type": "object",
             "properties": { "result": { "type": ["string", "null"] } },
             "additionalProperties": false
         });
+        assert!(findings(action.clone()).is_empty());
+        action["payload"]["outputSchema"]["properties"]["result"] =
+            json!({ "type": ["object", "null"] });
         assert!(has(
             &findings(action),
             "action.validation.invalid_schema",
