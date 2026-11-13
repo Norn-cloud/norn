@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
+import { Clock, GitCommitHorizontal } from "lucide-react"
+import { Chip, FactChip } from "@/components/chip"
 import { Braces, Database, GitBranch, History as HistoryIcon, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -71,14 +72,14 @@ export function ObjectPage() {
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-start gap-4">
-        <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl", fill, text)}><TypeIcon className="size-6" /></span>
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="text-meta text-muted-foreground">{concept?.title ?? conceptTitle(name)}</div>
+        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60", fill, text)}><TypeIcon className="size-5" /></span>
+        <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
-            {data?.object.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
+            <Chip tone="violet" icon={TypeIcon}>{concept?.title ?? conceptTitle(name)}</Chip>
+            {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
           </div>
-          {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+          {data && <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
             <CopyId value={id} />
             <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
             {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={() => void reads.refetch()} title="Read this record from the cell again">
@@ -103,7 +104,7 @@ export function ObjectPage() {
           <TabsContent value="overview" className="pt-4">
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
               <div className="min-w-0 space-y-6">
-                <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
+                <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
                 {concept.lifecycles.map((lifecycle) => (
                   <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
                     <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
@@ -119,9 +120,9 @@ export function ObjectPage() {
                 <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} />
                 <LinksRail concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} live={live} />
                 <div className="flex flex-wrap gap-1.5">
-                  {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}
+                  {concept.rules.map((rule) => <Chip key={rule} tone="green" icon={ShieldCheck} className="max-w-xs" title={rule}><span className="truncate">{rule}</span></Chip>)}
                   {/* Personal data is marked by the server in the documents it sends; these mark none. */}
-                  <Badge variant="outline" className="gap-1 text-muted-foreground" title="The documents the server sent for this record mark no field as personal data."><ShieldOff />No personal data marked</Badge>
+                  <Chip tone="gray" icon={ShieldOff} title="The documents the server sent for this record mark no field as personal data.">No personal data marked</Chip>
                 </div>
               </aside>
             </div>
@@ -161,8 +162,12 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
   const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), enabled: live, retry: false })
   const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
-    <span className="text-meta tabular-nums" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>
-      version {version}{entry ? <> · commit {entry.commit} · as of <time dateTime={new Date(entry.logicalTime).toISOString()} title={new Date(entry.logicalTime).toISOString()}>{stamp(entry.logicalTime)}</time></> : null}
+    <span className="contents" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>
+      <FactChip label="version">{version}</FactChip>
+      {entry ? <>
+        <FactChip icon={GitCommitHorizontal} label="commit">{entry.commit}</FactChip>
+        <FactChip icon={Clock} label="as of"><time dateTime={new Date(entry.logicalTime).toISOString()} title={new Date(entry.logicalTime).toISOString()}>{stamp(entry.logicalTime)}</time></FactChip>
+      </> : null}
     </span>
   )
 }
@@ -172,11 +177,11 @@ function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; re
   const fields = keyFacts(concept, reads.object.document.values)
   if (fields.length === 0) return null
   return (
-    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-node border border-node-border bg-node-border shadow-[var(--node-highlight),var(--elevation-1)] sm:grid-cols-3 xl:grid-cols-6">
+    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3 xl:grid-cols-6">
       {fields.map((field) => (
-        <div key={field.id} className="min-w-0 bg-card px-3 py-2.5">
-          <dt className="truncate text-meta text-muted-foreground">{field.label ?? field.id.replaceAll("_", " ")}</dt>
-          <dd className={cn("truncate pt-0.5 text-panel font-medium", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
+        <div key={field.id} className="min-w-0 bg-card px-4 py-3">
+          <dt className="truncate text-xs text-muted-foreground">{field.label ?? field.id.replaceAll("_", " ")}</dt>
+          <dd className={cn("truncate pt-1 text-section font-semibold tracking-tight", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
         </div>
       ))}
     </dl>
