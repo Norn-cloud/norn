@@ -2504,6 +2504,131 @@
         ]
       }
     },
+    "/v1/objects/{type}:facets": {
+      "get": {
+        "tags": [
+          "crate::object_routes"
+        ],
+        "summary": "HOST-READ-7: the exact value counts of `object_type`'s categorical\nproperties over the caller's authorized snapshot, narrowed by a filter.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared type (404), an invalid filter\nor a property that is not a declared text, choice or yes/no property (400\n`query.invalid`, every violation at its pointer), a commit while the\nsnapshot was read (409 `object.snapshot_moved`, retryable), or a host failure.",
+        "operationId": "get_object_facets",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "properties",
+            "in": "query",
+            "description": "The properties to count, comma separated: each a text, choice or\nyes/no property of the type. Every such property when absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "status,unit"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "The grid query's filter (`{\"all\":[clause, ...]}`), with its rules: the\nfacets count the rows a page with this filter lists.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The concept to count.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The value counts over the caller's authorized snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornObjectFacets"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`query.invalid`): the filter does not hold, or a property is not a declared text, choice or yes/no property, with every violation as a diagnostic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The snapshot moved while it was read; retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/objects/{type}:profile": {
       "get": {
         "tags": [
@@ -7087,6 +7212,60 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornFacet": {
+        "type": "object",
+        "description": "One property's values and how many counted rows hold each.",
+        "required": [
+          "property",
+          "values",
+          "otherRows",
+          "nulls"
+        ],
+        "properties": {
+          "nulls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Counted rows without a value.",
+            "minimum": 0
+          },
+          "otherRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Counted rows holding a value not listed.",
+            "minimum": 0
+          },
+          "property": {
+            "type": "string",
+            "description": "The property id."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornFacetValue"
+            },
+            "description": "Its values, most rows first (ties in value order), at most\n[`MAX_FACET_VALUES`]."
+          }
+        }
+      },
+      "NornFacetValue": {
+        "type": "object",
+        "description": "One value and the counted rows that hold it.",
+        "required": [
+          "value",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Counted rows holding it.",
+            "minimum": 0
+          },
+          "value": {
+            "description": "A stored value: text or a boolean."
+          }
+        }
       },
       "NornGuaranteesDocument": {
         "type": "object",
@@ -31207,6 +31386,60 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornObjectFacets": {
+        "type": "object",
+        "description": "The exact value counts of a concept's categorical properties.",
+        "required": [
+          "objectType",
+          "rows",
+          "withheldRows",
+          "quarantinedRows",
+          "lowerBound",
+          "scanLimit",
+          "facets"
+        ],
+        "properties": {
+          "facets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornFacet"
+            },
+            "description": "One facet per property asked for, in the order asked (the order the\ncell's model lists the type's properties when none was named)."
+          },
+          "lowerBound": {
+            "type": "boolean",
+            "description": "True when the scan bound was reached: every count (`rows`, each value,\n`otherRows`, `nulls`) is exact over the rows scanned, and so at most the\ntrue count."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concept counted; rows may be of its subtypes."
+          },
+          "quarantinedRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows held back by source disputes or open quarantining findings.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows counted: readable, not held back, and matching the filter.",
+            "minimum": 0
+          },
+          "scanLimit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The visible-row scan bound.",
+            "minimum": 0
+          },
+          "withheldRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows the caller may know exist but whose values are withheld; none is\ncounted, and none matches a filter.",
+            "minimum": 0
+          }
+        }
       },
       "NornObjectFindings": {
         "type": "object",
