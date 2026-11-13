@@ -9,6 +9,7 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     missing_docs,
     reason = "trace correspondence over the seeded demo cell"
 )]
@@ -27,6 +28,9 @@ use serde_json::{Value, json};
 
 const MEMBER: Option<&str> = Some("Bearer fixture:admin@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
+
+/// Which listed metric a card kind is.
+type Pick = Box<dyn Fn(&Value) -> bool>;
 
 /// The first listed metric `pick` accepts, with the concept it reads.
 fn metric(listed: &Value, pick: impl Fn(&Value) -> bool) -> Option<(Value, String)> {
@@ -104,7 +108,7 @@ fn every_card_kind_traces_at_its_answers_frontier() {
     };
     let (status, listed) = call("GET", "/v1/questions:metrics", "");
     assert_eq!(status, 200, "{listed}");
-    let kinds: [(&str, Box<dyn Fn(&Value) -> bool>); 3] = [
+    let kinds: [(&str, Pick); 3] = [
         (
             "additive",
             Box::new(|m: &Value| m["kind"] == "simple" && m["additivity"]["kind"] == "additive"),
