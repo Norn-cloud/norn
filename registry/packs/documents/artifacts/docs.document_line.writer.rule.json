@@ -73,10 +73,6 @@
               "properties": {
                 "amount": {
                   "nornType": {
-                    "currencySource": {
-                      "links": [],
-                      "property": "currency"
-                    },
                     "kind": "decimal",
                     "scale": 2
                   },
@@ -96,10 +92,6 @@
                 },
                 "document_total": {
                   "nornType": {
-                    "currencySource": {
-                      "links": [],
-                      "property": "currency"
-                    },
                     "kind": "decimal",
                     "scale": 2
                   },
@@ -146,10 +138,6 @@
                 },
                 "lines_total": {
                   "nornType": {
-                    "currencySource": {
-                      "links": [],
-                      "property": "currency"
-                    },
                     "kind": "decimal",
                     "scale": 2
                   },
@@ -160,10 +148,6 @@
                 },
                 "total": {
                   "nornType": {
-                    "currencySource": {
-                      "links": [],
-                      "property": "currency"
-                    },
                     "kind": "decimal",
                     "scale": 2
                   },
@@ -202,10 +186,6 @@
               "properties": {
                 "amount": {
                   "nornType": {
-                    "currencySource": {
-                      "links": [],
-                      "property": "currency"
-                    },
                     "kind": "decimal",
                     "scale": 2
                   },
@@ -283,10 +263,6 @@
                 "properties": {
                   "amount": {
                     "nornType": {
-                      "currencySource": {
-                        "links": [],
-                        "property": "currency"
-                      },
                       "kind": "decimal",
                       "scale": 2
                     },
@@ -309,10 +285,6 @@
                   },
                   "lines_total": {
                     "nornType": {
-                      "currencySource": {
-                        "links": [],
-                        "property": "currency"
-                      },
                       "kind": "decimal",
                       "scale": 2
                     },
@@ -320,10 +292,6 @@
                   },
                   "total": {
                     "nornType": {
-                      "currencySource": {
-                        "links": [],
-                        "property": "currency"
-                      },
                       "kind": "decimal",
                       "scale": 2
                     },

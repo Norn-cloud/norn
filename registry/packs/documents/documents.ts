@@ -289,12 +289,18 @@ const LineCorrectionInput = Schema.Struct({
   id: Schema.String, currency: Schema.Literals(["USD"]), amount: Money, document_total: Schema.optionalKey(Money),
   correction_reason: Schema.String, correction_evidence: Schema.String,
 })
-const LineValues = Schema.Struct({ id: Schema.String, document_id: Schema.String, currency: Schema.Literals(["USD"]), amount: Money })
-const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Literals(["USD"]), total: Money, lines_total: Schema.NullOr(Money) })
+// The writer reads and writes exact decimals at scale 2; the currency stays the document's own (USD).
+const Amount = Norn.decimal(2)
+const WriterInput = Schema.Struct({
+  id: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount, document_total: Schema.optionalKey(Amount),
+  correction_reason: Schema.String, correction_evidence: Schema.String,
+})
+const LineValues = Schema.Struct({ id: Schema.String, document_id: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount })
+const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Literals(["USD"]), total: Amount, lines_total: Schema.NullOr(Amount) })
 const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
-  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Money), total: Schema.optionalKey(Money), lines_total: Schema.optionalKey(Money),
+  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount), lines_total: Schema.optionalKey(Amount),
   correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
 })
 
@@ -306,7 +312,7 @@ const Patch = Schema.Struct({
  */
 export const LineCorrectionWriter = Norn.decision({
   id: "docs.document_line.writer", title: "Restate a corrected line and its document", version: "0.1.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
-  input: Schema.Struct({ slice: LineSlice, event: Schema.Struct({ input: LineCorrectionInput, actor: Schema.String, operationId: Schema.String }) }),
+  input: Schema.Struct({ slice: LineSlice, event: Schema.Struct({ input: WriterInput, actor: Schema.String, operationId: Schema.String }) }),
   output: Schema.Struct({
     facts: Schema.Array(Schema.Struct({ op: Schema.Literals(["patch"]), objectType: Schema.Literals(["docs.DocumentLine", "docs.ScannedDocument"]), key: Schema.String, patch: Patch })),
     commands: Schema.Array(Schema.Struct({})), timers: Schema.Array(Schema.Struct({})),
