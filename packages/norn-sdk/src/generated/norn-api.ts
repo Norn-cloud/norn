@@ -11104,13 +11104,17 @@ export interface components {
         };
         /** @description The exact value counts of a concept's categorical properties. */
         NornObjectFacets: {
-            /** @description True when the scan bound was reached: every count is a lower bound. */
-            approximate: boolean;
             /**
              * @description One facet per property asked for, in the order asked (the order the
              *     cell's model lists the type's properties when none was named).
              */
             facets: components["schemas"]["NornFacet"][];
+            /**
+             * @description True when the scan bound was reached: every count (`rows`, each value,
+             *     `otherRows`, `nulls`) is exact over the rows scanned, and so at most the
+             *     true count.
+             */
+            lowerBound: boolean;
             /** @description The concept counted; rows may be of its subtypes. */
             objectType: string;
             /**

@@ -30952,21 +30952,21 @@
           "rows",
           "withheldRows",
           "quarantinedRows",
-          "approximate",
+          "lowerBound",
           "scanLimit",
           "facets"
         ],
         "properties": {
-          "approximate": {
-            "type": "boolean",
-            "description": "True when the scan bound was reached: every count is a lower bound."
-          },
           "facets": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornFacet"
             },
             "description": "One facet per property asked for, in the order asked (the order the\ncell's model lists the type's properties when none was named)."
+          },
+          "lowerBound": {
+            "type": "boolean",
+            "description": "True when the scan bound was reached: every count (`rows`, each value,\n`otherRows`, `nulls`) is exact over the rows scanned, and so at most the\ntrue count."
           },
           "objectType": {
             "type": "string",
