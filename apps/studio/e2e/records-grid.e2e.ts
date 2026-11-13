@@ -36,9 +36,10 @@ test("view: browse, typed cells, virtualized rows, columns, server sort, paging 
   await page.goto("/objects/canon.Holding")
   await expect(page.getByText("500 records")).toBeVisible()
   await expect(firstCell(page, 0)).toHaveText("demo/holding/0001")
-  // Exact decimal text with its unit; enums as declared, never reworded.
+  // Exact decimal text with its unit.
   await expect(rows(page).first()).toContainText("37.007")
-  await expect(rows(page).first()).toContainText("moving_average")
+  // Business reads a choice in words; its stored value stays the chip's title.
+  await expect(rows(page).first()).toContainText("moving average")
   // Only the rows in view are in the DOM.
   expect(await rows(page).count()).toBeLessThan(50)
   await shoot(page, "live")
