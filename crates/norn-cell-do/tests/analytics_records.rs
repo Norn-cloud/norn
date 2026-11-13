@@ -8,6 +8,7 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     missing_docs,
     reason = "engine correspondence over the seeded demo cell"
 )]
@@ -18,7 +19,7 @@ use std::sync::Mutex;
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
-use norn_cell::analytics::{ColumnKind, LoadRequest, TableSchema, hex_digest};
+use norn_cell::analytics::{Column, ColumnKind, LoadRequest, PointLaw, TableSchema, hex_digest};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -112,10 +113,12 @@ fn encode(text: &str) -> String {
 fn query(filter: Option<&Value>, sort: Option<&str>) -> String {
     let mut query = format!("{SCOPE}&limit=200");
     if let Some(filter) = filter {
-        query.push_str(&format!("&filter={}", encode(&filter.to_string())));
+        query.push_str("&filter=");
+        query.push_str(&encode(&filter.to_string()));
     }
     if let Some(sort) = sort {
-        query.push_str(&format!("&sort={}", encode(sort)));
+        query.push_str("&sort=");
+        query.push_str(&encode(sort));
     }
     query
 }
@@ -150,7 +153,7 @@ fn canonical(values: &Value) -> Value {
             norn_ir::Decimal::parse(&n.to_string())
                 .map_or_else(|_| n.to_string(), |d| d.canonical()),
         ),
-        other => other.clone(),
+        Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) => values.clone(),
     }
 }
 
@@ -174,7 +177,7 @@ fn csv(table: &TableSchema, records: &[Value]) -> Option<String> {
                 Value::String(text) => Some(format!("\"{}\"", text.replace('"', "\"\""))),
                 Value::Number(n) => Some(n.to_string()),
                 Value::Bool(flag) => Some(flag.to_string()),
-                _ => None,
+                Value::Array(_) | Value::Object(_) => None,
             })
             .collect::<Option<Vec<_>>>()?;
         out.push_str(&fields.join(","));
@@ -183,15 +186,26 @@ fn csv(table: &TableSchema, records: &[Value]) -> Option<String> {
     Some(out)
 }
 
-/// The clauses one present value of `column` exercises, by kind.
-fn clauses(id: &str, kind: ColumnKind, value: &Value) -> Vec<Value> {
+/// The clauses one present value of `column` exercises, by kind (an enum
+/// takes `eq`, `ne` and `in` only).
+fn clauses(column: &Column, value: &Value) -> Vec<Value> {
+    let id = column.id.as_str();
+    let enumerated = column
+        .laws
+        .iter()
+        .any(|law| matches!(law, PointLaw::OneOf(_)));
     let clause =
         |op: &str, value: Value| json!({"all": [{"property": id, "op": op, "value": value}]});
     let mut out = vec![
         json!({"all": [{"property": id, "op": "empty"}]}),
         json!({"all": [{"property": id, "op": "present"}]}),
     ];
-    match kind {
+    match column.kind {
+        ColumnKind::Text if enumerated => out.extend([
+            clause("eq", value.clone()),
+            clause("ne", value.clone()),
+            clause("in", json!([value, value])),
+        ]),
         ColumnKind::Text => {
             let text = value.as_str().unwrap_or_default();
             let head: String = text.chars().take(2).collect();
@@ -287,11 +301,7 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             queries.push((None, Some(format!("{}:asc", column.id))));
             queries.push((None, Some(format!("{}:desc", column.id))));
             if let Some(value) = raw.iter().map(|r| &r[&column.id]).find(|v| !v.is_null()) {
-                queries.extend(
-                    clauses(&column.id, column.kind, value)
-                        .into_iter()
-                        .map(|f| (Some(f), None)),
-                );
+                queries.extend(clauses(column, value).into_iter().map(|f| (Some(f), None)));
             }
         }
         let before: Vec<_> = queries
@@ -323,11 +333,13 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             .lock()
             .unwrap()
             .insert(format!("file://{id}"), file.into_bytes());
+        let files = Files(&transport);
+        let uploads: &dyn Uploads = &files;
         let load = server::analytics(
             &host,
             &principals,
             &transport,
-            Some(&Files(&transport) as &dyn Uploads),
+            Some(uploads),
             &server::Request {
                 method: "POST",
                 path: "/v1/datasets:load",
@@ -357,21 +369,18 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             let (want, want_total, _) = rows(native);
             let (got, got_total, _) = rows(&engine);
             assert_eq!(got_total, want_total, "{name} {filter:?} {sort:?}");
-            match sort {
-                // Ties order by identity, which differs: compare the sorted column.
-                Some(sort) => {
-                    let column = sort.split(':').next().unwrap();
-                    let project =
-                        |rows: &[Value]| rows.iter().map(|r| r[column].clone()).collect::<Vec<_>>();
-                    assert_eq!(project(&got), project(&want), "{name} {sort}");
-                }
-                None => {
-                    let sorted = |mut rows: Vec<Value>| {
-                        rows.sort_by_key(Value::to_string);
-                        rows
-                    };
-                    assert_eq!(sorted(got), sorted(want), "{name} {filter:?}");
-                }
+            // Ties order by identity, which differs: compare the sorted column.
+            if let Some(sort) = sort {
+                let column = sort.split(':').next().unwrap();
+                let project =
+                    |rows: &[Value]| rows.iter().map(|r| r[column].clone()).collect::<Vec<_>>();
+                assert_eq!(project(&got), project(&want), "{name} {sort}");
+            } else {
+                let sorted = |mut rows: Vec<Value>| {
+                    rows.sort_by_key(Value::to_string);
+                    rows
+                };
+                assert_eq!(sorted(got), sorted(want), "{name} {filter:?}");
             }
         }
         // A row of the grid reads alone by its identity; an absent one is 404.
