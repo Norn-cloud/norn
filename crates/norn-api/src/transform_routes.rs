@@ -12,10 +12,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use http::StatusCode;
-use norn_cell::compute::transform::{RowAccess, TransformResult};
+use norn_cell::compute::materialize::{MaterializationState, Served};
+use norn_cell::compute::transform::RowAccess;
 use norn_cell::{CellStore, MAIN_WORLD, ObjectRecord, engine::SqlEngine};
-use norn_checker::transform::{Column, NodeSchema, Step, TransformPlan, admit};
+use norn_checker::transform::{Column, Materialization, NodeSchema, Step, TransformPlan, admit};
 use norn_ir::{ArtifactEnvelope, PropertyAdditivity, PropertyTypeName, RuntimeValue};
+use norn_kernel::LogicalTime;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -101,8 +103,13 @@ pub struct NornTransformPage {
     pub version: String,
     /// The evaluator: `cell` (exact) today.
     pub engine: String,
-    /// Commits in the cell when the rows were read.
+    /// Commits in the cell at the snapshot the rows were computed from: now,
+    /// or a stored result's frontier.
     pub commits: u64,
+    /// VIEW-MAT-1: the stored result these rows come from; null when they
+    /// were evaluated live for this read.
+    #[schema(required = true, nullable = true)]
+    pub materialization: Option<NornMaterialization>,
     /// Output columns, in schema order.
     pub columns: Vec<NornTransformColumn>,
     /// The columns that identify a row.
@@ -117,6 +124,9 @@ pub struct NornTransformPage {
     pub excluded: u64,
     /// No input row was withheld or excluded.
     pub complete: bool,
+    /// Rows each plan node produced for this read, by node id: the plan's
+    /// volume under the reader's visibility.
+    pub node_rows: BTreeMap<String, u64>,
     /// Pass as `after` for the next page; null on the last page.
     #[schema(required = true, nullable = true)]
     pub next_after: Option<String>,
@@ -144,8 +154,12 @@ pub struct NornTransformLineage {
     pub transform: String,
     /// The row.
     pub row_id: String,
-    /// Commits in the cell when the row was read.
+    /// Commits in the cell at the snapshot the row was computed from.
     pub commits: u64,
+    /// VIEW-MAT-1: the stored result the row comes from; null when evaluated
+    /// live for this read.
+    #[schema(required = true, nullable = true)]
+    pub materialization: Option<NornMaterialization>,
     /// Every column value of the row.
     #[schema(schema_with = row_values_schema)]
     pub values: BTreeMap<String, RuntimeValue>,
@@ -200,6 +214,44 @@ pub struct NornTransformPlan {
     pub nodes: Vec<NornTransformNode>,
     /// The output node.
     pub output: String,
+    /// VIEW-MAT-1: how the stored result refreshes; null when the transform
+    /// is evaluated on every read.
+    #[schema(required = true, nullable = true)]
+    pub refresh: Option<NornRefresh>,
+}
+
+/// VIEW-MAT-1: the stored result a read was served from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornMaterialization {
+    /// Commits in the cell when the stored result was computed: its frontier.
+    pub frontier: u64,
+    /// When it was computed, in milliseconds since the Unix epoch.
+    pub refreshed_at_ms: u64,
+    /// The inputs changed since: the rows are the frontier's, not the
+    /// current snapshot's.
+    pub stale: bool,
+}
+
+/// VIEW-MAT-1: when a materialized transform's stored result is refreshed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornRefresh {
+    /// `on_read`: a read that finds the inputs changed refreshes; `manual`:
+    /// only `POST /v1/transforms/{transform}:refresh` does.
+    pub policy: String,
+    /// `on_read` only: a stored result younger than this is served,
+    /// labelled stale, instead of refreshed.
+    #[schema(required = true, nullable = true)]
+    pub max_age_ms: Option<u64>,
+}
+
+fn materialization(state: &MaterializationState) -> NornMaterialization {
+    NornMaterialization {
+        frontier: state.frontier.commits,
+        refreshed_at_ms: state.refreshed_at_ms,
+        stale: state.stale,
+    }
 }
 
 fn row_values_schema() -> utoipa::openapi::schema::Object {
@@ -324,24 +376,29 @@ fn row_access<E: SqlEngine>(
     }
 }
 
+/// The rows a reader is served: live, or a materialized transform's stored
+/// result when the reader may read every input row (VIEW-MAT-1).
 fn evaluate<E: SqlEngine>(
     host: &DevHost<E>,
-    scope: &ScopeQuery,
-    actor: Option<&str>,
+    (scope, actor): (&ScopeQuery, Option<&str>),
     transform: &str,
     access: &dyn ObjectAccess,
-) -> Result<(TransformPlan, TransformResult), Refusal> {
+    now: LogicalTime,
+) -> Result<(TransformPlan, Served), Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let store = cell.store();
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    let result = store
-        .evaluate_transform(&plan, MAIN_WORLD, &host.scope().key(), |row| {
-            Ok(row_access(host, access, &actor, row))
-        })
+    let served = store
+        .serve_transform(
+            &plan,
+            (MAIN_WORLD, &host.scope().key()),
+            |row| Ok(row_access(host, access, &actor, row)),
+            now.as_millis(),
+        )
         .map_err(Refusal::from_compute)?;
-    Ok((plan, result))
+    Ok((plan, served))
 }
 
 fn additivity(value: &PropertyAdditivity) -> &'static str {
@@ -403,9 +460,11 @@ pub fn get_transform_rows<E: SqlEngine>(
     transform: &str,
     params: &TransformRowsParams,
     access: &dyn ObjectAccess,
+    now: LogicalTime,
 ) -> Result<NornTransformPage, Refusal> {
     let limit = parse_limit(params.limit.as_deref())?;
-    let (plan, result) = evaluate(host, scope, actor, transform, access)?;
+    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let result = &served.result;
     let commits = result.revision.commits;
     let start = match params.after.as_deref() {
         None => 0,
@@ -453,6 +512,7 @@ pub fn get_transform_rows<E: SqlEngine>(
         version: result.version.clone(),
         engine: "cell".to_owned(),
         commits,
+        materialization: served.materialization.as_ref().map(materialization),
         columns: columns(plan.output_schema()),
         grain: result.grain.clone(),
         rows: page,
@@ -460,6 +520,7 @@ pub fn get_transform_rows<E: SqlEngine>(
         withheld: result.withheld.clone(),
         excluded: u64::try_from(result.exclusions.len()).unwrap_or(u64::MAX),
         complete: result.complete,
+        node_rows: result.node_rows.clone(),
         next_after,
     })
 }
@@ -477,8 +538,10 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     transform: &str,
     row: &str,
     access: &dyn ObjectAccess,
+    now: LogicalTime,
 ) -> Result<NornTransformLineage, Refusal> {
-    let (_plan, result) = evaluate(host, scope, actor, transform, access)?;
+    let (_plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let result = &served.result;
     let found = result
         .rows
         .iter()
@@ -488,6 +551,7 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
         transform: result.transform.clone(),
         row_id: found.id.clone(),
         commits: result.revision.commits,
+        materialization: served.materialization.as_ref().map(materialization),
         values: found.values.clone(),
         members: found
             .members
@@ -568,6 +632,16 @@ fn plan_document(plan: &TransformPlan) -> NornTransformPlan {
             .collect(),
         nodes,
         output: plan.output.clone(),
+        refresh: plan.materialization.map(|policy| match policy {
+            Materialization::OnRead { max_age_ms } => NornRefresh {
+                policy: "on_read".to_owned(),
+                max_age_ms,
+            },
+            Materialization::Manual => NornRefresh {
+                policy: "manual".to_owned(),
+                max_age_ms: None,
+            },
+        }),
     }
 }
 
@@ -679,4 +753,44 @@ pub fn compile_transform<E: SqlEngine>(
         }),
         Err(findings) => Ok(refused(&findings)),
     }
+}
+
+/// VIEW-MAT-1: recompute and store a materialized transform's result. Only
+/// a reader who may read every input row refreshes; the stored result is
+/// then served to such readers until the inputs change.
+///
+/// # Errors
+/// A denied gate, or a reader who may not read every input row (the same
+/// opaque 403), an undeclared transform (404), a transform that is not
+/// materialized (400), a bound (413), a stale or failed evaluation (422) or
+/// a host failure.
+#[utoipa::path(post, path = "/v1/transforms/{transform}:refresh", operation_id = "refresh_transform", params(ScopeQuery, ("transform" = String, Path, description = "The transform's artifact id.")), responses((status = 200, description = "The stored result now: its frontier and refresh time.", body = NornMaterialization), (status = 400, description = "The request was refused as invalid (`request.invalid`): the transform is evaluated on every read, not materialized.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied on the transform or any object type it reads, or an input row this reader may not read, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`transform.not_found`).", body = Refusal), (status = 413, description = "The request was refused (`core.compute.bound_exceeded`).", body = Refusal), (status = 422, description = "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`).", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn refresh_transform<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    transform: &str,
+    access: &dyn ObjectAccess,
+    now: LogicalTime,
+) -> Result<NornMaterialization, Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
+    let cell = host.cell()?;
+    let store = cell.store();
+    let plan = installed_plan(store, transform)?;
+    input_gates(host, access, &actor, &plan)?;
+    if plan.materialization.is_none() {
+        return Err(Refusal::invalid(
+            "the transform is evaluated on every read; only a materialized transform refreshes",
+        ));
+    }
+    store
+        .refresh_transform(
+            &plan,
+            (MAIN_WORLD, &host.scope().key()),
+            |row| Ok(row_access(host, access, &actor, row)),
+            now.as_millis(),
+        )
+        .map_err(Refusal::from_compute)?
+        .map(|state| materialization(&state))
+        .ok_or_else(read_denied)
 }

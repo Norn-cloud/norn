@@ -24,6 +24,7 @@ use norn_api::transform_routes::{
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, ObjectRecord};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
+use norn_kernel::LogicalTime;
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
@@ -31,6 +32,8 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const TRANSFORM: &str = "shop.revenue_by_region";
+/// The read time: the cell's commits are at this instant.
+const NOW: LogicalTime = LogicalTime::from_millis(1_792_972_800_000);
 
 struct Everyone;
 impl Authorizer for Everyone {
@@ -314,15 +317,23 @@ fn the_studio_fixture_is_what_the_transform_routes_serve() {
             after: None,
         },
         &Mapping,
+        NOW,
     )
     .expect("rows");
     let lineage: BTreeMap<String, Value> = rows
         .rows
         .iter()
         .map(|row| {
-            let document =
-                get_transform_row_lineage(&host, &scope, actor, TRANSFORM, &row.row_id, &Mapping)
-                    .expect("lineage");
+            let document = get_transform_row_lineage(
+                &host,
+                &scope,
+                actor,
+                TRANSFORM,
+                &row.row_id,
+                &Mapping,
+                NOW,
+            )
+            .expect("lineage");
             (row.row_id.clone(), serde_json::to_value(document).unwrap())
         })
         .collect();

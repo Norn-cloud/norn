@@ -53,13 +53,13 @@ impl<E: SqlEngine> CellStore<E> {
         access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
     ) -> Result<TransformResult, CellError> {
         // Lower first: an unsupported plan refuses before any read.
-        let sql = lower(plan)?;
+        let lowered = lower(plan)?;
         self.evaluate_transform_with(
             plan,
             (world, scope),
             access,
             Engine::Duckdb,
-            |plan, input| execute(plan, input, &sql),
+            |plan, input| execute(plan, input, &lowered),
         )
     }
 }
@@ -572,7 +572,14 @@ fn lower_node(plan: &TransformPlan, id: &str, step: &Step) -> Result<String, Cel
 }
 
 /// The whole plan as one query over the loaded tables.
-fn lower(plan: &TransformPlan) -> Result<String, CellError> {
+/// A lowered plan: the output query, and the rows each node produces (by
+/// its index in the plan's order), over one WITH clause of node CTEs.
+struct Lowered {
+    output: String,
+    counts: String,
+}
+
+fn lower(plan: &TransformPlan) -> Result<Lowered, CellError> {
     for (alias, link) in &plan.links {
         if !valid_identifier(alias) || !valid_identifier(link) {
             return unsupported();
@@ -594,12 +601,22 @@ fn lower(plan: &TransformPlan) -> Result<String, CellError> {
         items.push(format!("CAST({} AS VARCHAR)", quote(&column.name)));
     }
     items.push(format!("array_to_string(\"__m\", '{MEMBER_SEPARATOR}')"));
-    Ok(format!(
-        "WITH {} SELECT {} FROM {}",
-        ctes.join(", "),
-        items.join(", "),
-        node(&plan.output)
-    ))
+    let with = ctes.join(", ");
+    let counts = plan
+        .order
+        .iter()
+        .enumerate()
+        .map(|(index, id)| format!("SELECT {index}, COUNT(*) FROM {}", node(id)))
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    Ok(Lowered {
+        output: format!(
+            "WITH {with} SELECT {} FROM {}",
+            items.join(", "),
+            node(&plan.output)
+        ),
+        counts: format!("WITH {with} {counts}"),
+    })
 }
 
 fn valid_identifier(name: &str) -> bool {
@@ -771,20 +788,38 @@ fn members(text: &str) -> Result<BTreeSet<MemberRef>, CellError> {
 fn execute(
     plan: &TransformPlan,
     input: &TransformInput,
-    sql: &str,
+    lowered: &Lowered,
 ) -> Result<TransformOutput, CellError> {
     let conn = db(Connection::open_in_memory())?;
     db(conn.execute_batch(
         "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;",
     ))?;
     load(&conn, plan, input)?;
+    // Every node's volume first: a node past the bound refuses the whole
+    // result, as the exact engine's does.
+    let bound = u64::try_from(norn_checker::transform::MAX_ROWS).unwrap_or(u64::MAX);
+    let mut node_rows = BTreeMap::new();
+    let mut counts = db(conn.prepare(&lowered.counts))?;
+    let found = db(counts.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))))?;
+    for item in found {
+        let (index, count) = db(item)?;
+        let id = usize::try_from(index)
+            .ok()
+            .and_then(|index| plan.order.get(index))
+            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        let count = u64::try_from(count).map_err(|_negative| refused(UNSUPPORTED_ENGINE))?;
+        if count > bound {
+            return Err(refused("core.compute.bound_exceeded"));
+        }
+        node_rows.insert(id.clone(), count);
+    }
     let schema = plan.output_schema();
     let kinds = schema
         .columns
         .iter()
         .map(|column| kind(&column.ty))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut statement = db(conn.prepare(sql))?;
+    let mut statement = db(conn.prepare(&lowered.output))?;
     let width = kinds.len();
     let rows = db(statement.query_map([], |row| {
         let mut texts = Vec::with_capacity(width);
@@ -806,5 +841,6 @@ fn execute(
         }
         out.push((values, members(lineage.as_deref().unwrap_or_default())?));
     }
-    eval::order_output(plan, out).map_err(|error: EvalError| refused(eval_refusal(&error)))
+    eval::order_output(plan, out, node_rows)
+        .map_err(|error: EvalError| refused(eval_refusal(&error)))
 }
