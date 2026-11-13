@@ -8,6 +8,10 @@
 // only with the target the component reports). Message payloads come from the Message union's
 // schema fields.
 
+import type { Schema } from "effect"
+import type { MessageUnion } from "foldkit/message"
+import type { CallableTaggedStruct } from "foldkit/schema"
+
 import type { Machine, MachineField, MachineTransition, StateRole, ValueType } from "../machine/machine.ts"
 
 /** The parts of a Foldkit `Machine` the compiler reads (`foldkit/experimental/machine`). */
@@ -24,15 +28,34 @@ export interface FoldkitMachine {
 
 type SchemaLike = { readonly ast?: { readonly _tag?: string; readonly encoding?: unknown }; readonly fields?: Readonly<Record<string, SchemaLike>> }
 
+/** The part of one Foldkit Message variant the compiler reads: its schema fields, `_tag` included. */
+export interface FoldkitVariant {
+  readonly fields: Readonly<Record<string, SchemaLike>>
+}
+
+/** A Foldkit Message union seen as its variants, looked up by message tag. */
+export type FoldkitMessages = (tag: string) => FoldkitVariant | undefined
+
+// Type test against Foldkit's public types: every variant constructor of a `defineMessageUnion` is a
+// `FoldkitVariant`. If upstream changes the shape the compiler reads, this stops compiling.
+const asVariant = <Tag extends string, Fields extends Schema.Struct.Fields>(variant: CallableTaggedStruct<Tag, Fields>): FoldkitVariant => variant
+
 /**
- * A Foldkit Message union (`defineMessageUnion`). Its runtime `members` are the tagged struct
- * constructors, but its public type does not list them, so the union is taken as any object and its
- * members are read through `SchemaLike`.
+ * Read a Foldkit Message union (`defineMessageUnion`) through its typed variant constructors. A tag
+ * resolves only to the variant whose own `_tag` is that tag, so the union's helpers (`match`, `ast`, …)
+ * are never taken for a message.
  */
-export type FoldkitMessages = object
+export function foldkitMessages<const Cases extends Record<string, Schema.Struct.Fields>>(union: MessageUnion<Cases>): FoldkitMessages {
+  return (tag) => {
+    if (!Object.hasOwn(union, tag)) return undefined
+    type Tag = keyof Cases & string
+    const variant = asVariant<Tag, Cases[Tag]>(union[tag as Tag])
+    return tagOf(variant) === tag ? variant : undefined
+  }
+}
 
 export interface CompileOptions {
-  /** The component's Message union, for event payload types. */
+  /** The component's Message union (`foldkitMessages(Message)`), for event payload types. */
   readonly messages?: FoldkitMessages
   /** Roles for states that are not plain idle states (an error to recover from, a finished state). */
   readonly roles?: Readonly<Record<string, Exclude<StateRole, "pending">>>
@@ -56,16 +79,15 @@ function valueType(schema: SchemaLike | undefined): { type: ValueType; required:
   }
 }
 
-function tagOf(member: SchemaLike): string | null {
+function tagOf(member: FoldkitVariant): string | null {
   const literal = member.fields?._tag?.ast as { readonly literal?: unknown } | undefined
   return typeof literal?.literal === "string" ? literal.literal : null
 }
 
 /** The payload a message tag carries, as declared by the union; empty when no union is given. */
 function payloadOf(messages: FoldkitMessages | undefined, tag: string): MachineField[] {
-  const members = (messages as { readonly members?: readonly SchemaLike[] } | undefined)?.members
-  const member = members?.find((candidate) => tagOf(candidate) === tag)
-  if (!member?.fields) return []
+  const member = messages?.(tag)
+  if (!member) return []
   return Object.entries(member.fields)
     .filter(([name]) => name !== "_tag")
     .map(([fieldId, schema]) => ({ fieldId, ...valueType(schema) }))

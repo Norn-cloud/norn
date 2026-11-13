@@ -9,7 +9,7 @@ import { defineMessageUnion } from "foldkit/message"
 import { defineTaggedUnion } from "foldkit/schema"
 
 import { type CatalogEntry, type Violation, createHost } from "../src/catalog-host/host.ts"
-import { machineFromFoldkit } from "../src/catalog-host/foldkit.ts"
+import { type FoldkitVariant, foldkitMessages, machineFromFoldkit } from "../src/catalog-host/foldkit.ts"
 
 const TileState = defineTaggedUnion({
   Collapsed: {},
@@ -50,7 +50,10 @@ const tile = Machine.define({ state: TileState, message: TileMessage })({
   },
 })
 
-const compiled = machineFromFoldkit(tile, { messages: TileMessage })
+// A concrete variant is a `FoldkitVariant` with no cast.
+TileMessage.ChoseCompare satisfies FoldkitVariant
+
+const compiled = machineFromFoldkit(tile, { messages: foldkitMessages(TileMessage) })
 
 test("the component's own declaration compiles: states, events with payloads, edges in order, component guards", () => {
   expect(compiled.initialStateId).toBe("Collapsed")
@@ -99,4 +102,25 @@ test("the host runs the compiled machine: guarded edges need the target the comp
   // A component that claims a target its contract does not declare is refused.
   host.receive({ type: "emit", eventId: "ClickedPin", to: "Collapsed" })
   expect(refused).toEqual([{ kind: "not_offered", eventId: "ClickedPin", state: "Expanded" }])
+
+  // The boundary is the runtime check, whatever the sender's static types say: an event the contract
+  // does not declare, a mistyped payload and a payload with an extra member are all refused, and none
+  // of them moves the machine or reaches the page.
+  const before = { states: states.length, emitted: emitted.length }
+  const raw = host.receive as (message: unknown) => void
+  raw({ type: "emit", eventId: "ClickedExplode", payload: {} })
+  raw({ type: "emit", eventId: "ChoseCompare", payload: { period: 7 }, to: "Expanded" })
+  raw({ type: "emit", eventId: "ChoseCompare", payload: { period: "day", admin: true }, to: "Expanded" })
+  expect(refused.slice(1).map((violation) => [violation.kind, "eventId" in violation ? violation.eventId : null])).toEqual([
+    ["undeclared_event", "ClickedExplode"],
+    ["ill_typed_payload", "ChoseCompare"],
+    ["ill_typed_payload", "ChoseCompare"],
+  ])
+  expect({ states: states.length, emitted: emitted.length }).toEqual(before)
+})
+
+test("a union's helpers are never read as messages: only a variant whose own tag matches resolves", () => {
+  const messages = foldkitMessages(TileMessage)
+  expect(messages("ChoseCompare")?.fields.period).toBeDefined()
+  for (const helper of ["match", "ast", "members", "toString", "constructor", "Nope"]) expect(messages(helper)).toBeUndefined()
 })
