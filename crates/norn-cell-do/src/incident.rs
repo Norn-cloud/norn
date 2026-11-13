@@ -33,16 +33,18 @@ pub fn id() -> String {
 pub fn respond(mut refused: Refusal) -> Response {
     if refused.is_internal() {
         let incident = id();
-        let cause = refused
+        let internal = refused.internal.get_or_insert_with(Box::default);
+        let cause = internal
             .cause
-            .0
-            .as_deref()
-            .unwrap_or("no cause was recorded for this refusal");
+            .clone()
+            .unwrap_or_else(|| String::from("no cause was recorded for this refusal"));
         log(&format!(
             "norn incident {incident}: {} ({}): {cause}",
             refused.code, refused.status
         ));
-        refused.incident_id = Some(incident);
+        if let Some(internal) = refused.internal.as_mut() {
+            internal.incident_id = Some(incident);
+        }
     }
     Response {
         status: refused.status,

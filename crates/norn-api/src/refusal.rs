@@ -108,29 +108,35 @@ pub struct Refusal {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
     pub restatement: Option<Box<RefusalRestatement>>,
-    /// INCIDENT-1: on an internal refusal, the id under which the host logged
-    /// its cause. The caller quotes it; the cause itself is never served.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub incident_id: Option<String>,
-    /// The cause of an internal refusal, for the operator's log only: never
-    /// serialized, never compared.
-    #[serde(skip)]
-    #[schema(ignore)]
-    pub cause: Cause,
+    /// INCIDENT-1: an internal refusal's incident id (served, flattened as
+    /// `incidentId`) and its cause (the operator's log only).
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    pub internal: Option<Box<Internal>>,
 }
 
-/// The operator-only cause of a refusal ([`Refusal::cause`]). Two refusals
-/// that differ only in their cause are the same refusal to a caller.
-#[derive(Debug, Clone, Default)]
-pub struct Cause(pub Option<String>);
+/// INCIDENT-1: what the host keeps about an internal refusal.
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Internal {
+    /// The id under which the host logged this refusal's cause. The caller
+    /// quotes it; the cause itself is never served.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incident_id: Option<String>,
+    /// The error chain, for the operator's log only: never serialized.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub cause: Option<String>,
+}
 
-impl PartialEq for Cause {
-    fn eq(&self, _other: &Self) -> bool {
-        true
+/// Two refusals that differ only in their cause are the same refusal.
+impl PartialEq for Internal {
+    fn eq(&self, other: &Self) -> bool {
+        self.incident_id == other.incident_id
     }
 }
 
-impl Eq for Cause {}
+impl Eq for Internal {}
 
 /// One checker finding in a refusal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -253,8 +259,7 @@ impl Refusal {
             explanation: explanation.into(),
             diagnostics: Vec::new(),
             restatement: None,
-            incident_id: None,
-            cause: Cause::default(),
+            internal: None,
         }
     }
 
@@ -262,7 +267,7 @@ impl Refusal {
     /// internal refusal's error chain). Never served to the caller.
     #[must_use]
     pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
-        self.cause = Cause(Some(cause.to_string()));
+        self.internal.get_or_insert_with(Box::default).cause = Some(cause.to_string());
         self
     }
 
