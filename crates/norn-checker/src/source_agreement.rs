@@ -145,8 +145,8 @@ pub fn finding(
         message,
         DataQualityOutcome::SourceDisagreement {
             property,
-            earlier,
-            later,
+            earlier: Box::new(earlier),
+            later: Box::new(later),
         },
         provenance,
         seen.clone(),

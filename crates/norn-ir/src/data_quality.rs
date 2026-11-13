@@ -176,9 +176,9 @@ pub enum DataQualityOutcome {
         /// The partition-source property the sources disagree on.
         property: PropertyId,
         /// The earlier version's source and value.
-        earlier: SourceClaim,
+        earlier: Box<SourceClaim>,
         /// The later version's source and value.
-        later: SourceClaim,
+        later: Box<SourceClaim>,
     },
 }
 
