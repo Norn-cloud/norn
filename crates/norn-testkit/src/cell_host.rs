@@ -407,6 +407,10 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
         Ok(self.0.concrete.get(key).cloned())
     }
 
+    fn object_values(&self, key: &FactKey) -> Result<Option<JsonObject>, Infallible> {
+        Ok(self.0.facts.get(key).and_then(|state| state.values.clone()))
+    }
+
     fn can_read_observed_source_owners(&self) -> bool {
         true
     }

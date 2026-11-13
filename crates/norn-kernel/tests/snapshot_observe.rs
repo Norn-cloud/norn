@@ -306,7 +306,7 @@ fn run_deviation(target: &str, transitions: &Value, reason: SnapshotDeviationRea
                         && state == target
                         && *actual_reason == reason
                 )
-                && matches!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &values, fact), Err(norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { .. }))
+                && matches!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &values, fact, &mut norn_kernel::governing_laws::NoLinkTargets), Err(norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { .. }))
                 && fact.provenance == vec![DataQualityLineage::new(
                     provenance.clone(),
                     vec!["observe-1".to_owned()],
@@ -1354,18 +1354,18 @@ norn_testkit::proptest::proptest! {
         let changed: JsonObject = serde_json::from_value(json!({"amount": amount})).unwrap();
         norn_testkit::proptest::prop_assert!(
             norn_kernel::snapshot_observe::finding_rule_is_violated(
-                &catalog, &key, &changed, finding,
+                &catalog, &key, &changed, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
         norn_testkit::proptest::prop_assert!(
             !norn_kernel::snapshot_observe::verify_finding_values(
-                &catalog, &key, &changed, finding,
+                &catalog, &key, &changed, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
         let corrected: JsonObject = serde_json::from_value(json!({"amount": 0})).unwrap();
         norn_testkit::proptest::prop_assert!(
             !norn_kernel::snapshot_observe::finding_rule_is_violated(
-                &catalog, &key, &corrected, finding,
+                &catalog, &key, &corrected, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
     }

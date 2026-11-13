@@ -23,8 +23,35 @@ export const PartyRole = Norn.type({
     { id: "counterparty", target: Party, cardinality: { to: "one", from: "many" } },
   ],
 })
+// A stock's cost is summed per its ISO 4217 currency (METRIC-UNIT-PARTITION-1); a cost without its
+// currency is refused at the write (the invariant), and a holding with no cost may have neither.
+const StockValuationProperties = Schema.Struct({
+  stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
+  cost_currency: Schema.NullOr(Schema.Literals([
+    "AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF",
+    "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF",
+    "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD",
+    "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD",
+    "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES",
+    "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD",
+    "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR",
+    "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN",
+    "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE",
+    "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD",
+    "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV",
+    "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD",
+    "XPF", "XPT", "XSU", "XUA", "YER", "ZAR", "ZMW", "ZWG",
+  ])),
+})
+export const StockValuation = Norn.interfaceType({
+  name: "canon.StockValuation", title: "Valued stock", version: "0.1.0",
+  properties: StockValuationProperties,
+  invariants: [{ id: "cost_has_currency", message: "A stock cost names its currency.",
+    expression: Norn.expression(StockValuationProperties, self => self.stock_cost === null || self.cost_currency !== null),
+  }],
+})
 export const Holding = Norn.type({
-  name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource],
+  name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource, StockValuation],
   properties: Schema.Struct({
     // A holding is a stock: summable across holdings at one instant, never over time. Every canon
     // quantity is held in `unit` or, for money, `currency` (METRIC-UNIT-PARTITION-1).
@@ -34,7 +61,21 @@ export const Holding = Norn.type({
     // When the source observed this balance (valid time; METRIC-SNAPSHOT-ASOF-1 orders a holding's versions by it).
     observed_at: Norn.ref("iso8601.timestamp"),
     location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
-    cost_currency: Schema.NullOr(Schema.String),
+    cost_currency: Schema.NullOr(Schema.Literals([
+      "AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF",
+      "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF",
+      "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD",
+      "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD",
+      "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES",
+      "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD",
+      "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR",
+      "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN",
+      "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE",
+      "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD",
+      "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV",
+      "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD",
+      "XPF", "XPT", "XSU", "XUA", "YER", "ZAR", "ZMW", "ZWG",
+    ])),
   }),
   links: [
     { id: "item", target: Item, cardinality: { to: "one", from: "many", required: true } },

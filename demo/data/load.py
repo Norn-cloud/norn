@@ -16,13 +16,16 @@ refused or any row is quarantined.
 """
 
 import json
+import os
 import sys
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SLICE_ROWS = 500
+# NORN_LOAD_SLICE_ROWS lowers the rows per request (default 500), for a host
+# whose per-request time bound a slice of slow rows would exceed.
+SLICE_ROWS = int(os.environ.get("NORN_LOAD_SLICE_ROWS", "500"))
 SLICE_BYTES = 60 * 1024
 
 

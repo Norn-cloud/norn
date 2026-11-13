@@ -24,6 +24,13 @@
       "description": "When this finding was most recently observed.",
       "$ref": "#/$defs/UtcTimestamp"
     },
+    "links": {
+      "description": "LAW-LINK-1: for a law that reads its subject's to-one links, the exact\nversion of each target it read, by link id (a link with no target is\nabsent), so the evaluation replays exactly. Empty for every other\nfinding, and then omitted.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/FactRef"
+      }
+    },
     "message": {
       "description": "Human-readable summary of the finding.",
       "type": "string"

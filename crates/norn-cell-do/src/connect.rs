@@ -467,6 +467,11 @@ impl Connect {
                     "source.sync_running",
                     "a sync of this connection is running",
                 )),
+                Err(ClaimError::Busy(other)) => Routed::reply(refused(
+                    409,
+                    "source.cell_busy",
+                    &format!("{other} is syncing; one sync runs per cell at a time"),
+                )),
                 Err(ClaimError::Unknown) => {
                     Routed::reply(refused(404, "source.unknown", "no such connection"))
                 }
@@ -882,6 +887,18 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         return answer(&Refusal::invalid(format!(
             "a load carries 1 to {MAX_LOAD_ROWS} rows; send a longer export in slices"
         )));
+    }
+    // A mapping this cell has not admitted refuses before anything is
+    // captured, naming the mapping (not a host failure).
+    match host.installed_artifact(&recorded.mapping) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return answer(&Refusal::invalid(format!(
+                "the mapping {} is not admitted in this cell",
+                recorded.mapping
+            )));
+        }
+        Err(refusal) => return answer(&refusal),
     }
     let rows = match recorded.observations() {
         Ok(rows) => rows,

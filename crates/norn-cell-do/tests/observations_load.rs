@@ -84,9 +84,23 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
     assert_eq!(again["alreadyLanded"], rows, "{again}");
     assert_eq!(again["landed"], 0, "{again}");
 
-    // A malformed or oversized page refuses before anything is captured.
+    // A malformed or oversized page, or one for a mapping this cell has not
+    // admitted, refuses before anything is captured.
     let (status, _) = load(&mut connect, &host, &principals, ADMIN, "{}");
     assert_eq!(status, 400);
+    let unknown = json!({ "profile": "synthetic-nowhere-three/1", "snapshot": export["snapshot"] });
+    let (status, refused) = load(
+        &mut connect,
+        &host,
+        &principals,
+        ADMIN,
+        &unknown.to_string(),
+    );
+    assert_eq!(status, 400);
+    assert!(
+        refused.to_string().contains("nowhere.three.mapping"),
+        "{refused}"
+    );
     let mut big = export.clone();
     big["snapshot"] = Value::Array(vec![export["snapshot"][0].clone(); 501]);
     let (status, _) = load(&mut connect, &host, &principals, ADMIN, &big.to_string());
