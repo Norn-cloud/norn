@@ -451,11 +451,13 @@ fn target<'a>(value: &'a mut Value, path: &[PathPart]) -> Result<&'a mut Value, 
     Ok(value)
 }
 
+/// Packed encoding of `record`, given its Norn1 canonical text.
 pub(crate) fn encode_export(
     engine: &impl SqlEngine,
     record: &crate::export::ExportRecord,
+    canonical: &str,
 ) -> Result<String, CellError> {
-    let value: Value = serde_json::from_str(&canonical_json(record)?)?;
+    let value: Value = serde_json::from_str(canonical)?;
     let scope = normalized(&record.batch.scope)?;
     let world = normalized(&record.batch.world)?;
     let mut references = Vec::new();

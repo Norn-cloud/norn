@@ -31,6 +31,33 @@ nextest=(cargo nextest --profile ci)
 # tool installs (`cargo install`) build in their own directory under $upstream instead.
 guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+# Fresh builds on reused targets: sources extracted with their commit times
+# (git archive) can be older than artifacts built from another tree, and cargo
+# decides by mtime, so a reused target could keep stale binaries. When the
+# tree differs from the one this target last built, touch every file changed
+# between the two (every tracked file when the old tree is unknown) and every
+# uncommitted change, then stamp the tree. Regeneration refuses a binary older
+# than the stamp (require_fresh).
+tree_stamp="$CARGO_TARGET_DIR/.norn-built-tree"
+refresh_sources() {
+  mkdir -p "$CARGO_TARGET_DIR"
+  local current previous
+  current=$(git rev-parse 'HEAD^{tree}')
+  previous=$(cat "$tree_stamp" 2> /dev/null || true)
+  if [[ -n $previous ]] && git cat-file -e "$previous^{tree}" 2> /dev/null; then
+    [[ $previous == "$current" ]] || git diff --name-only -z "$previous" "$current" | xargs -0 -r touch -c --
+  else
+    git ls-files -z | xargs -0 -r touch -c --
+  fi
+  { git diff --name-only -z HEAD; git ls-files -z --others --exclude-standard; } | xargs -0 -r touch -c --
+  # The stamp changes only with the tree, so an up-to-date binary stays newer.
+  [[ $previous == "$current" ]] || printf '%s\n' "$current" > "$tree_stamp"
+}
+refresh_sources
+# Fails unless binary $1 was built after this tree was stamped.
+require_fresh() {
+  [[ -x $1 && $1 -nt $tree_stamp ]] || { echo "core.sh: $1 is older than this tree; rebuild it" >&2; exit 1; }
+}
 # The pinned nextest, installed like the other tools when absent.
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
@@ -257,7 +284,9 @@ PY
         while read -r build; do $build --no-run; done
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
-      cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
+      cargo build --locked -p norn-cli
+      require_fresh "$CARGO_TARGET_DIR/debug/norn"
+      "$CARGO_TARGET_DIR/debug/norn" openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       python3 -m venv "$upstream/openapi-venv"

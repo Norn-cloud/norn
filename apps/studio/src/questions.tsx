@@ -25,7 +25,7 @@ import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricHeading, metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
+import { metricHeading, metricQuestion, readMetrics, timeLabel, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -48,7 +48,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const sources = metric.unitPartition ?? []
   const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
   return (
-    <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
+    <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</span>}
       action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span> : undefined}>
       <Well className="space-y-4 p-4">
         {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}

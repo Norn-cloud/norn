@@ -17356,6 +17356,20 @@
           "description": {
             "type": "string"
           },
+          "endings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleEnding"
+            },
+            "description": "LIFE-SOUND-1: the declared endings and their outcomes. A run is sound\nwhen it can always reach one. A non-`resting` ending is a terminal\nstate; a `resting` ending is a non-terminal state a perpetual object\nmay stay in (an account, an item). A terminal state with no entry here\nis an unclassified ending. Omitted when empty."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleEvent"
+            },
+            "description": "LIFE-SOUND-6: the external event kinds an object of this lifecycle can\nreceive (connector observations, provider results, counterparty\ncancellations). Every reachable non-terminal state handles each one by\nan event-triggered transition or an explicit `ignoredIn` entry.\nOmitted when empty."
+          },
           "immutable": {
             "type": "array",
             "items": {
@@ -17399,6 +17413,82 @@
         },
         "additionalProperties": false
       },
+      "NornIrLifecycleEnding": {
+        "type": "object",
+        "description": "One declared ending of a lifecycle.",
+        "required": [
+          "state",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "What ending in it means.",
+            "enum": [
+              "completed",
+              "compensated",
+              "cancelled",
+              "breached_visible",
+              "resting"
+            ],
+            "x-enumDescriptions": [
+              "The run did what it was for.",
+              "The run was undone and every dispatched effect was compensated.",
+              "The run was abandoned before any uncompensated effect.",
+              "An obligation was breached and the breach is visible (a remedy owed).",
+              "A non-terminal state a perpetual object may rest in indefinitely."
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "The state; listed once."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLifecycleEvent": {
+        "type": "object",
+        "description": "An external event kind a lifecycle receives (LIFE-SOUND-6).",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The event id, same grammar as a transition id; unique per lifecycle."
+          },
+          "ignoredIn": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleIgnore"
+            },
+            "description": "States in which the event is deliberately ignored, each with a reason.\nOmitted when empty."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLifecycleIgnore": {
+        "type": "object",
+        "description": "States in which an external event is ignored on purpose.",
+        "required": [
+          "states",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why ignoring it there is correct; non-blank."
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The states; non-empty."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLifecycleMap": {
         "type": "object",
         "description": "One lifecycle observation rule of a lifecycle property.\n\nExactly one of `state` and `transition` is required. `state` names the\nobserved target state directly. `transition` is the legacy form: the\ndeclared transition id is resolved to its destination state before the\nsnapshot is handed to the kernel.",
@@ -17425,6 +17515,24 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrLifecycleOutcome": {
+        "type": "string",
+        "description": "How a lifecycle run ended (LIFE-SOUND-1).",
+        "enum": [
+          "completed",
+          "compensated",
+          "cancelled",
+          "breached_visible",
+          "resting"
+        ],
+        "x-enumDescriptions": [
+          "The run did what it was for.",
+          "The run was undone and every dispatched effect was compensated.",
+          "The run was abandoned before any uncompensated effect.",
+          "An obligation was breached and the breach is visible (a remedy owed).",
+          "A non-terminal state a perpetual object may rest in indefinitely."
+        ]
       },
       "NornIrLifecyclePathProperty": {
         "type": "object",
@@ -25683,6 +25791,10 @@
           "to"
         ],
         "properties": {
+          "compensatedBy": {
+            "type": "string",
+            "description": "LIFE-SOUND-8: this transition dispatches an irreversible external\neffect, and the named transition compensates it. A run that dispatched\nit may end `cancelled`, `compensated` or `breached_visible` only after\nthe compensating transition. Omitted when the transition dispatches none."
+          },
           "description": {
             "type": "string"
           },
@@ -25709,9 +25821,25 @@
             "description": "Unique id within the lifecycle (`submit`, `cancel`).",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
+          "mode": {
+            "type": "string",
+            "description": "LIFE-SOUND-5: fact or request. Omitted: a request, unless a trigger\nmakes it a fact.",
+            "enum": [
+              "request",
+              "fact"
+            ],
+            "x-enumDescriptions": [
+              "A request: laws and guards may refuse it. The default.",
+              "A fact (an observation, an offline sale, a count, a provider result):\nnever refused. It commits, commits with a variance or shortfall, or is\nquarantined. A fact transition carries no guard."
+            ]
+          },
           "to": {
             "type": "string",
             "description": "The target state."
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/NornIrTransitionTrigger",
+            "description": "LIFE-SOUND-3: a timer or external event that fires this transition.\nOmitted: an action fires it."
           }
         },
         "additionalProperties": false
@@ -25720,6 +25848,18 @@
         "type": "string",
         "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrTransitionMode": {
+        "type": "string",
+        "description": "Whether a transition records a fact or asks for a change (LIFE-SOUND-5).",
+        "enum": [
+          "request",
+          "fact"
+        ],
+        "x-enumDescriptions": [
+          "A request: laws and guards may refuse it. The default.",
+          "A fact (an observation, an offline sale, a count, a provider result):\nnever refused. It commits, commits with a variance or shortfall, or is\nquarantined. A fact transition carries no guard."
+        ]
       },
       "NornIrTransitionRow": {
         "type": "object",
@@ -25749,6 +25889,59 @@
           },
           "to": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrTransitionTrigger": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrTransitionTriggerOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrTransitionTriggerOneOf1"
+          }
+        ],
+        "description": "What fires a transition (LIFE-SOUND-3). Omitted: an action fires it."
+      },
+      "NornIrTransitionTriggerOneOf0": {
+        "type": "object",
+        "description": "The cell clock: the transition fires once the object has been in a\nsource state for `millis`. A deadline; always a fact.",
+        "required": [
+          "kind",
+          "millis"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "timer"
+            ]
+          },
+          "millis": {
+            "type": "string",
+            "description": "Positive canonical unsigned milliseconds, bounded by u64."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrTransitionTriggerOneOf1": {
+        "type": "object",
+        "description": "A declared external event of the lifecycle. Always a fact.",
+        "required": [
+          "kind",
+          "event"
+        ],
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "The [`LifecycleEvent`] id."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "event"
+            ]
           }
         },
         "additionalProperties": false
@@ -30338,6 +30531,7 @@
           "objectType",
           "expression",
           "timeProperty",
+          "timeLinks",
           "numerator",
           "denominator",
           "unitPartition",
@@ -30387,12 +30581,19 @@
             ],
             "description": "The concept it aggregates, for a simple metric."
           },
+          "timeLinks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The to-one links from the measured object to the object holding\n[`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its\nevent's); empty when the time is the object's own."
+          },
           "timeProperty": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The time property its buckets use, for a simple metric."
+            "description": "The time property its buckets use, for a simple metric: a property of\nthe measured object, or of the object [`Self::time_links`] reach."
           },
           "unitPartition": {
             "type": "array",
@@ -31574,12 +31775,21 @@
           "additivity",
           "identity",
           "origins",
-          "markings"
+          "markings",
+          "currencyFrom",
+          "unitFrom"
         ],
         "properties": {
           "additivity": {
             "type": "string",
             "description": "The aggregation contract: `undeclared`, `additive`, `semi_additive`,\n`non_additive` or `ratio`."
+          },
+          "currencyFrom": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The column of the same row holding this quantity's currency\n(VIEW-AGG-1): null when it has none or the row does not carry it."
           },
           "identity": {
             "type": [
@@ -31613,6 +31823,13 @@
           "type": {
             "type": "string",
             "description": "The value type, as the checker names it (`decimal`, `text`, …)."
+          },
+          "unitFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The columns of the same row whose values together are this\nquantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;\nempty when it has none or the row does not carry them."
           }
         }
       },

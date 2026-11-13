@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.unhandled_event",
+  "message": "a reachable lifecycle state neither handles nor ignores a declared event: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

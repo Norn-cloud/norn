@@ -246,8 +246,11 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &export.entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let hash = export.hash()?;
-    let serialized = crate::payload_storage::encode_export(engine, &export)?;
+    // The record's hash and its packed encoding both start from its canonical
+    // text; canonicalize it once.
+    let canonical = crate::codec::canonical_json(&export)?;
+    let hash = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(canonical.as_bytes());
+    let serialized = crate::payload_storage::encode_export(engine, &export, &canonical)?;
     engine.execute(
         r#"INSERT INTO "_norn_export_journal" ("commit_seq", "hash", "record") VALUES (?1, ?2, ?3)"#,
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],
