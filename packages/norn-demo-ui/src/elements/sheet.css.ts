@@ -34,7 +34,14 @@ export const SHEET_CSS = `
   color: inherit; background: var(--background, #fff); border: 1px solid var(--input, var(--border, #d4d4d8)); }
 .norn-field textarea:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 1px; }
 .norn-status, .norn-confirm, .norn-outcome { border-radius: .5rem; padding: .5rem .75rem; font-size: .875rem; }
-.norn-status[data-tone="danger"], .norn-confirm { border: 1px solid color-mix(in oklab, var(--destructive, #dc2626) 30%, transparent);
+.norn-confirm[data-tone="neutral"] { border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: color-mix(in oklab, var(--muted, #f4f4f5) 60%, transparent); color: inherit; }
+.norn-confirm[data-tone="neutral"] .norn-confirm-title { color: var(--foreground, #111); }
+.norn-option[data-refused] { opacity: .75; cursor: not-allowed; border-style: dashed; }
+.norn-option[data-refused] .norn-option-label { text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--foreground, #111) 40%, transparent); }
+.norn-hash { display: flex; align-items: center; gap: .5rem; }
+.norn-hash .norn-button { height: 1.75rem; padding: 0 .5rem; font-size: .8125rem; }
+.norn-value { white-space: normal; }
+.norn-status[data-tone="danger"], .norn-confirm:not([data-tone="neutral"]) { border: 1px solid color-mix(in oklab, var(--destructive, #dc2626) 30%, transparent);
   background: color-mix(in oklab, var(--destructive, #dc2626) 6%, transparent); color: var(--destructive, #b91c1c); }
 .norn-status[data-tone="info"] { color: var(--muted-foreground, #666); }
 .norn-confirm p { margin: 0; }
@@ -60,6 +67,7 @@ ui-alert-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .3
 .norn-form { display: grid; gap: 1.25rem; }
 .norn-link { font-size: .875rem; color: inherit; text-underline-offset: 4px; }
 .norn-link:hover, .norn-outcome-card .norn-link { text-decoration: underline; }
+.norn-note { font-size: .8125rem; color: var(--muted-foreground, #555); border-inline-start: 2px solid var(--node-border, var(--border, #d4d4d8)); padding-inline-start: .5rem; }
 .norn-problem { margin: 0; font-size: .8125rem; color: var(--destructive, #b91c1c); }
 .norn-field textarea[aria-invalid="true"] { border-color: var(--destructive, #dc2626); }
 [data-region="countdown"][data-urgent] { color: var(--destructive, #b91c1c); font-weight: 500; }

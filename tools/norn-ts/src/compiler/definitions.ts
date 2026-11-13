@@ -25,6 +25,7 @@ import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as T from "../builder/transform.ts"
+import type { DeonticRule } from "../builder/deontic.ts"
 import * as LB from "../builder/labels.ts"
 import * as MD from "../builder/model.ts"
 import * as R from "../builder/rule.ts"
@@ -120,6 +121,11 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const TRANSFORM = "@norn/authoring#Norn.transform"
+const OBLIGATION = "@norn/authoring#Norn.obligation"
+const PROHIBITION = "@norn/authoring#Norn.prohibition"
+const PERMISSION = "@norn/authoring#Norn.permission"
+/** Norms lower into their subject type's entity artifact, so they produce no artifact of their own. */
+const NORMS: ReadonlySet<string> = new Set([OBLIGATION, PROHIBITION, PERMISSION])
 const LABELS = "@norn/authoring#Norn.labels"
 const MODEL = "@norn/authoring#Norn.model"
 const FLOW = "@norn/authoring#Norn.flow"
@@ -132,6 +138,7 @@ const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
 const ACTIONS: ReadonlySet<string> = new Set([ACTION])
 const DECISIONS: ReadonlySet<string> = new Set([DECISION])
 const TRUST_LEVELS: ReadonlySet<string> = new Set(["native", "proven", "contract_checked", "opaque"])
+const NORM_MEMBERS = ["on", "when", "must", "never", "may", "cite", "yieldsTo", "unless", "because"] as const
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
 const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.boundDecimal", "@norn/authoring#Norn.rate", "@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
@@ -358,6 +365,12 @@ class DefinitionCompiler {
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
         if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
         if (init && id === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards use the dashboard compiler; the cell admits them as definitions, not artifacts", init)
+        if (init && ts.isCallExpression(init) && id !== undefined && NORMS.has(id)) {
+          const on = init.arguments[1] && this.closedRecord(init.arguments[1], NORM_MEMBERS, ["on"]).get("on")
+          const subject = on && this.referenced(on, OBJECT_TYPES, "a Norn.type definition").call
+          if (subject && subject.getSourceFile() !== source) throw new CompileError("NORN-FLOW-MODULE", "declare a norm in the module that declares its subject type: it lowers into that type's artifact", init)
+          continue
+        }
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
@@ -776,7 +789,94 @@ class DefinitionCompiler {
       links: linksNode ? this.list(linksNode).map((x) => this.link(x)) : [],
       identity: identityNode ? this.list(identityNode).map((x) => this.key(x)) : [],
       lifecycles: lifecyclesNode ? this.list(lifecyclesNode).map((x) => this.lifecycle(x)) : [],
+      ...(() => { const norms = this.norms(call, members); return norms.length ? { norms } : {} })(),
       at: this.at(call),
+    })
+  }
+
+  /**
+   * `Norn.obligation | prohibition | permission(name, { on, when?, must | never | may, cite,
+   * yieldsTo?, unless?, because })` declared in this type's module with `on` this type (#1176
+   * unit B). Each lowers to one `DeonticRule` in the type's `norn.normative/1.0.0` slot, in
+   * declaration order: the law is inferred as for `Norn.law`, `cite` names the authority and
+   * version, `yieldsTo` lowers to `defeatedBy`, and the rule's source is its own slot. A
+   * permission is a defeater: it never asserts anything; a prohibition yields to it.
+   */
+  private norms(typeCall: ts.CallExpression, typeMembers: Members): DeonticRule[] {
+    const found: Array<{ readonly call: ts.CallExpression; readonly name: string }> = []
+    for (const statement of typeCall.getSourceFile().statements) {
+      if (!ts.isVariableStatement(statement)) continue
+      for (const d of statement.declarationList.declarations) {
+        const init = d.initializer && this.unwrap(d.initializer)
+        if (!init || !ts.isCallExpression(init) || !NORMS.has(this.id(init) ?? "")) continue
+        const spec = init.arguments[1] && this.closedRecord(init.arguments[1], NORM_MEMBERS, ["on", "cite", "because"])
+        if (!spec || this.referenced(spec.get("on")!, OBJECT_TYPES, "a Norn.type definition").call !== typeCall) continue
+        if (init.arguments.length !== 2) throw new CompileError("NORN-FLOW-LITERAL", "a norm takes its name and one spec object", init)
+        found.push({ call: init, name: this.string(init.arguments[0]!) })
+      }
+    }
+    if (found.length === 0) return []
+    const subject = this.string(this.member(typeMembers, "name", typeCall))
+    const owner = subject.slice(0, subject.lastIndexOf("."))
+    if (owner.length === 0) throw new CompileError("NORN-FLOW-LITERAL", `norm subject ${JSON.stringify(subject)} is not a qualified type name (namespace.Type), so the norm has no owner`, typeCall)
+    const self = this.subjectSchema(typeCall, typeMembers, true, new Set())
+    const artifactId = `${subject}.entity`
+    const idOf = (call: ts.CallExpression): string => {
+      const entry = found.find((f) => f.call === call)
+      if (!entry) throw new CompileError("NORN-FLOW-VALUE", "yieldsTo names a norm over the same type declared in this module", call)
+      return `${subject}.${entry.name}`
+    }
+    const names = new Set<string>()
+    return found.map(({ call, name }, index) => {
+      if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new CompileError("NORN-FLOW-LITERAL", `norm name ${JSON.stringify(name)} must be snake_case`, call.arguments[0]!)
+      if (names.has(name)) throw new CompileError("NORN-FLOW-LITERAL", `norm name ${JSON.stringify(name)} is declared twice on ${subject}`, call.arguments[0]!)
+      names.add(name)
+      const kind = this.id(call)
+      const spec = this.closedRecord(call.arguments[1]!, NORM_MEMBERS, ["on", "cite", "because"])
+      const slot = `/payload/extensions/norn.normative~11.0.0/${index}`
+      const [modality, member, lawModality] = kind === OBLIGATION ? ["obligation", "must", "always"] as const
+        : kind === PROHIBITION ? ["prohibition", "never", "never"] as const
+        : ["permission", "may", "always"] as const
+      for (const other of ["must", "never", "may"]) {
+        if (other !== member && spec.has(other)) throw new CompileError("NORN-FLOW-LITERAL", `an ${modality} takes ${member}, not ${other}`, spec.get(other)!)
+      }
+      const body = spec.get(member)
+      if (!body) throw new CompileError("NORN-FLOW-LITERAL", `an ${modality} needs ${member}`, call.arguments[1]!)
+      const predicate = (node: ts.Expression, pointer: string): string => {
+        this.sourceMap.push({ artifactId, pointer, at: this.at(node) })
+        return this.lambda(node, self)
+      }
+      const cite = this.closedRecord(spec.get("cite")!, ["authority", "version"], ["authority", "version"])
+      const id = `${subject}.${name}`
+      const when = spec.get("when"), unless = spec.get("unless"), yieldsTo = spec.get("yieldsTo")
+      const exceptions = unless ? this.exceptions(unless, id, artifactId, predicate).map((e, i) => ({ ...e, source: { artifactId, pointer: `${slot}/law/exceptions/${i}` } })) : []
+      const defeatedBy = yieldsTo ? this.list(yieldsTo).map((ref) => {
+        const target = this.deref(ref)
+        if (!ts.isCallExpression(target)) throw new CompileError("NORN-FLOW-VALUE", "yieldsTo lists norm references", ref)
+        return idOf(target)
+      }) : []
+      const law: L.LawIR = {
+        lawVersion: "0.1",
+        id,
+        owner,
+        severity: "error",
+        rationale: this.string(spec.get("because")!),
+        provenance: { source: "authoring_sdk" },
+        scope: { root: { kind: "entity", id: subject }, objectTypes: [subject] },
+        subject,
+        ...(when ? { condition: predicate(when, `${slot}/law/condition`) } : {}),
+        modality: { kind: lawModality },
+        response: { kind: "predicate", expression: predicate(body, `${slot}/law/response/expression`) },
+        ...(exceptions.length ? { exceptions } : {}),
+      }
+      return {
+        law,
+        modality,
+        authorityId: this.string(cite.get("authority")!),
+        authorityVersion: this.string(cite.get("version")!),
+        source: { artifactId, pointer: slot },
+        ...(defeatedBy.length ? { defeatedBy } : {}),
+      }
     })
   }
 
@@ -1327,7 +1427,6 @@ class DefinitionCompiler {
     const self = this.subjectSchema(subjectCall, subjectMembers, true, new Set())
     const id = spec.has("id") ? this.string(spec.get("id")!) : `${subject}.${name}`
     const artifactId = `${id}.law`
-    if (spec.has("unless")) throw new CompileError("NORN-FLOW-LITERAL", "`unless` exceptions are engine gap §8.1 (defeasible laws) and do not lower yet", spec.get("unless")!)
     const modalities = (["must", "never", "eventually"] as const).filter((k) => spec.has(k))
     if (modalities.length !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a law takes exactly one of must, never or eventually", call.arguments[1]!)
     const modality = modalities[0]!
@@ -1341,6 +1440,8 @@ class DefinitionCompiler {
     const within = spec.get("within")
     const timing = within ? this.lawTiming(within, self) : undefined
     const when = spec.get("when")
+    const unless = spec.get("unless")
+    const exceptions = unless ? this.exceptions(unless, id, artifactId, predicate) : []
     return L.law({
       id: artifactId,
       title: this.string(spec.get("because")!),
@@ -1359,9 +1460,39 @@ class DefinitionCompiler {
         modality: { kind: modality === "must" ? "always" : modality },
         ...(timing ? { timing } : {}),
         response: { kind: "predicate", expression: predicate(spec.get(modality)!, "/payload/response/expression") },
+        ...(exceptions.length ? { exceptions } : {}),
       },
       dependencies: [{ artifactId: `${subject}.${this.id(subjectCall) === INTERFACE ? "interface" : "entity"}`, kind: "entity", version, required: true }],
     })
+  }
+
+  /**
+   * `unless: { label: { when, because, unless? } }` (#1126 R4, Catala-style labels): each label
+   * is an exception id overriding the law, or its parent label when nested, so a nested exception
+   * re-applies what its parent lifted. Labels are unique across the tree; the source of each is its
+   * own slot in the law artifact. The checker admits the tree (`law.exception.*`).
+   */
+  private exceptions(input: ts.Expression, lawId: string, artifactId: string, predicate: (node: ts.Expression, pointer: string) => string): L.LawException[] {
+    const out: L.LawException[] = []
+    const walk = (node: ts.Expression, overrides: string): void => {
+      for (const [label, entry] of this.record(node)) {
+        if (!/^[a-z][a-z0-9_]*$/.test(label)) throw new CompileError("NORN-FLOW-LITERAL", `exception label ${JSON.stringify(label)} must be snake_case`, entry)
+        if (label === lawId || out.some((e) => e.id === label)) throw new CompileError("NORN-FLOW-LITERAL", `exception label ${JSON.stringify(label)} is used twice in this law's tree`, entry)
+        const m = this.closedRecord(entry, ["when", "because", "unless"], ["when", "because"])
+        const pointer = `/payload/exceptions/${out.length}`
+        out.push({
+          id: label,
+          overrides,
+          condition: predicate(m.get("when")!, `${pointer}/condition`),
+          rationale: this.string(m.get("because")!),
+          source: { artifactId, pointer },
+        })
+        const nested = m.get("unless")
+        if (nested) walk(nested, label)
+      }
+    }
+    walk(input, lawId)
+    return out
   }
 
   private lawTiming(input: ts.Expression, self: SubjectSchema): L.LawTiming {
@@ -1713,8 +1844,10 @@ class DefinitionCompiler {
   }
 
   private lifecycle(input: ts.Expression): E.LifecycleDecl {
-    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "immutable", "transitions"], ["property", "initial", "transitions"])
+    if (this.record(input).has("states")) return this.machine(input)
+    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "immutable", "transitions", "endings", "events"], ["property", "initial", "transitions"])
     const description = m.get("description"), terminal = m.get("terminal"), immutable = m.get("immutable")
+    const endings = m.get("endings"), events = m.get("events")
     return {
       property: this.string(m.get("property")!),
       ...(description ? { description: this.string(description) } : {}),
@@ -1722,12 +1855,144 @@ class DefinitionCompiler {
       ...(terminal ? { terminal: this.strings(terminal) } : {}),
       ...(immutable ? { immutable: this.strings(immutable) } : {}),
       transitions: this.list(m.get("transitions")!).map((t) => this.transition(t)),
+      ...(endings ? { endings: [...this.record(endings)].map(([state, outcome]) => ({ state, outcome: this.outcome(outcome) })) } : {}),
+      ...(events ? { events: [...this.record(events)].map(([id, spec]) => this.lifecycleEvent(id, spec)) } : {}),
     }
   }
 
+  /**
+   * A lifecycle in machine shape (dx-spec §4.4) lowers to the flat declaration: one transition
+   * per event, from every state whose move is the same; `after` becomes a timer transition and an
+   * event the machine declares becomes an event-triggered one. One event with different moves
+   * from different states is NORN-MACHINE-EVENT-CONFLICT: a transition has one target and one
+   * guard set, so the author names two events.
+   */
+  private machine(input: ts.Expression): E.LifecycleDecl {
+    const m = this.closedRecord(input, ["property", "description", "initial", "states", "events"], ["property", "initial", "states"])
+    const description = m.get("description"), eventsNode = m.get("events")
+    const initialNode = m.get("initial")!
+    const initial = ts.isArrayLiteralExpression(this.deref(initialNode)) ? this.strings(initialNode) : [this.string(initialNode)]
+    const declared = new Map<string, string | undefined>()
+    if (eventsNode) {
+      for (const [id, spec] of this.record(eventsNode)) {
+        const e = this.closedRecord(spec, ["ignore"], [])
+        declared.set(id, e.has("ignore") ? this.string(e.get("ignore")!) : undefined)
+      }
+    }
+    const terminal: string[] = [], immutable: string[] = [], endings: E.LifecycleEnding[] = []
+    const states: string[] = []
+    type Move = { readonly decl: Omit<E.TransitionDecl, "from">; readonly from: string[]; readonly key: string; readonly node: ts.Node }
+    const moves = new Map<string, Move>()
+    const add = (id: string, state: string, decl: Omit<E.TransitionDecl, "id" | "from">, node: ts.Node): void => {
+      const key = JSON.stringify(decl)
+      const known = moves.get(id)
+      if (!known) { moves.set(id, { decl: { id, ...decl }, from: [state], key, node }); return }
+      if (known.key !== key) throw new CompileError("NORN-MACHINE-EVENT-CONFLICT", `event ${JSON.stringify(id)} moves differently from ${JSON.stringify(known.from[0])} and ${JSON.stringify(state)}; a transition has one target and one guard set, so name two events`, node)
+      known.from.push(state)
+    }
+    for (const [state, nodeInput] of this.record(m.get("states")!)) {
+      states.push(state)
+      const node = this.closedRecord(nodeInput, ["description", "on", "after", "final", "resting", "immutable"], [])
+      const final = node.get("final"), on = node.get("on"), after = node.get("after")
+      if (node.has("immutable")) immutable.push(state)
+      if (final) {
+        if (on || after || node.has("resting")) throw new CompileError("NORN-FLOW-LITERAL", `final state ${JSON.stringify(state)} takes no moves and is not resting`, nodeInput)
+        const outcome = this.outcome(final)
+        if (outcome === "resting") throw new CompileError("NORN-FLOW-LITERAL", "a final state's outcome is completed, compensated, cancelled or breached_visible; use resting: true for a perpetual state", final)
+        terminal.push(state)
+        endings.push({ state, outcome })
+        continue
+      }
+      if (node.has("resting")) endings.push({ state, outcome: "resting" })
+      for (const [event, moveInput] of on ? this.record(on) : []) {
+        const move = this.deref(moveInput)
+        const fields = ts.isObjectLiteralExpression(move)
+          ? this.closedRecord(move, ["to", "guards", "guardRefusalCode", "mode", "compensatedBy", "description"], ["to"])
+          : new Map([["to", moveInput]])
+        const guards = fields.get("guards"), mode = fields.get("mode"), compensatedBy = fields.get("compensatedBy")
+        const modeValue = mode ? this.string(mode) : undefined
+        if (modeValue !== undefined && modeValue !== "fact" && modeValue !== "request") throw new CompileError("NORN-FLOW-LITERAL", "mode is \"fact\" or \"request\"", mode!)
+        add(event, state, {
+          ...(fields.has("description") ? { description: this.string(fields.get("description")!) } : {}),
+          to: this.string(fields.get("to")!),
+          ...(guards ? { guards: this.list(guards).map((e) => this.zen(e, "self")) } : {}),
+          ...(fields.has("guardRefusalCode") ? { guardRefusalCode: this.string(fields.get("guardRefusalCode")!) } : {}),
+          ...(declared.has(event) ? { trigger: { kind: "event" as const, event } } : {}),
+          ...(modeValue ? { mode: modeValue as "fact" | "request" } : {}),
+          ...(compensatedBy ? { compensatedBy: this.string(compensatedBy) } : {}),
+        }, moveInput)
+      }
+      if (after) {
+        const a = this.closedRecord(after, ["days", "hours", "minutes", "to", "id"], ["to"])
+        const parts = new Map([...a].filter(([k]) => k === "days" || k === "hours" || k === "minutes"))
+        const id = a.has("id") ? this.string(a.get("id")!) : `${state}_timeout`
+        add(id, state, { to: this.string(a.get("to")!), trigger: { kind: "timer" as const, millis: this.millisOf(parts, after) } }, after)
+      }
+    }
+    const events: E.LifecycleEvent[] = [...declared].map(([id, reason]) => {
+      if (reason === undefined) return { id }
+      const handled = new Set(moves.get(id)?.from ?? [])
+      const ignored = states.filter((state) => !terminal.includes(state) && !handled.has(state))
+      return ignored.length ? { id, ignoredIn: [{ states: ignored, reason }] } : { id }
+    })
+    return {
+      property: this.string(m.get("property")!),
+      ...(description ? { description: this.string(description) } : {}),
+      initial,
+      ...(terminal.length ? { terminal } : {}),
+      ...(immutable.length ? { immutable } : {}),
+      transitions: [...moves.values()].map(({ decl, from }) => ({ ...decl, from } as E.TransitionDecl)),
+      ...(endings.length ? { endings } : {}),
+      ...(events.length ? { events } : {}),
+    }
+  }
+
+  private outcome(input: ts.Expression): E.LifecycleOutcome {
+    const outcome = this.string(input)
+    if (outcome !== "completed" && outcome !== "compensated" && outcome !== "cancelled" && outcome !== "breached_visible" && outcome !== "resting") {
+      throw new CompileError("NORN-FLOW-LITERAL", "an ending outcome is completed, compensated, cancelled, breached_visible or resting", input)
+    }
+    return outcome
+  }
+
+  private lifecycleEvent(id: string, input: ts.Expression): E.LifecycleEvent {
+    const m = this.closedRecord(input, ["ignoredIn"], [])
+    const ignored = m.get("ignoredIn")
+    return {
+      id,
+      ...(ignored ? { ignoredIn: this.list(ignored).map((x) => {
+        const entry = this.closedRecord(x, ["states", "because"], ["states", "because"])
+        return { states: this.strings(entry.get("states")!), reason: this.string(entry.get("because")!) }
+      }) } : {}),
+    }
+  }
+
+  /** Exact milliseconds from a whole-unit duration literal (`{ days, hours, minutes }`). */
+  private durationMillis(input: ts.Expression): string {
+    return this.millisOf(this.closedRecord(input, ["days", "hours", "minutes"], []), input)
+  }
+
+  private millisOf(m: ReadonlyMap<string, ts.Expression>, input: ts.Expression): string {
+    const part = (key: string, unit: bigint): bigint => {
+      const node = m.get(key)
+      if (!node) return 0n
+      const value = this.deref(node)
+      if (!ts.isNumericLiteral(value) || !/^[0-9]+$/.test(value.text)) throw new CompileError("NORN-FLOW-LITERAL", `${key} is a whole number literal`, node)
+      return BigInt(value.text) * unit
+    }
+    const millis = part("days", 86_400_000n) + part("hours", 3_600_000n) + part("minutes", 60_000n)
+    if (millis === 0n) throw new CompileError("NORN-FLOW-LITERAL", "a duration needs a positive days, hours or minutes", input)
+    if (millis > 18_446_744_073_709_551_615n) throw new CompileError("NORN-FLOW-LITERAL", "the duration is longer than u64 milliseconds", input)
+    return millis.toString()
+  }
+
   private transition(input: ts.Expression): E.TransitionDecl {
-    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards", "guardRefusalCode"], ["id", "from", "to"])
+    const m = this.closedRecord(input, ["id", "description", "from", "to", "guards", "guardRefusalCode", "after", "on", "mode", "compensatedBy"], ["id", "from", "to"])
     const description = m.get("description"), guards = m.get("guards")
+    const after = m.get("after"), on = m.get("on"), mode = m.get("mode"), compensatedBy = m.get("compensatedBy")
+    if (after && on) throw new CompileError("NORN-FLOW-LITERAL", "a transition fires on a timer (after) or an event (on), not both", input)
+    const modeValue = mode ? this.string(mode) : undefined
+    if (modeValue !== undefined && modeValue !== "fact" && modeValue !== "request") throw new CompileError("NORN-FLOW-LITERAL", "mode is \"fact\" or \"request\"", mode!)
     return {
       id: this.string(m.get("id")!),
       ...(m.has("guardRefusalCode") ? { guardRefusalCode: this.string(m.get("guardRefusalCode")!) } : {}),
@@ -1735,6 +2000,10 @@ class DefinitionCompiler {
       from: this.strings(m.get("from")!),
       to: this.string(m.get("to")!),
       ...(guards ? { guards: this.list(guards).map((e) => this.zen(e, "self")) } : {}),
+      ...(after ? { trigger: { kind: "timer" as const, millis: this.durationMillis(after) } } : {}),
+      ...(on ? { trigger: { kind: "event" as const, event: this.string(on) } } : {}),
+      ...(modeValue ? { mode: modeValue as "fact" | "request" } : {}),
+      ...(compensatedBy ? { compensatedBy: this.string(compensatedBy) } : {}),
     }
   }
 

@@ -32008,12 +32008,21 @@
           "additivity",
           "identity",
           "origins",
-          "markings"
+          "markings",
+          "currencyFrom",
+          "unitFrom"
         ],
         "properties": {
           "additivity": {
             "type": "string",
             "description": "The aggregation contract: `undeclared`, `additive`, `semi_additive`,\n`non_additive` or `ratio`."
+          },
+          "currencyFrom": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The column of the same row holding this quantity's currency\n(VIEW-AGG-1): null when it has none or the row does not carry it."
           },
           "identity": {
             "type": [
@@ -32047,6 +32056,13 @@
           "type": {
             "type": "string",
             "description": "The value type, as the checker names it (`decimal`, `text`, …)."
+          },
+          "unitFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The columns of the same row whose values together are this\nquantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;\nempty when it has none or the row does not carry them."
           }
         }
       },

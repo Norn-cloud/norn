@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { CellResult } from "../lib/cell-read.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { useLiveRefresh } from "../lib/live-reads.ts"
 import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, remaining, stepTitle, type Decision, type DecisionsPage } from "../lib/decisions.ts"
 import { Countdown, DecisionSheet, RiskChip } from "./decision-sheet.tsx"
 
@@ -28,7 +29,9 @@ function useCellClock(serverNowMs: number | undefined, receivedAt: number | unde
 
 /** The shell's badge: how many decisions wait on this actor, as the cell counts them ("500+" when capped). */
 export function useDecisionBadge(): string | undefined {
-  const count = useQuery({ queryKey: ["decisions", "count"], queryFn: () => countDecisions(), refetchInterval: 60_000, retry: false })
+  const count = useQuery({ queryKey: ["decisions", "count"], queryFn: () => countDecisions(), retry: false })
+  // The cell says when the count changes (UI-LIVE-1); nothing polls.
+  useLiveRefresh("/v1/decisions?state=pending&limit=0", ["decisions", "count"])
   return count.data?.kind === "ok" && count.data.value.total > 0 ? badgeText(count.data.value) : undefined
 }
 
@@ -40,9 +43,10 @@ export function DecisionsPage() {
   const read = useQuery<Read<DecisionsPage>>({
     queryKey: listKey,
     queryFn: async () => ({ result: await listDecisions(), receivedAt: Date.now() }),
-    refetchInterval: 30_000,
     retry: false,
   })
+  // A decision arriving, decided elsewhere or withdrawn reaches the list when the cell commits it.
+  useLiveRefresh("/v1/decisions?state=pending", listKey)
   const page = read.data?.result.kind === "ok" ? read.data.result.value : undefined
   const now = useCellClock(page?.serverNowMs, read.data?.receivedAt)
   // A decision whose deadline passes leaves the list at once; the cell's next read confirms it.
