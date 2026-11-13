@@ -30,18 +30,23 @@ function scaleOf(artifacts: readonly Artifact[], objectType: string, property: s
 }
 
 /**
- * The governed correction that cited this evidence, newest first, from the history of the value's
- * subject: what it set the value to, who (the verified actor), why, and in which commit.
+ * The governed change to the value this evidence was read for: the newest version of the value's
+ * subject that an action wrote and that changed that property. It shows what the value became, who
+ * changed it (the verified actor), why, and in which commit, whichever action did it (a line's
+ * correction restates its document's total too).
  */
 function Correction({ evidence, subject }: { readonly evidence: Evidence; readonly subject: EvidenceRef }) {
   const history = useQuery({ queryKey: ["history", subject.objectType, subject.id], queryFn: () => readHistory(subject.objectType, subject.id), retry: false })
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const versions = history.data?.document.versions ?? []
-  const correction = versions.find((version) => version.writer.kind === "action" && version.writer.input.correction_evidence === evidence.ref.id)
+  const versions = [...history.data?.document.versions ?? []].sort((a, b) => b.version - a.version)
+  const property = evidence.subjectProperty
+  const index = versions.findIndex((version, at) => version.writer.kind === "action" && version.values !== null
+    && JSON.stringify(version.values[property]) !== JSON.stringify(versions[at + 1]?.values?.[property]))
+  const correction = versions[index]
   if (correction === undefined || correction.writer.kind !== "action") return null
-  const value = correction.writer.input[evidence.subjectProperty]
+  const value = correction.values?.[property]
   if (value === undefined || value === null) return null
-  const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, evidence.subjectProperty)
+  const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, property)
   const reason = correction.writer.input.correction_reason
   return (
     <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-foreground">
