@@ -50,5 +50,7 @@ pub mod transform_routes;
 
 /// The trusted transport's identity seam: verified host tokens to Norn principals.
 pub mod principal;
+/// HOST-PROVISION-1: the host-neutral tenant provisioning contract.
+pub mod provision;
 /// Scoped PDP authority for complete refusal diagnostics.
 pub mod refusal_disclosure;
