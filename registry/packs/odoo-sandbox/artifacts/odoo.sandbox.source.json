@@ -44,6 +44,17 @@
             "value": "moving_average"
           }
         ]
+      },
+      {
+        "dataset": "stock.quant",
+        "field": "cost_currency",
+        "id": "holding_cost_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
       }
     ],
     "constraints": [
