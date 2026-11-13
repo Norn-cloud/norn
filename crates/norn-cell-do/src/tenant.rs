@@ -477,7 +477,7 @@ impl<E: SqlEngine> Tenant<E> {
                     (None, Some(derived)) => derived
                         .questions(&serving.host)
                         .ok()
-                        .filter(|runtime| !runtime.definitions().is_empty()),
+                        .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
                     _ => None,
                 };
                 let questions = serving
