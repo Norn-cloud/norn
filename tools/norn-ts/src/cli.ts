@@ -113,7 +113,11 @@ if (command === "compile") {
     process.exit(2)
   }
   const { report } = admit(checker, pack)
-  const diagnostics = [...pack.warnings, ...sourceMappedDiagnostics(report.diagnostics.diagnostics, pack.sourceMap)]
-  process.stdout.write(`${JSON.stringify({ ...report, diagnostics })}\n`)
-  process.exit(report.admitted ? 0 : 1)
+  // LAW-EXAMPLE-1: every authored example runs with the checker's law semantics.
+  const { runExamples } = await import("./examples.ts")
+  const failedExamples = report.admitted ? runExamples(checker, pack.artifacts, pack.examples) : []
+  const diagnostics = [...pack.warnings, ...sourceMappedDiagnostics(report.diagnostics.diagnostics, pack.sourceMap), ...failedExamples]
+  const admitted = report.admitted && failedExamples.length === 0
+  process.stdout.write(`${JSON.stringify({ ...report, admitted, diagnostics })}\n`)
+  process.exit(admitted ? 0 : 1)
 }

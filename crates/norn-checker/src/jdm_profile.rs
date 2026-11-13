@@ -94,8 +94,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::jdm::{
-    JdmDecisionTableContent, JdmEdge, JdmExpressionContent, JdmGraph, JdmNode, JdmNodeType,
-    JdmSwitchContent,
+    JdmDecisionTableContent, JdmEdge, JdmExpressionContent, JdmGraph, JdmHitPolicy, JdmNode,
+    JdmNodeType, JdmSwitchContent,
 };
 use norn_ir::{
     ArtifactDependency, ArtifactEnvelope, ArtifactKind, DECIDE_INPUT_MEMBERS,
@@ -118,8 +118,14 @@ pub mod codes {
     pub const JDM_CUSTOM_NODE_REJECTED: &str = "rule.validation.jdm_custom_node_rejected";
     /// A node `type` that is not a JDM node type.
     pub const JDM_UNKNOWN_NODE_TYPE: &str = "rule.validation.jdm_unknown_node_type";
-    /// A decision-table or switch hit policy other than `first`/`collect`.
+    /// A decision-table hit policy other than `first`/`collect`/`unique`, or a
+    /// switch hit policy other than `first`/`collect`.
     pub const JDM_HIT_POLICY_REJECTED: &str = "rule.validation.jdm_hit_policy_rejected";
+    /// TABLE-UNIQUE-1: two rows of a `unique` table match one input (with the witness).
+    pub const JDM_UNIQUE_OVERLAP: &str = "rule.validation.jdm_unique_overlap";
+    /// TABLE-UNIQUE-1: the checker cannot prove a `unique` table's rows disjoint; Unknown is
+    /// refused, never admitted.
+    pub const JDM_UNIQUE_UNPROVED: &str = "rule.validation.jdm_unique_unproved";
     /// Two nodes, edges, statements, columns, rows, or expressions share an id.
     pub const JDM_DUPLICATE_ID: &str = "rule.validation.jdm_duplicate_id";
     /// Not exactly one input node and one output node.
@@ -315,18 +321,120 @@ fn screen_nodes(raw_nodes: &[JsonValue], sink: &mut Sink<'_>) -> BTreeSet<usize>
             .and_then(|content| content.get("hitPolicy"))
             .and_then(JsonValue::as_string)
             && !matches!(policy, "first" | "collect")
+            && !(policy == "unique" && node_type == JdmNodeType::DecisionTableNode)
         {
             excluded.insert(index);
             sink.push(
                 codes::JDM_HIT_POLICY_REJECTED,
                 format!(
-                    "hit policy '{policy}' is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)"
+                    "hit policy '{policy}' is not admitted by the Norn profile: decision tables admit first, collect and unique, switches first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)"
                 ),
                 format!("{}.content.hitPolicy", node_path(index)),
             );
         }
     }
     excluded
+}
+
+/// TABLE-UNIQUE-1: every `unique` decision table is proved disjoint over its input, or refused.
+///
+/// The proof is the exhaustive finite analysis of [`crate::table_analysis::analyze_table`] over
+/// the rule's closed `inputSchema`, so it applies to a table whose only incoming edge comes from
+/// the input node. An overlap is refused with its witness input and matching rows. A table whose
+/// context is not the rule input, or whose domain, budget or cells the analysis cannot decide, is
+/// Unknown and refused: a unique table is never admitted on trust, so evaluation never sees two
+/// matching rows.
+pub(crate) fn check_unique_tables(
+    payload: &BTreeMap<String, JsonValue>,
+    diagnostics: &mut Vec<norn_ir::Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    use crate::table_analysis::{Unknown, analyze_table};
+    let Some(graph) = payload
+        .get("graph")
+        .and_then(|graph| serde_json::to_value(graph).ok())
+        .and_then(|graph| serde_json::from_value::<JdmGraph>(graph).ok())
+    else {
+        return;
+    };
+    let mut sink = Sink {
+        diagnostics,
+        artifact_id,
+    };
+    let schema = payload
+        .get("inputSchema")
+        .map(|schema| norn_expr::schema::Schema::parse(schema, "payload.inputSchema"));
+    for (index, node) in graph.nodes.iter().enumerate() {
+        let JdmNode::DecisionTableNode { id, content, .. } = node else {
+            continue;
+        };
+        if content.hit_policy != JdmHitPolicy::Unique {
+            continue;
+        }
+        let path = format!("{}.content.hitPolicy", node_path(index));
+        let incoming: Vec<&JdmEdge> = graph.edges.iter().filter(|e| &e.target_id == id).collect();
+        let from_input = matches!(incoming.as_slice(), [edge] if graph.nodes.iter().any(|n| {
+            matches!(n, JdmNode::InputNode { .. }) && n.id() == edge.source_id
+        }));
+        let unproved = |sink: &mut Sink<'_>, reason: String| {
+            sink.push(
+                codes::JDM_UNIQUE_UNPROVED,
+                format!(
+                    "unique table '{id}' is Unknown, so it is refused: {reason}; use first for a classification table, or give the table a finite closed input it reads directly"
+                ),
+                path.clone(),
+            );
+        };
+        let Some(Ok(schema)) = schema.as_ref().filter(|_| from_input) else {
+            unproved(
+                &mut sink,
+                "its input is not the rule's closed input record, so no finite proof covers it"
+                    .to_owned(),
+            );
+            continue;
+        };
+        match analyze_table(content, schema) {
+            Ok(analysis) => {
+                if let Some(overlap) = analysis.overlaps.first() {
+                    let input = norn_canonical::canonical_json_exact_of(&overlap.input)
+                        .ok()
+                        .and_then(|bytes| String::from_utf8(bytes).ok())
+                        .unwrap_or_default();
+                    sink.push(
+                        codes::JDM_UNIQUE_OVERLAP,
+                        format!(
+                            "unique table '{id}' has rows {:?} matching the same input {input} ({} overlapping inputs of {}); make the rows disjoint, or use first or collect",
+                            overlap.matching_rows,
+                            analysis.overlaps.len(),
+                            analysis.inputs_checked
+                        ),
+                        path,
+                    );
+                }
+            }
+            Err(unknown) => {
+                let reason = match unknown {
+                    Unknown::UnboundedDomain => "the input has an unbounded member".to_owned(),
+                    Unknown::Limit => {
+                        "the input domain or row work exceeds the analysis budget".to_owned()
+                    }
+                    Unknown::LoopExecution => "loop execution reads another input model".to_owned(),
+                    Unknown::ArrayOutput => "an array output changes selection".to_owned(),
+                    Unknown::SharedSubject => "cells share the engine's mutable subject".to_owned(),
+                    Unknown::TemporalIntermediate => {
+                        "a temporal column cannot be projected losslessly".to_owned()
+                    }
+                    Unknown::NonCanonicalIntermediate => {
+                        "an intermediate value would be normalized".to_owned()
+                    }
+                    Unknown::Expression(detail) => {
+                        format!("a cell does not evaluate to a Boolean: {detail}")
+                    }
+                };
+                unproved(&mut sink, reason);
+            }
+        }
+    }
 }
 
 /// Locate a graph decode failure: per node and per edge, then the graph
@@ -1042,6 +1150,7 @@ pub(crate) fn validate_rule_contract(
     diagnostics: &mut Vec<norn_ir::Diagnostic>,
     artifact_id: Option<&str>,
 ) {
+    check_unique_tables(payload, diagnostics, artifact_id);
     for (member, path) in [
         ("inputSchema", "payload.inputSchema"),
         ("outputSchema", "payload.outputSchema"),
@@ -1727,6 +1836,84 @@ mod tests {
 
     fn only(found: &[(String, String)], code: &str, path: &str) {
         assert_eq!(found, [(code.to_owned(), path.to_owned())], "{found:?}");
+    }
+
+    /// TABLE-UNIQUE-1 planted cases over a closed `{tier: a|b|c, vip}` input.
+    fn unique_payload(
+        conditions: &[&str],
+        schema: &Value,
+    ) -> std::collections::BTreeMap<String, norn_ir::JsonValue> {
+        let rules: Vec<Value> = conditions
+            .iter()
+            .enumerate()
+            .map(|(index, condition)| json!({"_id": format!("row_{index}"), "condition": condition, "out_r": "1"}))
+            .collect();
+        serde_json::from_value(json!({
+            "inputSchema": schema,
+            "graph": {"nodes": [
+                {"id": "in", "name": "input", "type": "inputNode"},
+                {"id": "t", "name": "table", "type": "decisionTableNode", "content": {
+                    "hitPolicy": "unique",
+                    "inputs": [{"id": "condition", "name": "condition", "type": "expression"}],
+                    "outputs": [{"id": "out_r", "name": "r", "field": "r"}],
+                    "rules": rules}},
+                {"id": "out", "name": "output", "type": "outputNode"}],
+             "edges": [
+                {"id": "e0", "sourceId": "in", "targetId": "t", "type": "edge"},
+                {"id": "e1", "sourceId": "t", "targetId": "out", "type": "edge"}]}
+        }))
+        .expect("payload")
+    }
+
+    fn finite() -> Value {
+        json!({"type": "object", "additionalProperties": false, "required": ["tier", "vip"],
+            "properties": {"tier": {"type": "string", "enum": ["a", "b", "c"]}, "vip": {"type": "boolean"}}})
+    }
+
+    fn unique_codes(
+        payload: &std::collections::BTreeMap<String, norn_ir::JsonValue>,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        super::check_unique_tables(payload, &mut out, Some("t.rule"));
+        out.into_iter().map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn a_unique_table_is_admitted_only_when_proved_disjoint() {
+        // Disjoint and total: admitted.
+        let disjoint = unique_payload(&["tier == 'a'", "tier == 'b' or tier == 'c'"], &finite());
+        assert!(unique_codes(&disjoint).is_empty());
+        // tier a and vip overlap at {tier: a, vip: true}: refused with the witness.
+        let overlapping = unique_payload(&["tier == 'a'", "vip"], &finite());
+        let mut found = Vec::new();
+        super::check_unique_tables(&overlapping, &mut found, Some("t.rule"));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, codes::JDM_UNIQUE_OVERLAP);
+        assert!(
+            found[0].message.contains("row_0") && found[0].message.contains("row_1"),
+            "{}",
+            found[0].message
+        );
+        assert!(
+            found[0].message.contains("\"tier\":\"a\""),
+            "{}",
+            found[0].message
+        );
+        // An unbounded number input cannot be decided: Unknown, refused, never a pass.
+        let unbounded = unique_payload(
+            &["amount > 100", "amount <= 100"],
+            &json!({"type": "object", "additionalProperties": false, "required": ["amount"],
+                "properties": {"amount": {"type": "number"}}}),
+        );
+        assert_eq!(unique_codes(&unbounded), [codes::JDM_UNIQUE_UNPROVED]);
+        // A table whose input is not the rule input is Unknown too.
+        let mut detached = disjoint;
+        if let Some(norn_ir::JsonValue::Object(graph)) = detached.get_mut("graph")
+            && let Some(norn_ir::JsonValue::Array(edges)) = graph.get_mut("edges")
+        {
+            edges.clear();
+        }
+        assert_eq!(unique_codes(&detached), [codes::JDM_UNIQUE_UNPROVED]);
     }
 
     #[test]

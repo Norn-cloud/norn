@@ -918,6 +918,14 @@
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
       "review": "needs_review"
     },
+    "law.example.mismatch": {
+      "message": "حكم مثال القانون يختلف عن المتوقع: {$detail}",
+      "review": "needs_review"
+    },
+    "law.example.unsupported": {
+      "message": "لا يمكن تقييم مثال القانون على قيمة واحدة: {$detail}",
+      "review": "needs_review"
+    },
     "law.exception.cycle": {
       "message": "سلسلة تجاوزات استثناء القانون لا تصل إلى قانونها أبدًا",
       "review": "needs_review"
@@ -2360,6 +2368,14 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "الفرع {$statementId} من المحوّل {$nodeId} ليس له حافة خارجة، فالحدث الذي يسلكه لا يصل إلى أي عقدة",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "صفّان في جدول قرار فريد يطابقان المدخل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "لا يستطيع المدقق إثبات أن صفوف جدول القرار الفريد منفصلة، لذا يُرفض: {$detail}",
       "review": "needs_review"
     },
     "rule.validation.jdm_unknown_column": {
