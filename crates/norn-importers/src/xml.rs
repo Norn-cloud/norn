@@ -13,6 +13,8 @@ pub(crate) const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_DEPTH: usize = 64;
 /// Most elements accepted in one file.
 pub(crate) const MAX_ELEMENTS: usize = 500_000;
+/// Most attributes accepted on one element.
+pub(crate) const MAX_ATTRIBUTES: usize = 256;
 
 /// One element.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -88,12 +90,16 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Element, String> {
                     .map_err(|error| error.to_string())?
                     .to_owned();
                 let mut attributes = Vec::new();
+                let mut keys = std::collections::BTreeSet::new();
                 for attribute in start.attributes() {
                     let attribute = attribute.map_err(|error| error.to_string())?;
+                    if attributes.len() >= MAX_ATTRIBUTES {
+                        return Err("too many attributes on one element".into());
+                    }
                     let key = std::str::from_utf8(attribute.key.as_ref())
                         .map_err(|error| error.to_string())?
                         .to_owned();
-                    if attributes.iter().any(|(existing, _)| *existing == key) {
+                    if !keys.insert(key.clone()) {
                         return Err(format!("duplicate attribute {key}"));
                     }
                     let value = attribute

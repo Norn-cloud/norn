@@ -72,6 +72,10 @@ const KEPT: &[&str] = &["title", "dependent-on", "default-resource-name"];
 const RELATION_ATTRIBUTES: &[&str] = &["type", "rel-entity-name", "title", "fk-name"];
 const KEY_MAP_ATTRIBUTES: &[&str] = &["field-name", "rel-field-name"];
 const INDEX_ATTRIBUTES: &[&str] = &["name", "unique"];
+const PRIM_KEY_ATTRIBUTES: &[&str] = &["field"];
+const INDEX_FIELD_ATTRIBUTES: &[&str] = &["name"];
+const MEMBER_ATTRIBUTES: &[&str] = &["entity-alias", "entity-name"];
+const GROUP_ATTRIBUTES: &[&str] = &["group", "entity"];
 const STATUS: &str = "StatusItem";
 const ENUMERATION: &str = "Enumeration";
 
@@ -220,15 +224,16 @@ fn entity_inventory(
         match child.name.as_str() {
             "description" if !extend => {
                 out.push(SourceElement::dataset_facet(dataset, Facet::Description));
+                closed(child, &[], "description", dataset, out);
+                leaf(child, "description", dataset, out);
             }
             "field" => field_inventory(child, dataset, out),
-            "prim-key" => out.push(SourceElement::dataset_facet(
-                dataset,
-                key(format!(
-                    "prim-key:{}",
-                    child.get("field").unwrap_or_default()
-                )),
-            )),
+            "prim-key" => {
+                let name = format!("prim-key:{}", child.get("field").unwrap_or_default());
+                out.push(SourceElement::dataset_facet(dataset, key(name.clone())));
+                closed(child, PRIM_KEY_ATTRIBUTES, &name, dataset, out);
+                leaf(child, &name, dataset, out);
+            }
             "relation" => {
                 let name = relation_key(path, top, relations);
                 relations = relations.saturating_add(1);
@@ -236,8 +241,14 @@ fn entity_inventory(
                 closed(child, RELATION_ATTRIBUTES, &name, dataset, out);
                 for part in &child.children {
                     match part.name.as_str() {
-                        "key-map" => closed(part, KEY_MAP_ATTRIBUTES, &name, dataset, out),
-                        "description" => {}
+                        "key-map" => {
+                            closed(part, KEY_MAP_ATTRIBUTES, &name, dataset, out);
+                            leaf(part, &name, dataset, out);
+                        }
+                        "description" => {
+                            closed(part, &[], &name, dataset, out);
+                            leaf(part, &name, dataset, out);
+                        }
                         other => out.push(SourceElement::dataset_facet(
                             dataset,
                             key(format!("unknown:{name}/{other}")),
@@ -250,7 +261,10 @@ fn entity_inventory(
                 out.push(SourceElement::dataset_facet(dataset, key(name.clone())));
                 closed(child, INDEX_ATTRIBUTES, &name, dataset, out);
                 for part in &child.children {
-                    if part.name != "index-field" {
+                    if part.name == "index-field" {
+                        closed(part, INDEX_FIELD_ATTRIBUTES, &name, dataset, out);
+                        leaf(part, &name, dataset, out);
+                    } else {
                         out.push(SourceElement::dataset_facet(
                             dataset,
                             key(format!("unknown:{name}/{}", part.name)),
@@ -284,6 +298,16 @@ fn closed(
     }
 }
 
+/// A text-only element: every child element is its own unknown element.
+fn leaf(element: &Element, owner: &str, dataset: &str, out: &mut Vec<SourceElement>) {
+    for child in &element.children {
+        out.push(SourceElement::dataset_facet(
+            dataset,
+            key(format!("unknown:{owner}/{}/{}", element.name, child.name)),
+        ));
+    }
+}
+
 fn field_inventory(field: &Element, dataset: &str, out: &mut Vec<SourceElement>) {
     let name = field.get("name").unwrap_or_default();
     out.push(SourceElement::field(dataset, name));
@@ -300,11 +324,30 @@ fn field_inventory(field: &Element, dataset: &str, out: &mut Vec<SourceElement>)
         }
     }
     for child in &field.children {
-        out.push(if child.name == "description" {
-            SourceElement::facet(dataset, name, Facet::Description)
+        if child.name == "description" {
+            out.push(SourceElement::facet(dataset, name, Facet::Description));
+            // A description is text: attributes or nested elements are unknown.
+            for (attribute, _) in &child.attributes {
+                out.push(SourceElement::facet(
+                    dataset,
+                    name,
+                    key(format!("unknown:description@{attribute}")),
+                ));
+            }
+            for nested in &child.children {
+                out.push(SourceElement::facet(
+                    dataset,
+                    name,
+                    key(format!("unknown:description/{}", nested.name)),
+                ));
+            }
         } else {
-            SourceElement::facet(dataset, name, key(format!("unknown:{}", child.name)))
-        });
+            out.push(SourceElement::facet(
+                dataset,
+                name,
+                key(format!("unknown:{}", child.name)),
+            ));
+        }
     }
 }
 
@@ -320,6 +363,18 @@ fn view_inventory(element: &Element, out: &mut Vec<SourceElement>) {
         }
     }
     for (index, child) in element.children.iter().enumerate() {
+        match child.name.as_str() {
+            "description" => {
+                closed(child, &[], "description", view, out);
+                leaf(child, "description", view, out);
+            }
+            "member-entity" => {
+                let member = format!("member:{}", child.get("entity-alias").unwrap_or_default());
+                closed(child, MEMBER_ATTRIBUTES, &member, view, out);
+                leaf(child, &member, view, out);
+            }
+            _ => {}
+        }
         out.push(match child.name.as_str() {
             "description" => SourceElement::dataset_facet(view, Facet::Description),
             "member-entity" => SourceElement::dataset_facet(
@@ -370,6 +425,20 @@ fn inventory_of(files: &[(OfbizFile<'_>, Element)]) -> Vec<SourceElement> {
                 }
                 (Role::Group, "entity-group") => {
                     out.push(SourceElement::definition(GROUP, &format!("{path}#{top}")));
+                    for (name, _) in &element.attributes {
+                        if !GROUP_ATTRIBUTES.contains(&name.as_str()) {
+                            out.push(SourceElement::definition(
+                                UNKNOWN,
+                                &format!("{path}#{top}@{name}"),
+                            ));
+                        }
+                    }
+                    for child in &element.children {
+                        out.push(SourceElement::definition(
+                            UNKNOWN,
+                            &format!("{path}#{top}/{}", child.name),
+                        ));
+                    }
                 }
                 (Role::Seed, _) => {
                     out.push(SourceElement::definition(SEED, &format!("{path}#{top}")));
@@ -998,6 +1067,8 @@ impl<'a> Build<'a> {
         bound
     }
 
+    /// Observed code sets, and the identities of the seed rows that contributed
+    /// a value to one (a repeated value contributes once, from its first row).
     fn code_sets(
         &mut self,
         bound: &BTreeMap<(String, String), (String, String)>,
@@ -1006,11 +1077,13 @@ impl<'a> Build<'a> {
         for ((dataset, field), (tag, value_key)) in bound {
             let mut values = Vec::new();
             let mut seen = BTreeSet::new();
-            for (_, row) in self.rows.get(tag).into_iter().flatten() {
+            let mut contributors = Vec::new();
+            for (identity, row) in self.rows.get(tag).into_iter().flatten() {
                 if let Some(value) = row.get(value_key)
                     && !value.is_empty()
                     && seen.insert(value.to_owned())
                 {
+                    contributors.push(identity.clone());
                     values.push(CodeValue {
                         value: value.to_owned(),
                         label: row
@@ -1021,7 +1094,7 @@ impl<'a> Build<'a> {
                 }
             }
             if !values.is_empty() {
-                used.insert(tag.clone());
+                used.extend(contributors);
                 self.code_sets.push(CodeSet {
                     id: format!("{dataset}.{field}"),
                     dataset: dataset.clone(),
@@ -1134,9 +1207,9 @@ impl<'a> Build<'a> {
                     unresolved("a status change from a status no pinned file declares")
                 } else if ["StatusType", STATUS, "StatusValidChange"].contains(&tag.as_str()) {
                     only("status lifecycle candidate, kept in provenance")
-                } else if tag == ENUMERATION || tag == "EnumerationType" {
+                } else if tag == ENUMERATION {
                     only("enumeration candidate, kept in provenance")
-                } else if used.contains(tag) {
+                } else if used.contains(identity) {
                     only("observed code-set value")
                 } else {
                     deferred(

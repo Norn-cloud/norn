@@ -291,6 +291,115 @@ fn an_element_the_reader_does_not_know_refuses_the_import() {
     );
 }
 
+/// The unexplained elements of an import of `files`.
+fn unexplained_of(files: &[OfbizFile<'_>]) -> (bool, Vec<String>) {
+    let import = OfbizReader.import(files, &config(files));
+    let unexplained = import
+        .loss_report
+        .entries
+        .iter()
+        .filter(|entry| entry.disposition == Disposition::Unexplained)
+        .map(|entry| format!("{:?}", entry.element))
+        .collect();
+    (refused(&import), unexplained)
+}
+
+/// Every attribute and descendant of a closed-grammar element is inventoried:
+/// content the reader does not know stays unexplained and refuses the import.
+#[test]
+fn unknown_content_inside_known_elements_refuses_the_import() {
+    let cases: [(&str, &str); 6] = [
+        (r#"<prim-key field="thingId" order="1"/>"#, "@order"),
+        (
+            r#"<prim-key field="thingId"/><index name="byId"><index-field name="thingId" function="lower"/></index>"#,
+            "@function",
+        ),
+        (
+            r#"<prim-key field="thingId"/><description>A <b>thing</b></description>"#,
+            "description/b",
+        ),
+        (
+            r#"<prim-key field="thingId"/><relation type="one" rel-entity-name="Thing"><key-map field-name="thingId"><note/></key-map></relation>"#,
+            "key-map/note",
+        ),
+        (
+            r#"<prim-key field="thingId"><extra/></prim-key>"#,
+            "prim-key/extra",
+        ),
+        (
+            r#"<prim-key field="thingId"/><relation type="one" rel-entity-name="Thing"><key-map field-name="thingId"/><description lang="en">x</description></relation>"#,
+            "@lang",
+        ),
+    ];
+    for (body, marker) in cases {
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><entitymodel><entity entity-name="Thing" package-name="org.toy"><field name="thingId" type="id"/>{body}</entity></entitymodel>"#
+        );
+        let files = [OfbizFile {
+            path: "entitymodel.xml",
+            role: Role::Entity,
+            bytes: xml.as_bytes(),
+        }];
+        let (refused, unexplained) = unexplained_of(&files);
+        assert!(refused, "{marker}: {unexplained:#?}");
+        assert!(
+            unexplained.iter().any(|element| element.contains(marker)),
+            "{marker}: {unexplained:#?}"
+        );
+    }
+
+    // A view member's unknown attribute, and an entity group's unknown
+    // attribute and child.
+    let model = br#"<?xml version="1.0" encoding="UTF-8"?><entitymodel><entity entity-name="Thing" package-name="org.toy"><field name="thingId" type="id"/><prim-key field="thingId"/></entity><view-entity entity-name="ThingView" package-name="org.toy"><member-entity entity-alias="T" entity-name="Thing" optional="true"/><alias-all entity-alias="T"/></view-entity></entitymodel>"#;
+    let group = br#"<?xml version="1.0" encoding="UTF-8"?><entitygroup><entity-group group="org.toy" entity="Thing" tier="hot"><note/></entity-group></entitygroup>"#;
+    let files = [
+        OfbizFile {
+            path: "entitymodel.xml",
+            role: Role::Entity,
+            bytes: model,
+        },
+        OfbizFile {
+            path: "entitygroup.xml",
+            role: Role::Group,
+            bytes: group,
+        },
+    ];
+    let (refused, unexplained) = unexplained_of(&files);
+    assert!(refused);
+    for marker in ["@optional", "@tier", "/note"] {
+        assert!(
+            unexplained.iter().any(|element| element.contains(marker)),
+            "{marker}: {unexplained:#?}"
+        );
+    }
+}
+
+/// A seed row is kept only for what it contributes: an `EnumerationType` row
+/// contributes to nothing the import emits, so it is deferred, not preserved.
+#[test]
+fn seed_rows_that_contribute_nothing_are_deferred() {
+    let toy = Toy::new();
+    let mut files = toy.files();
+    let seed = br#"<?xml version="1.0" encoding="UTF-8"?><entity-engine-xml><EnumerationType enumTypeId="LINE_SIDE" description="Line side"/></entity-engine-xml>"#;
+    files.push(OfbizFile {
+        path: "data/ExtraSeedData.xml",
+        role: Role::Seed,
+        bytes: seed,
+    });
+    let import = OfbizReader.import(&files, &config(&files));
+    let entry = import
+        .loss_report
+        .entries
+        .iter()
+        .find(|entry| format!("{:?}", entry.element).contains("data/ExtraSeedData.xml#0"))
+        .expect("the EnumerationType row is inventoried");
+    assert!(
+        matches!(entry.disposition, Disposition::Deferred { .. }),
+        "{:?}",
+        entry.disposition
+    );
+}
+
 #[test]
 fn bytes_that_do_not_match_their_pin_are_never_parsed() {
     let toy = Toy::new();
