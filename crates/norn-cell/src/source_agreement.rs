@@ -55,6 +55,9 @@ pub struct SourceDisagreementCount {
     pub subjects: u64,
 }
 
+/// One version's partition values, by property.
+type Reports = BTreeMap<PropertyId, Option<String>>;
+
 /// A partition value as the rule compares it: a code, or `None` for null.
 fn code(value: Option<&RuntimeValue>) -> Option<String> {
     match value {
@@ -109,7 +112,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         frontier: Option<u64>,
         partition: &[PropertyId],
-    ) -> Result<(Vec<ObjectRecord>, Vec<BTreeMap<PropertyId, Option<String>>>), CellError> {
+    ) -> Result<(Vec<ObjectRecord>, Vec<Reports>), CellError> {
         let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
         let rows = self.conn.query(
             &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND (?4 IS NULL OR \"commit_seq\" <= ?4) ORDER BY \"version\" LIMIT 4097"),
