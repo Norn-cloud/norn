@@ -246,7 +246,9 @@ mod tests {
         // cell-owned evidence types) or an exhausted claim budget, not only
         // the generic code.
         assert_eq!(
-            refusal_code(&CellError::UnknownObjectType("norn.ObservedLinkClaim".into())),
+            refusal_code(&CellError::UnknownObjectType(
+                "norn.ObservedLinkClaim".into()
+            )),
             "core.boundary.mapping_refused: unknown object type `norn.ObservedLinkClaim`"
         );
         assert_eq!(
