@@ -278,6 +278,35 @@
             "code",
             "detail"
           ]
+        },
+        {
+          "description": "SOURCE-AGREE-1: two sources reported different values of a measure's\npartition source (its unit, currency or basis) for one subject, in\nconsecutive versions. Both reports are true facts about what each\nsource says; the subject is never excluded for it.",
+          "type": "object",
+          "properties": {
+            "earlier": {
+              "description": "The earlier version's source and value.",
+              "$ref": "#/$defs/SourceClaim"
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_disagreement"
+            },
+            "later": {
+              "description": "The later version's source and value.",
+              "$ref": "#/$defs/SourceClaim"
+            },
+            "property": {
+              "description": "The partition-source property the sources disagree on.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property",
+            "earlier",
+            "later"
+          ]
         }
       ]
     },
@@ -572,6 +601,29 @@
           "type": "string",
           "const": "ambiguous_shortest_path"
         }
+      ]
+    },
+    "SourceClaim": {
+      "description": "SOURCE-AGREE-1: what one source reported for a partition source, and the\nversion that recorded it.",
+      "type": "object",
+      "properties": {
+        "fact": {
+          "description": "The version that recorded it (its commit).",
+          "$ref": "#/$defs/FactRef"
+        },
+        "system": {
+          "description": "The reporting source system (`SourceRecordRef::system`).",
+          "type": "string"
+        },
+        "value": {
+          "description": "The reported code, or `None` for null.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "fact"
       ]
     },
     "SourceRecordRef": {

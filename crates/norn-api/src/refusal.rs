@@ -102,12 +102,13 @@ pub struct Refusal {
     /// ungranted resource.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<RefusalDiagnostic>,
-    /// On `definition.signoff_mismatch` only: the host's restatement of the
-    /// caller's own admitted payload, flattened into the refusal as
-    /// `restatement` and `restatementSha256`. Absent otherwise.
+    /// What only some refusals carry, flattened into the refusal: on
+    /// `definition.signoff_mismatch`, the host's restatement of the caller's
+    /// own admitted payload (`restatement`, `restatementSha256`); on an
+    /// internal refusal, its `incidentId` (INCIDENT-1). Absent otherwise.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
-    pub restatement: Option<Box<RefusalRestatement>>,
+    pub extra: Option<Box<RefusalExtra>>,
 }
 
 /// One checker finding in a refusal.
@@ -180,6 +181,52 @@ pub struct RefusalRestatement {
     pub restatement_sha256: String,
 }
 
+/// The rarely present parts of a refusal, boxed so every refusal stays small.
+/// Its fields sit flat in the refusal, exactly where the restatement always
+/// did, so the wire shape only gains `incidentId` (D84).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalExtra {
+    /// The plain-words restatement the host recomputed. Present, with its
+    /// digest, only on `definition.signoff_mismatch`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub restatement: Option<String>,
+    /// Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub restatement_sha256: Option<String>,
+    /// INCIDENT-1: the id under which the host logged this internal
+    /// refusal's cause. The caller quotes it; the cause is never served.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub incident_id: Option<String>,
+    /// INCIDENT-1: the error chain, for the operator's log only: never
+    /// serialized, never compared.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub cause: Option<String>,
+}
+
+impl RefusalExtra {
+    /// Carry the host's restatement (`definition.signoff_mismatch`).
+    pub fn set_restatement(&mut self, restatement: RefusalRestatement) {
+        self.restatement = Some(restatement.restatement);
+        self.restatement_sha256 = Some(restatement.restatement_sha256);
+    }
+}
+
+/// Two refusals that differ only in their cause are the same refusal.
+impl PartialEq for RefusalExtra {
+    fn eq(&self, other: &Self) -> bool {
+        self.restatement == other.restatement
+            && self.restatement_sha256 == other.restatement_sha256
+            && self.incident_id == other.incident_id
+    }
+}
+
+impl Eq for RefusalExtra {}
+
 /// A location in the submitted document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -207,7 +254,10 @@ impl Refusal {
             Self::UNPROVEN_DETAIL.clone_into(&mut self.explanation);
             self.reason = None;
             self.diagnostics.clear();
-            self.restatement = None;
+            if let Some(extra) = self.extra.as_mut() {
+                extra.restatement = None;
+                extra.restatement_sha256 = None;
+            }
         }
         self
     }
@@ -230,8 +280,23 @@ impl Refusal {
             message: message.into(),
             explanation: explanation.into(),
             diagnostics: Vec::new(),
-            restatement: None,
+            extra: None,
         }
+    }
+
+    /// The same refusal remembering `cause` for the operator's log (an
+    /// internal refusal's error chain). Never served to the caller.
+    #[must_use]
+    pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
+        self.extra.get_or_insert_with(Box::default).cause = Some(cause.to_string());
+        self
+    }
+
+    /// Whether this refusal is an internal failure whose cause the host logs
+    /// under an incident id (INCIDENT-1).
+    #[must_use]
+    pub fn is_internal(&self) -> bool {
+        matches!(self.category, RefusalCategory::Internal)
     }
 
     /// The same refusal carrying checker findings, each pointer prefixed by
@@ -350,13 +415,14 @@ impl Refusal {
 
     /// A host failure (the request changed nothing).
     #[must_use]
-    pub fn host(_detail: impl std::fmt::Display) -> Self {
+    pub fn host(detail: impl std::fmt::Display) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             codes::HOST_ERROR,
             "the cell host failed; nothing was committed",
             Self::UNPROVEN_DETAIL,
         )
+        .with_cause(detail)
     }
 }
 
@@ -372,4 +438,18 @@ fn refusal_reason_schema() -> utoipa::openapi::schema::Schema {
             )
             .build(),
     )
+}
+
+/// An error and every source under it, outermost first, as one line for the
+/// operator's log (INCIDENT-1).
+#[must_use]
+pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut line = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        line.push_str(": ");
+        line.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    line
 }

@@ -362,6 +362,19 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The active definitions version alone (no set is read), or `None` for
+    /// a cell with nothing installed: cheap enough to check per request.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn active_definitions_version(&self) -> Result<Option<u64>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .active_definitions_version()
+            .map_err(Refusal::host)
+    }
+
     /// The active definitions revision, read under the definition epoch, or
     /// `None` for a cell with nothing installed. Never writes.
     /// # Errors
@@ -435,6 +448,18 @@ impl<E: SqlEngine> DevHost<E> {
 
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
 pub const PAGE_ROWS: usize = 500;
+
+/// How many OBS-PAGE-1 pages (one commit each) [`DevHost::ingest`] makes of
+/// `rows`, before any canonical-object split inside a page.
+#[must_use]
+pub fn page_count(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> usize {
+    pages(rows).len()
+}
 
 /// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
 /// [`PAGE_ROWS`] and before a source record the page already carries.

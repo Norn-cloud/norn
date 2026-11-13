@@ -389,6 +389,9 @@
     "core.laws.unresolved_scope": {
       "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget"
     },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded."
+    },
     "core.projection.publication_guard": {
       "message": "analytical publication refused by declared policy: {$detail}"
     },

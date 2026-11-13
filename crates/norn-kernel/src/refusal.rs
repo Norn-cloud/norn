@@ -414,7 +414,8 @@ fn invariant_reason(
         // Non-runtime outcomes carry no unproven observed values into a refusal.
         norn_ir::DataQualityOutcome::ObservedOutOfBand { .. }
         | norn_ir::DataQualityOutcome::InvalidTemporalObservation { .. }
-        | norn_ir::DataQualityOutcome::IdentityProjectionIsolation { .. } => "unsupported_outcome",
+        | norn_ir::DataQualityOutcome::IdentityProjectionIsolation { .. }
+        | norn_ir::DataQualityOutcome::SourceDisagreement { .. } => "unsupported_outcome",
     };
     RefusalReason {
         law: id.as_str().to_owned(),
