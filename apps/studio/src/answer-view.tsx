@@ -18,7 +18,9 @@ import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from 
 import type { Read } from "./lib/exact.ts"
 import type { QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
+import { AnswerProvenance } from "@/components/provenance"
 import { systemName } from "./lib/catalog.ts"
+import { bucketProvenance } from "./lib/provenance.ts"
 
 /**
  * The answer view: how one answer reads, whether the question is published or
@@ -137,7 +139,7 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale }: {
+export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
   readonly read: QuestionAnswer
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
@@ -148,11 +150,15 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
   readonly onStale?: () => void
   /** How a bucket's records are read for a question that is not published. */
   readonly fetchTrace?: FetchTrace
+  /** A bucket whose records open at once: a tile's number asked for its trace. */
+  readonly openBucket?: string
 }) {
-  const [open, setOpen] = useState<Bucket>()
   const question = read.question.document
   const answer = read.answer.document
-  const rows = buckets(declarations(read), { answer, numbers: read.answer.numbers, at: "" })
+  const declared = declarations(read)
+  const rows = buckets(declared, { answer, numbers: read.answer.numbers, at: "" })
+  const [open, setOpen] = useState<Bucket | undefined>(() => rows.find(({ key }) => key === openBucket))
+  const provenanceOf = (bucket: Bucket) => bucketProvenance(declared, answer, bucket, engineOf(answer) ?? null)
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
@@ -175,9 +181,10 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
       </div>
       {latest && (
         <StatStrip>
-          <button type="button" className="block h-full rounded-lg text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px" onClick={() => setOpen(latest)}>
+          <AnswerProvenance variant="block" className="block h-full rounded-lg text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px"
+            label={latest.label} value={shown(latest)} provenance={provenanceOf(latest)} records={latest.members.length} onTrace={() => setOpen(latest)}>
             <KpiTile icon={Sigma} label={latest.label} value={shown(latest)} sub={latest.totals.length > 1 ? `${fraction(latest.totals)} = ${latest.value} exactly` : undefined} />
-          </button>
+          </AnswerProvenance>
           <KpiTile icon={Rows3} label="Records counted" value={latest.members.length} sub={latest.label} />
           <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={<>{`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`}{engineOf(answer) && <span className="block">{engineOf(answer)}</span>}</>} />
         </StatStrip>
@@ -213,7 +220,9 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
                     {bucket.label}
                   </button>
                 </TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">
+                  {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={shown(bucket)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{shown(bucket)}</AnswerProvenance>}
+                </TableCell>
                 <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${fraction(bucket.totals)} = ${bucket.value}`}</TableCell>
                 <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
               </TableRow>
