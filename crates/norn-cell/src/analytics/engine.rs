@@ -1495,12 +1495,13 @@ impl Projection {
                         // At a knowledge cutoff the exact engine reads values from
                         // their commitments, whose text is NFC; now, as written.
                         ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date => {
+                            let normal = format!("nfc_normalize({c})");
                             let shown = if scope.model.is_some() {
-                                format!("nfc_normalize({c})")
+                                normal.clone()
                             } else {
                                 c
                             };
-                            (format!("nfc_normalize({c})"), shown, GroupKind::Text)
+                            (normal, shown, GroupKind::Text)
                         }
                         ColumnKind::Integer | ColumnKind::Decimal { .. } => (
                             c.clone(),
