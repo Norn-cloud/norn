@@ -305,6 +305,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/guard/{id}:restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * PRIVACY-GUARD-1: restore a text that uses a guard's tokens for `actor`.
+         * @description # Errors
+         *     An invalid body (400), an unknown guard (404), a denied gate (403) or a
+         *     host failure.
+         */
+        post: operations["guard_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/guard:prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * PRIVACY-GUARD-1: tokenize a prompt for a model call (see the module docs).
+         * @description # Errors
+         *     An invalid body (400), a denied or unreadable context record (404), or a
+         *     host failure. Nothing is sent anywhere: the caller sends `safePrompt`.
+         */
+        post: operations["guard_prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp": {
         parameters: {
             query?: never;
@@ -2413,6 +2457,69 @@ export interface components {
          * @enum {string}
          */
         NornGuaranteesUnitSystem: "ucum" | "qudt";
+        /** @description One record whose fields are context for the call. */
+        NornGuardRef: {
+            /** @description The object id. */
+            id: string;
+            /** @description The object type. */
+            objectType: string;
+        };
+        /** @description `POST /v1/guard:prompt` request body. */
+        NornGuardRequest: {
+            /** @description Records whose fields the model may use, as tokens where marked. */
+            context?: components["schemas"]["NornGuardRef"][];
+            /** @description The caller's key for this call: a retry replays the same receipt. */
+            idempotencyKey: string;
+            /** @description What the call is for (`dashboard-assistant`, `mcp`), kept in the receipt. */
+            purpose?: string | null;
+            /** @description The prompt as the person wrote it. */
+            text: string;
+        };
+        /**
+         * @description Where a token's value came from.
+         * @enum {string}
+         */
+        NornGuardSource: "field" | "detected";
+        /** @description One placeholder token of a guarded prompt. Never its value. */
+        NornGuardToken: {
+            /** @description The field it stands for (field tokens). */
+            field?: string | null;
+            /** @description Its type: `CUSTOMER`, `NAME`, `EMAIL`, `PHONE`, `CARD`, or a field's. */
+            kind: string;
+            /** @description What it stands for, in words (`Email`, `Customer`). */
+            label: string;
+            /** @description The field's markings (field tokens). */
+            markings?: string[];
+            /**
+             * @description Whether a restore would give this caller the value back: the PDP
+             *     allows them `norn.reveal` on every marking (a field), or they typed
+             *     it (a detected literal).
+             */
+            revealable: boolean;
+            /** @description Where the value came from. */
+            source: components["schemas"]["NornGuardSource"];
+            /** @description The token as the model reads it, e.g. `[EMAIL_1]`. */
+            token: string;
+        };
+        /**
+         * @description A guarded prompt: what the model may receive, and the receipt that holds
+         *     its token map in the cell.
+         */
+        NornGuarded: {
+            /**
+             * Format: int64
+             * @description The receipt's commit; restore with it.
+             */
+            guardId: number;
+            /** @description The receipt's hash. */
+            receiptHash: string;
+            /** @description The tokenized prompt: the only text a model receives. */
+            safePrompt: string;
+            /** @description Each token, in order of first appearance. */
+            tokens: components["schemas"]["NornGuardToken"][];
+            /** @description Fields withheld from the model, as `type/id.property`. */
+            withheld: string[];
+        };
         /** @description A histogram. */
         NornHistogram: {
             /** @description Bins in ascending order. */
@@ -11895,6 +12002,47 @@ export interface components {
              */
             policy: string;
         };
+        /** @description `POST /v1/guard/{id}:restore` request body. */
+        NornRestoreRequest: {
+            /**
+             * @description The caller's key for this restore; each revealed field's receipt is
+             *     keyed by it.
+             */
+            idempotencyKey: string;
+            /**
+             * @description Text that uses the guard's tokens: the model's reply, or the safe
+             *     prompt itself ("Show original").
+             */
+            text: string;
+        };
+        /** @description A restored text and the reveals it logged. */
+        NornRestored: {
+            /** @description Every token of the text was restored for this reader. */
+            complete: boolean;
+            /**
+             * Format: int64
+             * @description The guard restored.
+             */
+            guardId: number;
+            /** @description The `marking.revealed` receipts this restore committed. */
+            reveals: number[];
+            /** @description The text, in pieces. */
+            segments: components["schemas"]["NornRestoredSegment"][];
+        };
+        /** @description One piece of a restored text. */
+        NornRestoredSegment: {
+            /** @description The token's type. */
+            kind?: string | null;
+            /**
+             * @description `restored` (the value, revealed to this reader), `projected` (its
+             *     pseudonym or mask) or `kept` (the placeholder stays).
+             */
+            state?: string | null;
+            /** @description Plain text, or what replaced the token. */
+            text: string;
+            /** @description The token this segment replaced; absent for plain text. */
+            token?: string | null;
+        };
         /** @description The receipt a reveal wrote to the ledger. */
         NornRevealReceipt: {
             /** @description Who it was revealed to. */
@@ -11945,8 +12093,8 @@ export interface components {
         NornRevealed: {
             /** @description The ledger receipt of this reveal. */
             receipt: components["schemas"]["NornRevealReceipt"];
-            /** @description The stored value. */
-            value: Record<string, never>;
+            /** @description The stored value, of the property's type; decimals are exact JSON number tokens. */
+            value: unknown;
         };
         /**
          * @description A sort direction.
@@ -13457,6 +13605,139 @@ export interface operations {
             };
             /** @description The request was refused: scope or authority denied. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    guard_restore: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The guardId of the guarded prompt. */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NornRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description The text with each token restored where the reader may reveal it (each a logged reveal), else projected or kept. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornRestored"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`guard.not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    guard_prompt: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NornGuardRequest"];
+            };
+        };
+        responses: {
+            /** @description The tokenized prompt a model may receive, its tokens (never their values) and the receipt that keeps the token map in the cell. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornGuarded"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): a context record is absent or not readable. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
