@@ -113,7 +113,9 @@ pub(crate) fn foreign_model_deletions<E: SqlEngine>(
     if rows.len() > cap {
         return Err(refused("core.compute.bound_exceeded"));
     }
-    rows.into_iter().map(|row| SqlRow(row).get::<String>(0)).collect()
+    rows.into_iter()
+        .map(|row| SqlRow(row).get::<String>(0))
+        .collect()
 }
 pub(super) fn history_ids<E: SqlEngine>(
     reader: &StoreReader<'_, E>,

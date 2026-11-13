@@ -2058,7 +2058,11 @@ mod known_at {
             context.now_ms = cutoff.recorded_at.as_millis();
             let want = exact(&store, &plan, context.clone(), cutoff).map(|_| ());
             let got = on_engine(&store, &engine, &plan, &context, cutoff).map(|_| ());
-            assert_eq!(want, Err("core.compute.unsupported_engine".to_owned()), "{cutoff:?}");
+            assert_eq!(
+                want,
+                Err("core.compute.unsupported_engine".to_owned()),
+                "{cutoff:?}"
+            );
             assert_eq!(got, want, "{cutoff:?}");
         }
     }
