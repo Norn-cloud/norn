@@ -1,5 +1,6 @@
 import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { clientIpHeader, type ClientIpHeader } from "./worker/client-ip.ts"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
 // declares on Cloudflare, written as the wrangler.json `celld deploy` reads (#728, D55).
@@ -31,6 +32,8 @@ export interface CelldStudio {
   readonly signUpEmails?: string
   /** The cell environment a new workspace is provisioned for (STUDIO_DEFAULT_ENVIRONMENT_ID). */
   readonly defaultEnvironmentId?: string
+  /** The header the stage's edge sets to the client's address; unset means `cf-connecting-ip`. */
+  readonly clientIpHeader?: ClientIpHeader
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -65,9 +68,12 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
   if (toolUrl !== undefined && !isHttpsOrigin(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
   if (env.STUDIO_MCP !== undefined && env.STUDIO_MCP !== "on") throw new Error(`STUDIO_MCP is "on" or unset, got ${JSON.stringify(env.STUDIO_MCP)}`)
+  // Validated here, so a wrong header refuses the deploy rather than every request.
+  const ipHeader = env.STUDIO_CLIENT_IP_HEADER === undefined ? undefined : clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)
   return {
     ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
+    ...ipHeader === undefined ? {} : { clientIpHeader: ipHeader },
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
     ...env.STUDIO_SIGNUP_EMAILS === undefined ? {} : { signUpEmails: env.STUDIO_SIGNUP_EMAILS },
     ...env.STUDIO_DEFAULT_ENVIRONMENT_ID === undefined ? {} : { defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID },
@@ -82,6 +88,7 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
   const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
+  if (studio.clientIpHeader !== undefined) vars.STUDIO_CLIENT_IP_HEADER = studio.clientIpHeader
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
   if (studio.mcp === true) vars.STUDIO_MCP = "on"
