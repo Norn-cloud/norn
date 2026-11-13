@@ -600,28 +600,6 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         };
         assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
-    // A stock's cost is read as of each week, summed per its currency.
-    let cost = space
-        .candidates()
-        .iter()
-        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("stock_cost"))
-        .expect("the stock cost snapshot");
-    let question: norn_ir::QuestionIR = serde_json::from_value(json!({
-        "irVersion": "0.1", "name": "canon.stock_cost_by_week", "objectSet": "canon.Holding",
-        "aggregate": [{"metric": cost.definition.name}],
-        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
-        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
-        "freshness": {"kind": "live", "maxAgeMs": 5000},
-    }))
-    .expect("question");
-    let plan = space.admit(&question, 100).expect("the stock cost admits");
-    let grouped: Vec<_> = plan
-        .question()
-        .dimensions
-        .iter()
-        .map(|dimension| dimension.path.property.as_str())
-        .collect();
-    assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }
 
 /// Every canon currency enum and every pack's currency code set is the one
@@ -697,4 +675,36 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
     for (at, list) in &lists {
         assert_eq!(list, &first, "{at}");
     }
+}
+
+/// A stock's cost is read as of each week, summed per its currency.
+#[test]
+fn the_stock_cost_is_summed_per_its_currency_each_week() {
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &artifacts(),
+        &BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
+    )
+    .unwrap_or_else(|d| panic!("{d:#?}"));
+    let cost = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("stock_cost"))
+        .expect("the stock cost snapshot");
+    let question: norn_ir::QuestionIR = serde_json::from_value(json!({
+        "irVersion": "0.1", "name": "canon.stock_cost_by_week", "objectSet": "canon.Holding",
+        "aggregate": [{"metric": cost.definition.name}],
+        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
+        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+        "freshness": {"kind": "live", "maxAgeMs": 5000},
+    }))
+    .expect("question");
+    let plan = space.admit(&question, 100).expect("the stock cost admits");
+    let grouped: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .map(|dimension| dimension.path.property.as_str())
+        .collect();
+    assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }
