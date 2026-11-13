@@ -14,6 +14,8 @@ export const Item = Norn.type({
 export const Party = Norn.type({
   name: "canon.Party", title: "Party", version: "0.1.0", implements: [Agent],
   properties: Schema.Struct({ display_name: Norn.ref("core.display_name"), kind: Schema.Literals(["person", "organization", "system"]) }),
+  // A party's name identifies a person or a customer: personal data, projected as the cell's catalog declares (PRIVACY-1).
+  propertyMarkings: { display_name: ["pii.contact"] },
 })
 export const PartyRole = Norn.type({
   name: "canon.PartyRole", title: "Source party role", version: "0.1.0", implements: [AgentRole],
