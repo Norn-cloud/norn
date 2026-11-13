@@ -14,7 +14,7 @@ import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
-import { FRESHNESS, headline, period, scope, stamp } from "./lib/format.ts"
+import { FRESHNESS, groupDigits, headline, period, scope, stamp } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
 import type { Read } from "./lib/exact.ts"
 import type { Question, QuestionAnswer } from "./lib/transport.ts"
@@ -170,6 +170,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const named = title ?? headline(question)
   const provenanceOf = (bucket: Bucket) => bucketProvenance(answer, bucket, title === undefined ? metricLabels(declared) : [title], engineOf(answer) ?? null)
   const lead = headlineOf(named, question, rows, answer.nowMs, unit)
+  // A ratio's buckets show the exact operands beside the percentage; a sum's figure is already exact.
+  const ratio = rows.some(({ totals }) => totals.length > 1)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
@@ -190,7 +192,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
             : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
         </div>
         {refusal && <RefusedNote refusal={refusal} />}
-        <p className="text-meta text-muted-foreground">{scope(question)} · {period(question.window)}</p>
+        {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
+        <p className="text-meta text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
       </div>
       <div className="space-y-2 px-1" data-slot="answer-lead">
         {lead.bucket && (
@@ -201,7 +204,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                 <span className="block text-figure leading-none font-semibold tracking-[-0.02em] tabular-nums underline decoration-dotted decoration-muted-foreground/40 underline-offset-8">{figure(lead.bucket, unit)}</span>
               </AnswerProvenance>
             )}
-            <span className="text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${fraction(lead.bucket.totals)} = ${lead.bucket.value} exactly` : ""}</span>
+            <span className="text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
           </div>
         )}
         <p className="max-w-[72ch] text-panel text-pretty">{lead.sentence}</p>
@@ -214,7 +217,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
         </div>
       </div>
       {/* A series over time is drawn; a breakdown by values is read in its table. */}
-      {grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0 ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
+      {/* A series over time of two or more buckets is drawn; one bucket, or a breakdown by values, is read in its table. */}
+      {rows.length >= 2 && (grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0) ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
         <Well className="px-2 pt-4 pb-1">
           {frame ? (
           <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
@@ -236,7 +240,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </Panel> : null}
       <Panel icon={Rows3} label={grain ? `Every ${grain}` : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
-          <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead>{ratio && <TableHead className="text-right max-sm:hidden">Exactly</TableHead>}<TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
@@ -248,7 +252,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                 <TableCell className="text-right font-medium tabular-nums">
                   {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={figure(bucket, unit)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{figure(bucket, unit)}</AnswerProvenance>}
                 </TableCell>
-                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${fraction(bucket.totals)} = ${bucket.value}`}</TableCell>
+                {ratio && <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(bucket.value)}`}</TableCell>}
                 <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
                 <TableCell className="w-10 p-1 text-right"><DrillMenu bucket={bucket} question={question} live={live} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
               </TableRow>

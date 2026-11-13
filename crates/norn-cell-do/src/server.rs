@@ -25,6 +25,7 @@ use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
 use norn_api::host::DevHost;
+use norn_api::object_facets::{ObjectFacetParams, get_object_facets};
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
@@ -139,6 +140,8 @@ routes! {
     Objects => ("GET", "/v1/objects/{type}"),
     /// `GET /v1/objects/{type}:profile`.
     ObjectProfile => ("GET", "/v1/objects/{type}:profile"),
+    /// `GET /v1/objects/{type}:facets`.
+    ObjectFacets => ("GET", "/v1/objects/{type}:facets"),
     /// `GET /v1/objects/{type}/{id}`.
     Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
@@ -279,6 +282,7 @@ impl Route {
         if let Some((kind, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
             return Some(match (id, leaf) {
                 (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
+                (None, _) if kind.ends_with(":facets") => Self::ObjectFacets,
                 (None, _) if kind.ends_with(":quarantined") => Self::ObjectsQuarantined,
                 (None, _) if kind.ends_with(":export") => Self::ObjectExport,
                 (None, _) => Self::Objects,
@@ -989,6 +993,32 @@ fn profiled<E: SqlEngine>(
     )?)
 }
 
+/// HOST-READ-7: `GET /v1/objects/{type}:facets`, scoped by the query string.
+fn faceted<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "properties", "filter"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectFacetParams {
+        properties: fields.remove("properties"),
+        filter: fields.remove("filter"),
+    };
+    document_json(&get_object_facets(
+        host,
+        &scope,
+        actor,
+        object_type,
+        &params,
+        &CellObjectAccess,
+    )?)
+}
+
 /// HOST-READ-6: `GET /v1/objects/{type}:quarantined`, scoped by the query string.
 fn quarantined<E: SqlEngine>(
     host: Option<&DevHost<E>>,
@@ -1109,6 +1139,9 @@ fn objects<E: SqlEngine>(
     let object_type = decoded(object_type)?;
     if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
         return profiled(cell(host)?, actor, kind, query);
+    }
+    if let (None, Some(kind)) = (id, object_type.strip_suffix(":facets")) {
+        return faceted(cell(host)?, actor, kind, query);
     }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
