@@ -1,4 +1,4 @@
-import { ChartLine, Clock, FileCheck2, Rows3, Sigma } from "lucide-react"
+import { ChartLine, Clock, FileCheck2, Radio, Rows3, Sigma } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { LiveRecords, RefusedNote, type FetchTrace } from "@/answer-view"
@@ -107,7 +107,7 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
       <div className="flex flex-wrap items-center gap-2 px-1">
         <h2 className="text-section font-medium">{title}</h2>
         <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
-        <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>
+        <Badge variant="success" title="Read now from the cell as your account."><Radio aria-hidden />Live</Badge>
       </div>
       {latest && (
         <StatStrip>

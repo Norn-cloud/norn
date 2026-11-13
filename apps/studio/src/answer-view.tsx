@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Ellipsis, Rows3, Split } from "lucide-react"
+import { ChartLine, Clock, Ellipsis, Radio, Rows3, Split } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -203,7 +203,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
           {read.answer.origin === "live"
-            ? <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>
+            ? <Badge variant="success" title="Read now from the cell as your account."><Radio aria-hidden />Live</Badge>
             : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
         </div>
         {refusal && <RefusedNote refusal={refusal} />}

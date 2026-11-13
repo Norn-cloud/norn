@@ -19,7 +19,7 @@ function Step({ kind, icon, title, children }: { readonly kind?: Kind; readonly 
   const Icon = icon ?? (kind ? KINDS[kind].icon : GitCommitHorizontal)
   return (
     <li className="flex gap-3">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><Icon aria-hidden className="size-4" /></span>
+      <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", kind ? cn(KINDS[kind].fill, KINDS[kind].text) : "bg-muted text-muted-foreground")}><Icon aria-hidden className="size-4" /></span>
       <div className="min-w-0 flex-1 space-y-0.5 text-sm"><div className="font-medium [overflow-wrap:anywhere]">{title}</div>{children}</div>
     </li>
   )
