@@ -217,9 +217,15 @@ fn review(cell: &mut Cell, id: &str, status: &str, expected: u64) {
                 key: norn_kernel::FactKey::new("source.AgreementReview", id),
                 expected: norn_kernel::FactVersion(expected),
                 mutation: norn_kernel::FactMutation::Put {
-                    values: norn_ir::runtime_object! {
-                        "id" => id, "status" => status, "reason" => "Shopify counts what is free to sell", "reviewed_by" => "steward",
-                    },
+                    values: BTreeMap::from([
+                        ("id".to_owned(), RuntimeValue::from(id)),
+                        ("status".to_owned(), RuntimeValue::from(status)),
+                        (
+                            "reason".to_owned(),
+                            RuntimeValue::from("Shopify counts what is free to sell"),
+                        ),
+                        ("reviewed_by".to_owned(), RuntimeValue::from("steward")),
+                    ]),
                 },
             }],
             ..norn_kernel::CellCommit::empty()
