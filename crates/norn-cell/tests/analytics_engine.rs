@@ -876,6 +876,7 @@ fn bulk_path_measurements() {
                             })
                             .collect(),
                     ),
+                    model: String::new(),
                     bad: false,
                 }
             })
@@ -1852,5 +1853,239 @@ mod alias_names {
             assert!(std::fs::metadata(&path).expect("exported").len() > 0);
             std::fs::remove_file(path).expect("scratch export");
         }
+    }
+}
+
+/// ASOF-KNOWLEDGE-1 on the engine: a question asked as known at an earlier
+/// commit is answered from the mirror at that frontier, in the exact engine's
+/// historical envelope, after later corrections and retractions.
+mod known_at {
+    use super::{
+        ArtifactEnvelope, ArtifactKind, ArtifactPayload, CLOCK, CommitBatch, EntityIrVersion,
+        EntityRootV2, METALS, TIMES, WORLD, by_metal, code, engine, row, shaped, sync, tenant,
+    };
+    use norn_cell::KnowledgeCutoff;
+    use norn_cell::compute::{Engine as Answered, HistoricalQuestionResult};
+    use norn_checker::metric::compute::QuestionPlan;
+
+    fn exact(
+        store: &norn_cell::CellStore,
+        plan: &QuestionPlan,
+        context: norn_cell::compute::QueryContext,
+        cutoff: KnowledgeCutoff,
+    ) -> Result<HistoricalQuestionResult, String> {
+        store
+            .evaluate_question_known_at(plan, context, cutoff, |_| Ok(true))
+            .map_err(|e| code(&e))
+    }
+
+    fn on_engine(
+        store: &norn_cell::CellStore,
+        engine: &norn_cell::analytics::engine::Engine,
+        plan: &QuestionPlan,
+        context: &norn_cell::compute::QueryContext,
+        cutoff: KnowledgeCutoff,
+    ) -> Result<HistoricalQuestionResult, String> {
+        sync(store, engine, &context.world);
+        let prepared = store
+            .analytics_prepare_known_at(plan, context.clone(), &tenant(), cutoff)
+            .map_err(|e| code(&e))?;
+        let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+        let mut answer = store
+            .analytics_answer_known_at(prepared, response)
+            .map_err(|e| code(&e))?;
+        answer.result.source_disagreements = store
+            .answer_source_disagreements(
+                plan,
+                &answer.result.context.clone(),
+                (answer.result.known_as_of, Some(cutoff)),
+                &mut |_| Ok(true),
+            )
+            .map_err(|e| code(&e))?;
+        Ok(answer)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn answers_known_at_every_earlier_commit_match_the_exact_engine(
+            steps in proptest::collection::vec(
+                (0u8..8, proptest::option::of((-5000i64..5000, 0usize..5, 0usize..4))),
+                1..10,
+            ),
+            shape in 0u8..3,
+        ) {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = match shape {
+                0 => by_metal(true, 100),
+                1 => by_metal(false, 100),
+                _ => shaped(true, 100, &serde_json::json!([{"path": {"property": "occurred_at"}, "grain": "week"}])),
+            };
+            let mut cutoffs = Vec::new();
+            for (tick, (id, edit)) in (1u64..).zip(steps) {
+                let write = match edit {
+                    Some((input, at, metal)) => row(&format!("G{id}"), input, Some(input / 3), TIMES[at], METALS[metal]),
+                    None => norn_cell::FactWriteRow::Delete { object_type: super::TYPE.into(), key: format!("G{id}") },
+                };
+                let at = CLOCK.checked_add(tick).expect("clock");
+                if store.commit(&CommitBatch {
+                    world: WORLD.into(),
+                    scope: "synthetic".into(),
+                    logical_time: at,
+                    writes: vec![write],
+                    ..CommitBatch::default()
+                }).is_ok() {
+                    let frontier = store.verified_head().expect("head").commits;
+                    cutoffs.push(KnowledgeCutoff {
+                        recorded_at: norn_kernel::LogicalTime::from_millis(at),
+                        frontier,
+                    });
+                }
+            }
+            for cutoff in cutoffs {
+                let mut context = context.clone();
+                context.now_ms = cutoff.recorded_at.as_millis();
+                let want = exact(&store, &plan, context.clone(), cutoff);
+                let got = on_engine(&store, &engine, &plan, &context, cutoff);
+                match (want, got) {
+                    (Ok(want), Ok(mut got)) => {
+                        proptest::prop_assert_eq!(got.result.engine, Answered::Duckdb);
+                        got.result.engine = Answered::Cell;
+                        proptest::prop_assert_eq!(
+                            serde_json::to_value(&got).expect("wire"),
+                            serde_json::to_value(&want).expect("wire")
+                        );
+                    }
+                    (Err(want), Err(got)) => proptest::prop_assert_eq!(got, want),
+                    (want, got) => proptest::prop_assert!(false, "engines disagree at {cutoff:?}: exact {want:?}, engine {got:?}"),
+                }
+            }
+        }
+    }
+
+    /// The mirror keeps no deletions. Where the version known at a cutoff is
+    /// a deletion committed under another model, the exact engine refuses;
+    /// the engine must refuse with the same code, never answer without the row.
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scenario: history under one model, the install, the cutoffs"
+    )]
+    fn a_deletion_under_another_model_refuses_as_the_exact_engine_refuses() {
+        let (_dir, engine) = engine();
+        let (mut store, plan, context) = by_metal(true, 100);
+        let mut cutoffs = Vec::new();
+        let writes = [
+            row("G1", 1000, Some(300), TIMES[0], METALS[0]),
+            norn_cell::FactWriteRow::Delete {
+                object_type: super::TYPE.into(),
+                key: "G1".into(),
+            },
+        ];
+        for (tick, write) in (1u64..).zip(writes) {
+            let at = CLOCK.checked_add(tick).expect("clock");
+            store
+                .commit(&CommitBatch {
+                    world: WORLD.into(),
+                    scope: "synthetic".into(),
+                    logical_time: at,
+                    writes: vec![write],
+                    ..CommitBatch::default()
+                })
+                .expect("committed");
+            cutoffs.push(KnowledgeCutoff {
+                recorded_at: norn_kernel::LogicalTime::from_millis(at),
+                frontier: store.verified_head().expect("head").commits,
+            });
+        }
+        // Another model: the same type beside a new one, so the question's
+        // columns are unchanged and only the model differs.
+        let object = store.model().object_types().next().expect("type").clone();
+        let other: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "demo.Other", "properties": [{ "id": "code", "type": { "kind": "text" } }]
+        }))
+        .expect("other type");
+        let artifacts: Vec<ArtifactEnvelope> = [&object, &other]
+            .into_iter()
+            .map(|object| {
+                let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+                    "../../../fixtures/ir/metrics/ontology.json"
+                ))
+                .expect("template");
+                let mut artifact = artifacts.swap_remove(0);
+                let name = object.name.as_str();
+                artifact.artifact_id = format!("{name}.entity.v2");
+                artifact.name = name.into();
+                artifact.namespace = name.split_once('.').expect("qualified").0.into();
+                artifact.payload = ArtifactPayload::from_kind_json(
+                    &ArtifactKind::Entity,
+                    norn_ir::json_tree_from_value(
+                        serde_json::to_value(EntityRootV2 {
+                            entity_version: EntityIrVersion::V2_0,
+                            object_type: (*object).clone(),
+                            mutation_authority: None,
+                            extensions: None,
+                        })
+                        .expect("typed root"),
+                    )
+                    .expect("tree"),
+                )
+                .expect("payload");
+                artifact
+            })
+            .collect();
+        let canonical_set =
+            String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("set"))
+                .expect("UTF8");
+        let model = norn_cell::Model::from_definitions(&[object, other], &[]).expect("model");
+        let before = store.model().model_hash().to_owned();
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set,
+                    registry: Vec::new(),
+                    receipt_sha256: "a".repeat(64),
+                    admission_receipt: None,
+                    readmission: None,
+                    installed_at: CLOCK.checked_add(10).expect("clock"),
+                    diff: serde_json::json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                    layout: None,
+                },
+                None,
+                "synthetic",
+            )
+            .expect("installed");
+        assert_ne!(store.model().model_hash(), before);
+        // G2 under the new model: at its frontier the only version of the old
+        // model is G1's deletion, which the mirror does not keep.
+        let at = CLOCK.checked_add(20).expect("clock");
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: at,
+                writes: vec![row("G2", 2000, Some(500), TIMES[0], METALS[0])],
+                ..CommitBatch::default()
+            })
+            .expect("committed");
+        let last = KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(at),
+            frontier: store.verified_head().expect("head").commits,
+        };
+        cutoffs.push(last);
+        for cutoff in cutoffs {
+            let mut context = context.clone();
+            context.now_ms = cutoff.recorded_at.as_millis();
+            let want = exact(&store, &plan, context.clone(), cutoff).map(|_| ());
+            let got = on_engine(&store, &engine, &plan, &context, cutoff).map(|_| ());
+            assert_eq!(got, want, "{cutoff:?}");
+        }
+        let mut context = context;
+        context.now_ms = last.recorded_at.as_millis();
+        assert_eq!(
+            exact(&store, &plan, context, last).map(|_| ()),
+            Err("core.compute.unsupported_engine".to_owned())
+        );
     }
 }
