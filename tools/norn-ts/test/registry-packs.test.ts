@@ -47,4 +47,8 @@ test.skipIf(!checker)("the Rust checker admits every registry pack and link", ()
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
+  // LAW-LINK-1 regression: every registered pack law stays admitted, with no finding against it.
+  const laws = new Set(artifacts.filter(a => a.kind === "law").map(a => a.artifactId as string))
+  expect(laws.size).toBeGreaterThan(0)
+  expect(checked.diagnostics.diagnostics.filter(d => laws.has(d.artifactId ?? ""))).toEqual([])
 }, 60_000)

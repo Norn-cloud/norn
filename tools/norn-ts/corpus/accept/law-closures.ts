@@ -5,7 +5,7 @@ import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
 const Line = Schema.Struct({ amount: Schema.Int, sku: Schema.String })
-const Entry = Schema.Struct({ status: Schema.Literals(["draft", "posted"]), issue_date: Schema.String, due_date: Schema.String, lines: Schema.Array(Line) })
+const Entry = Schema.Struct({ status: Schema.Literals(["draft", "posted"]), issue_date: Schema.String, due_date: Schema.String, debit: Schema.Int, credit: Schema.Int, debit_sku: Schema.String, credit_sku: Schema.String, lines: Schema.Array(Line) })
 
 export const JournalLine = Norn.type({
   name: "books.JournalLine",
@@ -19,7 +19,7 @@ export const JournalEntry = Norn.type({
   name: "books.JournalEntry",
   title: "Journal entry",
   version: "0.1.0",
-  properties: Schema.Struct({ entry_id: Schema.String, status: Schema.Literals(["draft", "posted"]), issue_date: Norn.date(), due_date: Norn.date() }),
+  properties: Schema.Struct({ entry_id: Schema.String, status: Schema.Literals(["draft", "posted"]), issue_date: Norn.date(), due_date: Norn.date(), debit: Schema.Int, credit: Schema.Int, debit_sku: Schema.String, credit_sku: Schema.String }),
   identity: [{ name: "primary", properties: ["entry_id"] }],
   links: [{ id: "lines", target: JournalLine, cardinality: { to: "many", from: "one" } }],
   lifecycles: [{
@@ -46,9 +46,9 @@ export const balanced = Norn.law({
     response: {
       kind: "predicate",
       expression: Norn.expression(Entry, (self) =>
-        Norn.sum(self.lines.map((l) => l.amount)) === 0
-        && self.lines.every((l) => l.amount !== 0)
-        && !self.lines.some((l) => l.sku.startsWith("VOID-") && ["A", "B"].some((p) => l.sku.endsWith(p)))
+        Norn.sum([{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].map((l) => l.amount)) === 0
+        && [{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].every((l) => l.amount !== 0)
+        && ![{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].some((l) => l.sku.startsWith("VOID-") && ["A", "B"].some((p) => l.sku.endsWith(p)))
         && Norn.addDays(self.issue_date, 30) >= Norn.parseDate(self.due_date)),
     },
   },
