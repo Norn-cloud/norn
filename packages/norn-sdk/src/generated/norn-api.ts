@@ -11884,6 +11884,11 @@ export interface components {
         /** @description A refused request. */
         Refusal: ({
             /**
+             * @description INCIDENT-1: the id under which the host logged this internal
+             *     refusal's cause. The caller quotes it; the cause is never served.
+             */
+            incidentId?: string;
+            /**
              * @description The plain-words restatement the host recomputed. Present, with its
              *     digest, only on `definition.signoff_mismatch`.
              */

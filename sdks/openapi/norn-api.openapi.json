@@ -32614,8 +32614,12 @@
             "oneOf": [
               {
                 "type": "object",
-                "description": "The words a signer can sign: what the host reads the submission as.",
+                "description": "The rarely present parts of a refusal, boxed so every refusal stays small.\nIts fields sit flat in the refusal, exactly where the restatement always\ndid, so the wire shape only gains `incidentId` (D84).",
                 "properties": {
+                  "incidentId": {
+                    "type": "string",
+                    "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."
+                  },
                   "restatement": {
                     "type": "string",
                     "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
@@ -32630,7 +32634,7 @@
                 "type": "null"
               }
             ],
-            "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
+            "description": "What only some refusals carry, flattened into the refusal: on\n`definition.signoff_mismatch`, the host's restatement of the caller's\nown admitted payload (`restatement`, `restatementSha256`); on an\ninternal refusal, its `incidentId` (INCIDENT-1). Absent otherwise."
           },
           {
             "type": "object",
