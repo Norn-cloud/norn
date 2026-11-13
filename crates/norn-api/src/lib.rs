@@ -41,9 +41,10 @@ pub mod jcs;
 pub mod kernel_set;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// HOST-READ-7: exact value counts of a concept's categorical properties.
+pub mod object_facets;
 /// HOST-READ-4: an object's link neighbourhood and its source lineage.
 pub mod object_links;
-pub mod object_facets;
 pub mod object_profile;
 /// HOST-READ-3: the object grid query grammar and its evaluation.
 pub mod object_query;

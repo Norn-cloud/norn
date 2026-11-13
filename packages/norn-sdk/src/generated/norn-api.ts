@@ -500,6 +500,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}:facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-7: the exact value counts of `object_type`'s categorical
+         *     properties over the caller's authorized snapshot, narrowed by a filter.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), an invalid filter
+         *     or a property that is not a declared text, choice or yes/no property (400
+         *     `query.invalid`, every violation at its pointer), a commit while the
+         *     snapshot was read (409 `object.snapshot_moved`, retryable), or a host failure.
+         */
+        get: operations["get_object_facets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}:profile": {
         parameters: {
             query?: never;
@@ -1983,6 +2008,36 @@ export interface components {
             id: string;
             sha256: string;
             version: number;
+        };
+        /** @description One property's values and how many counted rows hold each. */
+        NornFacet: {
+            /**
+             * Format: int64
+             * @description Counted rows without a value.
+             */
+            nulls: number;
+            /**
+             * Format: int64
+             * @description Counted rows holding a value not listed.
+             */
+            otherRows: number;
+            /** @description The property id. */
+            property: string;
+            /**
+             * @description Its values, most rows first (ties in value order), at most
+             *     [`MAX_FACET_VALUES`].
+             */
+            values: components["schemas"]["NornFacetValue"][];
+        };
+        /** @description One value and the counted rows that hold it. */
+        NornFacetValue: {
+            /**
+             * Format: int64
+             * @description Counted rows holding it.
+             */
+            count: number;
+            /** @description A stored value: text or a boolean. */
+            value: Record<string, never>;
         };
         /**
          * GuaranteesDocument
@@ -10835,6 +10890,39 @@ export interface components {
             /** @description Revalidated exact result at its original frontier. */
             result: components["schemas"]["NornQueryResult"];
         };
+        /** @description The exact value counts of a concept's categorical properties. */
+        NornObjectFacets: {
+            /** @description True when the scan bound was reached: every count is a lower bound. */
+            approximate: boolean;
+            /**
+             * @description One facet per property asked for, in the order asked (declared order
+             *     when none was named).
+             */
+            facets: components["schemas"]["NornFacet"][];
+            /** @description The concept counted; rows may be of its subtypes. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Rows held back by source disputes or open quarantining findings.
+             */
+            quarantinedRows: number;
+            /**
+             * Format: int64
+             * @description Rows counted: readable, not held back, and matching the filter.
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description The visible-row scan bound.
+             */
+            scanLimit: number;
+            /**
+             * Format: int64
+             * @description Rows the caller may know exist but whose values are withheld; none is
+             *     counted, and none matches a filter.
+             */
+            withheldRows: number;
+        };
         /** @description An object's quality findings (OBS-EVIDENCE-1), open and resolved. */
         NornObjectFindings: {
             /**
@@ -13426,6 +13514,90 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_facets: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /**
+                 * @description The properties to count, comma separated: each a text, choice or
+                 *     yes/no property of the type. Every such property when absent.
+                 * @example status,unit
+                 */
+                properties?: string;
+                /**
+                 * @description The grid query's filter (`{"all":[clause, ...]}`), with its rules: the
+                 *     facets count the rows a page with this filter lists.
+                 */
+                filter?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to count. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The value counts over the caller's authorized snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectFacets"];
+                };
+            };
+            /** @description The request was refused as invalid (`query.invalid`): the filter does not hold, or a property is not a declared text, choice or yes/no property, with every violation as a diagnostic. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The snapshot moved while it was read; retry. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
