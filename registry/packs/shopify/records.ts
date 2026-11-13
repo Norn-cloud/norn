@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "shopify.three.source",
@@ -71,7 +71,7 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "FulfillmentLine", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Transaction", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "delivery_posting_state", dataset: "FulfillmentLine", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "settlement_currency", dataset: "Transaction", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "Transaction", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "ProductVariant", fields: ["id"], origin: "declared"},
@@ -87,7 +87,7 @@ export const Mapping = Norn.mapping({
   id: "shopify.three.mapping",
   title: "shopify synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "96924c86db3fa3d8585eb41e44b313a0e69d5f963e6eacd733b9b166e32f81f3"},
+  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "cb5f00539f986adf07b0ed0bc29f9dd2aa2606935e48cba5c306ec5693fc1120"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, Settlement],
   maps: [

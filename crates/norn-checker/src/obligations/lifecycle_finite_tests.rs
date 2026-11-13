@@ -375,3 +375,70 @@ fn every_frozen_choice_keeps_the_complete_chart() {
         }
     }
 }
+
+/// LIFE-SOUND-4: with no recorded loss, conservation refuses `post` from every approved row,
+/// so approval is a planted dead end whose minimal blocking core is the conservation law.
+#[test]
+fn a_law_blocked_exit_names_its_smallest_blocking_law_set() {
+    let source = source(true);
+    let graph = super::lifecycle_tests::authority(&source)
+        .lifecycle_graph(&source, &BTreeSet::new(), &bounds())
+        .expect("source")
+        .graph
+        .expect("bounded graph");
+    let findings = graph.soundness().expect("rows carry states");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(
+        finding.code,
+        crate::lifecycle_soundness::codes::LAW_BLOCKED_EXIT
+    );
+    assert_eq!(finding.state, "approved");
+    assert_eq!(finding.run, ["measure", "approve"]);
+    let (transition, laws) = finding.blocked.as_ref().expect("a core");
+    assert_eq!(transition, "post");
+    assert_eq!(laws.len(), 1);
+    assert!(laws[0].contains("fine_mass_conservation"), "{laws:?}");
+    assert_eq!(
+        graph.inputs.nodes[finding.row]["loss_fine_g"],
+        norn_ir::RuntimeValue::from_json_text("0").expect("exact")
+    );
+    // Recording the loss makes every approved row postable: no dead end remains.
+    let mut profile = bounds();
+    profile
+        .frozen
+        .insert("loss_fine_g".into(), vec!["1".into()]);
+    let sound = super::lifecycle_tests::authority(&source)
+        .lifecycle_graph(&source, &BTreeSet::new(), &profile)
+        .expect("source")
+        .graph
+        .expect("bounded graph");
+    assert_eq!(sound.soundness().expect("states"), Vec::new());
+}
+
+/// A fact transition a governing law refuses is reported, not silently dropped.
+#[test]
+fn a_law_refusing_a_fact_is_reported() {
+    let mut declarations = declarations(true);
+    declarations[0]["payload"]["objectType"]["lifecycles"][0]["transitions"][3]["mode"] =
+        json!("fact");
+    let source = definition_source(&declarations);
+    let graph = super::lifecycle_tests::authority(&source)
+        .lifecycle_graph(&source, &BTreeSet::new(), &bounds())
+        .expect("source")
+        .graph
+        .expect("bounded graph");
+    let codes: Vec<_> = graph
+        .soundness()
+        .expect("states")
+        .into_iter()
+        .map(|finding| finding.code)
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            crate::lifecycle_soundness::codes::LAW_BLOCKED_EXIT,
+            crate::lifecycle_soundness::codes::FACT_REFUSED
+        ]
+    );
+}

@@ -328,6 +328,74 @@ pub fn check_requirement(
     requirement: &norn_ir::deontic::StructuredRequirement,
     env: &norn_expr::ZenTypeEnv,
 ) -> Result<(), RequirementRefusal> {
+    check(requirement, env, false)
+}
+
+/// Why [`check_defeasible_requirement`] refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefeasibleWithinRefusal {
+    /// Any refusal of [`check_requirement`]; an unresolved trigger is `InvalidBinding`.
+    Requirement(RequirementRefusal),
+    /// LIFE-SOUND-9: an exception could cancel the deadline in a state from which no
+    /// declared good or compensated ending is proved reachable.
+    CancellationDeadEnd(crate::lifecycle_soundness::CancellationDeadEnd),
+}
+
+impl DefeasibleWithinRefusal {
+    /// Stable locale-independent diagnostic identity.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Requirement(refusal) => refusal.code(),
+            Self::CancellationDeadEnd(_) => {
+                crate::lifecycle_soundness::codes::CANCELLATION_DEAD_END
+            }
+        }
+    }
+}
+
+/// LAW-WITHIN-1 with the LIFE-SOUND-9 relaxation (ruling on #1313, "Reading A gated by a
+/// proof"): a `within` obligation whose only extra is an exception tree (no condition, scope
+/// filter or defeat edge) is admitted when [`crate::lifecycle_soundness::cancellation_gate`]
+/// proves that in every live state where an applying exception could cancel the activation,
+/// the subject's `lifecycle` still reaches a declared good or compensated ending. Otherwise it
+/// is refused with the failing states and the smallest blocking set. Every other requirement is
+/// exactly [`check_requirement`]; without this proof a defeasible `within` stays refused.
+///
+/// # Errors
+/// [`DefeasibleWithinRefusal`].
+pub fn check_defeasible_requirement(
+    requirement: &norn_ir::deontic::StructuredRequirement,
+    env: &norn_expr::ZenTypeEnv,
+    lifecycle: &norn_ir::Lifecycle,
+    states: &[String],
+) -> Result<(), DefeasibleWithinRefusal> {
+    use crate::lifecycle_soundness::{CancellationRefusal, cancellation_gate};
+    let rule = &requirement.norm;
+    let defeasible = !rule.exceptions.is_empty() || !rule.law.exceptions.is_empty();
+    let within = within_shape(requirement).ok().flatten();
+    let Some((within, _millis)) = within.filter(|_| defeasible) else {
+        return check_requirement(requirement, env).map_err(DefeasibleWithinRefusal::Requirement);
+    };
+    match cancellation_gate(lifecycle, states, &within.trigger) {
+        Ok(()) => {}
+        Err(CancellationRefusal::UnknownTrigger) => {
+            return Err(DefeasibleWithinRefusal::Requirement(
+                RequirementRefusal::InvalidBinding,
+            ));
+        }
+        Err(CancellationRefusal::DeadEnd(failure)) => {
+            return Err(DefeasibleWithinRefusal::CancellationDeadEnd(failure));
+        }
+    }
+    check(requirement, env, true).map_err(DefeasibleWithinRefusal::Requirement)
+}
+
+fn check(
+    requirement: &norn_ir::deontic::StructuredRequirement,
+    env: &norn_expr::ZenTypeEnv,
+    cancellation_proved: bool,
+) -> Result<(), RequirementRefusal> {
     use RequirementRefusal as R;
     use norn_expr::{Expression, Type, check_expression};
     let rule = &requirement.norm;
@@ -345,13 +413,13 @@ pub fn check_requirement(
         if within.calendar.is_some() {
             return Err(R::UnsupportedCalendar);
         }
-        // A pointwise condition, lifecycle/commitment scope filter, exception
-        // or defeat edge on an activation has no admitted semantics yet.
+        // A pointwise condition, lifecycle/commitment scope filter or defeat
+        // edge on an activation has no admitted semantics yet; an exception
+        // only once LIFE-SOUND-9 proved its cancellations end well.
         if law.condition.is_some()
             || !law.scope.lifecycle_states.is_empty()
             || !law.scope.commitments.is_empty()
-            || !rule.exceptions.is_empty()
-            || !law.exceptions.is_empty()
+            || (!cancellation_proved && (!rule.exceptions.is_empty() || !law.exceptions.is_empty()))
             || !rule.defeated_by.is_empty()
         {
             return Err(R::UnsupportedActivation);

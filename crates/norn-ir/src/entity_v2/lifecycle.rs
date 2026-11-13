@@ -103,6 +103,107 @@ pub struct Lifecycle {
     /// Guards can remove paths but cannot introduce a path that avoids `via`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path_properties: Vec<LifecyclePathProperty>,
+    /// LIFE-SOUND-1: the declared endings and their outcomes. A run is sound
+    /// when it can always reach one. A non-`resting` ending is a terminal
+    /// state; a `resting` ending is a non-terminal state a perpetual object
+    /// may stay in (an account, an item). A terminal state with no entry here
+    /// is an unclassified ending. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub endings: Vec<LifecycleEnding>,
+    /// LIFE-SOUND-6: the external event kinds an object of this lifecycle can
+    /// receive (connector observations, provider results, counterparty
+    /// cancellations). Every reachable non-terminal state handles each one by
+    /// an event-triggered transition or an explicit `ignoredIn` entry.
+    /// Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<LifecycleEvent>,
+}
+
+/// How a lifecycle run ended (LIFE-SOUND-1).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleOutcome {
+    /// The run did what it was for.
+    Completed,
+    /// The run was undone and every dispatched effect was compensated.
+    Compensated,
+    /// The run was abandoned before any uncompensated effect.
+    Cancelled,
+    /// An obligation was breached and the breach is visible (a remedy owed).
+    BreachedVisible,
+    /// A non-terminal state a perpetual object may rest in indefinitely.
+    Resting,
+}
+
+impl LifecycleOutcome {
+    /// Whether an ending with this outcome must be a terminal state.
+    #[must_use]
+    pub const fn is_final(self) -> bool {
+        !matches!(self, Self::Resting)
+    }
+}
+
+/// One declared ending of a lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LifecycleEnding {
+    /// The state; listed once.
+    pub state: String,
+    /// What ending in it means.
+    pub outcome: LifecycleOutcome,
+}
+
+/// An external event kind a lifecycle receives (LIFE-SOUND-6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LifecycleEvent {
+    /// The event id, same grammar as a transition id; unique per lifecycle.
+    pub id: String,
+    /// States in which the event is deliberately ignored, each with a reason.
+    /// Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored_in: Vec<LifecycleIgnore>,
+}
+
+/// States in which an external event is ignored on purpose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LifecycleIgnore {
+    /// The states; non-empty.
+    pub states: Vec<String>,
+    /// Why ignoring it there is correct; non-blank.
+    pub reason: String,
+}
+
+/// What fires a transition (LIFE-SOUND-3). Omitted: an action fires it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TransitionTrigger {
+    /// The cell clock: the transition fires once the object has been in a
+    /// source state for `millis`. A deadline; always a fact.
+    Timer {
+        /// Positive canonical unsigned milliseconds, bounded by u64.
+        millis: String,
+    },
+    /// A declared external event of the lifecycle. Always a fact.
+    Event {
+        /// The [`LifecycleEvent`] id.
+        event: String,
+    },
+}
+
+/// Whether a transition records a fact or asks for a change (LIFE-SOUND-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionMode {
+    /// A request: laws and guards may refuse it. The default.
+    Request,
+    /// A fact (an observation, an offline sale, a count, a provider result):
+    /// never refused. It commits, commits with a variance or shortfall, or is
+    /// quarantined. A fact transition carries no guard.
+    Fact,
 }
 
 /// Every path from an initial state to `target` must visit `via`, including
@@ -210,6 +311,28 @@ impl Lifecycle {
             terminal: ordered(&self.terminal),
             immutable: ordered(&self.immutable),
             path_properties: self.path_properties.clone(),
+            endings: self
+                .endings
+                .iter()
+                .filter(|ending| states.contains(&ending.state))
+                .cloned()
+                .collect(),
+            events: self
+                .events
+                .iter()
+                .map(|event| LifecycleEvent {
+                    id: event.id.clone(),
+                    ignored_in: event
+                        .ignored_in
+                        .iter()
+                        .map(|ignore| LifecycleIgnore {
+                            states: ordered(&ignore.states),
+                            reason: ignore.reason.clone(),
+                        })
+                        .filter(|ignore| !ignore.states.is_empty())
+                        .collect(),
+                })
+                .collect(),
             transitions: self
                 .transitions
                 .iter()
@@ -221,6 +344,9 @@ impl Lifecycle {
                     to: transition.to.clone(),
                     guards: transition.guards.clone(),
                     guard_refusal_code: transition.guard_refusal_code.clone(),
+                    trigger: transition.trigger.clone(),
+                    mode: transition.mode,
+                    compensated_by: transition.compensated_by.clone(),
                 })
                 .filter(|transition| !transition.from.is_empty())
                 .collect(),
@@ -273,6 +399,44 @@ pub struct Transition {
     )]
     #[schemars(with = "String")]
     pub guard_refusal_code: Option<String>,
+    /// LIFE-SOUND-3: a timer or external event that fires this transition.
+    /// Omitted: an action fires it.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "TransitionTrigger")]
+    pub trigger: Option<TransitionTrigger>,
+    /// LIFE-SOUND-5: fact or request. Omitted: a request, unless a trigger
+    /// makes it a fact.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "TransitionMode")]
+    pub mode: Option<TransitionMode>,
+    /// LIFE-SOUND-8: this transition dispatches an irreversible external
+    /// effect, and the named transition compensates it. A run that dispatched
+    /// it may end `cancelled`, `compensated` or `breached_visible` only after
+    /// the compensating transition. Omitted when the transition dispatches none.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub compensated_by: Option<TransitionId>,
+}
+
+impl Transition {
+    /// Whether the transition records a fact: a timer or event trigger, or
+    /// `mode: fact`.
+    #[must_use]
+    pub fn is_fact(&self) -> bool {
+        self.trigger.is_some() || self.mode == Some(TransitionMode::Fact)
+    }
 }
 
 /// The effective lifecycles of object type `name`, by lifecycle property:
@@ -360,8 +524,30 @@ pub fn effective_lifecycles<'a>(
                         machine.path_properties.push(property.clone());
                     }
                 }
+                // Endings and events are inherited; the redeclaration's own win.
+                for ending in &wide.endings {
+                    if states.contains(&ending.state)
+                        && !machine.endings.iter().any(|own| own.state == ending.state)
+                    {
+                        machine.endings.push(ending.clone());
+                    }
+                }
+                for event in &wide.events {
+                    if !machine.events.iter().any(|own| own.id == event.id) {
+                        machine.events.push(event.clone());
+                    }
+                }
                 for transition in &mut machine.transitions {
                     if let Some(parent) = wide.transitions.iter().find(|p| p.id == transition.id) {
+                        if transition.trigger.is_none() {
+                            transition.trigger.clone_from(&parent.trigger);
+                        }
+                        if transition.mode.is_none() {
+                            transition.mode = parent.mode;
+                        }
+                        if transition.compensated_by.is_none() {
+                            transition.compensated_by.clone_from(&parent.compensated_by);
+                        }
                         if parent.guard_refusal_code.is_some() {
                             transition
                                 .guard_refusal_code
