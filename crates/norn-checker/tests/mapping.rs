@@ -1225,6 +1225,63 @@ fn erpnext_mapping_checks_clean_in_the_artifact_set() {
     );
 }
 
+/// The claim type is needed only where links are mapped: a set whose mapping
+/// declares no links is checked exactly as before, with or without
+/// `norn.ObservedLinkClaim` (a tenant without link-claim mappings installs
+/// unchanged).
+#[test]
+fn a_mapping_without_links_does_not_need_the_claim_type() {
+    let mut payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    for map in payload
+        .pointer_mut("/maps")
+        .and_then(Value::as_array_mut)
+        .expect("the mapping declares maps")
+    {
+        map["links"] = json!([]);
+    }
+    let check = |with_claim_type: bool| {
+        let mut mapping = mapping_artifact(payload.clone(), false);
+        if !with_claim_type {
+            mapping
+                .dependencies
+                .retain(|dependency| dependency.artifact_id != "norn.ObservedLinkClaim.entity");
+        }
+        let mut artifacts: Vec<ArtifactEnvelope> = model_artifacts()
+            .into_iter()
+            .filter(|artifact| {
+                with_claim_type || artifact.artifact_id != "norn.ObservedLinkClaim.entity"
+            })
+            .collect();
+        artifacts.push(source_artifact());
+        artifacts.push(mapping);
+        let mut codes: Vec<String> = check_artifact_set(
+            &artifacts,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        )
+        .into_iter()
+        .map(|finding| finding.code)
+        .collect();
+        codes.sort();
+        codes
+    };
+    let without = check(false);
+    assert!(
+        !without
+            .iter()
+            .any(|code| code == "mapping.model.link_claim_type_missing"),
+        "no link is mapped, so no claim is recorded: {without:#?}"
+    );
+    assert_eq!(
+        without,
+        check(true),
+        "the claim type's absence changes nothing"
+    );
+}
+
 /// OBS-LINK-CONVERGE-1 at admission: the cell records every mapped link as a
 /// `norn.ObservedLinkClaim`, so a set whose mapping declares links without
 /// that type is refused here, at the first linking map, instead of admitting
