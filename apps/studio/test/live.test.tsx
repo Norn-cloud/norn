@@ -246,7 +246,11 @@ test("a bucket the server suppressed (D53) reads 'Suppressed: fewer than 3 recor
   expect(frame?.unit).toBe("%")
   expect(frame?.points[0] as unknown).toEqual({ label: rows[0]?.label, position: null, shown: SUPPRESSED, exact: SUPPRESSED })
   expect(frame?.points.slice(1).every(({ position }) => typeof position === "number")).toBe(true)
-  const html = await page({ kind: "read", read: readDocument(source, "live") })
+  // The table lists a long series' latest weeks, so the page is checked with its latest bucket suppressed.
+  const latest = JSON.parse(answerText) as typeof suppressed
+  const last = Object.keys(latest.rows).at(-1) ?? ""
+  Object.assign(latest.rows[last] ?? {}, { suppressed: true, value: null, totals: [] })
+  const html = await page({ kind: "read", read: readDocument(JSON.stringify(latest), "live") })
   expect(html).toContain(SUPPRESSED)
   expect(html).not.toContain(" = Suppressed")
 })

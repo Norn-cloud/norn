@@ -1,0 +1,51 @@
+{
+  "artifactId": "jewelry.melt.fine_mass_conserved.law",
+  "dependencies": [
+    {
+      "artifactId": "jewelry.Melt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A melt loses no fine metal: input equals output plus recorded loss.",
+  "namespace": "jewelry",
+  "payload": {
+    "condition": "true",
+    "id": "jewelry.melt.fine_mass_conserved",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "jewelry",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/jewelry/jewelry.ts"
+    },
+    "rationale": "Fine metal is neither created nor destroyed by a melt; any difference is recorded as loss.",
+    "response": {
+      "expression": "self.input_fine_g == self.output_fine_g + self.loss_fine_g",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "jewelry.Melt"
+      ],
+      "root": {
+        "id": "jewelry.Melt",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "jewelry.Melt"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/jewelry/artifacts/jewelry.melt.fine_mass_conserved.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

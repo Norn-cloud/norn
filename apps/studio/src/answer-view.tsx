@@ -100,6 +100,9 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale 
   )
 }
 
+/** How many of a series' periods its table lists before "Show all". */
+const LATEST = 8
+
 /**
  * The server's refusal, as an answer: what it means in plain words (the reader's language), with
  * the engine's own message, code and explanation under Technical.
@@ -183,6 +186,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const declared = declarations(read)
   const rows = buckets(declared, { answer, numbers: read.answer.numbers, at: "" })
   const [open, setOpen] = useState<Bucket | undefined>(() => rows.find(({ key }) => key === openBucket))
+  const [every, setEvery] = useState(false)
   const named = title ?? headline(question)
   const provenanceOf = (bucket: Bucket) => bucketProvenance(answer, bucket, title === undefined ? metricLabels(declared) : [title], engineOf(answer) ?? null)
   const lead = headlineOf(named, question, rows, answer.nowMs, unit)
@@ -195,6 +199,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const [drill, setDrill] = useState<Drill>()
   const live = read.answer.origin === "live"
   const grain = question.groupBy?.[0]?.grain
+  // A long series lists its latest periods; the reader can show them all (the chart above draws every one).
+  const listed = grain !== undefined && !every && rows.length > LATEST ? rows.slice(-LATEST) : rows
   return (
     <section className="space-y-4">
       <div className="space-y-1 px-1">
@@ -254,11 +260,11 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel> : null}
-      <Panel icon={Rows3} label={grain ? `Every ${grain}` : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
+      <Panel icon={Rows3} label={grain ? (listed.length < rows.length ? `The latest ${listed.length} ${grain}s` : `Every ${grain}`) : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead>{ratio && <TableHead className="text-right max-sm:hidden">Exactly</TableHead>}<TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
           <TableBody>
-            {rows.map((bucket) => (
+            {listed.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
                 <TableCell>
                   <button type="button" className="rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); setOpen(bucket) }}>
@@ -274,7 +280,12 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               </TableRow>
             ))}
           </TableBody>
-        </Table></TableCard>}
+        </Table>
+        {grain && rows.length > LATEST && (
+          <div className="border-t border-border/70 px-3 py-1.5">
+            <Button variant="ghost" size="sm" onClick={() => setEvery(!every)}>{every ? `Show the latest ${LATEST}` : `Show all ${rows.length} ${grain}s`}</Button>
+          </div>
+        )}</TableCard>}
       </Panel>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>
