@@ -4038,7 +4038,7 @@
         "tags": [
           "crate::transform_routes"
         ],
-        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it against the\ninstalled definitions. Nothing is installed and no SQL runs.",
+        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it as installing\nit would: the installed set re-admitted whole with it added, on the base\nthe installed receipt records. Nothing is installed and no SQL runs.",
         "description": "# Errors\nA denied definitions read (the opaque 403), no installed definitions\n(404 `defs.version_not_found`) or a host failure. A query the dialect or\nthe checker refuses is a 200 with `admitted: false` and its diagnostics.",
         "operationId": "compile_transform",
         "parameters": [
@@ -6742,7 +6742,7 @@
         "properties": {
           "admitted": {
             "type": "boolean",
-            "description": "The checker admits the lowered plan against the installed definitions."
+            "description": "Installing the lowered transform over the installed definitions would\nbe admitted."
           },
           "artifact": {
             "type": [
@@ -14553,6 +14553,10 @@
               "Quarter.",
               "Year."
             ]
+          },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           }
         },
         "additionalProperties": false
@@ -18410,6 +18414,10 @@
               "Greatest non-null value."
             ]
           },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
+          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -20844,6 +20852,10 @@
           "expression": {
             "type": "string",
             "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract."
+          },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           },
           "name": {
             "type": "string",
@@ -30105,6 +30117,10 @@
               "Exact sum of an additive column from the partition start to this row."
             ]
           },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
+          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -31777,7 +31793,8 @@
           "origins",
           "markings",
           "currencyFrom",
-          "unitFrom"
+          "unitFrom",
+          "label"
         ],
         "properties": {
           "additivity": {
@@ -31797,6 +31814,13 @@
               "null"
             ],
             "description": "The object type whose ids the column holds, if any."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What readers call the column, as its definition labels it; null when\nthe definition names it only by `name`."
           },
           "markings": {
             "type": "array",
