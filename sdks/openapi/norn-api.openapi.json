@@ -394,7 +394,7 @@
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Only an admin or owner may load.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Decided like any upload load\n(`SyncSource(\"upload\")`); the load is reported as a run of the type's\n`upload` connection, as the cell's own observations (SYNC-REPORT-1).",
         "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
@@ -2390,7 +2390,7 @@
           "crate::analytics_routes"
         ],
         "summary": "D102: every row of `object_type` the caller may read, with the named\nproperties plus `id` and `version`, from the tenant's engine, exact at the\ncell's verified head (or a dataset's current load). The caller needs\nPopulation and Values on the type; quarantined rows are left out, as on a\npage. The host streams the engine's file; the snapshot it is exact at is\nthe `Norn-Snapshot` header (`c<commit>` or `l<load>`).",
-        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown column\nor format (400), or an unreachable engine.",
+        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown,\nrepeated or reserved column or an unknown format (400), or an\nunreachable engine.",
         "operationId": "export_objects",
         "parameters": [
           {
@@ -2423,7 +2423,7 @@
           {
             "name": "columns",
             "in": "query",
-            "description": "Comma-separated property ids; each row also carries `id` and `version`.",
+            "description": "Comma-separated stored property ids, each once; each row also carries\nits own `id` and `version`, so no property of those names is exported.",
             "required": true,
             "schema": {
               "type": "string"
@@ -6483,6 +6483,7 @@
         "description": "The outcome of `POST /v1/datasets:load`.",
         "required": [
           "objectType",
+          "connectionId",
           "load",
           "uri",
           "sha256",
@@ -6498,6 +6499,10 @@
             "format": "int64",
             "description": "File size in bytes.",
             "minimum": 0
+          },
+          "connectionId": {
+            "type": "string",
+            "description": "The `upload` connection the load is reported under (SYNC-REPORT-1)."
           },
           "load": {
             "type": "string",
