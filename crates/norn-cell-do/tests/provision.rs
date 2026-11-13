@@ -1295,11 +1295,33 @@ fn the_trusted_base_digest_is_public_and_the_same_everywhere() {
     ];
     for cell in [&mut vacant, &mut served] {
         for caller in &callers {
-            for query in [query(&scope), String::new(), "orgId=org_b&environmentId=prod".to_owned()] {
-                let response = call(cell, "GET", provision::BASE_PATH, &query, caller.as_deref(), "");
-                assert_eq!((response.status, json_of(&response)), (200, expected.clone()), "{caller:?} {query}");
+            for query in [
+                query(&scope),
+                String::new(),
+                "orgId=org_b&environmentId=prod".to_owned(),
+            ] {
+                let response = call(
+                    cell,
+                    "GET",
+                    provision::BASE_PATH,
+                    &query,
+                    caller.as_deref(),
+                    "",
+                );
+                assert_eq!(
+                    (response.status, json_of(&response)),
+                    (200, expected.clone()),
+                    "{caller:?} {query}"
+                );
             }
-            let refused = call(cell, "POST", provision::BASE_PATH, "", caller.as_deref(), "{}");
+            let refused = call(
+                cell,
+                "POST",
+                provision::BASE_PATH,
+                "",
+                caller.as_deref(),
+                "{}",
+            );
             assert_eq!(refused.status, 405);
         }
     }
@@ -1307,7 +1329,11 @@ fn the_trusted_base_digest_is_public_and_the_same_everywhere() {
     let learned = expected["baseSha256"].as_str().unwrap();
     let owner = user("org_a", "owner");
     assert_eq!(
-        json_of(&provision(&mut vacant, Some(&owner), &submission_on(learned, &full())))["outcome"],
+        json_of(&provision(
+            &mut vacant,
+            Some(&owner),
+            &submission_on(learned, &full())
+        ))["outcome"],
         "provisioned"
     );
 }

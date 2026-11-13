@@ -76,6 +76,7 @@ impl Backend for Human {
             Command::Mcp
             | Command::Remote(_)
             | Command::Source(_)
+            | Command::Workspace(_)
             | Command::Eval { .. }
             | Command::Openapi
             | Command::SourceDigest { .. }

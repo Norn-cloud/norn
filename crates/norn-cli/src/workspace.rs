@@ -48,7 +48,10 @@ const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 fn loopback_origin(origin: &str) -> bool {
     admissible_origin(origin)
         && origin.parse::<ureq::http::Uri>().is_ok_and(|uri| {
-            matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"))
+            matches!(
+                uri.host(),
+                Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+            )
         })
 }
 
@@ -62,7 +65,10 @@ fn admissible_origin(origin: &str) -> bool {
         && uri
             .path_and_query()
             .is_none_or(|rest| rest.as_str().is_empty() || rest.as_str() == "/");
-    let loopback = matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    let loopback = matches!(
+        uri.host(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    );
     bare && match uri.scheme_str() {
         Some("https") => uri.host().is_some(),
         Some("http") => loopback,
@@ -151,7 +157,9 @@ pub(super) fn execute(args: &WorkspaceArgs) -> Result<(String, bool), String> {
     let address = match via {
         Some(via) if loopback_origin(via) => via.clone(),
         Some(_) => {
-            return Err("--via must be a loopback origin, for example http://127.0.0.1:8080".into());
+            return Err(
+                "--via must be a loopback origin, for example http://127.0.0.1:8080".into(),
+            );
         }
         None => studio.clone(),
     };
@@ -160,11 +168,15 @@ pub(super) fn execute(args: &WorkspaceArgs) -> Result<(String, bool), String> {
     // The definitions are passed on as written: their bytes are the submission.
     let artifacts = match definitions {
         Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let value: Value =
                 serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             if !value.is_array() {
-                return Err(format!("{}: not a JSON array of artifact envelopes", path.display()));
+                return Err(format!(
+                    "{}: not a JSON array of artifact envelopes",
+                    path.display()
+                ));
             }
             text
         }
