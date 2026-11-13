@@ -8285,7 +8285,7 @@ export interface components {
          */
         NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
         /** @description Supported page components. */
-        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"] | components["schemas"]["NornIrWidgetComponentOneOf10"];
+        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"];
         /** @description A named section or tab with explicit field inclusion and order. */
         NornIrWidgetComponentOneOf0: {
             /** @enum {string} */
@@ -8304,13 +8304,6 @@ export interface components {
              * @enum {string}
              */
             selection: "none" | "single" | "multiple";
-        };
-        /** @description An exact page of a pinned widget artifact composed as a baseline. */
-        NornIrWidgetComponentOneOf10: {
-            /** @enum {string} */
-            kind: "composition";
-            pageId: string;
-            widget: components["schemas"]["NornIrArtifactRef"];
         };
         /** @description One object detail view. */
         NornIrWidgetComponentOneOf2: {
@@ -8377,16 +8370,12 @@ export interface components {
             /** @enum {string} */
             kind: "navigation";
         };
-        /**
-         * @description A control whose only effect is to raise the page machine's `user`
-         *     events that name this node (UI-MACHINE-1). A `choice` or `text`
-         *     control sends its value as the event payload member `value`.
-         */
+        /** @description An exact page of a pinned widget artifact composed as a baseline. */
         NornIrWidgetComponentOneOf9: {
-            input: components["schemas"]["NornIrWidgetControlInput"];
             /** @enum {string} */
-            kind: "control";
-            label: components["schemas"]["NornIrLocaleText"];
+            kind: "composition";
+            pageId: string;
+            widget: components["schemas"]["NornIrArtifactRef"];
         };
         /**
          * @description Confirmation interaction.
@@ -8415,11 +8404,6 @@ export interface components {
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
         };
-        /**
-         * @description What a person does with a [`WidgetComponent::Control`].
-         * @enum {string}
-         */
-        NornIrWidgetControlInput: "trigger" | "choice" | "text";
         /** @description One exact object binding and its bounded query. */
         NornIrWidgetDataBinding: {
             /** @description Stable binding id. */
