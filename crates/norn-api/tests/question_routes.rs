@@ -1645,3 +1645,89 @@ fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_withou
         BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
     );
 }
+
+/// Every registry pack, derived as a cell would: no listed metric names an
+/// internal encoding (a semantic model's `norn_path_…` field or an encoded
+/// object name). A linked time is its definition's path: the property and the
+/// links to it (METRIC-GRAIN-LINK-1).
+#[test]
+fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |dir: &str| -> Vec<norn_ir::ArtifactEnvelope> {
+        let mut paths: Vec<_> = std::fs::read_dir(root.join(dir))
+            .expect("artifacts")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        paths.sort();
+        paths
+            .iter()
+            .map(|path| {
+                serde_json::from_str(&std::fs::read_to_string(path).expect("artifact"))
+                    .expect("envelope")
+            })
+            .collect()
+    };
+    // The core set the three-systems cell installs (registry standards it omits are left out).
+    let core: Vec<_> = read("registry/core/artifacts")
+        .into_iter()
+        .filter(|artifact| {
+            ![
+                "commerce.SalesOrder.entity",
+                "core.Order.interface",
+                "core.Entitlement.entity",
+                "identity.BusinessUnit.entity",
+                "location.Region.entity",
+                "location.Space.entity",
+                "party.Brand.entity",
+            ]
+            .contains(&artifact.artifact_id.as_str())
+        })
+        .collect();
+    let canon = read("registry/packs/canon/artifacts");
+    let mut packs: Vec<_> = std::fs::read_dir(root.join("registry/packs"))
+        .expect("packs")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.join("artifacts").is_dir())
+        .collect();
+    packs.sort();
+    let mut linked = 0;
+    for pack in packs {
+        let name = pack.file_name().expect("name").to_string_lossy().into_owned();
+        let mut set = core.clone();
+        if name != "canon" {
+            set.extend(canon.iter().cloned());
+        }
+        set.extend(read(&format!("registry/packs/{name}/artifacts")));
+        let space = norn_checker::metric::derive::derive_metric_space(
+            &set,
+            &std::collections::BTreeSet::new(),
+            &norn_ir::LawRoot::Entity("canon.Holding".to_owned()),
+        )
+        .unwrap_or_else(|findings| panic!("{name} derives: {findings:#?}"));
+        for candidate in space.candidates() {
+            let summary = norn_api::question_routes::metric_summary(&candidate.definition, Vec::new());
+            let mut shown = summary.unit_partition.clone();
+            shown.extend(summary.time_links.iter().cloned());
+            shown.extend(
+                [&summary.time_property, &summary.expression, &summary.object_type]
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            shown.push(summary.label.clone());
+            for text in &shown {
+                assert!(
+                    !text.contains("norn_path_") && !text.contains("analysis.object_"),
+                    "{name}: {} shows {text}",
+                    candidate.definition.name
+                );
+            }
+            if !summary.time_links.is_empty() {
+                linked += 1;
+                assert_eq!(summary.time_property.as_deref(), Some("occurred_at"), "{name}");
+            }
+        }
+    }
+    // The posting and settlement sums of the three systems take their event's time.
+    assert!(linked > 0);
+}

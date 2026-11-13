@@ -9,6 +9,8 @@ export interface MetricSummary {
   readonly objectType: string
   readonly expression: string | null
   readonly timeProperty: string | null
+  /** The to-one links from the measured object to the one holding `timeProperty` (a posting's time is its event's); empty or absent when the time is the object's own. */
+  readonly timeLinks?: readonly string[]
   readonly numerator: string | null
   readonly denominator: string | null
   /** The properties a question summing this metric must fix to one value each (mixed units are refused), when the cell names them. */
@@ -47,6 +49,12 @@ const REDUCTION: Record<"first" | "last" | "min" | "max", (grain: string) => str
  * time; "Quantity, end of week" for a balance read at each period's end; the property alone when
  * the cell does not say how its values combine.
  */
+/** The time a metric buckets by, in words from its definition: "occurred at", or "event's occurred at" through a link. */
+export function timeLabel(metric: Pick<MetricSummary, "timeProperty" | "timeLinks">): string {
+  if (metric.timeProperty === null) return ""
+  return [...(metric.timeLinks ?? []).map((link) => `${link.replaceAll("_", " ")}'s`), metric.timeProperty.replaceAll("_", " ")].join(" ")
+}
+
 export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label" | "expression" | "kind">, grain = "period"): string {
   const property = (metric.expression ?? "").replaceAll("_", " ")
   if (metric.kind !== "simple" || property === "") return metric.label
