@@ -1,0 +1,147 @@
+{
+  "artifactId": "jewelry.melt.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a melt",
+  "namespace": "jewelry",
+  "payload": {
+    "actionId": "jewelry.melt.record",
+    "description": "Record how much fine metal a melt took in, gave out and lost.",
+    "effectProgram": {
+      "entityArtifactId": "jewelry.Melt.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "jewelry.Melt"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Melt number",
+          "type": "string"
+        },
+        "input_fine_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Fine metal in (g)",
+          "type": "number"
+        },
+        "loss_fine_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Recorded loss (g)",
+          "type": "number"
+        },
+        "loss_reason": {
+          "description": "Why fine metal was lost, when it was.",
+          "title": "Loss reason",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metal": {
+          "enum": [
+            "gold",
+            "silver"
+          ],
+          "title": "Metal",
+          "type": "string"
+        },
+        "output_fine_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Fine metal out (g)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "metal",
+        "input_fine_g",
+        "output_fine_g",
+        "loss_fine_g",
+        "loss_reason"
+      ],
+      "type": "object",
+      "x-norn": {
+        "groups": [
+          {
+            "fields": [
+              "/id",
+              "/metal"
+            ],
+            "id": "melt",
+            "title": "Melt"
+          },
+          {
+            "fields": [
+              "/input_fine_g",
+              "/output_fine_g",
+              "/loss_fine_g",
+              "/loss_reason"
+            ],
+            "id": "fine",
+            "title": "Fine metal"
+          }
+        ]
+      }
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record a melt",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "jewelry.Melt"
+      },
+      {
+        "change": "modified",
+        "entityKind": "jewelry.Melt"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/jewelry/artifacts/jewelry.melt.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
