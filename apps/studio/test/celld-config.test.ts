@@ -85,7 +85,7 @@ test("a write that fails leaves no secret-bearing file behind", async () => {
 })
 
 test("a self-host on this machine may use plain http on loopback only; it names the environment new workspaces get", () => {
-  for (const url of ["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost"]) {
+  for (const url of ["http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080", "http://localhost"]) {
     expect(celldConfig(celldStudio({ ...BASE, BETTER_AUTH_URL: url })).vars).toMatchObject({ BETTER_AUTH_URL: url })
   }
   for (const url of ["http://studio.example.com", "http://localhost.example.com", "http://localhost:8080/x", "http://10.0.0.1:8080"]) {

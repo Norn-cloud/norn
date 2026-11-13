@@ -4,11 +4,11 @@
 // 1. The owner: NORN_OWNER_EMAIL signs up (the install's first account owns its workspace; after
 //    it, sign-up is by invitation). The password is NORN_OWNER_PASSWORD, or one generated once
 //    into /data/secrets/owner-password.
-// 2. The owner's cell: provisioned through Studio's host route with no artifacts of its own, so it
-//    starts with the host's trusted base. The base digest comes from the host's own refusal of a
-//    first submission (`cell.base_mismatch` names it, to the provisioner only).
+// 2. The owner's cell: `norn workspace create`, the same command the README shows, with no
+//    artifacts of its own, so the cell starts with the host's trusted base.
 //
 // Every step is idempotent: on a restart the sign-up answers as before, and the cell replays.
+import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { randomBytes } from "node:crypto"
 
@@ -54,21 +54,11 @@ async function main(): Promise<void> {
   if (signUp.status !== 200 && signUp.status !== 403) throw new Error(`owner sign-up failed: HTTP ${signUp.status} ${await signUp.text()}`)
   const signIn = await call("/api/auth/sign-in/email", { body: { email, password } })
   if (signIn.status !== 200) throw new Error(`owner sign-in failed (HTTP ${signIn.status}): another account owns this install, or NORN_OWNER_PASSWORD changed`)
-  const cookie = signIn.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
-  const me = (await (await call("/api/me", { cookie })).json()) as { organization: { id: string } | null; environmentId: string | null }
-  if (me.organization === null || me.environmentId === null) throw new Error("the owner has no workspace with a data environment")
-  const scope = `orgId=${encodeURIComponent(me.organization.id)}&environmentId=${encodeURIComponent(me.environmentId)}`
-  const provision = (baseSha256: string) => call(`/api/host/v1/cell:provision?${scope}`, { cookie, body: { baseSha256, artifacts: [] } })
-  const first = await provision("0".repeat(64))
-  const learned = first.status === 409 ? ((await first.json()) as { code: string; baseSha256?: string }) : undefined
-  if (learned?.code === "cell.provision_conflict") {
-    // The cell exists with definitions of its own: already set up.
-  } else if (learned?.baseSha256 !== undefined) {
-    const second = await provision(learned.baseSha256)
-    if (second.status !== 200) throw new Error(`provisioning failed: HTTP ${second.status} ${await second.text()}`)
-  } else {
-    throw new Error(`provisioning did not name the host's base: HTTP ${first.status}`)
-  }
+  // Straight to the node's loopback listener, naming the public origin Studio trusts.
+  const created = spawnSync("norn", ["workspace", "create", "--studio", publicUrl, "--via", LOCAL, "--email", email, "--password-env", "NORN_OWNER_PASSWORD"], {
+    env: { ...process.env, NORN_OWNER_PASSWORD: password }, encoding: "utf8",
+  })
+  if (created.status !== 0) throw new Error(`norn workspace create failed: ${created.stderr || created.stdout}`)
   console.log([
     "",
     `Norn is ready at ${publicUrl}`,

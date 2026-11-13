@@ -455,20 +455,6 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
             .unwrap()
             .contains(&host_base)
     );
-    // ...and names it as data, so a client learns the digest from its first
-    // submission (`baseSha256`, on this refusal only).
-    assert_eq!(json_of(&response)["baseSha256"], json!(host_base));
-    // Only a provisioner of the scope is told: the same submission from any
-    // other caller is the opaque denial, with no digest.
-    for other in [user("org_a", "admin"), user("org_b", "owner")] {
-        let response = provision(
-            &mut cell,
-            Some(&other),
-            &submission_on(&"0".repeat(64), &full()),
-        );
-        assert_eq!(response.status, 403);
-        assert!(json_of(&response).get("baseSha256").is_none());
-    }
     // A set the checker does not admit refuses with its findings.
     let mut dangling: Value = serde_json::from_str(&first).unwrap();
     dangling["dependencies"] = json!([{ "artifactId": "tenant.Missing.entity", "kind": "entity",
@@ -532,17 +518,8 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
     drop(cell);
     let mut cell = open(&path, &scope);
     assert!(!cell.tenant.is_provisioned());
-    // The digest the refusal named provisions the cell.
-    let learned = json_of(&provision(
-        &mut cell,
-        Some(&owner),
-        &submission_on(&"0".repeat(64), &full()),
-    ))["baseSha256"]
-        .as_str()
-        .unwrap()
-        .to_owned();
     assert_eq!(
-        json_of(&provision(&mut cell, Some(&owner), &submission_on(&learned, &full())))["outcome"],
+        json_of(&provision(&mut cell, Some(&owner), &submission(&full())))["outcome"],
         "provisioned"
     );
 }
@@ -1297,4 +1274,40 @@ fn a_short_lineage_key_refuses_to_open() {
         Some(&[1; 16]),
     );
     assert!(refused.is_err());
+}
+
+/// `GET /v1/cell:base` answers the host's trusted-base digest to anyone, the
+/// same on a vacant and a provisioned cell, with or without a scope, and the
+/// digest it names provisions a cell. Nothing else is in the document.
+#[test]
+fn the_trusted_base_digest_is_public_and_the_same_everywhere() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let mut vacant = open(&file(&directory, "vacant"), &scope);
+    let mut served = provisioned(&file(&directory, "served"), &scope, &full());
+    let expected = json!({ "baseSha256": vacant.tenant.base_sha256() });
+    let callers = [
+        None,
+        Some(user("org_a", "owner")),
+        Some(user("org_a", "viewer")),
+        Some(user("org_b", "owner")),
+        Some("Bearer nonsense".to_owned()),
+    ];
+    for cell in [&mut vacant, &mut served] {
+        for caller in &callers {
+            for query in [query(&scope), String::new(), "orgId=org_b&environmentId=prod".to_owned()] {
+                let response = call(cell, "GET", provision::BASE_PATH, &query, caller.as_deref(), "");
+                assert_eq!((response.status, json_of(&response)), (200, expected.clone()), "{caller:?} {query}");
+            }
+            let refused = call(cell, "POST", provision::BASE_PATH, "", caller.as_deref(), "{}");
+            assert_eq!(refused.status, 405);
+        }
+    }
+    assert!(!vacant.tenant.is_provisioned());
+    let learned = expected["baseSha256"].as_str().unwrap();
+    let owner = user("org_a", "owner");
+    assert_eq!(
+        json_of(&provision(&mut vacant, Some(&owner), &submission_on(learned, &full())))["outcome"],
+        "provisioned"
+    );
 }

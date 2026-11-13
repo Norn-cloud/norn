@@ -25,6 +25,17 @@ You own this install. Your workspace already has its data cell, so you can conne
 start asking questions. After the first account, sign-up is by invitation only, and Studio has no
 invitation screen yet, so for now this install has one account.
 
+On the first start the owner's workspace gets its data cell from `norn workspace create`, Norn's
+command-line tool, which is in the image. The same command gives a workspace its cell from any
+machine that can reach Studio:
+
+```sh
+NORN_PASSWORD='…' norn workspace create --studio https://norn.example.com \
+  --email you@example.com --password-env NORN_PASSWORD
+```
+
+Only the workspace's owner may do this; running it again changes nothing.
+
 To choose the owner yourself, set these before the first start:
 
 ```sh

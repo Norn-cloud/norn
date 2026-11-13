@@ -47,7 +47,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   if (!/^[0-9a-f]{40}$/.test(build)) throw new Error("STUDIO_BUILD must be the full commit the bundle was built from")
   const authUrl = env.BETTER_AUTH_URL ?? ""
   // https, or plain http only on this machine's loopback (a local self-host), where browsers treat the origin as secure.
-  if (!/^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$/.test(authUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]{1,5})?$/.test(authUrl)) throw new Error("BETTER_AUTH_URL must be an https origin without a path, or http://localhost[:port]")
+  if (!/^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$/.test(authUrl) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?$/.test(authUrl)) throw new Error("BETTER_AUTH_URL must be an https origin without a path, or http://localhost[:port]")
   const defaultEnvironment = env.STUDIO_DEFAULT_ENVIRONMENT_ID
   if (defaultEnvironment !== undefined && !NAME.test(defaultEnvironment)) throw new Error(`STUDIO_DEFAULT_ENVIRONMENT_ID must be an environment name, got ${JSON.stringify(defaultEnvironment)}`)
   const authSecret = env.BETTER_AUTH_SECRET ?? ""

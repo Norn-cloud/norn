@@ -9,7 +9,9 @@ WORKDIR /src
 COPY . .
 ENV CARGO_TARGET_DIR=/target
 # A deployable cell: no `fixtures` feature, so only a verified host token is a caller.
-RUN cargo build --locked -p norn-cell-do --target wasm32-unknown-unknown --profile wasm-release \
+RUN cargo build --locked --release -p norn-cli \
+ && cp /target/release/norn /out-norn \
+ && cargo build --locked -p norn-cell-do --target wasm32-unknown-unknown --profile wasm-release \
  && wasm-bindgen /target/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm \
       --target web --out-name norn_cell_do --out-dir /out/cell/pkg \
  && cp apps/norn-cell-do/worker.mjs /out/cell/ \
@@ -45,6 +47,7 @@ COPY --from=studio /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=studio /src/apps/studio /opt/norn/studio
 COPY --from=wasm /out/cell /opt/norn/cell
 COPY --from=wasm /out/commit /opt/norn/commit
+COPY --from=wasm /out-norn /usr/local/bin/norn
 COPY apps/self-host/start.sh apps/self-host/setup.ts /opt/norn/
 RUN useradd --system --uid 10001 --home-dir /data norn && mkdir -p /data && chown norn /data /opt/norn/cell /opt/norn/studio
 USER norn

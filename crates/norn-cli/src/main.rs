@@ -7,6 +7,7 @@ mod explain;
 mod mcp;
 mod remote;
 mod source;
+mod workspace;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -28,6 +29,8 @@ enum Command {
     Remote(remote::RemoteArgs),
     /// Read a configured source and print sealed raw observations.
     Source(source::SourceArgs),
+    /// Studio workspaces: give one its data cell.
+    Workspace(workspace::WorkspaceArgs),
     /// List the available human operations and their input schemas.
     #[command(
         long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
@@ -91,6 +94,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
         Command::Source(args) => source::execute(&args),
+        Command::Workspace(args) => workspace::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))
             .map_err(|error| error.to_string()),

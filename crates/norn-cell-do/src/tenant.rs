@@ -377,6 +377,13 @@ impl<E: SqlEngine> Tenant<E> {
         if request.path == PROVISION_PATH {
             return server::respond(self.provision(principals, request));
         }
+        if request.path == provision::BASE_PATH {
+            // Before any scope or caller is read: the same answer everywhere.
+            return server::respond(
+                provision::get_base(&self.base, request.method)
+                    .and_then(|document| server::document_json(&document)),
+            );
+        }
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
         }
