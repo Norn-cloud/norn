@@ -205,6 +205,28 @@ fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
     })
 }
 
+/// METRIC-GRAIN-LINK-1: the link a plan's time is read through, unresolved
+/// (the cell names its mirrored table and target root).
+fn time_link(plan: &QuestionPlan) -> Result<Option<TimeLink>, CellError> {
+    plan.time_link()
+        .map(|link| {
+            if plan.as_of()
+                || !matches!(
+                    column_kind(&link.property),
+                    Some(ColumnKind::Timestamp | ColumnKind::Date)
+                )
+            {
+                return Err(refused());
+            }
+            Ok(TimeLink {
+                link: link.link.as_str().to_owned(),
+                target: link.target_type.as_str().to_owned(),
+                column: link.property.id.as_str().to_owned(),
+            })
+        })
+        .transpose()
+}
+
 const fn grain_of(grain: TimeGrain) -> Grain {
     match grain {
         TimeGrain::Day => Grain::Day,
@@ -225,24 +247,7 @@ pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
     let question = plan.question();
     let first = plan.sums().first().ok_or_else(refused)?;
     // METRIC-GRAIN-LINK-1: the time is the linked object's, read as one column.
-    let time_link = plan
-        .time_link()
-        .map(|link| {
-            if plan.as_of()
-                || !matches!(
-                    column_kind(&link.property),
-                    Some(ColumnKind::Timestamp | ColumnKind::Date)
-                )
-            {
-                return Err(refused());
-            }
-            Ok(TimeLink {
-                link: link.link.as_str().to_owned(),
-                target: link.target_type.as_str().to_owned(),
-                column: link.property.id.as_str().to_owned(),
-            })
-        })
-        .transpose()?;
+    let time_link = time_link(plan)?;
     let window = Window {
         column: match &time_link {
             Some(_) => TIME_LINK_COLUMN.to_owned(),

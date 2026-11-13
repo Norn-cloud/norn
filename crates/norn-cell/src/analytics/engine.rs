@@ -1258,7 +1258,7 @@ impl Projection {
             if linked {
                 // A row with no linked object counts as unlinked when some
                 // operand's own filters hold; one that refuses refuses.
-                let none = Frag::fmt("({} AND NOT \":lk\" AND NOT \":lm\")", &[&q]);
+                let none = Frag::raw("(\":q\" AND NOT \":lk\" AND NOT \":lm\")");
                 refusals.push(Frag::fmt("({} AND {})", &[&none, &own.refuse]));
                 counted.push(Frag::fmt("({} AND {})", &[&none, &own.holds]));
             }
