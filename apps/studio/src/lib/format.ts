@@ -49,7 +49,7 @@ export function headline(question: Question): string {
 
 export function scope(question: Question): string {
   const filters = (question.filter ?? []).map(({ path, operator, value }) =>
-    `${words(path.property)} ${OPERATOR[operator] ?? operator} ${String(value)}`)
+    `${words(path.property)} ${OPERATOR[operator] ?? operator} ${value === null ? "empty" : String(value)}`)
   return [`${words(question.objectSet)} records`, ...filters].join(" · ")
 }
 

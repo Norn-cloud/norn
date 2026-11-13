@@ -121,7 +121,7 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
           </Table></TableCard>
         </div>
       )}
-      {open && weekly && <AskedAnswer question={weekly} title={`${title}${open.unit ? `, in ${open.unit}` : ""}`} unit={open.unit} declared={declared} />}
+      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} />}
     </div>
   )
 }
