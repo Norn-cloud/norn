@@ -27,8 +27,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
-    ArtifactEnvelope, ArtifactPayload, JsonValue, WidgetCallOutcome, WidgetMachine, WidgetMachineCall,
-    WidgetMachineEventSource, WidgetMachineLifecycle, WidgetUx,
+    ArtifactEnvelope, ArtifactPayload, JsonValue, WidgetCallOutcome, WidgetMachine,
+    WidgetMachineCall, WidgetMachineEventSource, WidgetMachineLifecycle, WidgetUx,
 };
 
 use crate::action_set::Model;
@@ -243,7 +243,12 @@ impl Page<'_> {
             let message = format!(
                 "page state `{}` is shown while the object is `{}`, which it does not assume{}",
                 self.ui_state(ui_state),
-                backend.machine.states.get(backend_state).copied().unwrap_or_default(),
+                backend
+                    .machine
+                    .states
+                    .get(backend_state)
+                    .copied()
+                    .unwrap_or_default(),
                 self.run(&ui, &backend, &product, &run)
             );
             Self::push(findings, ASSUMPTION_VIOLATED, pointer, message);
@@ -532,7 +537,12 @@ impl Page<'_> {
                 continue;
             }
             let run = soundness::witness(product.net(), state).unwrap_or_default();
-            let object = backend.machine.states.get(backend_state).copied().unwrap_or_default();
+            let object = backend
+                .machine
+                .states
+                .get(backend_state)
+                .copied()
+                .unwrap_or_default();
             let message = if code == STUCK {
                 format!(
                     "page state `{}` with the object `{object}`: no ending of both is reachable{}",

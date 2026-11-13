@@ -51,7 +51,8 @@ fn action() -> Value {
 /// A page: `open` (idle) → submit → `submitting` (pending on the action) → accepted → `done`
 /// (terminal); every other outcome returns to `open`.
 fn machine(lifecycle: &Value) -> Value {
-    let outcome = |id: &str| json!({ "eventId": id, "source": { "kind": "outcome", "outcome": id } });
+    let outcome =
+        |id: &str| json!({ "eventId": id, "source": { "kind": "outcome", "outcome": id } });
     let back = |id: &str| json!({ "transitionId": format!("on-{id}"), "from": "submitting", "on": id, "target": "open" });
     json!({
         "machineVersion": "0.1",
@@ -78,9 +79,7 @@ fn machine(lifecycle: &Value) -> Value {
 }
 
 fn widget(lifecycle: &Value) -> Value {
-    let node = |id: &str, component: Value, children: Value| {
-        json!({ "nodeId": id, "semanticId": id, "component": component, "children": children })
-    };
+    let node = |id: &str, component: Value, children: Value| json!({ "nodeId": id, "semanticId": id, "component": component, "children": children });
     let mut value = artifact(
         "widget",
         WIDGET_ID,
@@ -123,7 +122,10 @@ fn entity(edit: impl FnOnce(&mut Value)) -> Value {
 }
 
 /// The `widget.lifecycle.*` findings as (code, pointer, message).
-fn lifecycle_findings(lifecycle: &Value, edit: impl FnOnce(&mut Value)) -> Vec<(String, String, String)> {
+fn lifecycle_findings(
+    lifecycle: &Value,
+    edit: impl FnOnce(&mut Value),
+) -> Vec<(String, String, String)> {
     let artifacts: Vec<ArtifactEnvelope> = [
         entity(edit),
         read_json("rule-ir-v2/valid/purchase-order-approval.rule.json"),
@@ -135,13 +137,20 @@ fn lifecycle_findings(lifecycle: &Value, edit: impl FnOnce(&mut Value)) -> Vec<(
     .collect();
     let found: Vec<Diagnostic> = check_artifact_set(
         &artifacts,
-        &EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None },
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
     );
     found
         .into_iter()
         .filter(|finding| finding.code.as_str().starts_with("widget.lifecycle."))
         .map(|finding| {
-            let pointer = finding.span.map(|span| format!("{span:?}")).unwrap_or_default();
+            let pointer = finding
+                .span
+                .map(|span| format!("{span:?}"))
+                .unwrap_or_default();
             (finding.code.as_str().to_owned(), pointer, finding.message)
         })
         .collect()
@@ -182,15 +191,20 @@ fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck(
             }
         }
     });
-    let stuck: Vec<&(String, String, String)> =
-        found.iter().filter(|(code, _, _)| code == "widget.lifecycle.stuck").collect();
+    let stuck: Vec<&(String, String, String)> = found
+        .iter()
+        .filter(|(code, _, _)| code == "widget.lifecycle.stuck")
+        .collect();
     assert!(!stuck.is_empty(), "{found:#?}");
     let (_, pointer, message) = stuck.first().expect("a stuck finding");
-    assert!(pointer.contains("/payload/ux/pages/0/machine/states/2"), "{pointer}");
-    assert!(message.contains("page state `done` with the object `draft`"), "{message}");
     assert!(
-        message.contains("page submit, page on-accepted with object submit, object reject, object revise"),
-        "{message}"
+        pointer.contains("/payload/ux/pages/0/machine/states/2"),
+        "{pointer}"
+    );
+    // The first stuck pair: a rejected order can only be revised back to that draft.
+    assert_eq!(
+        message,
+        "page state `done` with the object `rejected`: no ending of both is reachable; shortest run: page submit, page on-accepted with object submit, object reject"
     );
 }
 
@@ -202,14 +216,30 @@ fn a_page_state_shown_where_its_assumption_does_not_hold_is_reported_with_its_ru
         { "stateId": "done", "lifecycleStates": ["submitted", "approved", "received"] }
     ]);
     let found = lifecycle_findings(&lifecycle, |_| {});
-    assert_eq!(codes(&found), ["widget.lifecycle.assumption_violated"; 2], "{found:#?}");
-    let messages: Vec<&str> = found.iter().map(|(_, _, message)| message.as_str()).collect();
+    assert_eq!(
+        codes(&found),
+        ["widget.lifecycle.assumption_violated"; 2],
+        "{found:#?}"
+    );
+    let messages: Vec<&str> = found
+        .iter()
+        .map(|(_, _, message)| message.as_str())
+        .collect();
     // The page opens only on a draft order, yet another actor can cancel it under the open page;
     // after a submit, the order can be rejected or cancelled under `done`.
-    assert!(messages.iter().any(|m| m.contains("page state `open` is shown while the object is `cancelled`")
-        && m.contains("shortest run: object cancel")), "{messages:#?}");
-    assert!(messages.iter().any(|m| m.contains("page state `done` is shown while the object is `")
-        && m.contains("page on-accepted with object submit")), "{messages:#?}");
+    assert!(
+        messages.iter().any(|m| m
+            .contains("page state `open` is shown while the object is `cancelled`")
+            && m.contains("shortest run: object cancel")),
+        "{messages:#?}"
+    );
+    assert!(
+        messages.iter().any(
+            |m| m.contains("page state `done` is shown while the object is `")
+                && m.contains("page on-accepted with object submit")
+        ),
+        "{messages:#?}"
+    );
 }
 
 #[test]
@@ -220,19 +250,29 @@ fn a_sync_needs_the_accepted_outcome_of_an_action_whose_decision_emits_the_trans
     ]);
     let found = lifecycle_findings(&lifecycle, |_| {});
     assert!(
-        found.iter().any(|(code, pointer, message)| code == "widget.lifecycle.sync_unfired"
-            && pointer.contains("/syncs/0/lifecycleTransition")
-            && message.contains("does not name transition `reject`")),
+        found.iter().any(
+            |(code, pointer, message)| code == "widget.lifecycle.sync_unfired"
+                && pointer.contains("/syncs/0/lifecycleTransition")
+                && message.contains("does not name transition `reject`")
+        ),
         "{found:#?}"
     );
 
     lifecycle["syncs"] = json!([{ "transitionId": "submit", "lifecycleTransition": "submit" }]);
     let found = lifecycle_findings(&lifecycle, |_| {});
-    assert_eq!(codes(&found), ["widget.lifecycle.sync_not_accepted"], "{found:#?}");
+    assert_eq!(
+        codes(&found),
+        ["widget.lifecycle.sync_not_accepted"],
+        "{found:#?}"
+    );
 
     lifecycle["syncs"] = json!([{ "transitionId": "on-accepted", "lifecycleTransition": "ship" }]);
     let found = lifecycle_findings(&lifecycle, |_| {});
-    assert_eq!(codes(&found), ["widget.lifecycle.unknown_reference"], "{found:#?}");
+    assert_eq!(
+        codes(&found),
+        ["widget.lifecycle.unknown_reference"],
+        "{found:#?}"
+    );
 }
 
 #[test]
@@ -241,7 +281,18 @@ fn a_page_names_a_lifecycle_its_object_type_declares() {
         &json!({ "objectType": "commerce.PurchaseOrder", "property": "shipping_status" }),
         |_| {},
     );
-    assert_eq!(codes(&found), ["widget.lifecycle.unknown_lifecycle"], "{found:#?}");
-    let found = lifecycle_findings(&json!({ "objectType": "commerce.Invoice", "property": "status" }), |_| {});
-    assert_eq!(codes(&found), ["widget.lifecycle.unknown_lifecycle"], "{found:#?}");
+    assert_eq!(
+        codes(&found),
+        ["widget.lifecycle.unknown_lifecycle"],
+        "{found:#?}"
+    );
+    let found = lifecycle_findings(
+        &json!({ "objectType": "commerce.Invoice", "property": "status" }),
+        |_| {},
+    );
+    assert_eq!(
+        codes(&found),
+        ["widget.lifecycle.unknown_lifecycle"],
+        "{found:#?}"
+    );
 }
