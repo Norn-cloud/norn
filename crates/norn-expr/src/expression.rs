@@ -92,6 +92,24 @@ impl Expression {
         crate::check::check_typed_expression(self, env, expected)
     }
 
+    /// VAL-EXACT-1: the compile [`Self::evaluate_admitted_metered`] runs before
+    /// evaluating, as an admission check. An expression this accepts compiles
+    /// at every evaluation; one it refuses would refuse every evaluation.
+    ///
+    /// # Errors
+    /// The exact profile's findings, when the expression needs that profile.
+    pub fn check_admitted(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> Result<(), Vec<crate::Diagnostic>> {
+        if crate::check::requires_exact_profile(self, env, expected) {
+            self.check_typed(env, expected).map(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+
     /// VAL-EXACT-1: execute an admitted consumer while retaining legacy non-exact behavior.
     /// Admission owns static type/cost checks; every runtime path retains the same meter.
     /// Exact reads, destinations and explicit round sites still use the strict typed binding.

@@ -899,3 +899,28 @@ fn materialization_is_declared_and_checked() {
         );
     }
 }
+
+#[test]
+fn admission_refuses_an_expression_every_evaluation_would_refuse() {
+    // VAL-EXACT-1: comparing money with a bare number refuses when the
+    // expression is compiled for evaluation, so admission refuses it too;
+    // otherwise the transform installs and every read fails.
+    refuses(
+        with(json!({"f": {"op": "filter", "input": "order", "predicate": "input.amount > 0"}})),
+        "f",
+        codes::TYPE_MISMATCH,
+    );
+    // A plain decimal compares as before, and what is admitted evaluates.
+    let plan = admitted(
+        with(json!({"f": {"op": "filter", "input": "order", "predicate": "input.flat > 0"}})),
+        "f",
+    );
+    let input = TransformInput {
+        rows: BTreeMap::from([(
+            "order".to_owned(),
+            vec![order("o1", "2026-11-02T10:00:00Z", "EGP", "80.00")],
+        )]),
+        links: BTreeMap::new(),
+    };
+    assert_eq!(evaluate(&plan, &input).expect("evaluated").rows.len(), 1);
+}
