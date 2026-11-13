@@ -1263,7 +1263,7 @@ fn a_mapping_without_links_does_not_need_the_claim_type() {
             },
         )
         .into_iter()
-        .map(|finding| finding.code)
+        .map(|finding| finding.code.to_string())
         .collect();
         codes.sort();
         codes
