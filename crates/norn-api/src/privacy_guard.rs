@@ -685,8 +685,8 @@ fn guarded_at<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     guard_id: u64,
 ) -> Result<Option<Guarded>, Refusal> {
-    // Ledger positions grow at least as fast as commits: search upward from
-    // the commit's own number for its first event.
+    // Ledger positions are ordered by commit (a commit without events has
+    // none): search the first position whose commit is not before it.
     let entry_at = |seq: u64| -> Result<Option<norn_cell::LedgerEntry>, Refusal> {
         Ok(reader
             .ledger_page(seq.saturating_sub(1), 1)
@@ -694,7 +694,7 @@ fn guarded_at<E: SqlEngine>(
             .into_iter()
             .next())
     };
-    let (mut low, mut high) = (guard_id.max(1), guard_id.max(1));
+    let (mut low, mut high) = (1_u64, 1_u64);
     let mut step = 1_u64;
     loop {
         match entry_at(high)? {

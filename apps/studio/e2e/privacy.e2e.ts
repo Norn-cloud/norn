@@ -32,6 +32,15 @@ async function partyCell(page: Page, reader: "viewer" | "auditor") {
       if (reader !== "auditor") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
       return route.fulfill({ status: 200, contentType: "application/json", body: recorded("canon.Party.reveal.json") })
     }
+    const one = /\/v1\/objects\/canon\.Party\/(.+?)(\/links|\/lineage)?$/.exec(url.pathname)
+    if (one !== null && route.request().method() === "GET") {
+      const id = decodeURIComponent(one[1] ?? "")
+      if (one[2] === "/links") return route.fulfill({ json: { objectType: "canon.Party", id, items: [], next: null } })
+      if (one[2] === "/lineage") return route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } })
+      const page = JSON.parse(recorded(`canon.Party.${reader}.page.json`)) as { records: { id: string }[] }
+      const record = page.records.find((candidate) => candidate.id === id)
+      return record === undefined ? route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } }) : route.fulfill({ json: record })
+    }
     if (url.pathname.endsWith("/v1/objects/canon.Party")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: recorded(`canon.Party.${reader}.page.json`) })
     }

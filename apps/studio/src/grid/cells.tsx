@@ -108,6 +108,23 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
   }
 }
 
+/** The properties a record is named by, in the order Studio reads them. */
+const NAME_PROPERTIES = ["label", "display_name"] as const
+
+/**
+ * The Record column's name. When the naming property is marked, it is the server's projection as a
+ * chip (with "Reveal" when allowed), never a name the server did not send.
+ */
+export function RecordName({ row, fallback }: { readonly row: GridRow; readonly fallback: string }) {
+  if (!isWithheld(row)) {
+    for (const property of NAME_PROPERTIES) {
+      const masked = maskedOf(row.record, property)
+      if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={property} masked={masked} projected={row.record.values[property]} />
+    }
+  }
+  return <>{fallback}</>
+}
+
 /** The way from a fact's card to the record's full lineage. */
 export function LineageLink({ objectType, id }: { readonly objectType: string; readonly id: string }) {
   return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-sm font-medium underline-offset-4 hover:underline">Open the record's lineage</Link>

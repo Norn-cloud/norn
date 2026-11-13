@@ -34,7 +34,7 @@ export function MaskedValue({ objectType, id, property, masked, projected, class
   if (revealed !== null) {
     const text = valueText(revealed.value)
     return (
-      <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)} data-revealed="" title={`Revealed to you; receipt ${revealed.receipt.commitSeq}${revealed.receipt.purpose ? ` (${revealed.receipt.purpose})` : ""}`}>
+      <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)} data-revealed="" onClick={(event) => event.stopPropagation()} title={`Revealed to you; receipt ${revealed.receipt.commitSeq}${revealed.receipt.purpose ? ` (${revealed.receipt.purpose})` : ""}`}>
         <Eye className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         <CopyId value={text} className="min-w-0" />
         <span className="shrink-0 font-mono text-[10px] text-muted-foreground">receipt #{revealed.receipt.commitSeq}</span>
@@ -61,7 +61,7 @@ export function MaskedValue({ objectType, id, property, masked, projected, class
   }
 
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
+    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
       {chip}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
