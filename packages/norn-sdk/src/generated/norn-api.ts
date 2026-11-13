@@ -9890,6 +9890,13 @@ export interface components {
             materialization: components["schemas"]["NornMaterialization"] | null;
             /** @description Pass as `after` for the next page; null on the last page. */
             nextAfter: string | null;
+            /**
+             * @description Rows each plan node produced for this read, by node id: the plan's
+             *     volume under the reader's visibility.
+             */
+            nodeRows: {
+                [key: string]: number;
+            };
             /** @description This page's rows, ordered by grain (nulls last). */
             rows: components["schemas"]["NornTransformRow"][];
             /**

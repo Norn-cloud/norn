@@ -27073,6 +27073,7 @@
           "withheld",
           "excluded",
           "complete",
+          "nodeRows",
           "nextAfter"
         ],
         "properties": {
@@ -27127,6 +27128,18 @@
               "null"
             ],
             "description": "Pass as `after` for the next page; null on the last page."
+          },
+          "nodeRows": {
+            "type": "object",
+            "description": "Rows each plan node produced for this read, by node id: the plan's\nvolume under the reader's visibility.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "rows": {
             "type": "array",
