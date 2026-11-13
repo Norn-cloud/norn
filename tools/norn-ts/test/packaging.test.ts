@@ -9,6 +9,7 @@ import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { buildInfo, parseBuildInfo, versionLine, type BuildInfo } from "../src/build-info.ts"
 import { CHECKER_PKG_ENV, checkerPackageDir } from "../src/checker-abi.ts"
 import { authoringVersionWarning } from "../src/authoring-version.ts"
@@ -205,10 +206,16 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     const warning = authoringVersionWarning(dir)
     expect(warning).toMatchObject({ code: "cli.setup.authoring_version_mismatch" })
     expect(warning!.message).toContain("installed @norn/authoring is 0.0.0")
-    // Under Node too, which enforces `exports`.
-    const node = spawnSync("node", ["--experimental-transform-types", "--no-warnings", "-e",
-      `import(${JSON.stringify(join(TOOL_ROOT, "src/authoring-version.ts"))}).then((m) => console.log(m.installedAuthoringVersion(${JSON.stringify(join(dir, "src"))})))`], { encoding: "utf8" })
-    if (node.error === undefined) expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
+    // Under Node too, which enforces `exports`: the module compiled for Node (`bun build
+    // --target=node`), so the probe needs no TypeScript flag and runs on any CI runner's Node.
+    const bundle = join(root, "authoring-version.mjs")
+    const built = spawnSync(process.execPath, ["build", join(TOOL_ROOT, "src/authoring-version.ts"), "--target=node", "--format=esm", "--outfile", bundle], { encoding: "utf8" })
+    expect({ status: built.status, err: built.stderr }).toMatchObject({ status: 0 })
+    // The paths travel as arguments, never spliced into the script text.
+    const probe = "const [url, src] = process.argv.slice(1); import(url).then((m) => console.log(m.installedAuthoringVersion(src)))"
+    const node = spawnSync("node", ["-e", probe, pathToFileURL(bundle).href, join(dir, "src")], { encoding: "utf8" })
+    expect(node.error).toBeUndefined()
+    expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
     writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION, exports: { ".": { types: "./profile/norn-authoring.d.ts" } } }))
     expect(authoringVersionWarning(dir)).toBeUndefined()
   } finally { rmSync(root, { recursive: true }) }

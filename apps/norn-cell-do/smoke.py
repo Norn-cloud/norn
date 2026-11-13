@@ -94,6 +94,13 @@ try:
     assert status == 403 and json.loads(denied)["code"] == "authz.denied", denied
     for path in ["/v1/definitions?orgId=foreign&environmentId=dev", "/v1/definitions"]:
         assert request(path, VIEWER)[:2] == (403, denied), path
+    # Tenant cells exist only in declared environments (NORN_TENANT_ENVIRONMENTS,
+    # default dev,prod). For a verified member of org_demo: an undeclared
+    # environment reaches no cell of its own (the demo cell's opaque denial); a
+    # declared one reaches its own cell, which says it is not provisioned.
+    assert request("/v1/definitions?orgId=org_demo&environmentId=staging", VIEWER)[:2] == (403, denied), "undeclared"
+    status, body, _ = request("/v1/definitions?orgId=org_demo&environmentId=prod", VIEWER)
+    assert status == 404 and json.loads(body)["code"] == "cell.not_provisioned", (status, body[:300])
     assert request(f"/v1/definitions?{SCOPE}&sql=1", VIEWER)[0] == 400
     assert request(f"/v1/definitions?{SCOPE}", VIEWER, "POST")[0] == 405
     status, body, cold_answer = request(f"{ANSWER}?{ANALYTICS}", VIEWER)

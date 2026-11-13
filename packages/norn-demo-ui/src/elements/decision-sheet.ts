@@ -481,7 +481,15 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const target = event.target as HTMLTextAreaElement | null
     if (target?.tagName === "TEXTAREA" && String(driver.snapshot().fields.note ?? "") !== target.value) raise("note-input", { value: target.value })
   })
-  ;(root as HTMLElement & { raise?: typeof raise; setNow?: (ms: number) => void }).raise = raise
+  /** Pick an option exactly as a click on its radio does: a disabled or unknown option is not picked. */
+  const choose = (optionId: string) => {
+    const radio = [...root.querySelectorAll<HTMLElement>("ui-radio")].find((candidate) => candidate.getAttribute("value") === optionId)
+    if (!radio || radio.hasAttribute("disabled") || radio.closest("[hidden]")) return false
+    return raise("option-choice", { value: optionId, confirm: needsConfirm(decision, optionId) })
+  }
+  // Named apart from the element's own `choose`, which forwards here once mounted.
+  ;(root as HTMLElement & { raise?: typeof raise; pick?: typeof choose; setNow?: (ms: number) => void }).raise = raise
+  ;(root as HTMLElement & { pick?: typeof choose }).pick = choose
   ;(root as HTMLElement & { setNow?: (ms: number) => void }).setNow = (ms: number) => {
     now = ms
     paint(driver.snapshot())
@@ -497,6 +505,11 @@ export interface NornDecisionSheet extends HTMLElement {
   readonly snapshot: Snapshot | null
   /** Raise the first event of `nodeId` the current state takes (a host's Escape raises `close-button`). */
   request(nodeId: string): boolean
+  /**
+   * Pick `optionId` through the machine, as a click on its radio would (a host's number keys). False,
+   * with nothing changed, when the option is unknown, disabled, or the current state takes no choice.
+   */
+  choose(optionId: string): boolean
 }
 
 /**
@@ -528,6 +541,9 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
     }
     request(nodeId: string): boolean {
       return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false
+    }
+    choose(optionId: string): boolean {
+      return (this as unknown as { pick?: (option: string) => boolean }).pick?.(optionId) ?? false
     }
     #mount() {
       this.#driver?.dispose()
