@@ -1014,14 +1014,6 @@ fn post_only(method: &str) -> Result<(), Refusal> {
     }
 }
 
-fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    Ok(ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    })
-}
-
 /// PRIVACY-GUARD-1: `POST /v1/guard:prompt`.
 fn guarded<E: SqlEngine>(
     host: &DevHost<E>,

@@ -465,7 +465,7 @@ pub fn guard<E: SqlEngine>(
     let actor = actor.ok_or_else(crate::authz::read_denied)?;
     scope_gate(host, scope, actor)?;
     // Context rows: readable by the caller, read in one section.
-    let (catalog, context, scanned) = {
+    let (_catalog, context, scanned) = {
         let cell = host.cell()?;
         let reader = cell.store().read();
         let catalog = host.marking_catalog(&reader)?;
