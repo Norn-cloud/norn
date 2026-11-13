@@ -1492,8 +1492,15 @@ impl Projection {
                 super::Dimension::Column { column } => {
                     let c = ident(column);
                     match scope.column(column)?.kind {
+                        // At a knowledge cutoff the exact engine reads values from
+                        // their commitments, whose text is NFC; now, as written.
                         ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date => {
-                            (format!("nfc_normalize({c})"), c, GroupKind::Text)
+                            let shown = if scope.model.is_some() {
+                                format!("nfc_normalize({c})")
+                            } else {
+                                c
+                            };
+                            (format!("nfc_normalize({c})"), shown, GroupKind::Text)
                         }
                         ColumnKind::Integer | ColumnKind::Decimal { .. } => (
                             c.clone(),

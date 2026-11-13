@@ -1882,7 +1882,7 @@ mod known_at {
         store: &norn_cell::CellStore,
         engine: &norn_cell::analytics::engine::Engine,
         plan: &QuestionPlan,
-        context: norn_cell::compute::QueryContext,
+        context: &norn_cell::compute::QueryContext,
         cutoff: KnowledgeCutoff,
     ) -> Result<HistoricalQuestionResult, String> {
         sync(store, engine, &context.world);
@@ -1945,7 +1945,7 @@ mod known_at {
                 let mut context = context.clone();
                 context.now_ms = cutoff.recorded_at.as_millis();
                 let want = exact(&store, &plan, context.clone(), cutoff);
-                let got = on_engine(&store, &engine, &plan, context, cutoff);
+                let got = on_engine(&store, &engine, &plan, &context, cutoff);
                 match (want, got) {
                     (Ok(want), Ok(mut got)) => {
                         proptest::prop_assert_eq!(got.result.engine, Answered::Duckdb);
