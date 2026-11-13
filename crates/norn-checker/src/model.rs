@@ -773,7 +773,7 @@ pub(crate) fn check_model_set(
         &models,
         artifacts,
         base,
-        |code, message, pointer, artifact| finding(code, message, pointer, artifact),
+        finding,
     ));
     findings
 }

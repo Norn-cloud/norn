@@ -81,8 +81,11 @@ struct Lineage {
     /// Mapping artifact id → payload.
     mappings: Vec<(String, Value)>,
     /// (dataset, field) → [(source schema id, markings)].
-    source_fields: BTreeMap<(String, String), Vec<(String, Vec<String>)>>,
+    source_fields: BTreeMap<SourceField, Vec<(String, Vec<String>)>>,
 }
+
+/// A source dataset and one of its fields.
+type SourceField = (String, String);
 
 impl Lineage {
     fn of(artifacts: &[&ArtifactEnvelope]) -> Self {
@@ -97,21 +100,21 @@ impl Lineage {
             let body = payload(artifact);
             match artifact.kind() {
                 ArtifactKind::Entity => {
-                    if let Some(object) = body.get("objectType") {
-                        if let Some(name) = object.get("name").and_then(Value::as_str) {
-                            lineage
-                                .types
-                                .entry(name.to_owned())
-                                .or_insert((artifact.artifact_id.clone(), object.clone()));
-                        }
+                    if let Some(object) = body.get("objectType")
+                        && let Some(name) = object.get("name").and_then(Value::as_str)
+                    {
+                        lineage
+                            .types
+                            .entry(name.to_owned())
+                            .or_insert_with(|| (artifact.artifact_id.clone(), object.clone()));
                     }
-                    if let Some(interface) = body.get("interface") {
-                        if let Some(name) = interface.get("name").and_then(Value::as_str) {
-                            lineage
-                                .interfaces
-                                .entry(name.to_owned())
-                                .or_insert(interface.clone());
-                        }
+                    if let Some(interface) = body.get("interface")
+                        && let Some(name) = interface.get("name").and_then(Value::as_str)
+                    {
+                        lineage
+                            .interfaces
+                            .entry(name.to_owned())
+                            .or_insert_with(|| interface.clone());
                     }
                     for shared in body
                         .get("propertyTypes")
@@ -153,7 +156,20 @@ impl Lineage {
                         }
                     }
                 }
-                _ => {}
+                ArtifactKind::Relation
+                | ArtifactKind::Rule
+                | ArtifactKind::Action
+                | ArtifactKind::Connector
+                | ArtifactKind::Widget
+                | ArtifactKind::Policy
+                | ArtifactKind::Customization
+                | ArtifactKind::Setting
+                | ArtifactKind::BusinessPack
+                | ArtifactKind::Derived
+                | ArtifactKind::Law
+                | ArtifactKind::DefinedConcept
+                | ArtifactKind::Labels
+                | ArtifactKind::Model => {}
             }
         }
         lineage
@@ -192,13 +208,12 @@ impl Lineage {
                 .filter(|kind| kind.get("kind").and_then(Value::as_str) == Some("ref"))
                 .and_then(|kind| kind.get("name"))
                 .and_then(Value::as_str)
+                && let Some(markings) = self.property_types.get(shared)
             {
-                if let Some(markings) = self.property_types.get(shared) {
-                    push(
-                        markings.clone(),
-                        format!("{member} ← property type {shared}"),
-                    );
-                }
+                push(
+                    markings.clone(),
+                    format!("{member} ← property type {shared}"),
+                );
             }
         }
         for interface in strings(object.get("implements")) {
@@ -215,6 +230,18 @@ impl Lineage {
                 }
             }
         }
+        for (markings, path) in self.mapped(entity, &member, property) {
+            push(markings, path);
+        }
+        carried.sort();
+        carried.dedup();
+        carried
+    }
+
+    /// The markings mappings carry into `property` from classified source
+    /// fields, each with its path.
+    fn mapped(&self, entity: &str, member: &str, property: &str) -> Vec<(Vec<String>, String)> {
+        let mut paths = Vec::new();
         for (mapping, body) in &self.mappings {
             for map in body
                 .get("maps")
@@ -226,7 +253,7 @@ impl Lineage {
                     .get("target")
                     .and_then(|target| target.get("entity"))
                     .and_then(Value::as_str);
-                if target != Some(entity.as_str()) {
+                if target != Some(entity) {
                     continue;
                 }
                 let Some(dataset) = map
@@ -253,20 +280,18 @@ impl Lineage {
                             .into_iter()
                             .flatten()
                         {
-                            push(
+                            paths.push((
                                 markings.clone(),
                                 format!(
                                     "{schema}: {dataset}.{field} → mapping {mapping} → {member}"
                                 ),
-                            );
+                            ));
                         }
                     }
                 }
             }
         }
-        carried.sort();
-        carried.dedup();
-        carried
+        paths
     }
 }
 
@@ -276,7 +301,9 @@ fn input_fields(expression: &str) -> Vec<String> {
     let mut rest = expression;
     while let Some(at) = rest.find("input.") {
         let before = rest.get(..at).and_then(|text| text.chars().last());
-        let after = rest.get(at + "input.".len()..).unwrap_or("");
+        let after = rest
+            .get(at.saturating_add("input.".len())..)
+            .unwrap_or("");
         let field: String = after
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
