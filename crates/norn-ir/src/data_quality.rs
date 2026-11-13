@@ -168,6 +168,39 @@ pub enum DataQualityOutcome {
         /// Concise reason that omits property values.
         detail: String,
     },
+    /// SOURCE-AGREE-1: two sources reported different values of a measure's
+    /// partition source (its unit, currency or basis) for one subject, in
+    /// consecutive versions. Both reports are true facts about what each
+    /// source says; the subject is never excluded for it.
+    SourceDisagreement {
+        /// The partition-source property the sources disagree on.
+        property: PropertyId,
+        /// The earlier version's source and value.
+        earlier: Box<SourceClaim>,
+        /// The later version's source and value.
+        later: Box<SourceClaim>,
+    },
+}
+
+/// SOURCE-AGREE-1: what one source reported for a partition source, and the
+/// version that recorded it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceClaim {
+    /// The reporting source system (`SourceRecordRef::system`).
+    pub system: String,
+    /// The reported code, or `None` for null.
+    #[serde(
+        default,
+        deserialize_with = "crate::members::present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub value: Option<String>,
+    /// The version that recorded it (its commit).
+    pub fact: crate::FactRef,
 }
 
 /// How serious a data quality finding is.

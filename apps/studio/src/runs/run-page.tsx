@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useView } from "@/lib/view"
 import { cn } from "@/lib/utils"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { useLiveRefresh } from "../lib/live-reads.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, startRun, stepTitle, type Phase, type Run, type RunStep, type StepStatus } from "../lib/runs.ts"
 
 const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly label: string; readonly tone: string }>> = {
@@ -64,15 +65,13 @@ export function RunPage() {
       if (result.kind === "ok") { etag.current = result.etag; last.current = result.value }
       return { result, at: Date.now() }
     },
-    refetchInterval: (query) => {
-      const run = query.state.data?.result.kind === "ok" ? query.state.data.result.value : last.current
-      return run === null ? false : refreshEvery(phaseOf(run))
-    },
     retry: false,
   })
   const result = read.data?.result
   // A 304 keeps the run already read.
   const run = result?.kind === "ok" ? result.value : result?.kind === "not-modified" ? last.current : null
+  // While the run works or waits, each commit that changes it is read once (UI-LIVE-1); an ended run is not watched.
+  useLiveRefresh(run !== null && refreshEvery(phaseOf(run)) !== false ? `/v1/runs/${encodeURIComponent(id)}` : null, ["run", id])
 
   if (read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
   if (read.isError) return (

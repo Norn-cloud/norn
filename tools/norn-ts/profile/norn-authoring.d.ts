@@ -672,10 +672,12 @@ declare module "@norn/authoring" {
      * One closed operator. Expressions are ZEN over `input.<column>` (the
      * node's input row) and are typed by the checker against the plan.
      */
+    /** What readers call a column (Studio's Business view); its `name` stays the id queries use. */
+    type ColumnLabel = { readonly label?: string }
     type TransformNode =
       | { readonly op: "scan"; readonly input: string }
       | { readonly op: "filter"; readonly input: string; readonly predicate: string }
-      | { readonly op: "project"; readonly input: string; readonly columns: ReadonlyArray<{ readonly name: string; readonly expression: string }> }
+      | { readonly op: "project"; readonly input: string; readonly columns: ReadonlyArray<{ readonly name: string; readonly expression: string } & ColumnLabel> }
       | {
           readonly op: "join"; readonly left: string; readonly right: string
           /** Along a declared link of the left column's type, or on a declared key (or `id`) of the right type. */
@@ -685,12 +687,12 @@ declare module "@norn/authoring" {
         }
       | {
           readonly op: "aggregate"; readonly input: string
-          readonly groupBy: ReadonlyArray<{ readonly column: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
-          readonly measures: ReadonlyArray<{ readonly name: string; readonly fn: "sum" | "count" | "count_distinct" | "min" | "max"; readonly column?: string }>
+          readonly groupBy: ReadonlyArray<{ readonly column: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" } & ColumnLabel>
+          readonly measures: ReadonlyArray<{ readonly name: string; readonly fn: "sum" | "count" | "count_distinct" | "min" | "max"; readonly column?: string } & ColumnLabel>
         }
       | {
           readonly op: "window"; readonly input: string; readonly partitionBy: ReadonlyArray<string>; readonly orderBy: ReadonlyArray<TransformOrder>
-          readonly columns: ReadonlyArray<{ readonly name: string; readonly fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum"; readonly column?: string; readonly offset?: number }>
+          readonly columns: ReadonlyArray<{ readonly name: string; readonly fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum"; readonly column?: string; readonly offset?: number } & ColumnLabel>
         }
       | { readonly op: "union"; readonly inputs: ReadonlyArray<string>; readonly branch: string }
       | { readonly op: "dedupe"; readonly input: string; readonly key: ReadonlyArray<string>; readonly orderBy: ReadonlyArray<TransformOrder>; readonly keep: "first" | "last" }
