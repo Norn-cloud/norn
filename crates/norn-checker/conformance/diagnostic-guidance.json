@@ -2320,20 +2320,8 @@
     "fix": "Give every catalog entry its own id."
   },
   {
-    "code": "widget.catalog.duplicate_entry",
-    "fix": "Give every catalog entry its own id."
-  },
-  {
     "code": "widget.catalog.duplicate_renderer",
     "fix": "Keep one renderer per field type, so every screen draws that type the same way."
-  },
-  {
-    "code": "widget.catalog.duplicate_renderer",
-    "fix": "Keep one renderer per field type, so every screen draws that type the same way."
-  },
-  {
-    "code": "widget.catalog.event_payload_mismatch",
-    "fix": "Declare the page event's payload exactly as the entry's event declares it."
   },
   {
     "code": "widget.catalog.event_payload_mismatch",
@@ -2344,20 +2332,8 @@
     "fix": "Write the prop as ZEN over input.fields with the prop's declared type."
   },
   {
-    "code": "widget.catalog.invalid_prop",
-    "fix": "Write the prop as ZEN over input.fields with the prop's declared type."
-  },
-  {
     "code": "widget.catalog.island_machine",
     "fix": "Remove the machine: an island joins the checked machine only through its typed props and declared events."
-  },
-  {
-    "code": "widget.catalog.island_machine",
-    "fix": "Remove the machine: an island joins the checked machine only through its typed props and declared events."
-  },
-  {
-    "code": "widget.catalog.unbound_prop",
-    "fix": "Bind every required prop to a ZEN expression over the page machine's fields."
   },
   {
     "code": "widget.catalog.unbound_prop",
@@ -2368,20 +2344,8 @@
     "fix": "Declare the entry in this widget's catalog, or pin the widget artifact whose catalog holds it."
   },
   {
-    "code": "widget.catalog.unknown_entry",
-    "fix": "Declare the entry in this widget's catalog, or pin the widget artifact whose catalog holds it."
-  },
-  {
     "code": "widget.catalog.unknown_event",
     "fix": "Set emits to an event the entry declares; only catalog components emit named events."
-  },
-  {
-    "code": "widget.catalog.unknown_event",
-    "fix": "Set emits to an event the entry declares; only catalog components emit named events."
-  },
-  {
-    "code": "widget.catalog.unknown_prop",
-    "fix": "Bind only the props the entry declares, or declare the prop on the entry."
   },
   {
     "code": "widget.catalog.unknown_prop",
