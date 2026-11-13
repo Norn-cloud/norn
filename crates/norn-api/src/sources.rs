@@ -67,6 +67,14 @@ pub struct ConnectionConfig {
     /// Minutes between scheduled syncs; `0` turns scheduling off.
     #[serde(default = "default_every")]
     pub every_minutes: u32,
+    /// Rows per source request for every feed, in place of the connector's
+    /// (SYNC-PAGE-1): a host tunes how many requests a sync makes without a
+    /// new definitions version. At most the pull's item bound
+    /// ([`Limits`]); the cell still maps and commits
+    /// what a request returns in its own pages
+    /// ([`PAGE_ROWS`](crate::host::PAGE_ROWS)).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
 }
 
 const fn default_every() -> u32 {
@@ -238,6 +246,16 @@ impl Sources {
             if connection.instance == CELL_INSTANCE {
                 return Err(format!(
                     "source configuration: {} may not use the instance {CELL_INSTANCE}, which is the cell's own",
+                    connection.id
+                ));
+            }
+            let bound = u32::try_from(Limits::default().max_items).unwrap_or(u32::MAX);
+            if connection
+                .page_size
+                .is_some_and(|size| size == 0 || size > bound)
+            {
+                return Err(format!(
+                    "source configuration: {} pageSize is 1 to {bound}",
                     connection.id
                 ));
             }
@@ -444,7 +462,7 @@ fn begin<E: SqlEngine>(
             )
         })?;
     let payload = connector.get("payload").cloned().unwrap_or_default();
-    let profile = PullProfile::from_connector(&payload)
+    let mut profile = PullProfile::from_connector(&payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?
         .ok_or_else(|| {
             fail(
@@ -452,6 +470,16 @@ fn begin<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
+    // SYNC-PAGE-1: the host's page size, when it sets one.
+    if let Some(rows) = config.page_size {
+        for feed in &mut profile.feeds {
+            match &mut feed.paging {
+                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
+                    *size = rows;
+                }
+            }
+        }
+    }
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets)?;
@@ -776,7 +804,8 @@ pub struct UploadRun<'a> {
     pub uri: &'a str,
     /// The object's SHA-256.
     pub sha256: &'a str,
-    /// The generated mapping.
+    /// The generated mapping; empty for a dataset load, which its admitted
+    /// definition types directly.
     pub mapping: &'a str,
     /// Who loaded it.
     pub actor: &'a str,
@@ -802,6 +831,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         base_url: upload.uri.to_owned(),
         headers: BTreeMap::new(),
         every_minutes: 0,
+        page_size: None,
     };
     let (read, landed, quarantined) = upload.counts;
     let run = Run {
@@ -839,6 +869,15 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         &watermark,
         Some(upload.ended_ms),
     );
+}
+
+/// The source schema a mapping reads; none for a load without a mapping.
+fn source_schema_id(mapping: &str) -> String {
+    if mapping.is_empty() {
+        String::new()
+    } else {
+        format!("{}.source", mapping.trim_end_matches(".mapping"))
+    }
 }
 
 /// SYNC-REPORT-1: the run, as the cell's own observations. A cell without
@@ -881,7 +920,7 @@ fn report<E: SqlEngine>(
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
         "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => format!("{}.source", config.mapping.trim_end_matches(".mapping")),
+        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&config.mapping),
         "mapping_id" => config.mapping.as_str(),
     };
     let phase = if ended.is_some() { "end" } else { "start" };

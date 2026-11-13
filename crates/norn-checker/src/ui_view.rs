@@ -106,6 +106,7 @@ fn behavior_fits(behavior: WidgetBehavior, component: &WidgetComponent) -> bool 
                 WidgetComponent::List { .. }
                     | WidgetComponent::ChildGrid { .. }
                     | WidgetComponent::Navigation { .. }
+                    | WidgetComponent::Control { .. }
             )
         }
         WidgetBehavior::DragAndDrop => matches!(

@@ -17,7 +17,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::Value;
 
-const MEMBER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const MEMBER: Option<&str> = Some("Bearer fixture:admin@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
 fn profile_of(response: &server::Response) -> Value {

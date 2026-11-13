@@ -278,7 +278,10 @@ property tests run both at the same frontier.
   cell recorded. Every row is typed exactly by its column: no value is
   rounded, and a timestamp is admitted exactly when the cell reads it as one,
   with the cell's own ordering key. A row that cannot be typed, or misses a
-  required value, is quarantined with its first reason (`bulk.*`).
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
 - **HOST-READ-3 (dataset):** a loaded dataset's rows live only in the
   engine, so `GET /v1/objects/{type}` for its type is answered there, in the
   grid's grammar and visibility: every clause holds (text by bytes, numbers

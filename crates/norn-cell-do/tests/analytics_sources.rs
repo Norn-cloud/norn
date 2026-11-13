@@ -6,6 +6,7 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "engine correspondence over reported connections"
 )]
@@ -30,7 +31,7 @@ use norn_checker::{
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
 use serde_json::{Value, json};
 
-const MEMBER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const MEMBER: Option<&str> = Some("Bearer fixture:admin@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 const AT_MS: u64 = 1_794_484_800_000;
 
@@ -60,16 +61,17 @@ fn host() -> (DevHost<NativeEngine>, FixturePrincipals) {
             )));
         }
     }
-    for name in [
-        "source.Synced.interface",
-        "source.Connection.entity",
-        "source.SyncRun.entity",
-        "norn.connect.source",
-        "norn.connect.mapping",
-    ] {
-        artifacts.push(artifact(&format!(
-            "registry/packs/sources/artifacts/{name}.json"
-        )));
+    // The whole sources pack, whatever it holds.
+    let mut pack: Vec<_> = std::fs::read_dir(root().join("registry/packs/sources/artifacts"))
+        .expect("the sources pack")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    pack.sort();
+    for path in pack {
+        artifacts.push(
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("artifact"))
+                .expect("artifact"),
+        );
     }
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()

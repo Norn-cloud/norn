@@ -26,7 +26,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::{Value, json};
 
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
@@ -71,6 +71,7 @@ impl Uploads for Files<'_> {
             uri: format!("s3://uploads/demo/{id}.csv"),
             sha256: hex_digest(bytes),
             content_type: "text/csv".into(),
+            file_name: format!("{id}.csv"),
         })
     }
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {

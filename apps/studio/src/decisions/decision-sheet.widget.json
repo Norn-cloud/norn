@@ -1,0 +1,777 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.studio.decision-sheet.widget",
+  "kind": "widget",
+  "namespace": "norn",
+  "name": "Decision sheet",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "apps/studio/src/decisions/decision-sheet.widget.json"
+  },
+  "payload": {
+    "widgetVersion": "0.1",
+    "widgetId": "norn.studio.decision-sheet",
+    "dataDependencies": [],
+    "viewStates": [
+      {
+        "stateId": "ready",
+        "kind": "ready"
+      }
+    ],
+    "actionBindings": [],
+    "permissions": [],
+    "ux": {
+      "uxVersion": "0.1",
+      "pages": [
+        {
+          "pageId": "decision",
+          "name": "Decision",
+          "contextParams": [],
+          "root": {
+            "nodeId": "decision-sheet",
+            "component": {
+              "kind": "section",
+              "section": {
+                "sectionId": "decision",
+                "kind": "section",
+                "label": {
+                  "en": "Decision",
+                  "ar": "القرار"
+                },
+                "fields": [],
+                "order": 0
+              }
+            },
+            "children": [
+              {
+                "nodeId": "decision-choices",
+                "component": {
+                  "kind": "section",
+                  "section": {
+                    "sectionId": "choices",
+                    "kind": "section",
+                    "label": {
+                      "en": "Choose",
+                      "ar": "اختر"
+                    },
+                    "fields": [],
+                    "order": 1
+                  }
+                },
+                "children": [
+                  {
+                    "nodeId": "option-choice",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Options",
+                        "ar": "الخيارات"
+                      },
+                      "input": "choice"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "nodeId": "decision-note",
+                "component": {
+                  "kind": "section",
+                  "section": {
+                    "sectionId": "note",
+                    "kind": "section",
+                    "label": {
+                      "en": "Note",
+                      "ar": "ملاحظة"
+                    },
+                    "fields": [],
+                    "order": 2
+                  }
+                },
+                "children": [
+                  {
+                    "nodeId": "note-input",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Note",
+                        "ar": "ملاحظة"
+                      },
+                      "input": "text"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "nodeId": "decision-actions",
+                "component": {
+                  "kind": "section",
+                  "section": {
+                    "sectionId": "actions",
+                    "kind": "section",
+                    "label": {
+                      "en": "Decide",
+                      "ar": "قرّر"
+                    },
+                    "fields": [],
+                    "order": 3
+                  }
+                },
+                "children": [
+                  {
+                    "nodeId": "decide-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Decide",
+                        "ar": "قرّر"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "confirm-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Yes, decide",
+                        "ar": "نعم، قرّر"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "back-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Back",
+                        "ar": "رجوع"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "retry-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Retry",
+                        "ar": "أعد المحاولة"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "close-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Close",
+                        "ar": "إغلاق"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "nodeId": "decision-leave",
+                "component": {
+                  "kind": "section",
+                  "section": {
+                    "sectionId": "leave",
+                    "kind": "section",
+                    "label": {
+                      "en": "Leave without deciding?",
+                      "ar": "المغادرة دون قرار؟"
+                    },
+                    "fields": [],
+                    "order": 4
+                  }
+                },
+                "children": [
+                  {
+                    "nodeId": "stay-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Keep deciding",
+                        "ar": "تابع القرار"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  },
+                  {
+                    "nodeId": "leave-button",
+                    "component": {
+                      "kind": "control",
+                      "label": {
+                        "en": "Leave",
+                        "ar": "غادر"
+                      },
+                      "input": "trigger"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "nodeId": "decision-outcome",
+                "component": {
+                  "kind": "section",
+                  "section": {
+                    "sectionId": "outcome",
+                    "kind": "section",
+                    "label": {
+                      "en": "Outcome",
+                      "ar": "النتيجة"
+                    },
+                    "fields": [],
+                    "order": 5
+                  }
+                },
+                "children": [],
+                "behaviors": [
+                  "live_region"
+                ]
+              }
+            ]
+          },
+          "view": {
+            "kind": "decision_inbox",
+            "subject": {
+              "kind": "decisions"
+            }
+          },
+          "machine": {
+            "machineVersion": "0.1",
+            "initialStateId": "choosing",
+            "fields": [
+              {
+                "fieldId": "choice",
+                "type": "text",
+                "required": false
+              },
+              {
+                "fieldId": "note",
+                "type": "text",
+                "required": true,
+                "initial": ""
+              },
+              {
+                "fieldId": "needsConfirm",
+                "type": "boolean",
+                "required": true,
+                "initial": false
+              },
+              {
+                "fieldId": "lastCode",
+                "type": "text",
+                "required": false
+              }
+            ],
+            "events": [
+              {
+                "eventId": "choose",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "option-choice"
+                },
+                "payload": [
+                  {
+                    "fieldId": "value",
+                    "type": "text",
+                    "required": true
+                  },
+                  {
+                    "fieldId": "confirm",
+                    "type": "boolean",
+                    "required": true
+                  }
+                ]
+              },
+              {
+                "eventId": "edit-note",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "note-input"
+                },
+                "payload": [
+                  {
+                    "fieldId": "value",
+                    "type": "text",
+                    "required": true
+                  }
+                ]
+              },
+              {
+                "eventId": "decide",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "decide-button"
+                }
+              },
+              {
+                "eventId": "confirm",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "confirm-button"
+                }
+              },
+              {
+                "eventId": "back",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "back-button"
+                }
+              },
+              {
+                "eventId": "retry",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "retry-button"
+                }
+              },
+              {
+                "eventId": "close",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "close-button"
+                }
+              },
+              {
+                "eventId": "stay",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "stay-button"
+                }
+              },
+              {
+                "eventId": "leave",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "leave-button"
+                }
+              },
+              {
+                "eventId": "accepted",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "accepted"
+                }
+              },
+              {
+                "eventId": "approval",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "pending_approval"
+                }
+              },
+              {
+                "eventId": "network",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "network_failure"
+                }
+              },
+              {
+                "eventId": "timeout",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "timeout"
+                }
+              },
+              {
+                "eventId": "refused",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused"
+                }
+              },
+              {
+                "eventId": "refused-visibility",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused",
+                  "category": "visibility"
+                }
+              },
+              {
+                "eventId": "refused-conflict",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused",
+                  "category": "conflict"
+                }
+              },
+              {
+                "eventId": "refused-invalid",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused",
+                  "category": "invalid"
+                }
+              }
+            ],
+            "states": [
+              {
+                "stateId": "choosing",
+                "role": "idle"
+              },
+              {
+                "stateId": "confirming",
+                "role": "idle"
+              },
+              {
+                "stateId": "sending",
+                "role": "pending",
+                "deadlineMs": 20000,
+                "awaits": {
+                  "kind": "operation",
+                  "operationId": "decideDecision"
+                }
+              },
+              {
+                "stateId": "refused",
+                "role": "error"
+              },
+              {
+                "stateId": "failed",
+                "role": "error"
+              },
+              {
+                "stateId": "awaiting-approval",
+                "role": "idle"
+              },
+              {
+                "stateId": "leaving",
+                "role": "idle"
+              },
+              {
+                "stateId": "decided",
+                "role": "terminal"
+              },
+              {
+                "stateId": "resolved",
+                "role": "terminal"
+              },
+              {
+                "stateId": "expired",
+                "role": "terminal"
+              },
+              {
+                "stateId": "gone",
+                "role": "terminal"
+              },
+              {
+                "stateId": "closed",
+                "role": "terminal"
+              }
+            ],
+            "transitions": [
+              {
+                "transitionId": "choosing--choose",
+                "from": "choosing",
+                "on": "choose",
+                "target": "choosing",
+                "assign": {
+                  "choice": "input.event.value",
+                  "needsConfirm": "input.event.confirm"
+                }
+              },
+              {
+                "transitionId": "choosing--edit-note",
+                "from": "choosing",
+                "on": "edit-note",
+                "target": "choosing",
+                "assign": {
+                  "note": "input.event.value"
+                }
+              },
+              {
+                "transitionId": "confirming--choose",
+                "from": "confirming",
+                "on": "choose",
+                "target": "choosing",
+                "assign": {
+                  "choice": "input.event.value",
+                  "needsConfirm": "input.event.confirm"
+                }
+              },
+              {
+                "transitionId": "confirming--edit-note",
+                "from": "confirming",
+                "on": "edit-note",
+                "target": "choosing",
+                "assign": {
+                  "note": "input.event.value"
+                }
+              },
+              {
+                "transitionId": "refused--choose",
+                "from": "refused",
+                "on": "choose",
+                "target": "choosing",
+                "assign": {
+                  "choice": "input.event.value",
+                  "needsConfirm": "input.event.confirm"
+                }
+              },
+              {
+                "transitionId": "refused--edit-note",
+                "from": "refused",
+                "on": "edit-note",
+                "target": "choosing",
+                "assign": {
+                  "note": "input.event.value"
+                }
+              },
+              {
+                "transitionId": "failed--choose",
+                "from": "failed",
+                "on": "choose",
+                "target": "choosing",
+                "assign": {
+                  "choice": "input.event.value",
+                  "needsConfirm": "input.event.confirm"
+                }
+              },
+              {
+                "transitionId": "failed--edit-note",
+                "from": "failed",
+                "on": "edit-note",
+                "target": "choosing",
+                "assign": {
+                  "note": "input.event.value"
+                }
+              },
+              {
+                "transitionId": "choosing--decide",
+                "from": "choosing",
+                "on": "decide",
+                "target": "sending",
+                "guard": "input.fields.choice != null and not input.fields.needsConfirm",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "decideDecision"
+                    },
+                    "input": {
+                      "choice": "input.fields.choice",
+                      "note": "input.fields.note"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "choosing--decide--confirming",
+                "from": "choosing",
+                "on": "decide",
+                "target": "confirming",
+                "guard": "input.fields.choice != null and input.fields.needsConfirm"
+              },
+              {
+                "transitionId": "refused--decide",
+                "from": "refused",
+                "on": "decide",
+                "target": "sending",
+                "guard": "input.fields.choice != null and not input.fields.needsConfirm",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "decideDecision"
+                    },
+                    "input": {
+                      "choice": "input.fields.choice",
+                      "note": "input.fields.note"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "refused--decide--confirming",
+                "from": "refused",
+                "on": "decide",
+                "target": "confirming",
+                "guard": "input.fields.choice != null and input.fields.needsConfirm"
+              },
+              {
+                "transitionId": "choosing--close",
+                "from": "choosing",
+                "on": "close",
+                "target": "closed",
+                "guard": "input.fields.choice == null and input.fields.note == \"\""
+              },
+              {
+                "transitionId": "choosing--close--leaving",
+                "from": "choosing",
+                "on": "close",
+                "target": "leaving",
+                "guard": "input.fields.choice != null or input.fields.note != \"\""
+              },
+              {
+                "transitionId": "confirming--close",
+                "from": "confirming",
+                "on": "close",
+                "target": "leaving"
+              },
+              {
+                "transitionId": "refused--close",
+                "from": "refused",
+                "on": "close",
+                "target": "leaving"
+              },
+              {
+                "transitionId": "failed--close",
+                "from": "failed",
+                "on": "close",
+                "target": "leaving"
+              },
+              {
+                "transitionId": "confirming--confirm",
+                "from": "confirming",
+                "on": "confirm",
+                "target": "sending",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "decideDecision"
+                    },
+                    "input": {
+                      "choice": "input.fields.choice",
+                      "note": "input.fields.note"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "confirming--back",
+                "from": "confirming",
+                "on": "back",
+                "target": "choosing"
+              },
+              {
+                "transitionId": "sending--accepted",
+                "from": "sending",
+                "on": "accepted",
+                "target": "decided"
+              },
+              {
+                "transitionId": "sending--approval",
+                "from": "sending",
+                "on": "approval",
+                "target": "awaiting-approval"
+              },
+              {
+                "transitionId": "sending--network",
+                "from": "sending",
+                "on": "network",
+                "target": "failed"
+              },
+              {
+                "transitionId": "sending--timeout",
+                "from": "sending",
+                "on": "timeout",
+                "target": "failed"
+              },
+              {
+                "transitionId": "sending--refused-visibility",
+                "from": "sending",
+                "on": "refused-visibility",
+                "target": "gone"
+              },
+              {
+                "transitionId": "sending--refused-conflict",
+                "from": "sending",
+                "on": "refused-conflict",
+                "target": "resolved",
+                "guard": "input.event.code == \"decision.resolved\""
+              },
+              {
+                "transitionId": "sending--refused-invalid",
+                "from": "sending",
+                "on": "refused-invalid",
+                "target": "expired",
+                "guard": "input.event.code == \"decision.expired\""
+              },
+              {
+                "transitionId": "sending--refused",
+                "from": "sending",
+                "on": "refused",
+                "target": "refused",
+                "assign": {
+                  "lastCode": "input.event.code"
+                }
+              },
+              {
+                "transitionId": "failed--retry",
+                "from": "failed",
+                "on": "retry",
+                "target": "sending",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "decideDecision"
+                    },
+                    "input": {
+                      "choice": "input.fields.choice",
+                      "note": "input.fields.note"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "awaiting-approval--close",
+                "from": "awaiting-approval",
+                "on": "close",
+                "target": "closed"
+              },
+              {
+                "transitionId": "leaving--stay",
+                "from": "leaving",
+                "on": "stay",
+                "target": "choosing"
+              },
+              {
+                "transitionId": "leaving--leave",
+                "from": "leaving",
+                "on": "leave",
+                "target": "closed"
+              }
+            ]
+          }
+        }
+      ],
+      "dataBindings": [],
+      "actionBindings": [],
+      "fields": [],
+      "forms": [],
+      "actionPlacements": [],
+      "navigationItems": [],
+      "overrides": []
+    }
+  }
+}

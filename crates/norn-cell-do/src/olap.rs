@@ -120,6 +120,7 @@ impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
                 uri: record.uri,
                 sha256: record.sha256,
                 content_type: record.content_type,
+                file_name: record.file_name,
             })
     }
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {

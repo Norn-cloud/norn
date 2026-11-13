@@ -30,6 +30,21 @@ export interface RecordsLoaded { readonly connectionId: string; readonly objectT
 
 type Put = (url: string, init: RequestInit) => Promise<Response>
 
+/** How long one step of an upload may take before Studio says the cell or the storage did not answer. */
+export const UPLOAD_STEP_MS = 90_000
+
+/** A step that gave up or could not reach its server, in words the reader can act on; anything else as it came. */
+export function uploadFailure(step: "storage" | "cell", error: unknown): Error {
+  const name = error instanceof Error ? error.name : ""
+  if (name === "TimeoutError" || name === "AbortError") return new Error(step === "storage" ? `The storage did not take the file within ${UPLOAD_STEP_MS / 1000} seconds; nothing was loaded.` : `The cell did not answer within ${UPLOAD_STEP_MS / 1000} seconds; nothing was loaded.`)
+  if (error instanceof TypeError && step === "storage") return new Error("The browser could not reach the storage (it may not accept uploads from this site); nothing was loaded.")
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+const step = async <T>(kind: "storage" | "cell", run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  try { return await run(AbortSignal.timeout(UPLOAD_STEP_MS)) } catch (error) { throw uploadFailure(kind, error) }
+}
+
 /** A column's id as the cell names it: the snake id `:complete` gave, or its header written that way. */
 export const columnId = (column: Column): string => column.id ?? column.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")
 
@@ -38,10 +53,10 @@ export const kindOf = (inferred: Inferred): Kind => inferred === "string" ? "tex
 
 /** Begin an upload, send the file to the URL the cell signed, and have the cell read it back. */
 export async function upload(file: File, put: Put = (url, init) => fetch(url, init)): Promise<{ readonly uploadId: string; readonly completed: Completed }> {
-  const begun = (await cellRead<Begun>("/v1/uploads:begin", "Uploads are", { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type || "text/csv", size: file.size }) })).document
-  const sent = await put(begun.putUrl, { method: "PUT", headers: begun.putHeaders, body: file })
+  const begun = await step("cell", async (signal) => (await cellRead<Begun>("/v1/uploads:begin", "Uploads are", { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type || "text/csv", size: file.size }), signal })).document)
+  const sent = await step("storage", (signal) => put(begun.putUrl, { method: "PUT", headers: begun.putHeaders, body: file, signal }))
   if (!sent.ok) throw new Error(`The storage refused the file (${sent.status}); nothing was loaded.`)
-  const completed = (await cellRead<Completed>(`/v1/uploads/${encodeURIComponent(begun.uploadId)}:complete`, "Uploads are", { method: "POST", body: "{}" })).document
+  const completed = await step("cell", async (signal) => (await cellRead<Completed>(`/v1/uploads/${encodeURIComponent(begun.uploadId)}:complete`, "Uploads are", { method: "POST", body: "{}", signal })).document)
   return { uploadId: begun.uploadId, completed }
 }
 
