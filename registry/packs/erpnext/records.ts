@@ -84,6 +84,7 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "Delivery Note Item", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Payment Entry", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "Warehouse Lot Balance", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]},
     {id: "delivery_posting_state", dataset: "Delivery Note Item", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "GL Entry", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: [{value: "USD"}]},

@@ -242,7 +242,8 @@ export const SandboxSource = Norn.sourceSchema({
       field: "valuation_method",
       origin: "declared",
       values: [{value: "moving_average"}]
-    }
+    },
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},
