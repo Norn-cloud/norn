@@ -31,5 +31,19 @@ wasm-bindgen = "=0.2.129"
 default = ["checker"]
 checker = ["dep:norn-checker", "dep:norn-projections"]
 
+# The checker ABI's own tests need the checker; the engine-only build (--no-default-features)
+# skips them (its parity with the full build is tests/parity/engine-parity.mjs).
+[[test]]
+name = "parity"
+required-features = ["checker"]
+
+[[test]]
+name = "admit_question"
+required-features = ["checker"]
+
+[[test]]
+name = "restatement"
+required-features = ["checker"]
+
 [lints]
 workspace = true
