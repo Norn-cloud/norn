@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowDown, Clock, GitCommitHorizontal, PencilLine, Waypoints, type LucideIcon } from "lucide-react"
-import { useState, type ReactNode, type SyntheticEvent } from "react"
+import { useEffect, useState, type ReactNode, type SyntheticEvent } from "react"
 import { CopyId, DigestId } from "@/components/copy-id"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { systemName } from "@/lib/catalog"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
@@ -72,7 +73,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   if (asOf.length > 0) steps.push(
     <Step key="as-of" icon={Clock} title="As of">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-xs">
-        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 truncate font-mono tabular-nums" title={value}>{value}</dd></div>)}
+        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 font-mono tabular-nums [overflow-wrap:anywhere]">{value}</dd></div>)}
       </dl>
     </Step>,
   )
@@ -95,8 +96,8 @@ export function ProvenanceCard({ label, value, notice, trace, children }: {
       <div className="space-y-0.5">
         <div className="text-xs text-muted-foreground">Where this value came from</div>
         <div className="flex min-w-0 items-baseline justify-between gap-3">
-          <span className="min-w-0 truncate text-sm font-medium">{label}</span>
-          {value !== undefined && <span className="shrink-0 font-mono text-sm tabular-nums">{value}</span>}
+          <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{label}</span>
+          {value !== undefined && <span className="shrink-0 text-end font-mono text-sm tabular-nums [overflow-wrap:anywhere]">{value}</span>}
         </div>
       </div>
       {notice && <p role="status" className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{notice}</p>}
@@ -104,6 +105,20 @@ export function ProvenanceCard({ label, value, notice, trace, children }: {
       {trace && <div className="border-t border-border/70 pt-2">{trace}</div>}
     </div>
   )
+}
+
+/** Narrower than 640 px: the card opens as a bottom sheet. */
+function useNarrow(): boolean {
+  const query = "(max-width: 639px)"
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia?.(query).matches === true)
+  useEffect(() => {
+    const list = window.matchMedia?.(query)
+    if (list === undefined) return
+    const update = () => setNarrow(list.matches)
+    list.addEventListener("change", update)
+    return () => list.removeEventListener("change", update)
+  }, [])
+  return narrow
 }
 
 /** Clicks and keys inside the card stay in it: a grid row or table row under it must not take them. */
@@ -124,8 +139,24 @@ export function ProvenancePopover({ children, variant = "inline", className, lab
   readonly open?: boolean
   readonly onOpenChange?: (open: boolean) => void
 }) {
+  const narrow = useNarrow()
+  const [own, setOwn] = useState(false)
+  const shown = open ?? own
+  const change = (next: boolean) => { setOwn(next); onOpenChange?.(next) }
+  // On a phone the card is a bottom sheet: a popover there covers the very value it explains.
+  if (narrow && variant !== "glyph") return (
+    <>
+      <button type="button" onClick={(event) => { keep(event); change(true) }} className={cn(variant === "inline" && TRIGGER, className)} {...variant === "block" ? { "aria-label": `${label}: where this value came from` } : {}}>{children}</button>
+      <Sheet open={shown} onOpenChange={change}>
+        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl px-4 pt-12 pb-6" onClick={keep} onKeyDown={keep}>
+          <SheetTitle className="sr-only">Where {label} came from</SheetTitle>
+          {card}
+        </SheetContent>
+      </Sheet>
+    </>
+  )
   return (
-    <Popover {...open === undefined ? {} : { open }} onOpenChange={onOpenChange}>
+    <Popover open={shown} onOpenChange={change}>
       {variant === "glyph"
         ? <span className={cn("flex min-w-0 items-center gap-1", className)}>
           <span className="min-w-0 flex-1 truncate">{children}</span>
