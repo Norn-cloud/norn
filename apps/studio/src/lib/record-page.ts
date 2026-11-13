@@ -41,8 +41,9 @@ export interface LinkGroup {
  * declared relationship, uncounted. Ids come from the first page only.
  */
 export function linkGroups(concept: Pick<Concept, "name" | "relationships">, incoming: readonly { readonly from: Pick<Concept, "name" | "title">; readonly relationship: { readonly id: string } }[], id: string, page: CountedLinkPage): LinkGroup[] {
-  const ids = (direction: "out" | "in", link: string, sourceType: string) => page.items
-    .filter((edge) => edge.link === link && edge.sourceType === sourceType && (direction === "out" ? edge.source === id : edge.target === id))
+  // An id under another type is another record: both ends' types must be the group's.
+  const ids = (direction: "out" | "in", link: string, sourceType: string, targetType: string) => page.items
+    .filter((edge) => edge.link === link && edge.sourceType === sourceType && edge.targetType === targetType && (direction === "out" ? edge.source === id : edge.target === id))
     .map((edge) => direction === "out" ? edge.target : edge.source)
   const words = (link: string) => link.replaceAll("_", " ")
   if (page.counts) {
@@ -55,12 +56,12 @@ export function linkGroups(concept: Pick<Concept, "name" | "relationships">, inc
       label: direction === "out" ? `${words(link)} → ${conceptTitle(targetType)}` : `${conceptTitle(sourceType)} records (${words(link)})`,
       count,
       atLeast: !complete,
-      ids: ids(direction, link, sourceType),
+      ids: ids(direction, link, sourceType, targetType),
     }))
   }
   return [
-    ...concept.relationships.map(({ id: link, target }): LinkGroup => ({ key: `out/${concept.name}/${link}/${target}`, direction: "out", link, otherType: target, label: `${words(link)} → ${conceptTitle(target)}`, count: null, atLeast: false, ids: ids("out", link, concept.name) })),
-    ...incoming.map(({ from, relationship }): LinkGroup => ({ key: `in/${from.name}/${relationship.id}/${concept.name}`, direction: "in", link: relationship.id, otherType: from.name, label: `${from.title} records (${words(relationship.id)})`, count: null, atLeast: false, ids: ids("in", relationship.id, from.name) })),
+    ...concept.relationships.map(({ id: link, target }): LinkGroup => ({ key: `out/${concept.name}/${link}/${target}`, direction: "out", link, otherType: target, label: `${words(link)} → ${conceptTitle(target)}`, count: null, atLeast: false, ids: ids("out", link, concept.name, target) })),
+    ...incoming.map(({ from, relationship }): LinkGroup => ({ key: `in/${from.name}/${relationship.id}/${concept.name}`, direction: "in", link: relationship.id, otherType: from.name, label: `${from.title} records (${words(relationship.id)})`, count: null, atLeast: false, ids: ids("in", relationship.id, from.name, concept.name) })),
   ]
 }
 
