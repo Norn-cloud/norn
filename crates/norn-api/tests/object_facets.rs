@@ -20,7 +20,7 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
-use norn_ir::{FactChange, RuntimeValue};
+use norn_ir::FactChange;
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
@@ -122,7 +122,7 @@ fn model() -> Model {
 }
 
 fn create(key: &str, status: &str, region: Option<&str>) -> FactChange {
-    let region = region.map_or("null".to_owned(), |region| format!(r#""{region}""#));
+    let region = region.map_or_else(|| "null".to_owned(), |region| format!(r#""{region}""#));
     serde_json::from_str(&format!(
         r#"{{"op":"create","objectType":"test.Node","key":"{key}","values":{{"status":"{status}","region":{region},"amount":1.5}}}}"#
     ))
@@ -182,9 +182,12 @@ fn read(found: &NornObjectFacets, property: &str) -> (Vec<(String, u64)>, u64, u
     let values = facet
         .values
         .iter()
-        .map(|value| match &value.value {
-            RuntimeValue::String(text) => (text.clone(), value.count),
-            other => (format!("{other:?}"), value.count),
+        .map(|value| {
+            let text = value
+                .value
+                .as_str()
+                .map_or_else(|| format!("{:?}", value.value), str::to_owned);
+            (text, value.count)
         })
         .collect();
     (values, facet.nulls, facet.other_rows)

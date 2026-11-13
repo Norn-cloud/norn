@@ -14,7 +14,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::RuntimeValue;
 use serde::Serialize;
 use utoipa::ToSchema;
-use utoipa::openapi::schema::{Object, Schema};
+use utoipa::openapi::schema::{Object, Schema, SchemaType};
 
 use crate::{
     host::DevHost,
@@ -91,11 +91,9 @@ pub struct NornFacetValue {
 }
 
 fn value_schema() -> Schema {
-    Schema::Object(
-        Object::builder()
-            .description(Some("A stored value: text or a boolean."))
-            .build(),
-    )
+    let mut schema = Object::with_type(SchemaType::AnyValue);
+    schema.description = Some("A stored value: text or a boolean.".to_owned());
+    Schema::Object(schema)
 }
 
 fn count(n: usize) -> u64 {
