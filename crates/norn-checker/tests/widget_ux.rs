@@ -4488,14 +4488,15 @@ fn catalog_code(widget: Value, code: &str, part: &str) {
 fn every_catalog_join_is_checked() {
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["root"]["children"][3]["component"]["entry"]["entryId"] = json!("gauge")
+            ux["pages"][0]["root"]["children"][3]["component"]["entry"]["entryId"] = json!("gauge");
         }),
         "widget.catalog.unknown_entry",
         "gauge",
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["root"]["children"][3]["component"]["props"]["colour"] = json!("\"red\"")
+            ux["pages"][0]["root"]["children"][3]["component"]["props"]["colour"] =
+                json!("\"red\"");
         }),
         "widget.catalog.unknown_prop",
         "colour",
@@ -4512,21 +4513,21 @@ fn every_catalog_join_is_checked() {
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["root"]["children"][3]["component"]["props"]["title"] = json!("1 + 1")
+            ux["pages"][0]["root"]["children"][3]["component"]["props"]["title"] = json!("1 + 1");
         }),
         "widget.catalog.invalid_prop",
         "title",
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["machine"]["events"][9]["source"]["emits"] = json!("explode")
+            ux["pages"][0]["machine"]["events"][9]["source"]["emits"] = json!("explode");
         }),
         "widget.catalog.unknown_event",
         "explode",
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["machine"]["events"][9]["payload"][0]["type"] = json!("integer")
+            ux["pages"][0]["machine"]["events"][9]["payload"][0]["type"] = json!("integer");
         }),
         "widget.catalog.event_payload_mismatch",
         "drill",
@@ -4562,7 +4563,7 @@ fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
     // On a page machine the same field is refused: a page's guards are ZEN the checker reads.
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["machine"]["transitions"][0]["componentGuard"] = json!("When#0")
+            ux["pages"][0]["machine"]["transitions"][0]["componentGuard"] = json!("When#0");
         }),
         "widget.machine.component_guard_outside_catalog",
         "ZEN",
