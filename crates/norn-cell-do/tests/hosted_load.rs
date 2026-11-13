@@ -14,6 +14,7 @@
     clippy::panic,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
+    clippy::too_many_lines,
     reason = "hosted load correspondence"
 )]
 
@@ -115,6 +116,10 @@ fn tenant_set() -> Vec<Value> {
 
 /// The demo dataset, as `generate.py` writes it (its default seed and size).
 fn dataset(out: &Path) -> Vec<(String, Value)> {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the gate loads the dataset the demo's own generator writes"
+    )]
     let status = std::process::Command::new("python3")
         .arg("-I")
         .arg(repo().join("demo/data/generate.py"))
@@ -144,12 +149,11 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
     );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
-    let opened = path.clone();
     let mut tenant = Tenant::open(
         scope.clone(),
         &DEMO_GRANTS,
         Box::new(move || {
-            NativeEngine::open(&opened, StoreOptions::default()).map_err(|e| e.to_string())
+            NativeEngine::open(&path, StoreOptions::default()).map_err(|e| e.to_string())
         }),
         Some(&LINEAGE_KEY),
     )
