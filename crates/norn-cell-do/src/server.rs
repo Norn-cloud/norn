@@ -240,9 +240,16 @@ fn refresh<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
     transform: &str,
-    query: &str,
-    now: u64,
+    (method, query, now): (&str, &str, u64),
 ) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a refresh takes POST",
+        ));
+    }
     let transform = percent_encoding::percent_decode_str(transform)
         .decode_utf8()
         .map_err(|_invalid| Refusal::invalid("a transform path segment is not UTF-8"))?;
@@ -409,16 +416,7 @@ pub fn handle_all<E: SqlEngine>(
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if let Some(transform) = transform_refresh_path(path) {
-        if method == "POST" {
-            refresh(host, actor, transform, query, now)
-        } else {
-            Err(Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "a refresh takes POST",
-            ))
-        }
+        refresh(host, actor, transform, (method, query, now))
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
