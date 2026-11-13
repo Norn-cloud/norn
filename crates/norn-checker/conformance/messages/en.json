@@ -1313,6 +1313,9 @@
     "model.admission.unknown_input": {
       "message": "a model's input object type is not declared by the artifact set or the installed base"
     },
+    "model.law.personal_data_never_trains": {
+      "message": "a model trains on a feature or target that carries personal data that is not pseudonymized"
+    },
     "model.validation.duplicate_id": {
       "message": "a model lists a feature, output or contract id twice"
     },

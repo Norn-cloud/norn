@@ -995,10 +995,10 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
 }
 
 /// The guard id of `/v1/guard/{id}:restore`.
-fn guard_restore_path(path: &str) -> Option<u64> {
+fn guard_restore_path(path: &str) -> Option<&str> {
     path.strip_prefix("/v1/guard/")
         .and_then(|rest| rest.strip_suffix(":restore"))
-        .and_then(|id| id.parse::<u64>().ok())
+        .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
 fn post_only(method: &str) -> Result<(), Refusal> {
@@ -1036,10 +1036,13 @@ fn guarded<E: SqlEngine>(
 fn guard_restored<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
-    id: u64,
+    id: &str,
     (method, query, body): (&str, &str, &str),
 ) -> Result<String, Refusal> {
     post_only(method)?;
+    let id = id
+        .parse::<u64>()
+        .map_err(|_not_a_number| Refusal::invalid("a guard id is a whole number"))?;
     let request: norn_api::privacy_guard::NornRestoreRequest = serde_json::from_str(body)
         .map_err(|error| Refusal::invalid(format!("the request body is not a restore: {error}")))?;
     document_json(&norn_api::privacy_guard::restore(

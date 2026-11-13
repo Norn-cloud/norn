@@ -499,11 +499,20 @@ pub struct NornRevealReceipt {
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NornRevealed {
-    /// The stored value.
-    #[schema(value_type = Object)]
+    /// The stored value; decimals are exact JSON number tokens.
+    #[schema(schema_with = revealed_value_schema)]
     pub value: RuntimeValue,
     /// The ledger receipt of this reveal.
     pub receipt: NornRevealReceipt,
+}
+
+fn revealed_value_schema() -> utoipa::openapi::schema::Schema {
+    let mut schema = utoipa::openapi::schema::Object::with_type(
+        utoipa::openapi::schema::SchemaType::AnyValue,
+    );
+    schema.description =
+        Some("The stored value, of the property's type; decimals are exact JSON number tokens.".to_owned());
+    utoipa::openapi::schema::Schema::Object(schema)
 }
 
 /// The longest purpose a reveal keeps, in characters.
