@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyId, DigestId } from "@/components/copy-id"
-import { ProvenanceChain, ProvenanceValue } from "@/components/provenance"
+import { FactProvenance, ProvenanceChain } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
 import { ViewToggle, useCardView, useView } from "@/lib/view"
@@ -103,7 +103,7 @@ export function ObjectPage() {
               </Panel>
             ))}
             <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
-            <Facts concept={concept} reads={data} />
+            <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} />
             {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
             <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
             {view === "technical" && <Technical name={name} lineage={lineage} />}
@@ -224,23 +224,37 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 }
 
 /** The record's facts in words, or, in the technical view, the exact document the server sent. */
-function Facts({ concept, reads }: { readonly concept: Concept; readonly reads: ObjectReads }) {
+function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const card = useCardView()
   const lineage = reads.source?.document
+  const { objectType, id, version } = reads.object.document
+  const live = reads.object.origin === "live"
   const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
   if (card.view === "technical") {
     return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
   }
   return (
     <Panel icon={Rows3} label="Facts" action={toggle}><Well className="space-y-2 p-3">
-      {lineage && <p className="text-meta text-muted-foreground">Select a value to see where it came from.</p>}
+      {(live || lineage) && <p className="text-meta text-muted-foreground">Select a value to see where it came from.</p>}
       <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
-        {concept.fields.map((field) => (
-          <TableRow key={field.id}>
-            <TableCell className="font-medium">{field.id.replaceAll("_", " ")}</TableCell>
-            <TableCell className={field.decimal ? "tabular-nums" : undefined}><ProvenanceValue lineage={lineage} fact={field.id}>{factText(field, reads.object.document, reads.object.numbers, "")}</ProvenanceValue></TableCell>
-          </TableRow>
-        ))}
+        {concept.fields.map((field) => {
+          const text = factText(field, reads.object.document, reads.object.numbers, "")
+          const value = reads.object.document.values[field.id]
+          const label = field.id.replaceAll("_", " ")
+          return (
+            <TableRow key={field.id}>
+              <TableCell className="font-medium">{label}</TableCell>
+              <TableCell className={field.decimal ? "tabular-nums" : undefined}>
+                {value === null || value === undefined ? text : (
+                  <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={text} lineage={lineage ?? null} live={live}
+                    trace={<button type="button" className="text-sm font-medium underline-offset-4 hover:underline" onClick={onLineage}>Open the record's lineage</button>}>
+                    {text}
+                  </FactProvenance>
+                )}
+              </TableCell>
+            </TableRow>
+          )
+        })}
       </DenseTable>
     </Well></Panel>
   )

@@ -21,10 +21,10 @@ import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor } from "../lib/screen/call.ts"
-import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
+import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 
-const ROW = 36
+const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
@@ -286,7 +286,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                       <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}>{nameOf(row)}</div>
                       {withheld
                         ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
-                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("min-w-0 truncate px-3", alignRight(field) && "text-right")}><Cell field={field} row={row} /></div>)}
+                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}
                     </div>
                   )
                 })}
@@ -353,7 +353,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
             {isWithheld(row)
               ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><Cell field={field} row={row} /></dd></div>)}
+                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">
