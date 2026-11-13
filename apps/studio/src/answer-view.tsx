@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Ellipsis, Radio, Rows3, Split } from "lucide-react"
+import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Rows3, Split } from "lucide-react"
+import { Chip, FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -208,10 +209,10 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{named}</h1>
             : heading === "h3" ? <h3 className="font-medium">{named}</h3>
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
-          <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
+          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
           {read.answer.origin === "live"
-            ? <Badge variant="success" title="Read now from the cell as your account."><Radio aria-hidden />Live</Badge>
-            : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
+            ? <Chip tone="teal" dot pulse title="Read now from the cell as your account.">Live</Chip>
+            : <Chip tone="gray" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Chip>}
         </div>
         {refusal && <RefusedNote refusal={refusal} />}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
@@ -219,33 +220,38 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </div>
       <div className="space-y-2 px-1" data-slot="answer-lead">
         {lead.bucket && (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pt-2">
             {lead.bucket.suppressed ? <span className="text-figure leading-none font-semibold tracking-[-0.02em] text-muted-foreground">—</span> : (
               <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
                 label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                <span className="block text-figure leading-none font-semibold tracking-[-0.02em] tabular-nums underline decoration-dotted decoration-muted-foreground/40 underline-offset-8">{figure(lead.bucket, unit)}</span>
+                <span className="block text-figure leading-none font-semibold tracking-[-0.03em] tabular-nums underline decoration-dotted decoration-muted-foreground/30 decoration-1 underline-offset-[10px]">{figure(lead.bucket, unit)}</span>
               </AnswerProvenance>
             )}
-            <span className="text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
           </div>
         )}
-        <p className="max-w-[72ch] text-panel text-pretty">{lead.sentence}</p>
-        <div className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground" aria-label="As of">
-          <Clock aria-hidden className="size-3.5" />
-          <span className="rounded-md bg-muted px-1.5 py-0.5 tabular-nums" title="The cell's knowledge when it answered: its committed changes">Known after {changes(answer.knownAsOf)}</span>
-          <span className="rounded-md bg-muted px-1.5 py-0.5 tabular-nums" title="The cell's clock when it answered">Read {stamp(answer.nowMs)}</span>
-          {engineOf(answer) && <span className="rounded-md bg-muted px-1.5 py-0.5">{engineOf(answer)}</span>}
-          {sources.length > 0 && <span className="rounded-md bg-muted px-1.5 py-0.5">Sources: {sources.join(", ")}</span>}
+        <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1" aria-label="As of">
+          <FactChip icon={GitCommitHorizontal} label="Known after" title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</FactChip>
+          <FactChip icon={Clock} label="Read" title="The cell's clock when it answered">{stamp(answer.nowMs)}</FactChip>
+          {engineOf(answer) && <FactChip icon={Cpu}>{engineOf(answer)}</FactChip>}
+          {sources.length > 0 && <FactChip icon={Database} label="Sources">{sources.join(", ")}</FactChip>}
         </div>
       </div>
       {/* A series over time is drawn; a breakdown by values is read in its table. */}
       {/* A series over time of two or more buckets is drawn; one bucket, or a breakdown by values, is read in its table. */}
       {rows.length >= 2 && (grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0) ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
-        <Well className="px-2 pt-4 pb-1">
+        <Well className="px-2 pt-4 pb-2">
           {frame ? (
           <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
             <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
-              <CartesianGrid vertical={false} strokeDasharray="2 4" />
+              <defs>
+                <linearGradient id="answer-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-position)" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="var(--color-position)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
               <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick.toLocaleString("en")}${frame.unit}`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
@@ -254,7 +260,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                   <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
-              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.75} fill="url(#answer-fill)" dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
