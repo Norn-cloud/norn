@@ -1,11 +1,13 @@
 {
-  "sha256": "3edee3ffb39607efa3a0f8b404a77fb795b2f6a2c69e3906fc84b4468c8a8abd",
-  "origin": "authored",
-  "category": "code",
+  "sha256": "2b3a14fc40f421f078acdd7665bf5c6a18d634a7ff957029437759f26a86816d",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/packs/ml/ml.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",

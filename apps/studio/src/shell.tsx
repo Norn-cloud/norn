@@ -1,11 +1,11 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { Bell, ChevronRight, ChevronsUpDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
+import { Bell, ChevronRight, ChevronsUpDown, Keyboard, LogOut, Search, SlidersHorizontal, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuAction,
@@ -16,7 +16,7 @@ import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
-import { LocaleProvider, LocaleToggle, directionOf, useLocale } from "@/lib/locale"
+import { LOCALES, LocaleProvider, LocaleToggle, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import { useMode } from "@/lib/live-transport"
 import { useStudioScope } from "@/lib/definitions"
@@ -280,8 +280,26 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { locale, setLocale } = useLocale()
   return (
     <div className="flex items-center gap-1">
-      <LocaleToggle locale={locale} onChange={setLocale} />
-      <ViewToggle view={view} onChange={setView} label="Business or technical view" />
+      {/* Wide: both choices in the bar. Narrow: one menu holds them, so the bar never runs off the screen. */}
+      <div className="hidden items-center gap-1 lg:flex">
+        <LocaleToggle locale={locale} onChange={setLocale} />
+        <ViewToggle view={view} onChange={setView} label="Business or technical view" />
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="text-muted-foreground lg:hidden"><SlidersHorizontal /><span className="sr-only">Language and view</span></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuLabel>Language</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={locale} onValueChange={(next) => { if (isLocale(next)) setLocale(next) }}>
+            {LOCALES.map(({ tag, name }) => <DropdownMenuRadioItem key={tag} value={tag} lang={tag}>{name}</DropdownMenuRadioItem>)}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>View</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
+            <DropdownMenuRadioItem value="business">Business</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="technical">Technical</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {tools}
       <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="hidden text-muted-foreground md:inline-flex"><Keyboard /><span className="sr-only">Keyboard shortcuts</span></Button></DropdownMenuTrigger>

@@ -19,7 +19,11 @@
 //! is admitted: numeric, boolean, `enum` or `text` for a feature, numeric,
 //! boolean or `enum` for the target. A `ref` property is resolved through the
 //! shared property types of the set and the base; one that does not resolve
-//! there is refused rather than guessed.
+//! there is refused rather than guessed. A model that names a predictions
+//! type (#1171 M4) is admitted only when that type resolves, has text
+//! properties `subject` and `model_version`, and declares every output as a
+//! property of the same type (a decimal's scale and unit, an enum's values
+//! as a superset) and the same nullability.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
@@ -46,6 +50,12 @@ const TRUST_WITHOUT_CONTRACT: &str = "model.validation.trust_without_contract";
 const UNKNOWN_INPUT: &str = "model.admission.unknown_input";
 const UNKNOWN_FEATURE: &str = "model.admission.unknown_feature";
 const FEATURE_KIND: &str = "model.admission.feature_kind";
+const PREDICTION_TYPE: &str = "model.admission.prediction_type_mismatch";
+
+/// The predictions type's property holding the scored input object's id.
+const PREDICTION_SUBJECT: &str = "subject";
+/// The predictions type's property holding the `ml.ModelVersion` id.
+const PREDICTION_VERSION: &str = "model_version";
 
 /// Legacy path of the `method` member.
 const METHOD: &str = "payload.method";
@@ -148,6 +158,18 @@ fn check_header(root: &ModelRoot, push: &mut impl FnMut(&str, String, String)) {
                 input.as_str()
             ),
             "payload.input.objectType".into(),
+        );
+    }
+    if let Some(predictions) = &root.predictions
+        && !matches_grammar(&OBJECT_NAME_GRAMMAR, predictions.object_type.as_str())
+    {
+        push(
+            INVALID_ID,
+            format!(
+                "predictions object type {:?} must be a qualified object type name (sales.ChurnPrediction)",
+                predictions.object_type.as_str()
+            ),
+            "payload.predictions.objectType".into(),
         );
     }
 }
@@ -528,18 +550,43 @@ impl Catalog {
         catalog
     }
 
-    fn class_of(&self, property_type: &PropertyType) -> Class {
+    /// The type a property's type resolves to: itself, or the shared
+    /// property type a `ref` names; `None` for a `ref` that does not resolve.
+    fn resolve<'a>(&'a self, property_type: &'a PropertyType) -> Option<&'a PropertyType> {
         if matches!(property_type, PropertyType::Ref { .. }) {
             crate::property_types::resolved_property_type(property_type, &self.property_types)
-                .map_or(Class::Unresolved, v2_class)
         } else {
-            v2_class(property_type)
+            Some(property_type)
         }
+    }
+
+    fn class_of(&self, property_type: &PropertyType) -> Class {
+        self.resolve(property_type)
+            .map_or(Class::Unresolved, v2_class)
+    }
+
+    fn class(&self, member: Member<'_>) -> Class {
+        match member {
+            Member::Property(property_type, _) => self.class_of(property_type),
+            Member::Field(field) => v1_class(field),
+            Member::Link => Class::Link,
+        }
+    }
+
+    /// The admitted-kind class of every effective member of object type
+    /// `name`, or `None` when no object type has that name.
+    fn members(&self, name: &str) -> Option<BTreeMap<&str, Class>> {
+        self.member_refs(name).map(|members| {
+            members
+                .into_iter()
+                .map(|(id, member)| (id, self.class(member)))
+                .collect()
+        })
     }
 
     /// The effective members of object type `name` by id, most derived
     /// first, or `None` when no object type has that name.
-    fn members(&self, name: &str) -> Option<BTreeMap<String, Class>> {
+    fn member_refs(&self, name: &str) -> Option<BTreeMap<&str, Member<'_>>> {
         let mut members = BTreeMap::new();
         let mut interfaces = Vec::new();
         let mut visited = BTreeSet::new();
@@ -558,20 +605,21 @@ impl Catalog {
                     let def = &def.object_type;
                     for property in &def.properties {
                         members
-                            .entry(property.id.as_str().to_owned())
-                            .or_insert_with(|| self.class_of(&property.property_type));
+                            .entry(property.id.as_str())
+                            .or_insert(Member::Property(
+                                &property.property_type,
+                                property.constraints.nullable,
+                            ));
                     }
                     for link in &def.links {
-                        members
-                            .entry(link.id.as_str().to_owned())
-                            .or_insert(Class::Link);
+                        members.entry(link.id.as_str()).or_insert(Member::Link);
                     }
                     interfaces.extend(def.implements.iter().map(|name| name.as_str().to_owned()));
                     next = def.extends.as_ref().map(|name| name.as_str().to_owned());
                 }
                 EntityRoot::V1(def) => {
                     for (id, field) in &def.fields {
-                        members.entry(id.clone()).or_insert_with(|| v1_class(field));
+                        members.entry(id.as_str()).or_insert(Member::Field(field));
                     }
                 }
                 EntityRoot::V2Interface(_)
@@ -584,13 +632,14 @@ impl Catalog {
                     let def = &def.object_type_extension;
                     for property in &def.properties {
                         members
-                            .entry(property.id.as_str().to_owned())
-                            .or_insert_with(|| self.class_of(&property.property_type));
+                            .entry(property.id.as_str())
+                            .or_insert(Member::Property(
+                                &property.property_type,
+                                property.constraints.nullable,
+                            ));
                     }
                     for link in &def.links {
-                        members
-                            .entry(link.id.as_str().to_owned())
-                            .or_insert(Class::Link);
+                        members.entry(link.id.as_str()).or_insert(Member::Link);
                     }
                 }
             }
@@ -607,14 +656,28 @@ impl Catalog {
                 let def = &def.interface;
                 for property in &def.properties {
                     members
-                        .entry(property.id.as_str().to_owned())
-                        .or_insert_with(|| self.class_of(&property.property_type));
+                        .entry(property.id.as_str())
+                        .or_insert(Member::Property(
+                            &property.property_type,
+                            property.constraints.nullable,
+                        ));
                 }
                 interfaces.extend(def.extends.iter().map(|name| name.as_str().to_owned()));
             }
         }
         Some(members)
     }
+}
+
+/// One effective member of an object type.
+#[derive(Debug, Clone, Copy)]
+enum Member<'a> {
+    /// An `EntityIR` 2.0 property: its declared type and whether it is nullable.
+    Property(&'a PropertyType, bool),
+    /// An `EntityIR` 1.0 field.
+    Field(&'a EntityFieldV1),
+    /// A link.
+    Link,
 }
 
 /// Check the candidate models against the candidate definitions and the
@@ -634,6 +697,7 @@ pub(crate) fn check_model_set(
     let catalog = Catalog::of(artifacts.iter().chain(base));
     let mut findings = Vec::new();
     for (artifact, root) in &models {
+        check_predictions(&catalog, root, artifact, &mut findings);
         let input = root.input.object_type().as_str();
         let Some(members) = catalog.members(input) else {
             findings.push(finding(
@@ -702,6 +766,162 @@ pub(crate) fn check_model_set(
         }
     }
     findings
+}
+
+/// A named predictions type carries `subject` and `model_version` as text
+/// properties and every output as a property of the same type and
+/// nullability (see [`norn_ir::ModelPredictions`]).
+fn check_predictions(
+    catalog: &Catalog,
+    root: &ModelRoot,
+    artifact: &ArtifactEnvelope,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let Some(predictions) = &root.predictions else {
+        return;
+    };
+    let name = predictions.object_type.as_str();
+    let mut push = |message: String, pointer: String| {
+        findings.push(finding(PREDICTION_TYPE, message, pointer, artifact));
+    };
+    let Some(members) = catalog.member_refs(name) else {
+        push(
+            format!(
+                "no object type in the artifact set or the installed base is named {name} for the model's predictions"
+            ),
+            "/payload/predictions/objectType".into(),
+        );
+        return;
+    };
+    for (id, holds) in [
+        (PREDICTION_SUBJECT, "the scored input object's id"),
+        (PREDICTION_VERSION, "the ml.ModelVersion id"),
+    ] {
+        let text = match members.get(id) {
+            Some(Member::Property(property_type, _)) => matches!(
+                catalog.resolve(property_type),
+                Some(PropertyType::Text { .. })
+            ),
+            Some(Member::Field(field)) => matches!(
+                field,
+                EntityFieldV1::Text { .. } | EntityFieldV1::String { .. }
+            ),
+            Some(Member::Link) | None => false,
+        };
+        if !text {
+            push(
+                format!("{name} has no text property {id:?} ({holds}) for the model's predictions"),
+                "/payload/predictions/objectType".into(),
+            );
+        }
+    }
+    for (index, output) in root.outputs.iter().enumerate() {
+        let id = output.id.as_str();
+        let pointer = format!("/payload/outputs/{index}");
+        let reason = match members.get(id) {
+            None => Some(format!("{name} has no property {id:?}")),
+            Some(Member::Link) => Some(format!("{name}.{id} is a link, not a property")),
+            Some(Member::Field(_)) => Some(format!(
+                "{name}.{id} is an EntityIR 1.0 field; a predictions type declares its columns as properties"
+            )),
+            Some(Member::Property(property_type, nullable)) => {
+                match catalog.resolve(property_type) {
+                    None => Some(format!(
+                        "{name}.{id} is a ref to a property type the set and the base do not declare"
+                    )),
+                    Some(resolved) => column_mismatch(&output.property_type, resolved)
+                        .map(|why| format!("{name}.{id} {why}"))
+                        .or_else(|| {
+                            (*nullable != output.nullable).then(|| {
+                                format!(
+                                    "{name}.{id} is {}nullable, the output is {}nullable",
+                                    if *nullable { "" } else { "not " },
+                                    if output.nullable { "" } else { "not " }
+                                )
+                            })
+                        }),
+                }
+            }
+        };
+        if let Some(reason) = reason {
+            push(
+                format!("output {id:?} cannot be written to {name}: {reason}"),
+                pointer,
+            );
+        }
+    }
+}
+
+/// Why a predictions property of type `column` cannot hold values of an
+/// output of type `output`, if it cannot: the same kind, a text's format, a
+/// decimal's scale and unit (and no dynamic unit), and an enum's values as a
+/// superset of the output's.
+fn column_mismatch(output: &PropertyType, column: &PropertyType) -> Option<String> {
+    let kinds = || {
+        Some(format!(
+            "is {}, the output is {}",
+            column.kind().as_str(),
+            output.kind().as_str()
+        ))
+    };
+    match output {
+        PropertyType::Text { format: wanted } => {
+            let PropertyType::Text { format } = column else {
+                return kinds();
+            };
+            (wanted != format).then(|| "has another text format than the output".into())
+        }
+        PropertyType::Integer { .. } => (!matches!(column, PropertyType::Integer { .. }))
+            .then(kinds)
+            .flatten(),
+        PropertyType::Boolean {} => (!matches!(column, PropertyType::Boolean {}))
+            .then(kinds)
+            .flatten(),
+        PropertyType::Decimal {
+            scale: wanted_scale,
+            unit: wanted_unit,
+            ..
+        } => {
+            let PropertyType::Decimal {
+                scale,
+                unit,
+                currency_source,
+                per_unit,
+                unit_source,
+                ..
+            } = column
+            else {
+                return kinds();
+            };
+            if scale != wanted_scale {
+                Some("has another decimal scale than the output".into())
+            } else if unit != wanted_unit {
+                Some("has another unit than the output".into())
+            } else if currency_source.is_some() || per_unit.is_some() || !unit_source.is_empty() {
+                Some("carries a currencySource, perUnit or unitSource the output does not".into())
+            } else {
+                None
+            }
+        }
+        PropertyType::Enum { values: wanted } => {
+            let PropertyType::Enum { values } = column else {
+                return kinds();
+            };
+            let held: BTreeSet<&str> = values.iter().map(|value| value.value.as_str()).collect();
+            wanted
+                .iter()
+                .find(|value| !held.contains(value.value.as_str()))
+                .map(|value| format!("does not declare the output's value {:?}", value.value))
+        }
+        // Not an output column kind (refused locally); never a match.
+        PropertyType::DecimalBinding { .. }
+        | PropertyType::Timestamp { .. }
+        | PropertyType::Date {}
+        | PropertyType::Duration {}
+        | PropertyType::Record { .. }
+        | PropertyType::JsonExt { .. }
+        | PropertyType::Ref { .. } => kinds(),
+    }
 }
 
 fn finding(

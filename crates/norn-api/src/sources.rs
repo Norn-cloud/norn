@@ -67,6 +67,14 @@ pub struct ConnectionConfig {
     /// Minutes between scheduled syncs; `0` turns scheduling off.
     #[serde(default = "default_every")]
     pub every_minutes: u32,
+    /// Rows per source request for every feed, in place of the connector's
+    /// (SYNC-PAGE-1): a host tunes how many requests a sync makes without a
+    /// new definitions version. At most the pull's item bound
+    /// ([`Limits`]); the cell still maps and commits
+    /// what a request returns in its own pages
+    /// ([`PAGE_ROWS`](crate::host::PAGE_ROWS)).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
 }
 
 const fn default_every() -> u32 {
@@ -133,6 +141,17 @@ pub struct RunSummary {
 /// reports), reserved: no configured connection uses it (SYNC-INSTANCE-1).
 pub const CELL_INSTANCE: &str = "cell";
 
+/// SYNC-LEASE-1: a run the host has not stepped for this long was abandoned
+/// (its fetch loop died: an exception, an evicted instance), and a claim or
+/// the schedule may take its connection over; a live run steps at least
+/// once per fetch (bounded at 30 s) or page commit.
+pub const RUN_LEASE_MS: u64 = 10 * 60 * 1000;
+
+/// Whether `run` still holds its connection at `now_ms` (SYNC-LEASE-1).
+fn held(run: &Run, now_ms: u64) -> bool {
+    now_ms.saturating_sub(run.stepped_ms) < RUN_LEASE_MS
+}
+
 /// The host's next move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
@@ -169,6 +188,8 @@ struct Run {
     trigger: Trigger,
     actor: String,
     started_ms: u64,
+    /// When the host last stepped the run (SYNC-LEASE-1).
+    stepped_ms: u64,
     pull: Option<Pull>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
@@ -228,6 +249,16 @@ impl Sources {
                     connection.id
                 ));
             }
+            let bound = u32::try_from(Limits::default().max_items).unwrap_or(u32::MAX);
+            if connection
+                .page_size
+                .is_some_and(|size| size == 0 || size > bound)
+            {
+                return Err(format!(
+                    "source configuration: {} pageSize is 1 to {bound}",
+                    connection.id
+                ));
+            }
             if !allowed_base(&connection.base_url) {
                 return Err(format!(
                     "source configuration: {} base URL must be https, or http to loopback or a private single-label host",
@@ -269,7 +300,7 @@ impl Sources {
             return Err(ClaimError::Unknown);
         }
         let state = self.state.entry(id.to_owned()).or_default();
-        if state.run.is_some() {
+        if state.run.as_ref().is_some_and(|run| held(run, now_ms)) {
             return Err(ClaimError::Running);
         }
         let run = format!("{id}/{now_ms}");
@@ -278,6 +309,7 @@ impl Sources {
             trigger,
             actor: actor.to_owned(),
             started_ms: now_ms,
+            stepped_ms: now_ms,
             pull: None,
             auth: Vec::new(),
             held: None,
@@ -297,7 +329,9 @@ impl Sources {
     pub fn due(&mut self, now_ms: u64) -> Option<String> {
         let id = self.connections.iter().find_map(|c| {
             let state = self.state.get(&c.id);
-            if c.every_minutes == 0 || state.is_some_and(|s| s.run.is_some()) {
+            if c.every_minutes == 0
+                || state.is_some_and(|s| s.run.as_ref().is_some_and(|run| held(run, now_ms)))
+            {
                 return None;
             }
             let every = u64::from(c.every_minutes).saturating_mul(60_000);
@@ -330,6 +364,7 @@ impl Sources {
                 "no sync is running",
             ));
         };
+        run.stepped_ms = now_ms;
         let outcome = match response {
             None if run.pull.is_some() => drain(host, run),
             None => begin(host, &config, &self.secrets, run, watermarks_known)
@@ -427,7 +462,7 @@ fn begin<E: SqlEngine>(
             )
         })?;
     let payload = connector.get("payload").cloned().unwrap_or_default();
-    let profile = PullProfile::from_connector(&payload)
+    let mut profile = PullProfile::from_connector(&payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?
         .ok_or_else(|| {
             fail(
@@ -435,6 +470,16 @@ fn begin<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
+    // SYNC-PAGE-1: the host's page size, when it sets one.
+    if let Some(rows) = config.page_size {
+        for feed in &mut profile.feeds {
+            match &mut feed.paging {
+                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
+                    *size = rows;
+                }
+            }
+        }
+    }
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets)?;
@@ -785,6 +830,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         base_url: upload.uri.to_owned(),
         headers: BTreeMap::new(),
         every_minutes: 0,
+        page_size: None,
     };
     let (read, landed, quarantined) = upload.counts;
     let run = Run {
@@ -792,6 +838,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         trigger: Trigger::Upload,
         actor: upload.actor.to_owned(),
         started_ms: upload.started_ms,
+        stepped_ms: upload.ended_ms,
         pull: None,
         auth: Vec::new(),
         held: None,

@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 /// The fixture principal holding `admin`.
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 /// The fixture principal holding `viewer`.
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The host secret the cell's lineage handle key derives from.
@@ -717,7 +717,7 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
     assert_eq!(
         document["signoff"],
         json!({
-            "signer": "viewer@demo",
+            "signer": "admin@demo",
             "signedAtMs": installed["receipt"]["recordedAtMs"],
             "restatementSha256": right,
         })
@@ -1959,7 +1959,7 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
         document["signoff"]["restatementSha256"],
         json!(sha256(&words))
     );
-    assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+    assert_eq!(document["signoff"]["signer"], json!("admin@demo"));
 
     // A cell that cannot restate a flow cannot install one: fail closed.
     let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));

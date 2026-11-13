@@ -6624,6 +6624,11 @@ export interface components {
             modelId: string;
             /** @description Prediction columns; non-empty, ids unique. */
             outputs: components["schemas"]["NornIrModelOutput"][];
+            /**
+             * @description The typed object type predictions are written to; omitted when the
+             *     model names none.
+             */
+            predictions?: components["schemas"]["NornIrModelPredictions"];
             /** @description The supervised target property; omitted for a scoring-only model. */
             target?: string;
             /** @description Human-readable title. */
@@ -6639,6 +6644,21 @@ export interface components {
         /** @description Reserved versioned extension slots, as on other artifact roots. */
         NornIrModelPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description Where a model's predictions are written (#1171 M4): one object per scored
+         *     input object, of a typed object type.
+         *
+         *     Admission (`norn-checker`, over a set): the type resolves in the candidate
+         *     set or the installed base; it has a text property `subject` (the scored
+         *     input object's id) and a text property `model_version` (the
+         *     `ml.ModelVersion` id that produced it); and every output of the model is a
+         *     property of it with the same id, the same type (a decimal's scale and unit,
+         *     an enum's values as a superset) and the same nullability.
+         */
+        NornIrModelPredictions: {
+            /** @description The predictions object type, by qualified name (`sales.ChurnPrediction`). */
+            objectType: string;
         };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).

@@ -13,7 +13,7 @@
   "fixtures/stress/purchase.json#/8/payload": "sha256:8e1e5b30c6a8eb9816f2e392b3fae9af4e17c28dc04049598af66c546e5745e9",
   "registry/core/artifacts/core.analytics.restatement_policy.law.json#/payload": "sha256:6411cda959ac4fb05c1e95494508beb4a7a2a749cc5518396a04fd2db6410430",
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
-  "registry/packs/documents/artifacts/docs.ScannedDocument.total_matches_lines.law.json#/payload": "sha256:8ac737b4ba82273afb2efa098f9f8166a953700facad20e0b8226af58841d5ae",
   "registry/packs/documents/artifacts/docs.ScannedDocument.total_matches_ledger.law.json#/payload": "sha256:54c6dbabf4e3d060f312166bd70cae7f2f00f392734ed7115f1d89e26c87d220",
+  "registry/packs/documents/artifacts/docs.ScannedDocument.total_matches_lines.law.json#/payload": "sha256:8ac737b4ba82273afb2efa098f9f8166a953700facad20e0b8226af58841d5ae",
   "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
 }

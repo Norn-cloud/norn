@@ -221,7 +221,7 @@ export function GuaranteesPage() {
   if (mode.data?.kind === "live") return (
     <section className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Rules</h1>
+        <h1 className="text-title font-semibold tracking-tight">Rules</h1>
         <p className="max-w-2xl text-muted-foreground">The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law.</p>
       </div>
       <LiveLaws />
@@ -246,7 +246,7 @@ function RecordedGuarantees() {
   return (
     <section className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Guarantees</h1>
+        <h1 className="text-title font-semibold tracking-tight">Guarantees</h1>
         <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}

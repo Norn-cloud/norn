@@ -178,19 +178,20 @@ pub fn derive_metric_space(
             continue;
         };
         let dimensions = dimensions(object, &catalog);
-        for time in object
+        // METRIC-GRAIN-LINK-1: an object with no time of its own takes its
+        // to-one links' times.
+        let mut times: Vec<DimensionPath> = object
             .properties
             .iter()
             .filter(|property| super::is_time(property))
-        {
-            let time_path = direct(&time.id);
+            .map(|time| direct(&time.id))
+            .collect();
+        if times.is_empty() {
+            times = linked_times(object, &catalog);
+        }
+        for time_path in &times {
             let sources = evidence.get(name).cloned().unwrap_or_default();
-            candidates.extend(candidates_at_time(
-                object,
-                &dimensions,
-                &sources,
-                &time_path,
-            ));
+            candidates.extend(candidates_at_time(object, &dimensions, &sources, time_path));
             if candidates.len() > 16_384 {
                 return Err(vec![crate::property_types::error(
                     codes::COMPLEXITY_LIMIT,
@@ -289,7 +290,10 @@ fn candidates_at_time(
             | PropertyAdditivity::NonAdditive {}
             | PropertyAdditivity::Ratio { .. } => false,
         };
-        if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {}) {
+        // A snapshot keeps its own valid time (METRIC-SNAPSHOT-ASOF-1).
+        if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {})
+            && time_path.links.is_empty()
+        {
             let mut generated = candidate(
                 snapshot(object, &property.id, time_path),
                 dimensions,
@@ -307,6 +311,10 @@ fn candidates_at_time(
         let mut generated = candidate(definition, dimensions, proof);
         generated.unit_partition = unit_partition(object, &[&property.id]);
         candidates.push(generated);
+    }
+    // METRIC-GRAIN-LINK-1: a linked time derives sums only.
+    if !time_path.links.is_empty() {
+        return candidates;
     }
     declared_ratios(
         object,
@@ -556,7 +564,11 @@ fn sum(
             "analysis.object_{}.{}.by_{}",
             encoded_name(object.name.as_str()),
             property.as_str(),
-            time.property.as_str()
+            if time.links.is_empty() {
+                time.property.as_str().to_owned()
+            } else {
+                field_name(time)
+            }
         ),
         label: format!("sum({}); conservation [{proof}]", property.as_str()),
         metric_type: MetricType::Simple,
@@ -627,6 +639,40 @@ fn encoded_name(name: &str) -> String {
         .flat_map(|byte| [byte >> 4, byte & 15])
         .filter_map(|digit| HEX.get(usize::from(digit)).map(|byte| char::from(*byte)))
         .collect()
+}
+
+/// METRIC-GRAIN-LINK-1: the stored, non-null times one to-one hop away, on a
+/// link reaching exactly one concrete object type.
+fn linked_times(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec<DimensionPath> {
+    let mut times = Vec::new();
+    for link in catalog
+        .links_for_object_type(object.name.as_str())
+        .into_iter()
+        .flatten()
+        .filter(|link| link.cardinality.to == norn_ir::Multiplicity::One)
+    {
+        let Some(targets) = catalog.target_types(link.target.as_str()) else {
+            continue;
+        };
+        let targets: Vec<_> = targets.into_iter().collect();
+        let [target] = targets.as_slice() else {
+            continue;
+        };
+        let Some(Ok(target)) = catalog.object_type_named(target) else {
+            continue;
+        };
+        for time in target
+            .properties
+            .iter()
+            .filter(|property| super::is_time(property) && !property.nullable && !property.computed)
+        {
+            times.push(DimensionPath {
+                links: vec![link.id.clone()],
+                property: time.id.clone(),
+            });
+        }
+    }
+    times
 }
 
 /// The direct unit-source paths of `measures`, deduplicated in declaration order.

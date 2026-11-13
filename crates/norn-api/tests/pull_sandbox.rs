@@ -832,3 +832,78 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
     );
     assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
 }
+
+/// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)
+/// holds its connection only for the lease; then a claim takes it over.
+#[test]
+fn an_abandoned_run_releases_its_connection_after_the_lease() {
+    use norn_api::sources::RUN_LEASE_MS;
+    let mut sources = sources();
+    let first = sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", 1_000)
+        .expect("claimed");
+    assert!(matches!(
+        sources.claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS - 1
+        ),
+        Err(ClaimError::Running)
+    ));
+    let second = sources
+        .claim(
+            "odoo.sandbox",
+            Trigger::Manual,
+            "user:b",
+            1_000 + RUN_LEASE_MS,
+        )
+        .expect("taken over");
+    assert_ne!(first, second);
+    assert!(sources.running("odoo.sandbox"));
+}
+
+/// SYNC-PAGE-1: a host's `pageSize` replaces every feed's request size,
+/// within the pull's item bound.
+#[test]
+fn a_host_page_size_sets_every_feeds_page() {
+    let config = |size: u32| {
+        CONFIG.replace(
+            r#""headers": {"X-Frappe-Site-Name": "frontend"}}"#,
+            &format!(r#""headers": {{"X-Frappe-Site-Name": "frontend"}}, "pageSize": {size}}}"#),
+        )
+    };
+    for refused in [0, 1001] {
+        assert!(
+            Sources::new(&config(refused), BTreeMap::new()).is_err(),
+            "{refused}"
+        );
+    }
+    let mut sources = Sources::new(
+        &config(250),
+        BTreeMap::from([(
+            "NORN_SECRET_ERPNEXT_SANDBOX_TOKEN".to_owned(),
+            "key:secret".to_owned(),
+        )]),
+    )
+    .expect("configuration");
+    let host = host();
+    sources
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS,
+        )
+        .expect("claimed");
+    match sources.step(&host, "erpnext.sandbox", None, EXTRACTED_AT_MS) {
+        Step::Request(request) => {
+            assert!(
+                request.url.contains("limit_page_length=250"),
+                "{}",
+                request.url
+            );
+        }
+        other @ (Step::Continue | Step::Done(_)) => panic!("expected a request, got {other:?}"),
+    }
+}
