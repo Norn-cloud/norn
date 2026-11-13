@@ -110,12 +110,13 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
   return (
     <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
       <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+      {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
+      {refusal.explanation && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{refusal.explanation}</p>}
       <details className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">{locale === "ar" ? "تقني" : "Technical"}</summary>
         <div className="mt-1 grid gap-0.5 font-mono [overflow-wrap:anywhere]" dir="ltr">
           <span>{refusal.code}</span>
           <span>{refusal.message}</span>
-          {refusal.explanation && <span>{refusal.explanation}</span>}
         </div>
       </details>
     </div>
