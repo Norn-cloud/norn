@@ -3,7 +3,12 @@
 # #2527) and print a size report.
 #
 # Usage: crates/norn-checker-wasm/scripts/build-pkg.sh [out-dir]
-#   out-dir defaults to <target-dir>/norn-checker-wasm/pkg.
+#   out-dir defaults to <target-dir>/norn-checker-wasm/pkg (<target-dir>/norn-checker-wasm/engine
+#   with NORN_WASM_ENGINE=1).
+#
+# NORN_WASM_ENGINE=1 builds the ZEN engine alone (D105): this crate without its default
+# `checker` feature, so the package exports only `evaluateExpression`, the same function as the
+# full package (tests/parity/engine-parity.mjs holds the two to the same answers).
 #
 # Needs the wasm32-unknown-unknown target and the wasm-bindgen CLI at exactly
 # the version pinned in crates/norn-checker-wasm/Cargo.toml. No wasm-pack,
@@ -14,7 +19,16 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 target_dir="${CARGO_TARGET_DIR:-${root}/target}"
-out="${1:-${target_dir}/norn-checker-wasm/pkg}"
+engine="${NORN_WASM_ENGINE:-0}"
+if [[ "${engine}" == "1" ]]; then
+  name="norn_engine_wasm" package="@norn/checker-engine" features=(--no-default-features)
+  description="The ZEN engine alone: the checker ABI evaluateExpression, the same function as @norn/checker-wasm"
+  out="${1:-${target_dir}/norn-checker-wasm/engine}"
+else
+  name="norn_checker_wasm" package="@norn/checker-wasm" features=()
+  description="Norn checker ABI (norn-checker-abi/1): JSON-in/JSON-out, byte-identical to the native checker"
+  out="${1:-${target_dir}/norn-checker-wasm/pkg}"
+fi
 wasm_manifest="${root}/crates/norn-checker-wasm/Cargo.toml"
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${wasm_manifest}" | head -n1)"
 wasm_bindgen_pin="$(sed -n 's/^wasm-bindgen = "=\([^"]*\)"$/\1/p' "${wasm_manifest}")"
@@ -34,29 +48,29 @@ if [[ "${cli_version}" != "${expected_cli_version}" ]]; then
   exit 1
 fi
 
-cargo rustc --locked -p norn-checker-wasm --lib \
+cargo rustc --locked -p norn-checker-wasm --lib "${features[@]}" \
   --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib \
   --manifest-path "${root}/Cargo.toml"
 
 wasm="${target_dir}/wasm32-unknown-unknown/wasm-release/norn_checker_wasm.wasm"
 mkdir -p "${out}"
-wasm-bindgen "${wasm}" --target web --out-dir "${out}" --out-name norn_checker_wasm \
+wasm-bindgen "${wasm}" --target web --out-dir "${out}" --out-name "${name}" \
   --remove-producers-section
 
 cat > "${out}/package.json" <<JSON
 {
-  "name": "@norn/checker-wasm",
+  "name": "${package}",
   "version": "${version}",
-  "description": "Norn checker ABI (norn-checker-abi/1): JSON-in/JSON-out, byte-identical to the native checker",
+  "description": "${description}",
   "type": "module",
-  "main": "norn_checker_wasm.js",
-  "module": "norn_checker_wasm.js",
-  "types": "norn_checker_wasm.d.ts",
+  "main": "${name}.js",
+  "module": "${name}.js",
+  "types": "${name}.d.ts",
   "files": [
-    "norn_checker_wasm.js",
-    "norn_checker_wasm.d.ts",
-    "norn_checker_wasm_bg.wasm",
-    "norn_checker_wasm_bg.wasm.d.ts",
+    "${name}.js",
+    "${name}.d.ts",
+    "${name}_bg.wasm",
+    "${name}_bg.wasm.d.ts",
     "SIZE.txt"
   ],
   "sideEffects": false,
@@ -64,7 +78,7 @@ cat > "${out}/package.json" <<JSON
 }
 JSON
 
-bg="${out}/norn_checker_wasm_bg.wasm"
+bg="${out}/${name}_bg.wasm"
 # wasm-opt -Oz after wasm-bindgen (binaryen, exact pin; NORN_WASM_OPT=0 skips it). It keeps the
 # module's behaviour: the native-vs-wasm parity suite runs on the optimized package.
 bindgen_bytes="$(wc -c < "${bg}" | tr -d ' ')"
@@ -79,15 +93,15 @@ if [[ "${NORN_WASM_OPT:-1}" != "0" ]]; then
 fi
 raw_bytes="$(wc -c < "${bg}" | tr -d ' ')"
 gzip_bytes="$(gzip -9 -n -c "${bg}" | wc -c | tr -d ' ')"
-js_bytes="$(wc -c < "${out}/norn_checker_wasm.js" | tr -d ' ')"
+js_bytes="$(wc -c < "${out}/${name}.js" | tr -d ' ')"
 raw_sha256="$(sha256sum < "${wasm}" | cut -d' ' -f1)"
 bg_sha256="$(sha256sum < "${bg}" | cut -d' ' -f1)"
-js_sha256="$(sha256sum < "${out}/norn_checker_wasm.js" | cut -d' ' -f1)"
+js_sha256="$(sha256sum < "${out}/${name}.js" | cut -d' ' -f1)"
 {
-  echo "norn-checker-wasm ${version} size report (profile wasm-release: opt-level=s, lto, codegen-units=1; wasm-opt: ${wasm_opt})"
-  echo "norn_checker_wasm_bg.wasm: ${raw_bytes} bytes (gzip -9: ${gzip_bytes} bytes)"
+  echo "${package} ${version} size report (profile wasm-release: opt-level=s, lto, codegen-units=1; wasm-opt: ${wasm_opt})"
+  echo "${name}_bg.wasm: ${raw_bytes} bytes (gzip -9: ${gzip_bytes} bytes)"
   echo "before wasm-opt:           ${bindgen_bytes} bytes (gzip -9: ${bindgen_gzip_bytes} bytes)"
-  echo "norn_checker_wasm.js:      ${js_bytes} bytes"
+  echo "${name}.js:      ${js_bytes} bytes"
   echo "raw WASM SHA-256:           ${raw_sha256}"
   echo "generated WASM SHA-256:     ${bg_sha256}"
   echo "generated JS SHA-256:       ${js_sha256}"

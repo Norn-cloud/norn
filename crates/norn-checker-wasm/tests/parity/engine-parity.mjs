@@ -1,9 +1,9 @@
-// One evaluator (D105): the ZEN-only engine package and the checker package answer every
-// evaluation byte for byte the same.
+// One evaluator (D105): the engine package (this crate without its `checker` feature,
+// NORN_WASM_ENGINE=1) and the checker package answer every evaluation byte for byte the same.
 //
 // Usage: node engine-parity.mjs <checker-pkg-dir> <engine-pkg-dir>
 //
-// The corpus is every guard and assignment of the page machines corpus.json names, plus its own
+// The corpus is every guard and assignment of the page machines engine-corpus.json names, plus its own
 // expressions, each over every input (and the raw, malformed inputs and profiles), so a machine
 // added to the list is covered with no new code.
 import { readFileSync } from "node:fs";
@@ -23,9 +23,9 @@ const load = async (dir, name) => {
   return pkg;
 };
 const checker = await load(checkerDir, "norn_checker_wasm");
-const engine = await load(engineDir, "norn_expr_wasm");
+const engine = await load(engineDir, "norn_engine_wasm");
 
-const corpus = JSON.parse(readFileSync(resolve(here, "corpus.json"), "utf8"));
+const corpus = JSON.parse(readFileSync(resolve(here, "engine-corpus.json"), "utf8"));
 const expressions = new Set(corpus.expressions);
 for (const path of corpus.machines) {
   const doc = JSON.parse(readFileSync(resolve(repoRoot, path), "utf8"));
@@ -52,7 +52,7 @@ for (const expression of expressions) {
   }
 }
 if (expressions.size < corpus.expressions.length + 10) {
-  console.error(`engine parity: only ${expressions.size} expressions; the machines in corpus.json contributed too few`);
+  console.error(`engine parity: only ${expressions.size} expressions; the machines in engine-corpus.json contributed too few`);
   process.exit(1);
 }
 if (differ.length > 0) {

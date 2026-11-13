@@ -1,18 +1,11 @@
-//! The ZEN engine alone (D105, UI-MACHINE-1): `evaluate_expression_json`, the one evaluation entry
-//! point of the checker ABI, without the rest of the checker. `norn-checker-wasm` re-exports this
-//! very function, so the checker package and this engine package evaluate with the same code from
-//! the same `norn-expr`; a page machine's guards and assignments load this small package instead
-//! of the whole checker. `tests/parity/engine-parity.mjs` holds the two built packages to the same
-//! output on a shared corpus.
+//! `evaluate_expression_json`: the ZEN evaluation of an admitted expression, the one evaluator
+//! every build of this crate exports (D105).
 
 use norn_expr::{
     EvaluationBudget, ExprError, Expression, Value as ExprValue, validate_evaluation_source,
 };
 use norn_ir::ResourceLimitProfile;
 use serde_json::{Value, json};
-
-#[cfg(all(target_arch = "wasm32", feature = "bindings"))]
-pub mod wasm;
 
 /// Format tag of the [`evaluate_expression_json`] document.
 pub const EVALUATION_FORMAT: &str = "norn-checker-abi/evaluation@1";

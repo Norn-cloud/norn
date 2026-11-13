@@ -804,7 +804,6 @@ def studio_browser_phase_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         tree, bin_dir = Path(directory) / "tree", Path(directory) / "bin"
         (tree / "crates/norn-checker-wasm/scripts").mkdir(parents=True)
-        (tree / "crates/norn-expr-wasm/scripts").mkdir(parents=True)
         (tree / "apps/studio").mkdir(parents=True)
         bin_dir.mkdir()
         tools = {
@@ -818,11 +817,9 @@ def studio_browser_phase_canaries() -> None:
         for name, body in tools.items():
             (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
             (bin_dir / name).chmod(0o755)
-        # The checker package and the ZEN-only engine package (D105) are both built into Studio.
-        for package in ("norn-checker-wasm", "norn-expr-wasm"):
-            build = tree / f"crates/{package}/scripts/build-pkg.sh"
-            build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
-            build.chmod(0o755)
+        build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
+        build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
+        build.chmod(0o755)
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
         wasm_libdir = Path(directory) / "wasm32-lib"
         wasm_libdir.mkdir()

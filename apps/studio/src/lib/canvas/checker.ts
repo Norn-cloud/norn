@@ -14,10 +14,10 @@ interface CheckerModule {
 // A glob, so a build without it still succeeds and the canvas says the checker is absent.
 // Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the pages.
 const PACKAGE = () => import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
-// src/engine/ holds the ZEN engine alone (crates/norn-expr-wasm): the checker ABI's own
-// `evaluateExpression`, the same function from the same norn-expr (D105), without the rest of the
-// checker. Page machines load it; CI holds the two packages to identical answers (engine-parity.mjs).
-const ENGINE = () => import.meta.glob<Pick<CheckerModule, "default" | "evaluateExpression">>("../../engine/norn_expr_wasm.js")
+// src/engine/ holds the ZEN engine alone: crates/norn-checker-wasm without its `checker` feature
+// (NORN_WASM_ENGINE=1), so only the checker ABI's own `evaluateExpression`, the same function
+// (D105). Page machines load it; CI holds the two packages to identical answers (engine-parity.mjs).
+const ENGINE = () => import.meta.glob<Pick<CheckerModule, "default" | "evaluateExpression">>("../../engine/norn_engine_wasm.js")
 
 /** Load the checker; rejects when the package is absent, so an edit is never shown as clean unchecked. */
 export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Checker> {

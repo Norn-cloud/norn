@@ -253,8 +253,8 @@ PY
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       # The ZEN-only engine package pages load (D105): one evaluator, so it answers every
       # evaluation of the shared corpus exactly as the checker package does.
-      crates/norn-expr-wasm/scripts/build-pkg.sh
-      node crates/norn-expr-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-expr-wasm/pkg"
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
+      node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
@@ -287,7 +287,7 @@ PY
       fi
       CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
-      crates/norn-expr-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
