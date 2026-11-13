@@ -138,17 +138,22 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     }
 }
 
-/// The stable code of a cell refusal: the leading dotted code of its message
-/// when it has one, else a generic mapping refusal.
+/// The reason a cell refusal quarantines a row: the leading dotted code of
+/// its message when it has one; otherwise the generic mapping refusal with
+/// the underlying error after it, so the cause is never hidden behind the
+/// generic code (`core.boundary.mapping_refused: unknown object type …`).
 fn refusal_code(error: &CellError) -> String {
     let text = error.to_string();
     let code = text.split([':', ' ']).next().unwrap_or_default();
     if code.contains('.') && !code.is_empty() {
         code.to_owned()
     } else {
-        "core.boundary.mapping_refused".to_owned()
+        format!("{MAPPING_REFUSED}: {text}")
     }
 }
+
+/// The generic reason of a mapping refusal whose error names no code.
+const MAPPING_REFUSED: &str = "core.boundary.mapping_refused";
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// The checks every mapped commit makes before preparing a bundle: the
@@ -228,5 +233,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .map(|r| r.values),
         };
         Ok(norn_kernel::FactSlice::from([(key.clone(), state)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CellError, refusal_code};
+
+    #[test]
+    fn a_refusal_without_a_code_carries_its_underlying_error() {
+        // The cause stays visible: an unknown claim type (a set missing the
+        // cell-owned evidence types) or an exhausted claim budget, not only
+        // the generic code.
+        assert_eq!(
+            refusal_code(&CellError::UnknownObjectType("norn.ObservedLinkClaim".into())),
+            "core.boundary.mapping_refused: unknown object type `norn.ObservedLinkClaim`"
+        );
+        assert_eq!(
+            refusal_code(&CellError::OutOfRange("link claim evidence bytes")),
+            "core.boundary.mapping_refused: link claim evidence bytes is out of range"
+        );
+        // A coded refusal keeps its stable code.
+        assert_eq!(
+            refusal_code(&CellError::SourceIdentityDisputed),
+            "core.boundary.import_finding"
+        );
     }
 }
