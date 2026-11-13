@@ -1,6 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router"
 import { Shapes } from "lucide-react"
 import { EmptyState } from "@/components/panel"
+import { LifecycleView } from "@/components/lifecycle-view"
 import { useCatalog } from "../sources.tsx"
 import { RecordsGrid } from "./records-grid.tsx"
 
@@ -21,6 +22,7 @@ export function RecordsPage() {
           <span className="font-mono text-meta text-muted-foreground">{concept.name}</span>
           <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-meta underline-offset-4 hover:underline">Definition</Link>
         </header>
+        {concept.lifecycles.map((lifecycle) => <LifecycleView key={`${concept.name}:${lifecycle.property}`} concept={concept} lifecycle={lifecycle} />)}
         <RecordsGrid key={concept.name} concept={concept} />
       </>}
     </div>

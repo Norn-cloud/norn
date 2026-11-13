@@ -49,3 +49,13 @@ export function useLiveRefresh(path: string | null, queryKey: QueryKey): void {
     // The key's value, not its identity, decides the subscription.
   }, [path, scope?.orgId, scope?.environmentId, key])
 }
+
+/**
+ * Listen to the cell's own answer to `path` (status and body, as the subscriber, now): for views
+ * that show exactly what the cell answers, such as a lifecycle's facet counts. Returns the
+ * unsubscribe; without a socket it never calls `listener`.
+ */
+export function liveAnswer(path: string, scope: StudioScope, listener: (answer: { readonly status: number; readonly body: unknown }) => void): () => void {
+  if (typeof WebSocket === "undefined") return () => {}
+  return live(scope).subscribe(scopedPath(path, scope), (snapshot) => listener({ status: snapshot.status, body: snapshot.body }))
+}
