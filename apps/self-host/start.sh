@@ -72,9 +72,9 @@ for attempt in $(seq 1 120); do
   [ "$attempt" = 120 ] && { cat /tmp/migrate.err >&2; kill -TERM "$NODE"; exit 1; }
   sleep 1
 done
-rm -f "$STUDIO/wrangler.json"
 # The first account owns this install; after it, sign-up is by invitation (migration 0009).
-celld d1 execute "$DB" --command "insert into studio_setting (key, value) values ('signup', 'first-owner') on conflict (key) do nothing"
+celld d1 execute "$DB" --command "insert into studio_setting (key, value) values ('signup', 'first-owner') on conflict (key) do nothing" "$STUDIO"
+rm -f "$STUDIO/wrangler.json"
 NORN_PUBLIC_URL=$NORN_PUBLIC_URL bun /opt/norn/setup.ts || { kill -TERM "$NODE"; wait "$NODE"; exit 1; }
 kill -TERM "$NODE"; wait "$NODE" || true
 

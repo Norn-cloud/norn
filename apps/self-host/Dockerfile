@@ -1,12 +1,24 @@
+# syntax=docker/dockerfile:1.10
 # Norn, self-hosted: celld serving the tenant cell Worker and Studio from one image (#728).
 # Build context: the repository root (compose.yaml sets it). Every tool is pinned.
+
+# --- The commit this image is built from: Studio's STUDIO_BUILD ------------------------------
+# A clone carries it in .git; otherwise pass it: `NORN_COMMIT=<40 hex> docker compose build`.
+# Only this stage reads .git, so a new commit does not rebuild the others.
+FROM rust:1.98.0-bookworm AS commit
+ARG NORN_COMMIT=""
+RUN --mount=type=bind,target=/ctx \
+    commit="${NORN_COMMIT:-$(git -C /ctx -c safe.directory=/ctx rev-parse HEAD 2>/dev/null || true)}"; \
+    echo "$commit" | grep -Eqx '[0-9a-f]{40}' \
+      || { echo "error: no commit; build from a git clone or set NORN_COMMIT" >&2; exit 1; }; \
+    mkdir -p /out && echo "$commit" > /out/commit
 
 # --- The cell Worker and the checker, compiled to WebAssembly -------------------------------
 FROM rust:1.98.0-bookworm AS wasm
 RUN rustup target add wasm32-unknown-unknown \
  && cargo install --locked wasm-bindgen-cli --version 0.2.129
 WORKDIR /src
-COPY . .
+COPY --exclude=apps/self-host --exclude=.git . .
 ENV CARGO_TARGET_DIR=/target
 # A deployable cell: no `fixtures` feature, so only a verified host token is a caller.
 RUN cargo build --locked --release -p norn-cli \
@@ -16,18 +28,10 @@ RUN cargo build --locked --release -p norn-cli \
       --target web --out-name norn_cell_do --out-dir /out/cell/pkg \
  && cp apps/norn-cell-do/worker.mjs /out/cell/ \
  && crates/norn-checker-wasm/scripts/build-pkg.sh /out/checker
-# The commit this image is built from becomes Studio's STUDIO_BUILD. A clone carries it in .git;
-# otherwise pass it: `NORN_COMMIT=<40 hex> docker compose build`.
-ARG NORN_COMMIT=""
-RUN commit="${NORN_COMMIT:-$(git -c safe.directory=/src rev-parse HEAD 2>/dev/null || true)}"; \
-    echo "$commit" | grep -Eqx '[0-9a-f]{40}' \
-      || { echo "error: no commit; build from a git clone or set NORN_COMMIT" >&2; exit 1; }; \
-    echo "$commit" > /out/commit
-
 # --- Studio: the bundle and the Worker sources celld deploys ----------------------------------
 FROM oven/bun:1.3.14-debian AS studio
 WORKDIR /src
-COPY . .
+COPY --exclude=apps/self-host --exclude=.git . .
 COPY --from=wasm /out/checker apps/studio/src/checker
 RUN cd apps/studio \
  && bun install --frozen-lockfile --ignore-scripts --backend copyfile \
@@ -46,7 +50,7 @@ RUN curl -fsSL -o /tmp/celld.gz https://github.com/denoland/celld/releases/downl
 COPY --from=studio /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=studio /src/apps/studio /opt/norn/studio
 COPY --from=wasm /out/cell /opt/norn/cell
-COPY --from=wasm /out/commit /opt/norn/commit
+COPY --from=commit /out/commit /opt/norn/commit
 COPY --from=wasm /out-norn /usr/local/bin/norn
 COPY apps/self-host/start.sh apps/self-host/setup.ts /opt/norn/
 RUN useradd --system --uid 10001 --home-dir /data norn && mkdir -p /data && chown norn /data /opt/norn/cell /opt/norn/studio
