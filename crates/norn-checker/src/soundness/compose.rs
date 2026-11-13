@@ -205,13 +205,10 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
         }
         let state = product.pairs.len();
         product.pairs.push(pair);
-        product
-            .net
-            .endings
-            .push(product_ending(
-                ui.endings.get(pair.0).copied().flatten(),
-                backend.endings.get(pair.1).copied().flatten(),
-            ));
+        product.net.endings.push(product_ending(
+            ui.endings.get(pair.0).copied().flatten(),
+            backend.endings.get(pair.1).copied().flatten(),
+        ));
         product.index.insert(pair, state);
         Ok(state)
     };
@@ -273,7 +270,7 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
             let to = intern(&mut product, pair)?;
             let label = product.origins.len();
             product.origins.push(origin);
-            product.net().edges.push(NetEdge {
+            product.net.edges.push(NetEdge {
                 from: state,
                 to,
                 label,
@@ -420,15 +417,24 @@ mod tests {
         assert_eq!(product_ending(Some(Good), Some(Resting)), Some(Good));
         assert_eq!(product_ending(Some(Resting), Some(Good)), Some(Resting));
         assert_eq!(product_ending(Some(Good), Some(Cancelled)), Some(Cancelled));
-        assert_eq!(product_ending(Some(Compensated), Some(Good)), Some(Compensated));
-        assert_eq!(product_ending(Some(Cancelled), Some(BreachedVisible)), Some(BreachedVisible));
+        assert_eq!(
+            product_ending(Some(Compensated), Some(Good)),
+            Some(Compensated)
+        );
+        assert_eq!(
+            product_ending(Some(Cancelled), Some(BreachedVisible)),
+            Some(BreachedVisible)
+        );
         let mut product = compose(&page(), &chart(), &sync()).expect("small");
         let paid = product.state(2, 2).expect("paid");
         let before = product.net().endings.clone();
         product.narrow_endings(|state, _, _| state != paid);
         assert_eq!(product.net().endings[paid], None);
         for (state, ending) in product.net().endings.iter().enumerate() {
-            assert!(ending.is_none() || before[state] == *ending, "narrowing never adds");
+            assert!(
+                ending.is_none() || before[state] == *ending,
+                "narrowing never adds"
+            );
         }
     }
 
