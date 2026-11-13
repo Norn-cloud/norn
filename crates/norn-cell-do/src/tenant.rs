@@ -207,10 +207,15 @@ impl<E: SqlEngine> Serving<E> {
                 .map_err(|refusal| refusal.explanation)?;
             policy::recompile_reads(&self.reads, served.object_types()).map_err(|error| error.0)?;
             self.object_types = collections(served.object_types());
-            ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
+            // The policy itself is the version's: a policy that does not
+            // compile fails the same way on every retry.
+            Ok(ActionPolicy::compile(&model, &artifacts, self.host.scope())
+                .map_err(|error| error.0))
         });
         match compiled {
-            Some(Ok(policy)) => self.install_actions(policy, version, None),
+            Some(Ok(Ok(policy))) => self.install_actions(policy, version, None),
+            // Marked compiled: the reason stands until the definitions change.
+            Some(Ok(Err(reason))) => self.install_actions(None, version, Some(reason)),
             // Not marked compiled: the next request tries again.
             Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
             None => self.install_actions(None, version, None),
@@ -322,6 +327,17 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn action_policy_error(&self) -> Option<&str> {
         match &self.state {
             State::Serving(serving) => serving.policy_error.as_deref(),
+            State::Vacant => None,
+        }
+    }
+
+    /// The definitions version the action policy was last settled for, or
+    /// `None` when the next request recompiles: a policy that does not
+    /// compile is settled for its version, a read that failed is not.
+    #[must_use]
+    pub fn action_policy_version(&self) -> Option<u64> {
+        match &self.state {
+            State::Serving(serving) => serving.compiled,
             State::Vacant => None,
         }
     }

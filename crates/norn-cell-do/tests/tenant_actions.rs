@@ -620,6 +620,12 @@ fn a_policy_compile_failure_is_reported_to_the_operator() {
         "{reason:?}"
     );
     assert!(!denied.body.contains(reason.as_deref().unwrap_or_default()));
+    // The failure is the policy's, so it is settled for this definitions
+    // version: later requests do not recompile it (#1297 r4 nit).
+    let settled = cell.tenant.action_policy_version();
+    assert!(settled.is_some());
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "n"), denied);
+    assert_eq!(cell.tenant.action_policy_version(), settled);
 }
 
 /// A dashboard tile's question, as Studio saves one: any `QuestionIR`.
