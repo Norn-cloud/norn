@@ -1144,7 +1144,7 @@ mod tests {
         let states = ["active", "building"];
         // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
         assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
-        let mut opted = chart.clone();
+        let mut opted = chart;
         opted.events = vec![norn_ir::LifecycleEvent {
             id: "audit".into(),
             ignored_in: vec![norn_ir::LifecycleIgnore {
