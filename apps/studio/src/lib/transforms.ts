@@ -6,6 +6,7 @@
 import { useQuery } from "@tanstack/react-query"
 import type { Read } from "./exact.ts"
 import { cellRead } from "./live-transport.ts"
+import { day } from "./format.ts"
 import { atScale } from "./objects.ts"
 import type { Artifact } from "./transport.ts"
 
@@ -18,6 +19,10 @@ export interface TransformColumn {
   readonly identity: string | null
   readonly origins: readonly { readonly input: string; readonly property: string }[]
   readonly markings: readonly string[]
+  /** The column of the same row holding this quantity's currency (VIEW-AGG-1); absent from an older cell. */
+  readonly currencyFrom?: string | null
+  /** The columns of the same row whose values are this quantity's unit (METRIC-UNIT-PARTITION-1). */
+  readonly unitFrom?: readonly string[]
 }
 
 export interface TransformRow {
@@ -99,6 +104,110 @@ export function nodeDefinition(artifacts: readonly Artifact[], transform: string
     { payload?: { calc?: { nodes?: Readonly<Record<string, unknown>> } } } | undefined
   const declared = envelope?.payload?.calc?.nodes?.[node]
   return declared === undefined ? undefined : JSON.stringify(declared, null, 2)
+}
+
+type Declared = Readonly<Record<string, unknown>>
+const declaredNodes = (artifacts: readonly Artifact[], transform: string): Readonly<Record<string, Declared>> => {
+  const envelope = artifacts.find((artifact) => (artifact as unknown as { artifactId?: string }).artifactId === transform) as unknown as
+    { payload?: { calc?: { nodes?: Readonly<Record<string, Declared>> } } } | undefined
+  return envelope?.payload?.calc?.nodes ?? {}
+}
+
+/** The calendar grain each bucketed group key is in (`week`, `month`, …), by column name, as the definition declares it. */
+export function grainsOf(artifacts: readonly Artifact[], transform: string): ReadonlyMap<string, string> {
+  const grains = new Map<string, string>()
+  for (const node of Object.values(declaredNodes(artifacts, transform))) {
+    if (node.op !== "aggregate" || !Array.isArray(node.groupBy)) continue
+    for (const key of node.groupBy as readonly { column?: unknown; grain?: unknown }[]) {
+      if (typeof key.column === "string" && typeof key.grain === "string") grains.set(key.column, key.grain)
+    }
+  }
+  return grains
+}
+
+const monthYear = new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric", timeZone: "UTC" })
+
+/** A bucket's first day in words: `2026-10-26` at `week` → `Week of 26 Oct 2026`; month `Oct 2026`; quarter `Q4 2026`; year `2026`. */
+export function periodOf(text: string, grain: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+  const at = `${text}T00:00:00Z`
+  if (Number.isNaN(Date.parse(at))) return text
+  const [year = "", month = "1"] = text.split("-")
+  switch (grain) {
+    case "week": return `Week of ${day(at)}`
+    case "month": return monthYear.format(new Date(at))
+    case "quarter": return `Q${Math.floor((Number(month) - 1) / 3) + 1} ${year}`
+    case "year": return year
+    default: return day(at)
+  }
+}
+
+const arrow = (direction: unknown) => direction === "desc" ? "↓" : "↑"
+const list = (items: readonly string[]) => items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+const strings = (value: unknown): readonly string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+const named = (value: unknown): readonly Declared[] => Array.isArray(value) ? value.filter((item): item is Declared => typeof item === "object" && item !== null) : []
+const spaced = (name: unknown) => typeof name === "string" ? name.replaceAll("_", " ") : "?"
+const FUNCTIONS: Readonly<Record<string, string>> = {
+  sum: "sum of", count: "count", count_distinct: "count of distinct", min: "smallest", max: "largest",
+  row_number: "row number", rank: "rank", dense_rank: "dense rank", lag: "previous", lead: "next", running_sum: "running sum of",
+}
+
+/**
+ * One operator in words, from its declaration, for the Business view: `Left join customer on
+ * order.customer = customer.id`; `Window over weekly, per region, ordered by placed at ↑`.
+ * `inputs` names each scanned alias's object type. Technical readers see the declaration itself.
+ */
+export function describeStep(step: Declared, inputs: ReadonlyMap<string, string>): string {
+  const measure = (item: Declared) => {
+    const fn = typeof item.fn === "string" ? (FUNCTIONS[item.fn] ?? item.fn) : "?"
+    const column = typeof item.column === "string" ? ` ${spaced(item.column)}` : ""
+    return `${spaced(item.name)} = ${fn}${column}`
+  }
+  switch (step.op) {
+    case "scan": {
+      const alias = typeof step.input === "string" ? step.input : "?"
+      return `Every ${inputs.get(alias) ?? alias} record`
+    }
+    case "filter":
+      return `Keep the rows of ${spaced(step.input)} where ${typeof step.predicate === "string" ? step.predicate.replaceAll("input.", "") : "?"}`
+    case "project":
+      return `From ${spaced(step.input)}: ${list(named(step.columns).map((column) => spaced(column.name)))}`
+    case "join": {
+      const on = (step.on ?? {}) as Declared
+      const kind = step.kind === "left" ? "Left join" : "Join"
+      const link = on.link as Declared | undefined
+      const key = on.key as Declared | undefined
+      const right = typeof step.right === "string" ? step.right : "?"
+      const left = typeof step.left === "string" ? step.left : "?"
+      if (link) return `${kind} ${right} on ${left}.${typeof link.link === "string" ? link.link : "?"} = ${right}.id`
+      if (key) return `${kind} ${right} on ${left}.${strings(key.left).join(" + ")} = ${right}'s ${spaced(key.right)}`
+      return `${kind} ${right}`
+    }
+    case "aggregate": {
+      const keys = named(step.groupBy).map((key) => typeof key.grain === "string" ? `${spaced(key.column)} by ${key.grain}` : spaced(key.column))
+      const per = keys.length === 0 ? "in total" : `per ${list(keys)}`
+      return `Totals of ${spaced(step.input)} ${per}: ${list(named(step.measures).map(measure))}`
+    }
+    case "window": {
+      const partition = strings(step.partitionBy).map(spaced)
+      const order = named(step.orderBy).map((key) => `${spaced(key.column)} ${arrow(key.direction)}`)
+      const per = partition.length === 0 ? "" : `, per ${list(partition)}`
+      return `Window over ${spaced(step.input)}${per}, ordered by ${list(order)}: ${list(named(step.columns).map(measure))}`
+    }
+    case "union":
+      return `Every row of ${list(strings(step.inputs).map(spaced))}, named in ${spaced(step.branch)}`
+    case "dedupe": {
+      const order = named(step.orderBy).map((key) => `${spaced(key.column)} ${arrow(key.direction)}`)
+      return `One row per ${list(strings(step.key).map(spaced))} of ${spaced(step.input)}, keeping the ${step.keep === "last" ? "last" : "first"} by ${list(order)}`
+    }
+    default:
+      return typeof step.op === "string" ? step.op : "?"
+  }
+}
+
+/** One node's declaration, as the installed artifact holds it. */
+export function nodeDeclaration(artifacts: readonly Artifact[], transform: string, node: string | undefined): Declared | undefined {
+  return node === undefined ? undefined : declaredNodes(artifacts, transform)[node]
 }
 
 const path = (id: string, leaf: string) => `/v1/transforms/${encodeURIComponent(id)}/${leaf}`

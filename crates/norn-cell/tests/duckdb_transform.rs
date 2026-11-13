@@ -343,10 +343,10 @@ fn quantities_grouped_by_unit_and_currency_lower_identically() {
     let order = json!({"name": "shop.Order", "properties": [
         {"id": "weight", "type": {"kind": "decimal", "scale": 3,
             "additivity": {"kind": "additive"}, "unitSource": ["weight_unit"]}},
-        {"id": "weight_unit", "type": {"kind": "enum", "values": ["kg", "lb"]}},
+        {"id": "weight_unit", "type": {"kind": "enum", "values": [{"value": "kg"}, {"value": "lb"}]}},
         {"id": "price", "type": {"kind": "decimal", "scale": 2,
             "additivity": {"kind": "additive"}, "currencySource": {"property": "currency"}}},
-        {"id": "currency", "type": {"kind": "enum", "values": ["USD", "EGP"]}}
+        {"id": "currency", "type": {"kind": "enum", "values": [{"value": "USD"}, {"value": "EGP"}]}}
     ]});
     let [_, customer] = types();
     let grouped = plan_over(

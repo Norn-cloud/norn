@@ -57,7 +57,9 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   await page.goto("/transforms/shop.revenue_by_region")
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Weekly revenue by region")
   await expect(page.getByText(`${fixture.rows.rows.length} rows`)).toBeVisible()
-  await expect(page.getByRole("columnheader", { name: /revenue/ }).first()).toContainText("additive")
+  // Business: a column's contract is in its header's tooltip, and a weekly bucket reads as its week.
+  await expect(page.getByRole("columnheader", { name: /revenue/ }).first().locator("[title]")).toHaveAttribute("title", /additive/)
+  await expect(page.getByRole("cell", { name: "Week of 26 Oct 2026" }).first()).toBeVisible()
   await expect(page.getByRole("cell", { name: "north" }).first()).toBeVisible()
   // Decimals are written to their declared scale, as everywhere in Studio (195.5 at decimal<2>).
   await expect(page.getByRole("cell", { name: "195.50" }).first()).toBeVisible()
@@ -69,6 +71,12 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   await expect(page.locator("[data-edge=right]")).toHaveCount(0)
   await expect(page.getByRole("cell", { name: "east" }).first()).toBeInViewport()
   await shoot(page, "rows-scrolled")
+  // Technical: the contract is a second header line and the bucket is its exact date.
+  await page.getByRole("radio", { name: "Technical" }).click()
+  await expect(page.getByRole("columnheader", { name: /revenue/ }).first()).toContainText("additive")
+  await expect(page.getByRole("cell", { name: "2026-10-26" }).first()).toBeVisible()
+  await shoot(page, "rows-technical")
+  await page.getByRole("radio", { name: "Business" }).click()
 })
 
 test("view: a row's lineage lists the records it derives from, each a link to its record", async ({ page }) => {
@@ -88,17 +96,24 @@ test("view: the plan draws every admitted operator and the output's column linea
   for (const op of ["scan", "filter", "join", "project", "aggregate", "window"]) await expect(page.getByText(op, { exact: true }).first()).toBeVisible()
   // The output is selected first: its columns and their lineage.
   await expect(page.getByRole("heading", { name: "Node ranked" })).toBeVisible()
-  await expect(page.getByRole("cell", { name: "order.amount" }).first()).toBeVisible()
+  await expect(page.getByText("from order.amount").first()).toBeVisible()
+  // Read at full size: the plan scrolls sideways rather than shrinking.
+  await expect(page.locator("[data-node=order]")).toHaveCSS("width", "220px")
   await shoot(page, "plan")
   // Selecting in the list selects in the graph and shows the node's definition.
   const nodes = page.getByRole("table", { name: "Plan nodes" })
   await nodes.getByRole("button", { name: "weekly", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Node weekly" })).toBeVisible()
+  // Business says what the operator does; Technical shows its declaration.
+  await expect(page.getByLabel("What weekly does")).toContainText("Totals of regional per region and placed at by week")
+  await page.getByRole("radio", { name: "Technical" }).click()
   await expect(page.getByLabel("Definition of weekly")).toContainText("groupBy")
+  await page.getByRole("radio", { name: "Business" }).click()
   await expect(page.locator("[data-node=weekly][data-selected]")).toBeVisible()
   // Selecting in the graph selects in the list.
   await page.locator("[data-node=joined]").click()
   await expect(nodes.getByRole("row", { selected: true })).toContainText("joined")
+  await expect(page.getByLabel("What joined does")).toContainText("Left join customer on paid.customer = customer.id")
   // The volume lens shows the rows each node produced, as the cell reports them.
   const volumes = fixture.rows.nodeRows ?? {}
   await page.getByRole("radio", { name: "volume" }).click()

@@ -909,12 +909,12 @@ fn shipments(nodes: Value, output: &str) -> Vec<ArtifactEnvelope> {
             {"id": "lane", "type": {"kind": "text"}},
             {"id": "weight", "type": {"kind": "decimal", "scale": 3,
                 "additivity": {"kind": "additive"}, "unitSource": ["weight_unit"]}},
-            {"id": "weight_unit", "type": {"kind": "enum", "values": ["kg", "lb"]}},
+            {"id": "weight_unit", "type": {"kind": "enum", "values": [{"value": "kg"}, {"value": "lb"}]}},
             {"id": "price", "type": money()},
-            {"id": "currency", "type": {"kind": "enum", "values": ["USD", "EGP"]}},
+            {"id": "currency", "type": {"kind": "enum", "values": [{"value": "USD"}, {"value": "EGP"}]}},
             {"id": "fee", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"},
                 "currencySource": {"property": "fee_currency"}}},
-            {"id": "fee_currency", "type": {"kind": "enum", "values": ["USD"]}}
+            {"id": "fee_currency", "type": {"kind": "enum", "values": [{"value": "USD"}]}}
         ]}),
     );
     let view = artifact(
