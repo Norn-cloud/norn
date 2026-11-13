@@ -542,7 +542,10 @@ pub fn get_transform_rows<E: SqlEngine>(
     crate::privacy::project_columns(
         host,
         &marked,
-        &mut page.iter_mut().map(|row| &mut row.values).collect::<Vec<_>>(),
+        &mut page
+            .iter_mut()
+            .map(|row| &mut row.values)
+            .collect::<Vec<_>>(),
     )?;
     let end = start.saturating_add(page.len());
     let next_after = (end < total)

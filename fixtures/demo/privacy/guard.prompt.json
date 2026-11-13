@@ -1,0 +1,42 @@
+{
+  "guardId": 4,
+  "receiptHash": "0430d4b88551cb29b364c99a3177a950476002d6780fe42a745f5360aed2e719",
+  "safePrompt": "Show weekly refunds for [CUSTOMER_1]: she was charged twice on card [CARD_1]. Reach her at [EMAIL_1] or [PHONE_1].",
+  "tokens": [
+    {
+      "token": "[CUSTOMER_1]",
+      "kind": "CUSTOMER",
+      "label": "Customer",
+      "source": "field",
+      "field": "canon.Party/demo/party/0001.display_name",
+      "markings": [
+        "pii.contact"
+      ],
+      "revealable": true
+    },
+    {
+      "token": "[EMAIL_1]",
+      "kind": "EMAIL",
+      "label": "Email",
+      "source": "detected",
+      "revealable": true
+    },
+    {
+      "token": "[CARD_1]",
+      "kind": "CARD",
+      "label": "Card",
+      "source": "detected",
+      "revealable": true
+    },
+    {
+      "token": "[PHONE_1]",
+      "kind": "PHONE",
+      "label": "Phone",
+      "source": "detected",
+      "revealable": true
+    }
+  ],
+  "withheld": [
+    "canon.Party/demo/party/0001.display_name"
+  ]
+}

@@ -461,13 +461,23 @@ fn retained_privacy_documents_are_the_servers_own() {
         environment_id: Some("analytics".into()),
     };
     let page = |actor: &str| {
-        get_object_query(&cell, &scope, Some(actor), PARTY, &ObjectQueryParams::default(), &Mapping)
-            .unwrap()
+        get_object_query(
+            &cell,
+            &scope,
+            Some(actor),
+            PARTY,
+            &ObjectQueryParams::default(),
+            &Mapping,
+        )
+        .unwrap()
     };
     let viewer = page("viewer");
     let auditor = page("auditor");
     for record in &viewer.records {
-        let name = record.values.as_ref().unwrap()["display_name"].as_str().unwrap().to_owned();
+        let name = record.values.as_ref().unwrap()["display_name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         assert!(name.starts_with("Customer #"), "{name}");
         assert!(rows.iter().all(|(_, raw, _)| !name.contains(raw)), "{name}");
     }
@@ -486,7 +496,8 @@ fn retained_privacy_documents_are_the_servers_own() {
     )
     .unwrap();
     assert_eq!(revealed.value, V::from("Amira Haddad"));
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
+    let root =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
     let retained = |name: &str, document: &dyn erased::Doc| {
         let mut text = document.text();
         text.push('\n');
@@ -495,8 +506,12 @@ fn retained_privacy_documents_are_the_servers_own() {
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(&file, &text).unwrap();
         }
-        let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
-        assert!(kept == text, "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1");
+        let kept =
+            std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
+        assert!(
+            kept == text,
+            "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1"
+        );
     };
     // PRIVACY-GUARD-1: the dashboard assistant's prompt, guarded, and the
     // model's reply restored for its author (who may reveal) and for a viewer.
@@ -515,7 +530,11 @@ fn retained_privacy_documents_are_the_servers_own() {
     )
     .unwrap();
     for raw in ["Amira", "4539", "fastmail", "555"] {
-        assert!(!guarded.safe_prompt.contains(raw), "{}", guarded.safe_prompt);
+        assert!(
+            !guarded.safe_prompt.contains(raw),
+            "{}",
+            guarded.safe_prompt
+        );
     }
     let reply = "Weekly refunds for [CUSTOMER_1]: the duplicate charge on [CARD_1] shows in the October 24 week. The catalog holds no contact fields, so [EMAIL_1] and [PHONE_1] are not used.";
     let restore_for = |actor: &str, text: &str, key: &str| {
@@ -582,11 +601,23 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     for raw in ["ada@example.com", "4539", "415 555", "grace@example.com"] {
         assert!(!safe.contains(raw), "{raw} reached the model: {safe}");
     }
-    assert!(safe.contains("[CUSTOMER_1]") && safe.contains("[CUSTOMER_2]"), "{safe}");
-    assert!(safe.contains("[CARD_1]") && safe.contains("[PHONE_1]"), "{safe}");
-    assert!(safe.contains("- name: Grace"), "unmarked context stays: {safe}");
+    assert!(
+        safe.contains("[CUSTOMER_1]") && safe.contains("[CUSTOMER_2]"),
+        "{safe}"
+    );
+    assert!(
+        safe.contains("[CARD_1]") && safe.contains("[PHONE_1]"),
+        "{safe}"
+    );
+    assert!(
+        safe.contains("- name: Grace"),
+        "unmarked context stays: {safe}"
+    );
     let document = serde_json::to_string(&guarded).unwrap();
-    assert!(!document.contains("example.com") && !document.contains("4539"), "{document}");
+    assert!(
+        !document.contains("example.com") && !document.contains("4539"),
+        "{document}"
+    );
     // The reply restores for the auditor (a logged reveal) and the author's own literals.
     let reply = "Refunded [CARD_1] for [CUSTOMER_2]; we will call [PHONE_1].";
     let restore_as = |actor: &str, key: &str| {
@@ -605,13 +636,23 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     };
     let auditor = restore_as("auditor", "r1");
     let joined: String = auditor.segments.iter().map(|s| s.text.as_str()).collect();
-    assert!(joined.contains("ada@example.com") && joined.contains("4539 1488 0343 6467"), "{joined}");
+    assert!(
+        joined.contains("ada@example.com") && joined.contains("4539 1488 0343 6467"),
+        "{joined}"
+    );
     assert!(auditor.complete);
-    assert_eq!(auditor.reveals.len(), 1, "one logged reveal for the one field");
+    assert_eq!(
+        auditor.reveals.len(),
+        1,
+        "one logged reveal for the one field"
+    );
     // A viewer reads the pseudonym and keeps the placeholders it did not type.
     let viewer = restore_as("viewer", "r2");
     let joined: String = viewer.segments.iter().map(|s| s.text.as_str()).collect();
-    assert!(joined.contains("Customer #") && joined.contains("[CARD_1]"), "{joined}");
+    assert!(
+        joined.contains("Customer #") && joined.contains("[CARD_1]"),
+        "{joined}"
+    );
     assert!(!joined.contains("ada@example.com"), "{joined}");
     assert!(viewer.reveals.is_empty() && !viewer.complete);
 }

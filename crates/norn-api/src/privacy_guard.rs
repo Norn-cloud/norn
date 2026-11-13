@@ -322,7 +322,9 @@ fn occurrences(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
             .map(|(at, _)| (at, at + needle.len()))
             .collect();
     }
-    h.match_indices(&n).map(|(at, _)| (at, at + n.len())).collect()
+    h.match_indices(&n)
+        .map(|(at, _)| (at, at + n.len()))
+        .collect()
 }
 
 /// A detector match: kind and byte range.
@@ -352,7 +354,9 @@ fn detect(text: &str) -> Vec<(&'static str, usize, usize)> {
     // Digit runs with separators: cards (13-19 digits, Luhn) and phones (8-15).
     let mut index = 0;
     while index < bytes.len() {
-        let starts = bytes.get(index).is_some_and(|b| b.is_ascii_digit() || *b == b'+')
+        let starts = bytes
+            .get(index)
+            .is_some_and(|b| b.is_ascii_digit() || *b == b'+')
             && (index == 0 || !bytes.get(index - 1).is_some_and(u8::is_ascii_alphanumeric));
         if !starts {
             index += 1;
@@ -377,7 +381,9 @@ fn detect(text: &str) -> Vec<(&'static str, usize, usize)> {
         let phone = !card
             && (8..=15).contains(&digits.len())
             && (bytes.get(index) == Some(&b'+')
-                || text.get(index..end).is_some_and(|run| run.contains([' ', '-', '('])));
+                || text
+                    .get(index..end)
+                    .is_some_and(|run| run.contains([' ', '-', '('])));
         if card {
             found.push(("CARD", index, end));
         } else if phone {
@@ -457,7 +463,9 @@ pub fn guard<E: SqlEngine>(
     access: &dyn ObjectAccess,
 ) -> Result<NornGuarded, Refusal> {
     if request.text.chars().count() > MAX_PROMPT_CHARS {
-        return Err(bad(format!("text is at most {MAX_PROMPT_CHARS} characters")));
+        return Err(bad(format!(
+            "text is at most {MAX_PROMPT_CHARS} characters"
+        )));
     }
     if request.context.len() > MAX_CONTEXT {
         return Err(bad(format!("at most {MAX_CONTEXT} context records")));
@@ -508,7 +516,10 @@ pub fn guard<E: SqlEngine>(
                     .list_after(MAIN_WORLD, &object_type, None, budget)
                     .map_err(Refusal::host)?;
                 budget = budget.saturating_sub(rows.len());
-                for row in rows.into_iter().filter(|row| row.object_type == object_type) {
+                for row in rows
+                    .into_iter()
+                    .filter(|row| row.object_type == object_type)
+                {
                     scanned.extend(marked_fields(&reader, &catalog, &row)?);
                 }
             }
@@ -564,7 +575,12 @@ pub fn guard<E: SqlEngine>(
         .chain(&scanned)
         .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
         .collect();
-    values.sort_by(|a, b| b.value.len().cmp(&a.value.len()).then(a.value.cmp(&b.value)));
+    values.sort_by(|a, b| {
+        b.value
+            .len()
+            .cmp(&a.value.len())
+            .then(a.value.cmp(&b.value))
+    });
     let mut taken: Vec<(usize, usize, String)> = Vec::new();
     let overlaps = |taken: &[(usize, usize, String)], start: usize, end: usize| {
         taken.iter().any(|(s, e, _)| start < *e && *s < end)
@@ -682,7 +698,10 @@ pub fn guard<E: SqlEngine>(
                     NornGuardSource::Detected => true,
                     NornGuardSource::Field => {
                         !entry.markings.is_empty()
-                            && entry.markings.iter().all(|marking| host.reveals(actor, marking))
+                            && entry
+                                .markings
+                                .iter()
+                                .all(|marking| host.reveals(actor, marking))
                     }
                 },
             })
@@ -828,7 +847,15 @@ pub fn restore<E: SqlEngine>(
         let (text, state) = if let Some(done) = revealed.get(piece) {
             done.clone()
         } else {
-            let done = restore_one(host, (actor, access), &catalog, entry, &event, key, &mut reveals)?;
+            let done = restore_one(
+                host,
+                (actor, access),
+                &catalog,
+                entry,
+                &event,
+                key,
+                &mut reveals,
+            )?;
             revealed.insert(piece.to_owned(), done.clone());
             done
         };
@@ -906,8 +933,8 @@ fn restore_one<E: SqlEngine>(
                 return kept();
             }
             let markings = entry.markings.clone();
-            let allowed = !markings.is_empty()
-                && markings.iter().all(|marking| host.reveals(actor, marking));
+            let allowed =
+                !markings.is_empty() && markings.iter().all(|marking| host.reveals(actor, marking));
             if allowed && let Some(value) = row.values.get(property).and_then(text_of) {
                 let receipt = privacy::record_reveal(
                     host,

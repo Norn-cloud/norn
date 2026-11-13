@@ -32,6 +32,13 @@ async function partyCell(page: Page, reader: "viewer" | "auditor") {
       if (reader !== "auditor") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
       return route.fulfill({ status: 200, contentType: "application/json", body: recorded("canon.Party.reveal.json") })
     }
+    // HOST-READ-7 over the same page: counts of the categorical property, as the cell would give them.
+    if (url.pathname.endsWith("/v1/objects/canon.Party:facets")) {
+      const page = JSON.parse(recorded(`canon.Party.${reader}.page.json`)) as { records: { values: Record<string, string> }[] }
+      const counts = new Map<string, number>()
+      for (const record of page.records) counts.set(record.values["kind"] ?? "", (counts.get(record.values["kind"] ?? "") ?? 0) + 1)
+      return route.fulfill({ json: { objectType: "canon.Party", rows: page.records.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: [{ property: "kind", values: [...counts].map(([value, count]) => ({ value, count })), otherRows: 0, nulls: 0 }] } })
+    }
     const one = /\/v1\/objects\/canon\.Party\/(.+?)(\/links|\/lineage)?$/.exec(url.pathname)
     if (one !== null && route.request().method() === "GET") {
       const id = decodeURIComponent(one[1] ?? "")

@@ -1,0 +1,48 @@
+{
+  "guardId": 4,
+  "segments": [
+    {
+      "text": "Weekly refunds for "
+    },
+    {
+      "text": "Amira Haddad",
+      "token": "[CUSTOMER_1]",
+      "kind": "CUSTOMER",
+      "state": "restored"
+    },
+    {
+      "text": ": the duplicate charge on "
+    },
+    {
+      "text": "4539 1488 0343 6467",
+      "token": "[CARD_1]",
+      "kind": "CARD",
+      "state": "restored"
+    },
+    {
+      "text": " shows in the October 24 week. The catalog holds no contact fields, so "
+    },
+    {
+      "text": "amira.haddad@fastmail.com",
+      "token": "[EMAIL_1]",
+      "kind": "EMAIL",
+      "state": "restored"
+    },
+    {
+      "text": " and "
+    },
+    {
+      "text": "+20 100 555 0132",
+      "token": "[PHONE_1]",
+      "kind": "PHONE",
+      "state": "restored"
+    },
+    {
+      "text": " are not used."
+    }
+  ],
+  "reveals": [
+    5
+  ],
+  "complete": true
+}

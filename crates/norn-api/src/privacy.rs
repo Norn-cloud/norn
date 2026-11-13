@@ -282,7 +282,11 @@ fn text_of(value: &RuntimeValue) -> String {
 }
 
 /// Apply `mask` to `value` in place; the mode actually applied.
-pub(crate) fn apply(mask: &MaskPolicy, key: Option<&PseudonymKey>, value: &mut RuntimeValue) -> NornMaskMode {
+pub(crate) fn apply(
+    mask: &MaskPolicy,
+    key: Option<&PseudonymKey>,
+    value: &mut RuntimeValue,
+) -> NornMaskMode {
     if matches!(value, RuntimeValue::Null) {
         return match mask {
             MaskPolicy::Pseudonym { .. } => NornMaskMode::Pseudonym,
