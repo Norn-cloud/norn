@@ -740,6 +740,8 @@ struct AnalysisContext<'a> {
     limits: &'a ResourceLimitProfile,
     root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
     exact_enabled: bool,
+    /// Read paths a guarding condition proved non-null.
+    assumed: &'a [Vec<String>],
 }
 struct Analysis {
     inferred: Option<InferredType>,
@@ -763,6 +765,7 @@ fn analyze_expression(
         limits,
         root_bounds,
         exact_enabled,
+        assumed,
     } = *context;
     let structural = StructuralLimits::NORN_EXPR_4;
     let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
@@ -788,6 +791,7 @@ fn analyze_expression(
     }
     let mut checker = Checker::new(env, metadata, None);
     checker.exact_math = exact_enabled;
+    checker.non_null = assumed.to_vec();
     let expectation = checker.expectation(expected);
     let found = checker.infer(ast, expectation.as_ref());
     if exact_enabled && let (Some(found), Some(expected)) = (&found, &expectation) {
@@ -838,6 +842,43 @@ fn check_expression_with_sources_and_root_bounds(
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
     exact_enabled: bool,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
+    check_guarded(expr, env, expected, limits, root_bounds, exact_enabled, &[])
+}
+
+/// [`check_expression`] for an expression evaluated only when a guarding
+/// condition holds (a law's response under its condition): every literal read
+/// path the condition proves non-null is read as non-null.
+///
+/// # Errors
+///
+/// Every [`Diagnostic`] found.
+pub fn check_expression_under(
+    expr: &Expression,
+    condition: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<InferredType, Vec<Diagnostic>> {
+    check_guarded(
+        expr,
+        env,
+        expected,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+        false,
+        &condition_null_guards(condition),
+    )
+    .map(|(checked, _)| checked.into_inferred())
+}
+
+fn check_guarded(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+    root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
+    assumed: &[Vec<String>],
+) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
     if let Some(found) = bounds::lexical(source, &structural, false) {
@@ -851,6 +892,7 @@ fn check_expression_with_sources_and_root_bounds(
         limits,
         root_bounds,
         exact_enabled,
+        assumed,
     };
     let outcome = intellisense.with_ast(source, false, |ast, metadata| {
         analyze_expression(ast, metadata, &context)
@@ -875,14 +917,7 @@ fn check_expression_with_sources_and_root_bounds(
     // Only declared exact sites use error-on-zero division. Plain Number keeps
     // the legacy nullable division contract in this same checker.
     if exact_enabled && !exact {
-        return check_expression_with_sources_and_root_bounds(
-            expr,
-            env,
-            expected,
-            limits,
-            root_bounds,
-            false,
-        );
+        return check_guarded(expr, env, expected, limits, root_bounds, false, assumed);
     }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -1470,6 +1505,77 @@ struct Checker<'a> {
     types: HashMap<usize, T>,
     exact: bool,
     exact_math: bool,
+    /// Literal read paths a guarding condition proved non-null: a law's
+    /// response is evaluated only when its condition holds. Expressions in
+    /// the profile itself never narrow.
+    non_null: Vec<Vec<String>>,
+}
+
+/// The literal read paths `node` proves non-null when it evaluates to
+/// `holds`: `p != null` (`p == null` when false), a conjunction when true, a
+/// disjunction when false, and negation. Nothing else is a guard.
+fn null_guards(node: &Node<'_>, holds: bool) -> Vec<Vec<String>> {
+    match node {
+        Node::Parenthesized(inner) => null_guards(inner, holds),
+        Node::Unary {
+            node: operand,
+            operator: Operator::Logical(LogicalOperator::Not),
+        } => null_guards(operand, !holds),
+        Node::Binary {
+            left,
+            operator:
+                Operator::Comparison(
+                    comparison @ (ComparisonOperator::Equal | ComparisonOperator::NotEqual),
+                ),
+            right,
+        } => {
+            let proves = holds == matches!(comparison, ComparisonOperator::NotEqual);
+            let path = match (unparenthesized(left), unparenthesized(right)) {
+                (Node::Null, other) | (other, Node::Null) => crate::reads::literal_path(other),
+                _ => None,
+            };
+            path.filter(|_| proves).into_iter().collect()
+        }
+        Node::Binary {
+            left,
+            operator: Operator::Logical(logical @ (LogicalOperator::And | LogicalOperator::Or)),
+            right,
+        } if holds == matches!(logical, LogicalOperator::And) => {
+            let mut guards = null_guards(left, holds);
+            guards.extend(null_guards(right, holds));
+            guards
+        }
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::TemplateString(_)
+        | Node::Pointer
+        | Node::Array(_)
+        | Node::Object(_)
+        | Node::Assignments { .. }
+        | Node::Identifier(_)
+        | Node::Closure { .. }
+        | Node::Root
+        | Node::Member { .. }
+        | Node::Slice { .. }
+        | Node::Interval { .. }
+        | Node::Conditional { .. }
+        | Node::Unary { .. }
+        | Node::Binary { .. }
+        | Node::FunctionCall { .. }
+        | Node::MethodCall { .. }
+        | Node::Error { .. } => Vec::new(),
+    }
+}
+
+/// The literal read paths a condition proves non-null when it holds. A law's
+/// response is checked under its condition (`when: self.link != null`).
+#[must_use]
+pub fn condition_null_guards(condition: &Expression) -> Vec<Vec<String>> {
+    IntelliSense::new()
+        .with_ast(condition.source(), false, |ast, _| null_guards(ast, true))
+        .unwrap_or_default()
 }
 
 /// The node inside any number of parentheses.
@@ -1529,7 +1635,38 @@ impl<'a> Checker<'a> {
             types: HashMap::new(),
             exact: false,
             exact_math: false,
+            non_null: Vec::new(),
         }
+    }
+
+    /// Whether the guarding condition proved `node`'s literal read path
+    /// non-null, and no closure alias shadows its root.
+    fn guarded(&self, node: &Node<'_>) -> bool {
+        if self.non_null.is_empty() {
+            return false;
+        }
+        let Some(path) = crate::reads::literal_path(node) else {
+            return false;
+        };
+        let shadowed = self
+            .scopes
+            .iter()
+            .any(|scope| scope.alias.as_deref() == path.first().map(String::as_str));
+        !shadowed && self.non_null.contains(&path)
+    }
+
+    /// The record a member read goes through: a guarded path reads as
+    /// non-null (`self.link.amount` under `self.link != null`); the path's
+    /// own type is unchanged, so `self.link ?? x` still type-checks.
+    fn member_base(&mut self, target: &Node<'_>) -> Option<T> {
+        if !self.guarded(target) {
+            return self.value(target, None);
+        }
+        let ty = self.infer(target, None)?;
+        if let T::Optional(inner) = &ty {
+            return Some((**inner).clone());
+        }
+        Some(ty)
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {
@@ -2172,7 +2309,7 @@ impl<'a> Checker<'a> {
     }
 
     fn member(&mut self, node: &Node<'_>, target: &Node<'_>, property: &Node<'_>) -> Option<T> {
-        let base = self.value(target, None)?;
+        let base = self.member_base(target)?;
         // Every read on a list is an index read, a string key included
         // (`[1]['0']`: zen reads `null`).
         if let T::List(item) = base {

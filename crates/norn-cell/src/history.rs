@@ -1360,6 +1360,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .collect()
     }
 
+    /// A read-bound finding (LAW-LINK-1: a subject re-checked because its
+    /// link target changed) names a subject its commit read but did not write.
+    /// Its commit guarded that read, so the subject's last version committed
+    /// before it is the state the finding describes.
+    fn read_snapshot_before(
+        &self,
+        world: &str,
+        commit_seq: u64,
+        key: &norn_kernel::FactKey,
+    ) -> Result<Option<FactSnapshot>, CellError> {
+        let root = self
+            .root_type(key.object_type.as_str())
+            .unwrap_or(key.object_type.as_str());
+        let rows = self.conn.query(&format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"commit_seq\" < ?2 AND \"root_type\" = ?3 AND \"id\" = ?4 ORDER BY \"version\" DESC LIMIT 1"), params![world, to_i64(commit_seq, "commit seq")?, root, &key.key])?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        self.proven_snapshot(
+            world,
+            key.object_type.as_str(),
+            &key.key,
+            to_u64(SqlRow(row).get(0)?, "fact version")?,
+        )
+        .map(Some)
+    }
+
     fn unique_event_emission(
         &self,
         world: &str,
@@ -1972,7 +1998,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         }
         let key = norn_kernel::FactKey::new(subject.object_type.as_str(), subject.key.clone());
-        let emissions = self.event_emissions(&entry.world, entry.commit_seq, &key)?;
+        let mut emissions = self.event_emissions(&entry.world, entry.commit_seq, &key)?;
+        if emissions.is_empty() {
+            emissions.extend(self.read_snapshot_before(&entry.world, entry.commit_seq, &key)?);
+        }
         let mut candidates = emissions.into_iter().filter(|snapshot| {
             snapshot.values.as_ref().is_some_and(|values| {
                 hash_json(values).is_ok_and(|hash| format!("sha256:{hash}") == *digest)
@@ -1995,8 +2024,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .with_interfaces(model.interfaces())
             .with_property_types(model.property_types())
             .with_governing_laws(model.law_artifacts());
-        if !norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &values, &finding)
-            .unwrap_or(false)
+        let mut links = crate::link_laws::PinnedLinks {
+            reader: self,
+            world: &entry.world,
+            links: crate::link_laws::pinned_links(&finding),
+        };
+        if !norn_kernel::snapshot_observe::verify_finding_values(
+            &catalog, &key, &values, &finding, &mut links,
+        )
+        .unwrap_or(false)
         {
             return Ok(None);
         }
@@ -2032,6 +2068,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             finding.status,
         )?
         .with_evidence_digest(digest.clone())?;
+        // LAW-LINK-1: the pinned targets are proven by the replay against
+        // exactly those versions, which the caller has just performed.
+        let canonical = if finding.links.is_empty() {
+            canonical
+        } else {
+            canonical.with_links(finding.links.clone())?
+        };
         if canonical.id != finding.id || canonical.dedupe_key != finding.dedupe_key {
             return Ok(None);
         }

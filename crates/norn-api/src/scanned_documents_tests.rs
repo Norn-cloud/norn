@@ -56,6 +56,7 @@ const DOCUMENT: &str = "docs.ScannedDocument";
 const EVIDENCE: &str = "docs.FieldEvidence";
 const CORRECT: &str = "docs.scanned_document.correct";
 const LAW: &str = "docs.ScannedDocument.total_matches_lines.law";
+const LAW_B: &str = "docs.ScannedDocument.total_matches_ledger.law";
 const STEWARD: &str = "user:steward";
 const EXTRACTED_AT_MS: u64 = 1_793_620_800_000;
 
@@ -425,6 +426,19 @@ fn correct(
 
 /// A stored value as text. Decimals are stored by value (`72.00` is `72`);
 /// the property's declared scale formats them for display.
+/// The law artifacts a set of findings is pinned to, sorted.
+fn law_pins(findings: &[norn_ir::DataQualityFinding]) -> Vec<String> {
+    let mut pins: Vec<String> = findings
+        .iter()
+        .filter_map(|finding| match &finding.rule_ref {
+            DataQualityRuleRef::Law { artifact_id, .. } => Some(artifact_id.clone()),
+            DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. } => None,
+        })
+        .collect();
+    pins.sort();
+    pins
+}
+
 fn text(record: &ObjectRecord, property: &str) -> String {
     match record.values.get(property) {
         Some(RuntimeValue::String(text)) => text.clone(),
@@ -467,15 +481,38 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
-    assert_eq!(findings.len(), 1, "{findings:#?}");
-    let finding = &findings[0];
-    assert_eq!(finding.status, DataQualityFindingStatus::Open);
-    match &finding.rule_ref {
-        DataQualityRuleRef::Law { artifact_id, .. } => assert_eq!(artifact_id, LAW),
-        other @ (DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. }) => {
-            panic!("the finding is pinned to LAW A, not {other:?}")
-        }
-    }
+    // 720 breaks both laws: its lines sum to 72 and its booked entry is 72.00.
+    assert_eq!(law_pins(&findings), [LAW_B, LAW], "{findings:#?}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.status == DataQualityFindingStatus::Open)
+    );
+
+    // LAW B alone: INV-0043's one line and its total were both read as 720, so
+    // its lines agree with its total; only its booked entry (72.00) does not.
+    let both_misread = reader
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("read")
+        .expect("raw read");
+    assert!(
+        reader
+            .observation_is_quarantined(MAIN_WORLD, &both_misread)
+            .expect("quality")
+    );
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
+    assert_eq!(
+        findings[0].links.get("ledger_entry"),
+        Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-0043", 1)),
+        "the finding pins the exact entry version it read"
+    );
+    assert_eq!(
+        findings[0].outcome,
+        norn_ir::DataQualityOutcome::NotSatisfied
+    );
 
     // Where the total was read survives the quarantine of the document.
     let evidence = reader
@@ -700,7 +737,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     )
     .expect("a reviewer reads the findings of a quarantined document");
     assert!(findings.quarantined);
-    assert_eq!(findings.findings.len(), 1);
+    assert_eq!(findings.findings.len(), 2);
     assert!(
         findings.evidence.iter().any(
             |evidence| evidence.object_type == EVIDENCE && evidence.id == "SCAN-INV-0042~total"
@@ -734,7 +771,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
             .iter()
             .map(|item| (item.id.as_str(), item.open_findings))
             .collect::<Vec<_>>(),
-        [("SCAN-INV-0042", 1)]
+        [("SCAN-INV-0042", 2), ("SCAN-INV-0043", 1)]
     );
     let before = host
         .cell()
@@ -777,6 +814,246 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
-    assert_eq!(findings.len(), 1, "the original finding is retained");
+    assert_eq!(findings.len(), 2, "the original findings are retained");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.status == DataQualityFindingStatus::Resolved),
+        "both laws hold again: {findings:#?}"
+    );
+    drop(cell);
+    corrections_under_the_ledger_law(&host);
+}
+
+/// LAW-LINK-1 on a native write: INV-0043 printed one line of 72.00 and a
+/// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
+fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
+    let refused = |key: &str, total: &str, lines: &str| {
+        let body = format!(
+            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-0043","currency":"USD","total":"{total}","lines_total":"{lines}","correction_reason":"r","correction_evidence":"SCAN-INV-0043~total"}}}}"#
+        );
+        correct(host, STEWARD, &body).expect_err("refused")
+    };
+    // Fixing the total alone breaks LAW A: the line still reads 720.
+    assert_eq!(refused("only-total", "72.00", "720").status, 422);
+    // Agreeing with the lines but not the booked entry breaks LAW B, through the link.
+    let ledger = refused("off-ledger", "70.00", "70.00");
+    assert_eq!(ledger.status, 422, "{ledger:?}");
+    correct(
+        host,
+        STEWARD,
+        r#"{"idempotencyKey":"inv-0043","input":{"id":"SCAN-INV-0043","currency":"USD","total":"72.00","lines_total":"72.00","correction_reason":"Line and total both read 720; the scan and journal entry JE-0043 say 72.00.","correction_evidence":"SCAN-INV-0043~total"}}"#,
+    )
+    .expect("a correction that agrees with the lines and the booked entry commits");
+    let cell = host.cell().expect("cell");
+    let reader = cell.store().read();
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B]);
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
+    assert!(
+        reader
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+            .expect("read")
+            .is_some(),
+        "released from quarantine"
+    );
+}
+
+/// LAW-LINK-TARGET-WRITE: a native change to a ledger entry that would
+/// contradict a document booked to it refuses atomically; one that keeps the
+/// amount commits.
+#[test]
+fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(loaded(), "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let (entry, values, version) = {
+        let reader = cell.store().read();
+        let edge = reader
+            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("links")
+            .into_iter()
+            .find(|edge| edge.link == "ledger_entry")
+            .expect("SCAN-INV-0041 is booked");
+        let record = reader
+            .object(MAIN_WORLD, &edge.target_type, &edge.target)
+            .expect("read")
+            .expect("the booked entry");
+        (
+            FactKey::new(record.object_type.as_str(), record.id.clone()),
+            record.values,
+            record.version,
+        )
+    };
+    let change = |property: &str, value: &str| {
+        let mut values = values.clone();
+        values.insert(
+            property.into(),
+            RuntimeValue::from_json_text(value).expect("value"),
+        );
+        let mut native = CellCommit::empty();
+        native.writes.push(FactWrite {
+            key: entry.clone(),
+            expected: FactVersion(version),
+            mutation: FactMutation::Put { values },
+        });
+        native
+    };
+    let refusal = cell
+        .commit(change("amount", "31.00"))
+        .expect_err("the booked document says 30.50");
+    assert_eq!(refusal.code(), "core.laws.violated", "{refusal:?}");
+    assert_eq!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, entry.object_type.as_str(), &entry.key)
+            .expect("read")
+            .expect("entry")
+            .version,
+        version,
+        "nothing is written"
+    );
+    cell.commit(change("account_code", "\"6100\""))
+        .expect("a change that keeps the amount commits");
+
+    // A document already in violation (SCAN-INV-0043, quarantined) does not
+    // freeze its entry: the write breaks nothing that held.
+    let (entry, values, version) = {
+        let reader = cell.store().read();
+        let edge = reader
+            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+            .expect("links")
+            .into_iter()
+            .find(|edge| edge.link == "ledger_entry")
+            .expect("SCAN-INV-0043 is booked");
+        let record = reader
+            .object(MAIN_WORLD, &edge.target_type, &edge.target)
+            .expect("read")
+            .expect("the booked entry");
+        (
+            FactKey::new(record.object_type.as_str(), record.id.clone()),
+            record.values,
+            record.version,
+        )
+    };
+    let mut values = values;
+    values.insert(
+        "account_code".into(),
+        RuntimeValue::from_json_text("\"6100\"").expect("value"),
+    );
+    let mut native = CellCommit::empty();
+    native.writes.push(FactWrite {
+        key: entry,
+        expected: FactVersion(version),
+        mutation: FactMutation::Put { values },
+    });
+    cell.commit(native)
+        .expect("an entry whose document already disagrees stays writable");
+}
+
+/// A later observation of `record` (a source re-export), as version `version`.
+fn reobserved(record: &RuntimeValue, version: u64) -> Observed<RuntimeValue> {
+    let mut observed = raw(record);
+    let at = EXTRACTED_AT_MS.saturating_add(version.saturating_mul(60_000));
+    observed.id = ObservationId(format!("{}@{version}", observed.id.0));
+    observed.provenance.observed_at = LogicalTime::from_millis(at);
+    let RuntimeValue::Object(input) = &mut observed.input else {
+        panic!("raw input is an object");
+    };
+    for (field, value) in [
+        ("source_version", format!("\"{version}\"")),
+        ("event_id", format!("\"export-{version}\"")),
+        ("extracted_at", at.to_string()),
+    ] {
+        input.insert(
+            field.into(),
+            RuntimeValue::from_json_text(value).expect("value"),
+        );
+    }
+    observed
+}
+
+/// Capture and map one re-exported row of `dataset`.
+fn observe(
+    store: CellStore<NativeEngine>,
+    dataset: &str,
+    record: &RuntimeValue,
+    version: u64,
+) -> CellStore<NativeEngine> {
+    let mut store = store;
+    let input = MappingInput {
+        mapping: "docs.scans.mapping".into(),
+        dataset: dataset.into(),
+        connector_instance: "demo".into(),
+        partition: "snapshot".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T13:00:00Z".into()),
+    };
+    let (id, new) = store
+        .inject_mapping_bundle(&reobserved(record, version), &input)
+        .expect("captured");
+    assert!(new, "a re-export is a new observation");
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    assert!(cell.process_mapping_bundle(&id).expect("mapped"), "{id}");
+    cell.into_store()
+}
+
+/// LAW-LINK-1 on the observed path: a ledger re-export that changes a booked
+/// entry's amount re-checks the document booked to it in the same commit,
+/// which opens a finding and quarantines it; a later export that restores
+/// the amount resolves the finding and releases the document.
+#[test]
+fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
+    let entry = |amount: &str| {
+        let (_, mut record) = snapshot_rows()
+            .into_iter()
+            .find(|(dataset, record)| {
+                dataset == "Journal Entry"
+                    && record.get("entry_number").and_then(RuntimeValue::as_str) == Some("JE-0041")
+            })
+            .expect("JE-0041");
+        let RuntimeValue::Object(fields) = &mut record else {
+            panic!("a record is an object");
+        };
+        fields.insert(
+            "amount".into(),
+            RuntimeValue::from_json_text(amount).expect("amount"),
+        );
+        record
+    };
+    let store = observe(loaded(), "Journal Entry", &entry("31.00"), 2);
+    {
+        let reader = store.read();
+        let document = reader
+            .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("read")
+            .expect("raw read");
+        assert!(
+            reader
+                .observation_is_quarantined(MAIN_WORLD, &document)
+                .expect("quality"),
+            "the booked document no longer matches its entry"
+        );
+        let findings = reader
+            .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("findings");
+        assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
+        assert_eq!(findings[0].status, DataQualityFindingStatus::Open);
+    }
+    let store = observe(store, "Journal Entry", &entry("30.50"), 3);
+    let reader = store.read();
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B], "the finding is retained");
+    assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
+    assert!(
+        reader
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("read")
+            .is_some(),
+        "released once the entry agrees again"
+    );
 }

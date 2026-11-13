@@ -71,6 +71,17 @@
         ]
       },
       {
+        "dataset": "Warehouse Lot Balance",
+        "field": "cost_currency",
+        "id": "holding_cost_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      },
+      {
         "dataset": "Delivery Note Item",
         "field": "posting_state",
         "id": "delivery_posting_state",

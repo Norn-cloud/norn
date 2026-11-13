@@ -18,16 +18,17 @@ import { chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
 import { amountTexts, liveAnswer, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
 import type { Read } from "./lib/exact.ts"
-import { transport, type QuestionAnswer } from "./lib/transport.ts"
+import { transport, type Metric, type ObjectType, type Question, type QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
 import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
-import { AnswerView, RefusedNote } from "./answer-view.tsx"
-import { RunQuestion } from "./run.tsx"
-import type { QuestionCatalog } from "./builder.tsx"
+import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricHeading, metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
+import { metricHeading, metricQuestion, readMetrics, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
+import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
+import { evaluateQuestion } from "./lib/evaluate.ts"
+import { readDocument } from "./lib/exact.ts"
 import { readProfile } from "./lib/profile.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
@@ -35,22 +36,21 @@ export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-
 function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const { view } = useView()
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  // A sum the cell will not add across units starts with one condition per property it must fix; the reader picks each value.
-  const [conditions, setConditions] = useState<readonly Condition[]>(() => (metric.unitPartition ?? []).map((property) => ({ property, value: "" })))
+  const [conditions, setConditions] = useState<readonly Condition[]>([])
+  // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
+  const [picked, setPicked] = useState<UnitGroup | null>(null)
   const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false })
   const window = profile.data && metric.timeProperty !== null ? windowOf(profile.data.document, metric.timeProperty) : undefined
   // The answer is read with the type's own declaration, as the cell admitted it.
   const objectType = catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === metric.objectType ? [artifact.payload.objectType] : [])[0]
-  const declarations: QuestionCatalog = {
-    objectSet: metric.objectType, properties: [], metrics: [], grains: [], operators: [],
-    example: { irVersion: "0.1", calendar: "iso_utc", freshness: { kind: "live", maxAgeMs: 60_000 } },
-    declarations: { metrics: [], objectType: objectType ?? { name: metric.objectType, properties: [] } },
-  }
+  const declared = { metrics: readDocument<readonly Metric[]>("[]", "live"), objectType: readDocument<ObjectType>(JSON.stringify(objectType ?? { name: metric.objectType, properties: [] }), "live") }
   const what = metricHeading(metric, window?.grain)
+  const sources = metric.unitPartition ?? []
+  const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
   return (
     <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {metric.timeProperty.replaceAll("_", " ")}</span>}</span>}
       action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span> : undefined}>
-      <Well className="space-y-3 p-4">
+      <Well className="space-y-4 p-4">
         {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
         {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
         {profile.data && profile.data.document.rows === 0 && (
@@ -63,13 +63,66 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         )}
         {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
-          <p className="text-meta text-muted-foreground">Per {window.grain}, {window.start.slice(0, 10)} to {window.end.slice(0, 10)}: every date its records carry.</p>
-          {(metric.unitPartition?.length ?? 0) > 0 && <p className="text-meta text-muted-foreground">The cell adds these up only within one {metric.unitPartition?.map((path) => path.replaceAll("_", " ")).join(" and ")}: choose one of each.</p>}
-          <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={setConditions} />
-          <RunQuestion key={JSON.stringify(conditions)} question={metricQuestion(metric, window, conditions)} catalog={declarations} label="Ask the cell" />
+          <p className="text-meta text-muted-foreground">Per {window.grain}, {day(window.start)} – {day(Date.parse(window.end) - 86_400_000)}: every date its records carry.</p>
+          <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} />
+          {sources.length === 0
+            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} />
+            : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} />}
         </>}
       </Well>
     </Panel>
+  )
+}
+
+/**
+ * A metric whose values are in several units, asked at once: one exact total per unit group the cell
+ * returns (it groups by the unit sources itself), labelled by its unit, most records first; the
+ * conditions narrow it. A group opens its answer per period.
+ */
+function UnitGroups({ metric, window, conditions, sources, title, declared, picked, onPick }: {
+  readonly metric: MetricSummary
+  readonly window: Window
+  readonly conditions: readonly Condition[]
+  readonly sources: readonly string[]
+  readonly title: string
+  readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
+  readonly picked: UnitGroup | null
+  readonly onPick: (group: UnitGroup | null) => void
+}) {
+  const asked = metricQuestion(metric, window, conditions) as Question
+  const totals: Question = { ...asked, groupBy: sources.map((property) => ({ path: { property } })) }
+  const run = useQuery({ queryKey: ["unit-groups", JSON.stringify(totals)], queryFn: () => evaluateQuestion(totals), retry: false, staleTime: 30_000 })
+  const result = run.data
+  if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
+  if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
+  if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
+  if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "not-a-question" ? result.findings.map(({ message }) => message).join(" ") : result.kind === "too-large" || result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
+  const rows = buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })
+  const groups = unitGroups(sources, rows)
+  // One group is not a choice: its answer per period opens with it.
+  const open = groups.length === 1 ? groups[0] ?? null : picked
+  const weekly = open && ({ ...asked, filter: [...(asked.filter ?? []).filter(({ path }) => !sources.includes(path.property)), ...sources.map((property) => ({ path: { property }, operator: "eq", value: open.values[property] ?? null }))] } as Question)
+  return (
+    <div className="space-y-4">
+      {groups.length === 0 ? <EmptyState icon={Sigma}>No records in this window match.</EmptyState> : (
+        <div className="space-y-2">
+          <p className="text-meta text-muted-foreground">{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${window.grain}.`}</p>
+          <TableCard><Table>
+            <TableHeader><TableRow><TableHead>Unit</TableHead><TableHead className="text-right">{title}</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {groups.map((group) => (
+                <TableRow key={group.key} data-state={open?.key === group.key ? "selected" : undefined} className="cursor-pointer" onClick={() => onPick(open?.key === group.key ? null : group)}>
+                  <TableCell><button type="button" aria-pressed={open?.key === group.key} className="rounded-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); onPick(open?.key === group.key ? null : group) }}>{group.unit ?? "No unit"}</button></TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{figure(group.bucket, group.unit)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{group.bucket.members.length.toLocaleString("en")}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table></TableCard>
+        </div>
+      )}
+      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} />}
+    </div>
   )
 }
 
@@ -119,7 +172,7 @@ function LiveQuestionsBoard() {
   return <>{types.map((type) => (
     <div key={type} className="space-y-3">
       <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
-      <div className="grid gap-3 xl:grid-cols-2">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} />)}</div>
+      <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} />)}</div>
     </div>
   ))}</>
 }

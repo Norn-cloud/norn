@@ -31,7 +31,9 @@ use crate::object_routes::{
     MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, mapped, not_found, permitted,
     scan_bound_exceeded, snapshot_moved,
 };
-use crate::objects::{NornLinkEdge, NornObjectLinkPage};
+use crate::objects::{
+    NornLinkCount, NornLinkCounts, NornLinkDirection, NornLinkEdge, NornObjectLinkPage,
+};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -39,6 +41,13 @@ use crate::scope::ScopeQuery;
 pub const DEFAULT_LINK_LIMIT: usize = 50;
 /// Largest links page a caller may ask for.
 pub const MAX_LINK_LIMIT: usize = 100;
+
+/// HOST-READ-4b: the most visible links a first page counts by link type.
+/// Past it, each count is a lower bound and the counts say so.
+pub const LINK_COUNT_BOUND: u64 = 500;
+
+/// One counted group: direction, source type, link, target type.
+type CountKey = (NornLinkDirection, String, String, String);
 
 /// The raw query string fields of `GET /v1/objects/{type}/{id}/links`.
 #[derive(Debug, Default, Clone, utoipa::IntoParams)]
@@ -226,16 +235,21 @@ struct LinkScan<'q> {
     start: Option<(u64, Option<(u64, u64)>)>,
     collections: BTreeMap<String, bool>,
     listed: Vec<LinkEdgeRecord>,
+    /// The visible links per group, on a first page only; `complete` stays
+    /// true until a link past [`LINK_COUNT_BOUND`] is seen.
+    counts: Option<(BTreeMap<CountKey, u64>, bool)>,
 }
 
-/// The links of one candidate batch the caller may see, in cell order.
+/// The links of one candidate batch the caller may see, in cell order, each
+/// with the end of it the requested object `(object_type, id)` is.
 fn visible_batch<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
+    (object_type, id): (&str, &str),
     scan: &mut LinkScan<'_>,
     batch: Vec<Candidate>,
-) -> Result<Vec<LinkEdgeRecord>, Refusal> {
+) -> Result<Vec<(LinkEdgeRecord, NornLinkDirection)>, Refusal> {
     let mut seen = Vec::new();
     for (edge, source, target) in batch {
         let (Some(source), Some(target)) = (source, target) else {
@@ -251,24 +265,62 @@ fn visible_batch<E: SqlEngine>(
     }
     let held = locked(host, access, &mut scan.start, |reader| {
         seen.iter()
-            .map(|(_, rows, readable)| {
-                rows.iter()
-                    .zip(readable)
-                    .try_fold(false, |held, (row, readable)| {
+            .map(|(_, [source, target], readable)| {
+                let held = [source, target].into_iter().zip(readable).try_fold(
+                    false,
+                    |held, (row, readable)| {
                         Ok::<bool, norn_cell::CellError>(
                             held || (*readable
                                 && reader.observation_is_quarantined(MAIN_WORLD, row)?),
                         )
-                    })
+                    },
+                )?;
+                // A self-link counts once, as outgoing.
+                let direction =
+                    if source.id == id && reader.model().is_a(&source.object_type, object_type) {
+                        NornLinkDirection::Out
+                    } else {
+                        NornLinkDirection::In
+                    };
+                Ok((held, direction))
             })
-            .collect::<Result<Vec<bool>, norn_cell::CellError>>()
+            .collect::<Result<Vec<(bool, NornLinkDirection)>, norn_cell::CellError>>()
             .map_err(Refusal::host)
     })?;
     Ok(seen
         .into_iter()
         .zip(held)
-        .filter_map(|((edge, _, _), held)| (!held).then_some(edge))
+        .filter_map(|((edge, _, _), (held, direction))| (!held).then_some((edge, direction)))
         .collect())
+}
+
+/// Count one visible link into the scan's groups; a link past the bound
+/// marks the counts incomplete instead. True while counting continues.
+fn count_link(
+    scan: &mut LinkScan<'_>,
+    visible: usize,
+    edge: &LinkEdgeRecord,
+    direction: NornLinkDirection,
+) -> bool {
+    let Some((groups, complete)) = scan.counts.as_mut() else {
+        return false;
+    };
+    if !*complete {
+        return false;
+    }
+    if u64::try_from(visible).unwrap_or(u64::MAX) > LINK_COUNT_BOUND {
+        *complete = false;
+        return false;
+    }
+    let key = (
+        direction,
+        edge.edge.source_type.clone(),
+        edge.edge.link.clone(),
+        edge.edge.target_type.clone(),
+    );
+    let count = groups.entry(key).or_insert(0);
+    *count = count.saturating_add(1);
+    true
 }
 
 /// Read the visible links touching `(object_type, id)` after the cursor's
@@ -310,7 +362,8 @@ fn scan_links<E: SqlEngine>(
             }
             Ok((page.next_after, batch))
         })?;
-        for edge in visible_batch(host, access, actor, scan, batch)? {
+        for (edge, direction) in visible_batch(host, access, actor, (object_type, id), scan, batch)?
+        {
             visible = visible.saturating_add(1);
             if visible > MAX_QUERY_SCAN {
                 return Err(scan_bound_exceeded());
@@ -319,8 +372,11 @@ fn scan_links<E: SqlEngine>(
                 resumed = scan.resume == Some(edge_digest(&edge.edge).as_str());
                 continue;
             }
-            scan.listed.push(edge);
-            if scan.listed.len() > scan.query.limit {
+            let counting = count_link(scan, visible, &edge, direction);
+            if scan.listed.len() <= scan.query.limit {
+                scan.listed.push(edge);
+            }
+            if scan.listed.len() > scan.query.limit && !counting {
                 return Ok(());
             }
         }
@@ -388,6 +444,7 @@ pub fn get_object_links<E: SqlEngine>(
         start: None,
         collections: BTreeMap::new(),
         listed: Vec::new(),
+        counts: cursor.is_none().then(|| (BTreeMap::new(), true)),
     };
     requested_row(host, access, &actor, (object_type, id), &mut scan.start)?;
     if let Some(cursor) = &cursor
@@ -411,11 +468,28 @@ pub fn get_object_links<E: SqlEngine>(
         }
         .encode()
     });
+    let counts = scan.counts.map(|(groups, complete)| NornLinkCounts {
+        groups: groups
+            .into_iter()
+            .map(
+                |((direction, source_type, link, target_type), count)| NornLinkCount {
+                    source_type,
+                    link,
+                    target_type,
+                    direction,
+                    count,
+                },
+            )
+            .collect(),
+        complete,
+        bound: LINK_COUNT_BOUND,
+    });
     Ok(NornObjectLinkPage {
         object_type: object_type.to_owned(),
         id: id.to_owned(),
         items: scan.listed.into_iter().map(NornLinkEdge::from).collect(),
         next,
+        counts,
     })
 }
 

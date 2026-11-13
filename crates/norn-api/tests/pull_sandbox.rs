@@ -529,17 +529,13 @@ fn the_schedule_claims_each_due_connection_once_as_its_own_principal() {
     let mut sources = sources();
     let t0 = 1_794_484_800_000;
     let first = sources.due(t0).expect("a never-synced connection is due");
-    let second = sources.due(t0).expect("the other one is due too");
-    assert_ne!(first, second);
-    assert_eq!(sources.due(t0), None, "both are running");
-    for (id, system) in [
-        (first.as_str(), &first[..first.find('.').expect("dotted")]),
-        (
-            second.as_str(),
-            &second[..second.find('.').expect("dotted")],
-        ),
-    ] {
-        let (summary, _) = sync(&host, &mut sources, id, (system, true), t0);
+    // SYNC-SERIAL-1: one sync per cell, so the other waits for this one.
+    assert_eq!(sources.due(t0), None, "one sync runs at a time");
+    let mut synced = Vec::new();
+    let mut next = Some(first);
+    while let Some(id) = next {
+        let system = id[..id.find('.').expect("dotted")].to_owned();
+        let (summary, _) = sync(&host, &mut sources, &id, (&system, true), t0);
         assert_eq!(summary.outcome, "ok", "{summary:#?}");
         let run = host
             .host_object("source.SyncRun", &summary.run)
@@ -553,7 +549,10 @@ fn the_schedule_claims_each_due_connection_once_as_its_own_principal() {
             run.get("trigger").and_then(RuntimeValue::as_str),
             Some("schedule")
         );
+        synced.push(id);
+        next = sources.due(t0);
     }
+    assert_eq!(synced.len(), 2, "each due connection ran once: {synced:?}");
     assert_eq!(
         sources.due(t0 + 60_000),
         None,
@@ -1133,4 +1132,42 @@ fn a_paced_sync_maps_at_most_its_rows_per_step() {
     let step = sources.step(&host, "odoo.sandbox", None, EXTRACTED_AT_MS);
     assert!(matches!(step, Step::Continue), "{step:?}");
     assert_eq!(sources.mapped("odoo.sandbox"), 3);
+}
+
+/// SYNC-SERIAL-1: one sync runs per cell at a time. While one connection
+/// syncs, another's claim is refused naming it and the schedule claims
+/// nothing; once it ends, the next one runs.
+#[test]
+fn one_sync_runs_per_cell_at_a_time() {
+    let host = host();
+    let mut sources = sources();
+    sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("claimed");
+    assert_eq!(
+        sources.claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS
+        ),
+        Err(ClaimError::Busy("odoo.sandbox".to_owned()))
+    );
+    assert_eq!(sources.due(EXTRACTED_AT_MS), None);
+    let _ = sync(
+        &host,
+        &mut sources,
+        "odoo.sandbox",
+        ("odoo", true),
+        EXTRACTED_AT_MS,
+    );
+    assert!(!sources.running("odoo.sandbox"));
+    sources
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS + 1,
+        )
+        .expect("the next one runs");
 }

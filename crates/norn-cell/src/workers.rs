@@ -31,6 +31,7 @@ extern "C" {
 pub struct WorkersEngine {
     storage: JsValue,
     active: Cell<bool>,
+    revision: crate::engine::WriteRevision,
 }
 
 impl WorkersEngine {
@@ -40,6 +41,7 @@ impl WorkersEngine {
         Self {
             storage,
             active: Cell::new(false),
+            revision: crate::engine::WriteRevision::new(),
         }
     }
 }
@@ -144,12 +146,19 @@ impl SqlEngine for WorkersEngine {
         crate::engine::ReadIsolation::ExclusiveSynchronous
     }
 
+    /// This connection is the database's only writer, so a count of the
+    /// writes it ran is a revision ([`crate::engine::WriteRevision`]).
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        Ok(self.revision.current(self.active.get()))
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.query(sql, params).map(|_| ())
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         validate_bindings(sql, params)?;
+        self.revision.note(sql);
         let bindings = params.iter().map(encode).collect::<Array>();
         rows(&self.storage, sql, &bindings)
             .map_err(|error| backend(&error))?
@@ -167,6 +176,7 @@ impl SqlEngine for WorkersEngine {
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.revision.bump();
         self.execute(sql, &[])
     }
 
