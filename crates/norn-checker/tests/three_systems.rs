@@ -636,8 +636,16 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
     let mut lists = Vec::new();
     for (artifact, root_key, property) in [
         ("canon.Settlement.interface", "interface", "currency"),
-        ("canon.SettlementObservation.entity", "objectType", "currency"),
-        ("canon.StockValuation.interface", "interface", "cost_currency"),
+        (
+            "canon.SettlementObservation.entity",
+            "objectType",
+            "currency",
+        ),
+        (
+            "canon.StockValuation.interface",
+            "interface",
+            "cost_currency",
+        ),
         ("canon.Holding.entity", "objectType", "cost_currency"),
     ] {
         let document = read(&format!("registry/packs/canon/artifacts/{artifact}.json"));
@@ -658,8 +666,14 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
         "odoo-sandbox/artifacts/odoo.sandbox",
     ] {
         let document = read(&format!("registry/packs/{source}.source.json"));
-        for set in document["payload"]["codeSets"].as_array().expect("code sets") {
-            if set["field"].as_str().is_some_and(|field| field.ends_with("currency")) {
+        for set in document["payload"]["codeSets"]
+            .as_array()
+            .expect("code sets")
+        {
+            if set["field"]
+                .as_str()
+                .is_some_and(|field| field.ends_with("currency"))
+            {
                 lists.push((format!("{source}#{}", set["id"]), codes(&set["values"])));
             }
         }
@@ -668,7 +682,10 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
     assert_eq!(lists.len(), 13, "{lists:?}");
     let first = lists[0].1.clone();
     assert_eq!(first.len(), 176);
-    assert!(first.windows(2).all(|pair| pair[0] < pair[1]), "sorted, unique");
+    assert!(
+        first.windows(2).all(|pair| pair[0] < pair[1]),
+        "sorted, unique"
+    );
     for (at, list) in &lists {
         assert_eq!(list, &first, "{at}");
     }
