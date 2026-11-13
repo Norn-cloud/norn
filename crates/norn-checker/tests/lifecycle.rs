@@ -417,10 +417,17 @@ fn a_guard_appended_to_an_inherited_fact_is_a_guarded_fact() {
     );
     assert_eq!(
         run(&[guarded], &[base], None),
-        vec![(
-            "lifecycle.soundness.fact_guarded".to_owned(),
-            "/objectTypes/0/lifecycles/0/transitions/0/guards".to_owned()
-        )]
+        vec![
+            (
+                "lifecycle.soundness.fact_guarded".to_owned(),
+                "/objectTypes/0/lifecycles/0/transitions/0/guards".to_owned()
+            ),
+            // The only route to the ending is now guarded.
+            (
+                "lifecycle.soundness.completion_unknown".to_owned(),
+                "/objectTypes/0/lifecycles/0".to_owned()
+            )
+        ]
     );
 }
 
