@@ -339,17 +339,21 @@ fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fi
 
 /// METRIC-CURRENCY-PARTITION and METRIC-CURRENCY-SINGLE: an amount whose
 /// currency lives in a code property aggregates per currency, as a unit source
-/// does; a single-code currency needs no partition.
+/// does; a single-code currency needs no partition unless it may be null.
 #[test]
 fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
-    for codes in [&["USD", "EUR"][..], &["USD"][..]] {
+    for (codes, nullable) in [
+        (&["USD", "EUR"][..], false),
+        (&["USD"][..], false),
+        (&["USD"][..], true),
+    ] {
         let values: Vec<_> = codes.iter().map(|code| json!({"value": code})).collect();
         let payment = json!({"entityVersion": "2.0", "objectType": {
             "name": "demo.Payment", "links": [],
             "properties": [
                 {"id": "paid_at", "type": {"kind": "timestamp", "timezone": "utc"}},
                 {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"}, "currencySource": {"property": "currency"}}},
-                {"id": "currency", "type": {"kind": "enum", "values": values}},
+                {"id": "currency", "type": {"kind": "enum", "values": values}, "constraints": {"nullable": nullable}},
             ],
         }});
         let artifacts = vec![envelope("demo.Payment.entity", &payment)];
@@ -365,7 +369,7 @@ fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
             .iter()
             .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("amount"))
             .expect("amount sum");
-        let single = codes.len() == 1;
+        let single = codes.len() == 1 && !nullable;
         let paths: Vec<_> = metric
             .unit_partition
             .iter()
@@ -410,7 +414,7 @@ fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
                 } else {
                     vec![]
                 },
-                "{codes:?} {how}"
+                "{codes:?} nullable {nullable} {how}"
             );
             let plan = space.admit(&question, 100).expect("derived question");
             let grouped = plan
@@ -421,7 +425,7 @@ fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
             assert_eq!(
                 grouped,
                 how == "grouped" || (!single && how != "eq"),
-                "{codes:?} {how}"
+                "{codes:?} nullable {nullable} {how}"
             );
         }
     }
