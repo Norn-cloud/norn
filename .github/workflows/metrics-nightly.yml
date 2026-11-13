@@ -33,24 +33,24 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Test the metrics tools
-        run: python3 scripts/metrics/test_metrics.py
+        run: python3 -I scripts/metrics/test_metrics.py
       - name: Collect main CI task times and test counts
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          python3 scripts/metrics/collect_ci.py --days 3 > "$RUNNER_TEMP/ci.jsonl"
-          python3 scripts/metrics/count_tests.py --by-url "$RUN_URL" > "$RUNNER_TEMP/tests.jsonl"
+          python3 -I scripts/metrics/collect_ci.py --days 3 > "$RUNNER_TEMP/ci.jsonl"
+          python3 -I scripts/metrics/count_tests.py --by-url "$RUN_URL" > "$RUNNER_TEMP/tests.jsonl"
           cat "$RUNNER_TEMP/ci.jsonl" "$RUNNER_TEMP/tests.jsonl" > "$RUNNER_TEMP/records.jsonl"
           wc -l "$RUNNER_TEMP/ci.jsonl" "$RUNNER_TEMP/tests.jsonl"
       - name: Append to the metrics branch
         env:
           METRICS_PUSH_TOKEN: ${{ github.token }}
-        run: python3 scripts/metrics/record.py add --file "$RUNNER_TEMP/records.jsonl"
+        run: python3 -I scripts/metrics/record.py add --file "$RUNNER_TEMP/records.jsonl"
       - name: Verify the whole record and its history
         env:
           METRICS_PUSH_TOKEN: ${{ github.token }}
-        run: python3 scripts/metrics/record.py verify
+        run: python3 -I scripts/metrics/record.py verify
       - name: KPI ratchet over the Boat series
-        run: python3 scripts/metrics/ratchet.py --rev origin/metrics
+        run: python3 -I scripts/metrics/ratchet.py --rev origin/metrics

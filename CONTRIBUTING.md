@@ -37,8 +37,9 @@ change needs `/approve-gates`:
   `linker`, `rustc-wrapper` or `[env]` entry there would apply to the trusted
   build.
 - **`rust-toolchain.toml` and `rust-toolchain`**, including adding one where
-  there is none. rustup reads them from the working directory, and a
-  `[toolchain] path` entry selects an arbitrary toolchain.
+  there is none. rustup reads them from the working directory. The trusted
+  runner sets `RUSTUP_TOOLCHAIN`, which takes precedence, so this gate is
+  defence in depth.
 
 In the merge queue, `Trusted merge group` (which always runs from the default
 branch) writes `trusted-policy` on each group's head commit. A gate-changing
