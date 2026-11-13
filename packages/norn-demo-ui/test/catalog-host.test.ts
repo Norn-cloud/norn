@@ -3,7 +3,7 @@
 // refused, reported, and never reaches the page.
 
 import { expect, test } from "bun:test"
-import { type CatalogEntry, type Violation, checkPayload, createHost, frameDocument } from "../src/catalog/host.ts"
+import { type CatalogEntry, type Violation, checkPayload, createHost, frameDocument } from "../src/catalog-host/host.ts"
 import type { Evaluate, Fields } from "../src/machine/index.ts"
 
 // The entry machine below has no guards or assignments, so no expression is ever evaluated.

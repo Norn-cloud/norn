@@ -4542,3 +4542,29 @@ fn every_catalog_join_is_checked() {
         "number",
     );
 }
+
+#[test]
+fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
+    // A compiled Foldkit edge (`when`) in a catalog entry's machine is admitted (May for the checker).
+    let entry_machine = json!({
+        "machineVersion": "0.1", "initialStateId": "Expanded", "fields": [],
+        "events": [{ "eventId": "ClickedPin", "source": { "kind": "user", "nodeId": "self" } }],
+        "states": [{ "stateId": "Expanded", "role": "idle" }, { "stateId": "Pinned", "role": "idle" }],
+        "transitions": [
+            { "transitionId": "pin", "from": "Expanded", "on": "ClickedPin", "target": "Pinned", "componentGuard": "When#0" },
+            { "transitionId": "stay", "from": "Expanded", "on": "ClickedPin", "target": "Expanded", "componentGuard": "Otherwise#1" },
+            { "transitionId": "unpin", "from": "Pinned", "on": "ClickedPin", "target": "Expanded" }
+        ]
+    });
+    let widget = catalog_edit(|ux| ux["catalog"][0]["machine"] = entry_machine);
+    let found = ui_codes(widget);
+    assert!(found.is_empty(), "{found:#?}");
+    // On a page machine the same field is refused: a page's guards are ZEN the checker reads.
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["machine"]["transitions"][0]["componentGuard"] = json!("When#0")
+        }),
+        "widget.machine.component_guard_outside_catalog",
+        "ZEN",
+    );
+}

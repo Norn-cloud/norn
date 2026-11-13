@@ -64,6 +64,8 @@ export interface MachineTransition {
   readonly on: string
   readonly target: string
   readonly guard?: string
+  /** A guard the catalog component's own code decides: the component reports the target it took. */
+  readonly componentGuard?: string
   readonly assign?: Readonly<Record<string, string>>
   readonly effects?: readonly MachineEffect[]
 }
@@ -94,7 +96,7 @@ export interface Snapshot {
 
 export type Msg =
   | { readonly kind: "page_opened" }
-  | { readonly kind: "user"; readonly eventId: string; readonly payload?: Fields }
+  | { readonly kind: "user"; readonly eventId: string; readonly payload?: Fields; readonly to?: string }
   | { readonly kind: "subscription"; readonly bindingId: string; readonly payload?: Fields }
   | {
       readonly kind: "outcome"
@@ -191,6 +193,8 @@ export function update(machine: Machine, evaluate: Evaluate, snapshot: Snapshot,
   for (const event of events) {
     for (const transition of machine.transitions) {
       if (transition.from !== snapshot.stateId || transition.on !== event.eventId) continue
+      // A component-decided guard: only the declared target the component reports fires.
+      if (transition.componentGuard !== undefined && (msg.kind !== "user" || msg.to !== transition.target)) continue
       const input = { fields: snapshot.fields, event: payload }
       if (transition.guard !== undefined && !truthy(evaluate(transition.guard, input), `guard of ${transition.transitionId}`)) continue
       return fire(machine, evaluate, snapshot, transition, input)

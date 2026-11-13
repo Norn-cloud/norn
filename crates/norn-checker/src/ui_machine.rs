@@ -58,9 +58,10 @@ const ERROR_WITHOUT_RECOVERY: &str = "widget.machine.error_without_recovery";
 const INPUT_FREE_CYCLE: &str = "widget.machine.input_free_cycle";
 const NONDETERMINISTIC: &str = "widget.machine.nondeterministic";
 const CONTROL_WITHOUT_EVENT: &str = "widget.machine.control_without_event";
+const COMPONENT_GUARD_OUTSIDE_CATALOG: &str = "widget.machine.component_guard_outside_catalog";
 
 /// Every code these laws can emit.
-pub const CODES: [&str; 24] = [
+pub const CODES: [&str; 25] = [
     DUPLICATE_ID,
     UNKNOWN_REFERENCE,
     INVALID_EVENT,
@@ -85,6 +86,7 @@ pub const CODES: [&str; 24] = [
     INPUT_FREE_CYCLE,
     NONDETERMINISTIC,
     CONTROL_WITHOUT_EVENT,
+    COMPONENT_GUARD_OUTSIDE_CATALOG,
 ];
 
 const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
@@ -124,6 +126,7 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
             let base = format!("/payload/ux/pages/{index}/machine");
             let checker = MachineChecker {
                 ux,
+                in_catalog: false,
                 machine,
                 base: &base,
                 findings: Vec::new(),
@@ -138,6 +141,7 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
             let base = format!("/payload/ux/catalog/{index}/machine");
             let checker = MachineChecker {
                 ux,
+                in_catalog: true,
                 machine,
                 base: &base,
                 findings: Vec::new(),
@@ -387,6 +391,8 @@ struct Facts<'m> {
 
 struct MachineChecker<'m> {
     ux: &'m WidgetUx,
+    /// Checking a catalog entry's own machine (component guards allowed).
+    in_catalog: bool,
     machine: &'m WidgetMachine,
     base: &'m str,
     findings: Vec<Finding>,
@@ -796,6 +802,15 @@ impl<'m> MachineChecker<'m> {
                     );
                 }
             }
+            // A page's guards are ZEN the checker reads; only a catalog component's own machine may
+            // leave a guard to the component's code.
+            if transition.component_guard.is_some() && !self.in_catalog {
+                self.push(
+                    COMPONENT_GUARD_OUTSIDE_CATALOG,
+                    format!("{pointer}/componentGuard"),
+                    "a page machine's guards are ZEN expressions; only a catalog entry's machine leaves a guard to its component".to_owned(),
+                );
+            }
             let payload = event.map(event_payload).unwrap_or_default();
             let env = (&field_types, &payload);
             if let Some(guard) = &transition.guard {
@@ -869,7 +884,7 @@ impl<'m> MachineChecker<'m> {
                                     outcome_name(outcome)
                                 ),
                             );
-                        } else if transition.guard.is_none() {
+                        } else if (transition.guard.is_none() && transition.component_guard.is_none()) {
                             let slot = facts.covered.entry(from).or_default();
                             for value in matched {
                                 slot.entry(value)
@@ -891,7 +906,7 @@ impl<'m> MachineChecker<'m> {
                         ),
                     ),
                 }
-            } else if transition.guard.is_none() {
+            } else if (transition.guard.is_none() && transition.component_guard.is_none()) {
                 facts
                     .unguarded
                     .entry((from, event.event_id.as_str()))

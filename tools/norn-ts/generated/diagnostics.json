@@ -4801,6 +4801,14 @@
       "no_fix": null
     },
     {
+      "code": "widget.machine.component_guard_outside_catalog",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine transition leaves its guard to component code: {detail}",
+      "fix": "Write the guard as a ZEN expression; only a catalog entry's machine may name a component guard.",
+      "no_fix": null
+    },
+    {
       "code": "widget.machine.control_without_event",
       "tier": "T2",
       "severity": "error",

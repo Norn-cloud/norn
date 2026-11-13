@@ -109,7 +109,7 @@ export function createHost(options: HostOptions): Host {
       options.onView(view())
     },
     receive(message) {
-      const msg = message as { type?: unknown; eventId?: unknown; payload?: unknown }
+      const msg = message as { type?: unknown; eventId?: unknown; payload?: unknown; to?: unknown }
       if (typeof msg !== "object" || msg === null || msg.type !== "emit" || typeof msg.eventId !== "string") {
         return refuse({ kind: "malformed_message", detail: "expected {type: \"emit\", eventId, payload}" })
       }
@@ -122,7 +122,9 @@ export function createHost(options: HostOptions): Host {
       if (problem !== null) return refuse({ kind: "ill_typed_payload", eventId, detail: problem })
       // The entry's machine decides whether the current state takes the event; it is the only state.
       if (entry.machine && snapshot && internal) {
-        const step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload })
+        // A component that decides its own guards says which declared target it took.
+        const to = typeof msg.to === "string" ? { to: msg.to } : {}
+        const step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload, ...to })
         if (step.fired === null) return refuse({ kind: "not_offered", eventId, state: snapshot.stateId })
         snapshot = step.snapshot
         options.onView(view())
@@ -145,7 +147,7 @@ export function frameDocument(moduleSource: string): string {
       async connect(render) {
         const port = await ready;
         port.onmessage = (event) => render(event.data);
-        return { emit: (eventId, payload = {}) => port.postMessage({ type: "emit", eventId, payload }) };
+        return { emit: (eventId, payload = {}, to) => port.postMessage({ type: "emit", eventId, payload, ...(to ? { to } : {}) }) };
       },
     };`
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bridge}</script></head><body><script type="module">${moduleSource.replaceAll("</script", "<\\/script")}</script></body></html>`

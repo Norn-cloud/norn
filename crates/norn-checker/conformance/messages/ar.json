@@ -2402,6 +2402,10 @@
       "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
       "review": "needs_review"
     },
+    "widget.machine.component_guard_outside_catalog": {
+      "message": "انتقال في ترسيمة صفحة يترك شرطه لشيفرة مكوّن: {$detail}",
+      "review": "needs_review"
+    },
     "widget.machine.control_without_event": {
       "message": "عنصر تحكم في الصفحة لا يطلق أي حدث من ترسيمة الصفحة: {$detail}",
       "review": "needs_review"

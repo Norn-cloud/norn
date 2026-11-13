@@ -647,6 +647,17 @@ pub struct WidgetMachineTransition {
     )]
     #[schemars(with = "ZenExpression")]
     pub guard: Option<ZenExpression>,
+    /// A guard the catalog component's own code decides (a Foldkit `when` or
+    /// `otherwise` edge), named for reviewers. The checker treats the
+    /// transition as possibly disabled (May); the host accepts it only with
+    /// the target the component reports. Catalog entry machines only.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub component_guard: Option<String>,
     /// New field values, each a ZEN expression over `input.fields` and
     /// `input.event`, typed as the field.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
