@@ -6,8 +6,9 @@
 //! never by a name or bytes in a request. A submission names the base it was
 //! authored against by digest (`TrustedBase::sha256`).
 //!
-//! The base is the reserved-namespace (`core.`, `std.`) artifacts the host's
-//! seeded demo cell admits with, read from `registry/core/artifacts`: an
+//! The base is the reserved artifacts (`core.`, `std.` and the cell-owned
+//! types, [`norn_api::kernel_set::CELL_OWNED`]) the host's seeded demo cell
+//! admits with, read from `registry/core/artifacts`: an
 //! admissible base this host already serves. Not every reserved registry
 //! artifact is one on its own (`core.Order.interface` names value types and
 //! interfaces that no reserved artifact defines), so the base is listed, and
@@ -18,7 +19,7 @@ use norn_api::provision::TrustedBase;
 use crate::seed::SeedError;
 
 /// The trusted base: one artifact envelope each.
-pub const SOURCES: [&str; 20] = [
+pub const SOURCES: [&str; 22] = [
     include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
     include_str!("../../../registry/core/artifacts/core.AgentRole.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Claim.interface.json"),
@@ -43,6 +44,8 @@ pub const SOURCES: [&str; 20] = [
     include_str!("../../../registry/core/artifacts/core.units.json"),
     include_str!("../../../registry/core/artifacts/core.value_types.entity.json"),
     include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
+    include_str!("../../../registry/core/artifacts/norn.ObservedLinkClaim.entity.json"),
+    include_str!("../../../registry/core/artifacts/norn.SourceEvidence.interface.json"),
 ];
 
 /// The host's trusted base.

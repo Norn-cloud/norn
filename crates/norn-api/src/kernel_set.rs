@@ -35,12 +35,22 @@ fn invalid(context: &str) -> impl Fn(&dyn std::fmt::Display) -> KernelRefusal + 
     move |error| KernelRefusal::Invalid(format!("{context}: {error}"))
 }
 
-/// Whether `artifact_id` names a trusted-base artifact by its reserved
-/// namespace. Only trusted provisioning code partitions a set by name; a
-/// submitted id never makes an artifact trusted (see [`base_ids`]).
+/// The types the cell itself writes, outside the reserved namespaces: the
+/// claim it records for every link a mapping declares, and the evidence
+/// interface source records carry. A tenant never defines them, and a cell
+/// without them refuses every linked row at mapping time, so they are the
+/// host's, beside `core.` and `std.`.
+pub const CELL_OWNED: [&str; 2] = ["norn.ObservedLinkClaim.entity", "norn.SourceEvidence.interface"];
+
+/// Whether `artifact_id` names a trusted-base artifact: one in a reserved
+/// namespace (`core.`, `std.`) or a cell-owned type ([`CELL_OWNED`]). Only
+/// trusted provisioning code partitions a set by name; a submitted id never
+/// makes an artifact trusted (see [`base_ids`]).
 #[must_use]
 pub fn is_reserved(artifact_id: &str) -> bool {
-    artifact_id.starts_with("core.") || artifact_id.starts_with("std.")
+    artifact_id.starts_with("core.")
+        || artifact_id.starts_with("std.")
+        || CELL_OWNED.contains(&artifact_id)
 }
 
 /// The ids the retained admission receipt recorded as the trusted base: the

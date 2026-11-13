@@ -300,6 +300,73 @@ fn the_compiled_in_base_is_the_seeds_reserved_artifacts() {
     assert!(admitted.is_ok(), "{:?}", admitted.err());
 }
 
+// ------------------------------------------------------------------ links
+
+/// A recorded page whose mapping declares links lands whole on a tenant
+/// whose submission carries no cell-owned type: the claim the cell writes
+/// for each link is the host's (`norn.ObservedLinkClaim`), never the
+/// tenant's to remember (#1328 follow-up, the alpha's 2,249 quarantined rows).
+#[test]
+fn linked_rows_land_on_a_tenant_that_submitted_no_cell_owned_type() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let tenant = full();
+    assert!(tenant.iter().all(|text| {
+        let id = serde_json::from_str::<Value>(text).unwrap()["artifactId"].clone();
+        !norn_api::kernel_set::CELL_OWNED.iter().any(|owned| id == *owned)
+    }));
+    let mut cell = provisioned(&file(&directory, "a"), &scope, &tenant);
+    let export: Value = serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap();
+    let mapping = tenant
+        .iter()
+        .map(|text| serde_json::from_str::<Value>(text).unwrap())
+        .find(|artifact| artifact["artifactId"] == "erpnext.three.mapping")
+        .unwrap();
+    let links = mapping["payload"]["maps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|map| map["links"].as_array())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert!(links > 0, "the page must exercise links");
+    let vars = json!({
+        "NORN_S3_ENDPOINT": "https://storage.example.test",
+        "NORN_S3_BUCKET": "uploads-bucket",
+        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+    });
+    let mut connect = norn_cell_do::connect::Connect::new("[]", &vars.to_string()).unwrap();
+    let body = json!({ "profile": export["profile"], "snapshot": export["snapshot"] }).to_string();
+    let query = query(&scope);
+    let admin = user("org_a", "admin");
+    let request = Request {
+        method: "POST",
+        path: "/v1/observations:load",
+        query: &query,
+        authorization: Some(&admin),
+        now: NOW,
+        body: &body,
+    };
+    let host = cell.tenant.serving_host().expect("a provisioned cell serves");
+    let routed = connect
+        .route(Some(host), &cell.tokens, &request, NOW)
+        .expect("a connect route");
+    let answer: Value = serde_json::from_str(&routed.response.body).unwrap();
+    let rows = export["snapshot"].as_array().unwrap().len();
+    assert_eq!(routed.response.status, 200, "{answer}");
+    assert_eq!(answer["landed"], rows, "{answer}");
+    assert_eq!(answer["quarantined"], 0, "{answer}");
+    // The cell reopens with the same base and still serves.
+    drop(cell);
+    let mut reopened = open(&file(&directory, "a"), &scope);
+    let response = definitions(&mut reopened, Some(&admin));
+    assert_eq!(response.status, 200, "{}", response.body);
+}
+
 // --------------------------------------------------------------- authority
 
 /// Only an owner of the scope's organization provisions it. Every other
@@ -420,11 +487,23 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
     let owner = user("org_a", "owner");
     let host_base = cell.tenant.base_sha256().to_owned();
 
-    // A reserved id refuses before admission, even a byte-exact base artifact.
+    // A reserved id refuses before admission, even a byte-exact base
+    // artifact, and so does a cell-owned type a tenant might copy from the
+    // registry beside its packs.
     let first = full().remove(0);
     let mut forged: Value = serde_json::from_str(&first).unwrap();
     forged["artifactId"] = json!("core.Forged.entity");
-    for reserved in [forged.to_string(), base::SOURCES[0].to_owned()] {
+    let cell_owned = norn_api::kernel_set::CELL_OWNED.map(|id| {
+        base::SOURCES
+            .iter()
+            .find(|source| serde_json::from_str::<Value>(source).unwrap()["artifactId"] == id)
+            .map(|source| (*source).to_owned())
+            .unwrap()
+    });
+    for reserved in [forged.to_string(), base::SOURCES[0].to_owned()]
+        .into_iter()
+        .chain(cell_owned)
+    {
         let response = provision(
             &mut cell,
             Some(&owner),

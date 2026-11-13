@@ -137,7 +137,7 @@ fn submitted_artifacts_schema() -> utoipa::openapi::schema::Array {
             "NornArtifactEnvelope",
         ))
         .description(Some(
-            "The tenant's artifact envelopes; none in a reserved namespace (core., std.).",
+            "The tenant's artifact envelopes; none in a reserved namespace (core., std.) and none a cell-owned type (norn.ObservedLinkClaim.entity, norn.SourceEvidence.interface).",
         ))
         .build()
 }
@@ -150,7 +150,8 @@ pub struct ProvisionRequest {
     /// authored against; it must be the host's.
     pub base_sha256: String,
     /// The tenant's artifact envelopes. None may be in a reserved namespace
-    /// (`core.`, `std.`): the host supplies the trusted base itself.
+    /// (`core.`, `std.`) or be a cell-owned type
+    /// ([`kernel_set::CELL_OWNED`]): the host supplies the trusted base itself.
     #[schema(schema_with = submitted_artifacts_schema)]
     pub artifacts: Vec<Box<RawValue>>,
 }
@@ -325,7 +326,7 @@ fn tenant_artifacts(
             StatusCode::BAD_REQUEST,
             codes::RESERVED_ARTIFACT,
             "the submission carries an artifact in a reserved namespace",
-            "core. and std. name the trusted base, which the host supplies; submit only your own artifacts",
+            "core., std. and the cell-owned types name the trusted base, which the host supplies; submit only your own artifacts",
         );
         refusal.diagnostics = reserved;
         return Err(refusal);
