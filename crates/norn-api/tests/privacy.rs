@@ -34,6 +34,7 @@ use norn_kernel::authz::{
 use serde_json::{Value as Json, json};
 
 const TYPE: &str = "shop.Customer";
+const PARTY: &str = "canon.Party";
 const SECRET: [u8; 32] = [42; 32];
 
 fn physical(org: &str) -> CellScope {
@@ -375,4 +376,141 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     let (value, document) = email(&unkeyed, "org_a", "viewer", "c1");
     assert_eq!(value, V::from("•••"));
     assert_eq!(document["masked"]["email"]["mode"], "redacted");
+}
+
+/// The documents Studio's privacy walk replays (`fixtures/demo/privacy`), as
+/// this server writes them for a Party-shaped cell: a viewer's grid page, an
+/// auditor's, and an auditor's reveal with its receipt. `NORN_BLESS=1`
+/// rewrites them; review the diff.
+#[test]
+fn retained_privacy_documents_are_the_servers_own() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": PARTY,
+        "properties": [
+            {"id": "display_name", "type": {"kind": "text"}, "markings": ["pii.contact"]},
+            {"id": "kind", "type": {"kind": "enum", "values": [{"value": "person"}, {"value": "organization"}, {"value": "system"}]}}
+        ]
+    }))
+    .unwrap();
+    let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
+    let artifacts = json!([
+        {"irVersion":"0.1","artifactId":"canon.Party.entity","kind":"entity","namespace":"canon","name":"Party","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"analytics"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}},
+        {"irVersion":"0.1","artifactId":"canon.markings.entity","kind":"entity","namespace":"canon","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"analytics"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":pseudonym()}]}}
+    ]);
+    let physical = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "analytics".into(),
+    };
+    let rows = [
+        ("demo/party/0001", "Amira Haddad", "person"),
+        ("demo/party/0002", "Nile Gold Traders", "organization"),
+        ("demo/party/0003", "Amira Haddad", "person"),
+        ("demo/party/0004", "Karim Mansour", "person"),
+        ("demo/party/0005", "Delta Refinery", "organization"),
+        ("demo/party/0006", "Salma Farouk", "person"),
+    ];
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).unwrap(),
+                    registry: vec![],
+                    receipt_sha256: "privacy-demo".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &physical.key(),
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical.key(),
+                logical_time: 1_793_620_800_000,
+                writes: rows
+                    .iter()
+                    .map(|(key, name, kind)| FactWriteRow::Put {
+                        object_type: PARTY.into(),
+                        key: (*key).into(),
+                        values: BTreeMap::from([
+                            ("display_name".to_owned(), V::from(*name)),
+                            ("kind".to_owned(), V::from(*kind)),
+                        ]),
+                    })
+                    .collect(),
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    let scope = ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("analytics".into()),
+    };
+    let page = |actor: &str| {
+        get_object_query(&cell, &scope, Some(actor), PARTY, &ObjectQueryParams::default(), &Mapping)
+            .unwrap()
+    };
+    let viewer = page("viewer");
+    let auditor = page("auditor");
+    for record in &viewer.records {
+        let name = record.values.as_ref().unwrap()["display_name"].as_str().unwrap().to_owned();
+        assert!(name.starts_with("Customer #"), "{name}");
+        assert!(rows.iter().all(|(_, raw, _)| !name.contains(raw)), "{name}");
+    }
+    // The auditor policy here reveals pii.contact; the walk's auditor role.
+    let revealed = reveal(
+        &cell,
+        &scope,
+        Some("auditor"),
+        (PARTY, "demo/party/0001"),
+        &NornRevealRequest {
+            property: "display_name".into(),
+            purpose: Some("KYC review for refund #4471".into()),
+            idempotency_key: "demo-reveal-1".into(),
+        },
+        &Mapping,
+    )
+    .unwrap();
+    assert_eq!(revealed.value, V::from("Amira Haddad"));
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
+    let retained = |name: &str, document: &dyn erased::Doc| {
+        let mut text = document.text();
+        text.push('\n');
+        let file = root.join(name);
+        if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(&file, &text).unwrap();
+        }
+        let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
+        assert!(kept == text, "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1");
+    };
+    retained("canon.Party.viewer.page.json", &viewer);
+    retained("canon.Party.auditor.page.json", &auditor);
+    retained("canon.Party.reveal.json", &revealed);
+}
+
+mod erased {
+    /// A document retained as pretty JSON.
+    pub trait Doc {
+        fn text(&self) -> String;
+    }
+    impl<T: serde::Serialize> Doc for T {
+        fn text(&self) -> String {
+            serde_json::to_string_pretty(self).expect("document JSON")
+        }
+    }
 }
