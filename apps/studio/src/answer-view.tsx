@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Ellipsis, Rows3, Split } from "lucide-react"
+import { ChartLine, Clock, Ellipsis, Radio, Rows3, Split } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -16,6 +16,9 @@ import { buckets, contribution, declarations, fraction, shown, type Bucket } fro
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, groupDigits, headline, period, scope, stamp } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
+import { CodedMessage } from "@/components/coded-message"
+import { useLocale } from "@/lib/locale"
+import { plainWords } from "./lib/plain-words.ts"
 import type { Read } from "./lib/exact.ts"
 import type { Question, QuestionAnswer } from "./lib/transport.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -97,12 +100,25 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale 
   )
 }
 
-/** The server's refusal, as an answer: its reason in its own words, and its code. */
+/**
+ * The server's refusal, as an answer: what it means in plain words (the reader's language), with
+ * the engine's own message, code and explanation under Technical.
+ */
 export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
+  const { locale } = useLocale()
+  const plain = plainWords(refusal.code, locale)
   return (
-    <div role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-      <div><span className="font-medium">Refused:</span> {refusal.message}</div>
-      <div className="font-mono text-xs text-muted-foreground">{refusal.code}{refusal.explanation ? ` · ${refusal.explanation}` : ""}</div>
+    <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
+      <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+      {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
+      {refusal.explanation && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{refusal.explanation}</p>}
+      <details className="text-meta text-muted-foreground">
+        <summary className="cursor-pointer select-none">{locale === "ar" ? "تقني" : "Technical"}</summary>
+        <div className="mt-1 grid gap-0.5 font-mono [overflow-wrap:anywhere]" dir="ltr">
+          <span>{refusal.code}</span>
+          <span>{refusal.message}</span>
+        </div>
+      </details>
     </div>
   )
 }
@@ -188,7 +204,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
           {read.answer.origin === "live"
-            ? <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>
+            ? <Badge variant="success" title="Read now from the cell as your account."><Radio aria-hidden />Live</Badge>
             : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
         </div>
         {refusal && <RefusedNote refusal={refusal} />}

@@ -39,7 +39,7 @@ Route changes to the relevant core contract:
 | Functions, integrations, reconciliation | [07 World boundary](../spec/core/07-world-boundary.md) |
 | Forks, scenarios, metrics, reactive views | [08 Worlds/projections](../spec/core/08-worlds-projections.md) |
 
-**CURRENT** syntax is read, never executed as an application module. The compiler resolves supported symbols and lowers them to IR; the Rust checker is admission authority. Use Effect Schema and the ruled syntax subset, not arbitrary TypeScript execution. See the [profile declarations](../../tools/norn-ts/profile/norn-authoring.d.ts), [compiler fixtures](../../tools/norn-ts/fixtures), and [rejection corpus](../../tools/norn-ts/corpus/reject).
+**CURRENT** Norn definitions are written in Effect's vocabulary (Effect Schema for shapes, `Effect.gen` for flows) and type-checked against the pinned `effect` package, but Norn never runs them: the compiler reads the syntax and lowers it to Norn IR, and the Rust checker decides what is admitted. Use the ruled syntax subset, not arbitrary TypeScript. See the [profile declarations](../../tools/norn-ts/profile/norn-authoring.d.ts), [compiler fixtures](../../tools/norn-ts/fixtures), and [rejection corpus](../../tools/norn-ts/corpus/reject).
 
 ### A small CURRENT definition
 

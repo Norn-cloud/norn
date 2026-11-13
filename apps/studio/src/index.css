@@ -46,11 +46,21 @@
   /* The one restrained colour: the primary add/create action, as a solid round button. */
   --action: #2f5fe3;
   --action-foreground: #ffffff;
-  --chart-1: #0a0a0a;
-  --chart-2: #6b7280;
-  --chart-3: #9ca3af;
-  --chart-4: #c4c8cf;
-  --chart-5: #d9dce1;
+  /* Detail colour, never a surface: one hue per kind of artefact for its icons and chips; each ≥ 4.5:1 on white and on the canvas. */
+  --kind-source: #0f766e;
+  --kind-mapping: #475569;
+  --kind-object: #4338ca;
+  --kind-transform: #92400e;
+  --kind-question: #a21caf;
+  --kind-workflow: #6d28d9;
+  --kind-guarantee: #166534;
+  --kind-policy: #c2410c;
+  /* Chart series: categorical, told apart by hue and by order in the legend. */
+  --chart-1: #4338ca;
+  --chart-2: #0f766e;
+  --chart-3: #b45309;
+  --chart-4: #a21caf;
+  --chart-5: #64748b;
   --sidebar: var(--canvas);
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
@@ -117,11 +127,20 @@
   --link: var(--foreground);
   --action: #3b6cf0;
   --action-foreground: #ffffff;
-  --chart-1: #fafafa;
-  --chart-2: #8a8a8a;
-  --chart-3: #5f5f5f;
-  --chart-4: #404040;
-  --chart-5: #2a2a2a;
+  /* The same kinds, lightened: each ≥ 5.9:1 on the dark card. */
+  --kind-source: #2dd4bf;
+  --kind-mapping: #94a3b8;
+  --kind-object: #a5b4fc;
+  --kind-transform: #fbbf24;
+  --kind-question: #f0abfc;
+  --kind-workflow: #c4b5fd;
+  --kind-guarantee: #4ade80;
+  --kind-policy: #fdba74;
+  --chart-1: #a5b4fc;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #f0abfc;
+  --chart-5: #94a3b8;
   --sidebar: var(--canvas);
   --sidebar-foreground: #fafafa;
   --sidebar-primary: #fafafa;
@@ -164,6 +183,14 @@
   --color-action: var(--action);
   --color-action-foreground: var(--action-foreground);
   --color-success: var(--success);
+  --color-kind-source: var(--kind-source);
+  --color-kind-mapping: var(--kind-mapping);
+  --color-kind-object: var(--kind-object);
+  --color-kind-transform: var(--kind-transform);
+  --color-kind-question: var(--kind-question);
+  --color-kind-workflow: var(--kind-workflow);
+  --color-kind-guarantee: var(--kind-guarantee);
+  --color-kind-policy: var(--kind-policy);
   --color-warning: var(--warning);
   --shadow-elevation: var(--elevation-1);
   --shadow-node: var(--elevation-node);
