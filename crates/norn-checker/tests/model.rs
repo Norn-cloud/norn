@@ -323,7 +323,7 @@ fn an_output_is_an_inline_scalar_column() {
     for value in [
         json!({ "kind": "timestamp", "timezone": "utc" }),
         json!({ "kind": "ref", "name": "sales.grade" }),
-        json!({ "kind": "decimal", "scale": 2, "unitSource": ["unit"] }),
+        json!({ "kind": "decimal", "scale": 2, "currencySource": { "links": ["order"], "property": "currency" } }),
     ] {
         // Opaque and without contracts, so only the column itself is refused.
         let mut payload = with("/outputs/0/type", value.clone());
