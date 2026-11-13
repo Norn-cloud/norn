@@ -1,3 +1,5 @@
+import { ShieldX } from "lucide-react"
+import { Chip } from "@/components/chip"
 import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
@@ -119,11 +121,11 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
       {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} />}
       {phase.kind === "refused" && !(phase.reason !== undefined && phase.code === "core.laws.violated") && (
-        <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span>
+        <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
+          <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
           {phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>}
-          <span className="font-mono text-xs opacity-80">{phase.code}</span>
-          {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta">{d.message}</span>)}
+          <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
+          {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
           {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
         </div>
       )}

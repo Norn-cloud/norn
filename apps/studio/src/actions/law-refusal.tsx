@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
+import { ShieldX } from "lucide-react"
+import { Chip, FactChip } from "@/components/chip"
 import { transport, type Artifact } from "@/lib/transport"
 import type { RefusalReason } from "../lib/actions.ts"
 
@@ -41,26 +43,34 @@ export function LawRefusal({ code, reason, explanation, fields, technical }: { r
   const label = (path: string) => fields[path]?.title ?? words(path)
   const shown = (path: string, value: unknown) => atDeclared(value, fields[path]?.nornType?.kind === "decimal" ? fields[path]?.nornType?.scale : undefined)
   return (
-    <div role="alert" className="grid gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-      <span className="font-medium text-destructive">This change breaks a rule, so nothing was saved</span>
-      {rationale !== undefined && <span className="text-foreground">{rationale}</span>}
-      {checked.length > 0 && (
-        <span className="text-meta text-foreground">
-          It checked {checked.map(([path, value], index) => <span key={path}>{index > 0 && (index === checked.length - 1 ? " against " : ", ")}{label(path)} <span className="font-mono tabular-nums">{shown(path, value)}</span></span>)}.
-        </span>
-      )}
-      <span className="text-meta text-foreground">
-        {held.length > 0 && held.length < checked.length
-          ? held.map(([path, value]) => `${sentence(label(path))} is ${shown(path, value)} on the record`).join("; ") + "; change the values so the rule holds."
-          : "Change the values so the rule holds."}
-      </span>
-      {technical && (
-        <span className="grid gap-0.5 font-mono text-xs text-muted-foreground">
-          <span>{code} · {reason.subject}</span>
-          {reason.pin?.artifactId !== undefined && <span>{reason.pin.artifactId}@{reason.pin.version ?? "?"}</span>}
-          <span className="whitespace-pre-wrap">{explanation}</span>
-        </span>
-      )}
+    <div role="alert" className="overflow-hidden rounded-xl border border-border bg-card text-sm">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
+        <Chip tone="red" icon={ShieldX}>Refused</Chip>
+        <span className="text-meta text-muted-foreground">This change breaks a rule, so nothing was saved</span>
+      </div>
+      <div className="grid gap-2.5 px-3 py-3">
+        {rationale !== undefined && <p className="font-medium text-pretty text-foreground">{rationale}</p>}
+        {checked.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5" aria-label="The values it checked">
+            {checked.map(([path, value], index) => <span key={path} className="contents">
+              {index > 0 && <span className="text-meta text-muted-foreground">{index === checked.length - 1 ? "vs" : "·"}</span>}
+              <FactChip label={label(path)} className="font-mono [&>span:first-of-type]:font-sans">{shown(path, value)}</FactChip>
+            </span>)}
+          </div>
+        )}
+        <p className="text-meta text-muted-foreground">
+          {held.length > 0 && held.length < checked.length
+            ? held.map(([path, value]) => `${sentence(label(path))} is ${shown(path, value)} on the record`).join("; ") + "; change the values so the rule holds."
+            : "Change the values so the rule holds."}
+        </p>
+        {technical && (
+          <span className="grid gap-0.5 border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">
+            <span>{code} · {reason.subject}</span>
+            {reason.pin?.artifactId !== undefined && <span>{reason.pin.artifactId}@{reason.pin.version ?? "?"}</span>}
+            <span className="whitespace-pre-wrap">{explanation}</span>
+          </span>
+        )}
+      </div>
     </div>
   )
 }
