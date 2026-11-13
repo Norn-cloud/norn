@@ -4202,5 +4202,5 @@ fn a_reveal_receipt_names_who_what_when_and_why_but_never_the_value() {
     let event = serde_json::to_value(receipt.ledger_event().expect("event")).expect("json");
     assert_eq!(event["type"], "marking.revealed");
     assert_eq!(event["purpose"], "refund dispute");
-    assert!(!event.to_string().contains("@"), "{event}");
+    assert!(!event.to_string().contains('@'), "{event}");
 }

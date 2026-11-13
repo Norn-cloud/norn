@@ -126,6 +126,49 @@ impl PseudonymKey {
     }
 }
 
+impl PseudonymKey {
+    /// A keyed, unlinkable stand-in for a derived row's id: its plain id is
+    /// a hash of grain values a dictionary could reverse.
+    #[must_use]
+    pub fn keyed_id(&self, id: &str) -> String {
+        let mut message = b"norn.row-id/1\0".to_vec();
+        message.extend_from_slice(id.as_bytes());
+        hmac(&self.0, &message)
+            .iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            })
+    }
+}
+
+/// How a derived row's id leaves the server: as it is, or keyed when a
+/// grain column carries markings in a cell that declares them. A cell with
+/// markings but no pseudonym key serves no such rows.
+///
+/// # Errors
+/// The cell cannot be read, or the ids would need a key the host lacks (403).
+pub(crate) fn row_ids<E: SqlEngine>(
+    host: &DevHost<E>,
+    grain_marked: bool,
+) -> Result<Option<PseudonymKey>, Refusal> {
+    if !grain_marked {
+        return Ok(None);
+    }
+    let catalog = {
+        let cell = host.cell()?;
+        host.marking_catalog(&cell.store().read())?
+    };
+    if catalog.is_empty() {
+        return Ok(None);
+    }
+    host.pseudonym_key()
+        .cloned()
+        .map(Some)
+        .ok_or_else(crate::authz::read_denied)
+}
+
 /// HMAC-SHA256 (RFC 2104).
 pub(crate) fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut block = if key.len() > 64 {
@@ -590,14 +633,17 @@ pub(crate) fn record_reveal<E: SqlEngine>(
             return Err(crate::object_routes::snapshot_moved());
         }
         cell.record_reveal(&format!("reveal:{actor}:{key}"), &receipt)
-            .map_err(|error| match error {
-                norn_cell::CellError::IdempotencyConflict(_) => Refusal::new(
-                    http::StatusCode::CONFLICT,
-                    "reveal.idempotency_conflict",
-                    "the idempotency key was used for another reveal",
-                    "use a new key for a new reveal",
-                ),
-                other => Refusal::host(other),
+            .map_err(|error| {
+                if matches!(error, norn_cell::CellError::IdempotencyConflict(_)) {
+                    Refusal::new(
+                        http::StatusCode::CONFLICT,
+                        "reveal.idempotency_conflict",
+                        "the idempotency key was used for another reveal",
+                        "use a new key for a new reveal",
+                    )
+                } else {
+                    Refusal::host(error)
+                }
             })?
     };
     let replayed = matches!(outcome, norn_cell::CommitOutcome::Replayed(_));

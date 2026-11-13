@@ -1075,6 +1075,15 @@ pub fn profile_objects<E: SqlEngine>(
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
     use norn_cell::analytics::{ProfileRequest, ProfileResponse};
+    // PRIVACY-1: the engine mirror holds stored values; a cell that declares
+    // markings profiles natively, over projected values.
+    let marked = {
+        let guard = host.cell()?;
+        !host.marking_catalog(&guard.store().read())?.is_empty()
+    };
+    if marked {
+        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();

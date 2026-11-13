@@ -25,6 +25,7 @@
 //! the reader who typed it.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 use norn_ir::RuntimeValue;
@@ -266,7 +267,10 @@ fn text_of(value: &RuntimeValue) -> Option<String> {
     match value {
         RuntimeValue::String(text) => Some(text.clone()),
         RuntimeValue::Number(number) => Some(number.to_string()),
-        _ => None,
+        RuntimeValue::Null
+        | RuntimeValue::Bool(_)
+        | RuntimeValue::Array(_)
+        | RuntimeValue::Object(_) => None,
     }
 }
 
@@ -319,63 +323,87 @@ fn occurrences(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
         // Lower-casing changed byte lengths: match exactly instead.
         return haystack
             .match_indices(needle)
-            .map(|(at, _)| (at, at + needle.len()))
+            .map(|(at, _)| (at, at.saturating_add(needle.len())))
             .collect();
     }
     h.match_indices(&n)
-        .map(|(at, _)| (at, at + n.len()))
+        .map(|(at, _)| (at, at.saturating_add(n.len())))
         .collect()
 }
 
 /// A detector match: kind and byte range.
 fn detect(text: &str) -> Vec<(&'static str, usize, usize)> {
-    let mut found = Vec::new();
+    let mut found = emails(text);
+    found.extend(digit_runs(text));
+    found
+}
+
+/// Email addresses: `local@domain.tld` around each `@`.
+fn emails(text: &str) -> Vec<(&'static str, usize, usize)> {
     let bytes = text.as_bytes();
-    // Emails: local@domain.tld around each '@'.
+    let local = |b: u8| b.is_ascii_alphanumeric() || b"._%+-".contains(&b);
+    let domain = |b: u8| b.is_ascii_alphanumeric() || b".-".contains(&b);
+    let mut found = Vec::new();
     for (at, _) in text.match_indices('@') {
-        let local = |b: u8| b.is_ascii_alphanumeric() || b"._%+-".contains(&b);
-        let domain = |b: u8| b.is_ascii_alphanumeric() || b".-".contains(&b);
         let mut start = at;
-        while start > 0 && bytes.get(start - 1).copied().is_some_and(local) {
-            start -= 1;
+        while let Some(previous) = start.checked_sub(1)
+            && bytes.get(previous).copied().is_some_and(local)
+        {
+            start = previous;
         }
-        let mut end = at + 1;
-        while end < bytes.len() && bytes.get(end).copied().is_some_and(domain) {
-            end += 1;
+        let host_start = at.saturating_add(1);
+        let mut end = host_start;
+        while bytes.get(end).copied().is_some_and(domain) {
+            end = end.saturating_add(1);
         }
-        while end > at + 1 && bytes.get(end - 1) == Some(&b'.') {
-            end -= 1;
+        while end > host_start && end.checked_sub(1).and_then(|last| bytes.get(last)) == Some(&b'.') {
+            end = end.saturating_sub(1);
         }
-        let host = text.get(at + 1..end).unwrap_or("");
+        let host = text.get(host_start..end).unwrap_or("");
         if start < at && host.contains('.') && !host.starts_with('.') {
             found.push(("EMAIL", start, end));
         }
     }
-    // Digit runs with separators: cards (13-19 digits, Luhn) and phones (8-15).
-    let mut index = 0;
+    found
+}
+
+/// Digit runs with separators: payment cards (13 to 19 digits, Luhn-valid)
+/// and phone numbers (8 to 15 digits, written with `+` or separators).
+fn digit_runs(text: &str) -> Vec<(&'static str, usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut index = 0_usize;
     while index < bytes.len() {
+        let preceded = index
+            .checked_sub(1)
+            .and_then(|previous| bytes.get(previous))
+            .is_some_and(u8::is_ascii_alphanumeric);
         let starts = bytes
             .get(index)
             .is_some_and(|b| b.is_ascii_digit() || *b == b'+')
-            && (index == 0 || !bytes.get(index - 1).is_some_and(u8::is_ascii_alphanumeric));
+            && !preceded;
         if !starts {
-            index += 1;
+            index = index.saturating_add(1);
             continue;
         }
         let mut end = index;
         let mut digits = String::new();
-        while end < bytes.len() {
-            let b = bytes.get(end).copied().unwrap_or(0);
+        while let Some(&b) = bytes.get(end) {
             if b.is_ascii_digit() {
                 digits.push(char::from(b));
             } else if !(b" -().".contains(&b) || (b == b'+' && end == index)) {
                 break;
             }
-            end += 1;
+            end = end.saturating_add(1);
         }
         // Do not end on a separator.
-        while end > index && !bytes.get(end - 1).is_some_and(u8::is_ascii_digit) {
-            end -= 1;
+        while end > index
+            && !end
+                .checked_sub(1)
+                .and_then(|last| bytes.get(last))
+                .is_some_and(u8::is_ascii_digit)
+        {
+            end = end.saturating_sub(1);
         }
         let card = (13..=19).contains(&digits.len()) && luhn(&digits);
         let phone = !card
@@ -389,22 +417,22 @@ fn detect(text: &str) -> Vec<(&'static str, usize, usize)> {
         } else if phone {
             found.push(("PHONE", index, end));
         }
-        index = end.max(index + 1);
+        index = end.max(index.saturating_add(1));
     }
     found
 }
 
 fn luhn(digits: &str) -> bool {
-    let mut sum = 0;
+    let mut sum = 0_u32;
     for (position, c) in digits.chars().rev().enumerate() {
-        let mut d = c.to_digit(10).unwrap_or(0);
-        if position % 2 == 1 {
-            d *= 2;
-            if d > 9 {
-                d -= 9;
-            }
-        }
-        sum += d;
+        let d = c.to_digit(10).unwrap_or(0);
+        let weighted = if position % 2 == 1 {
+            let doubled = d.saturating_mul(2);
+            if doubled > 9 { doubled.saturating_sub(9) } else { doubled }
+        } else {
+            d
+        };
+        sum = sum.saturating_add(weighted);
     }
     sum % 10 == 0
 }
@@ -418,13 +446,20 @@ struct Tokens {
 }
 
 impl Tokens {
-    fn token(&mut self, kind: &str, value: &str, make: impl FnOnce(String) -> Entry) -> String {
-        let key = (kind.to_owned(), value.to_lowercase());
+    /// The token for `value` in `space` (a field's and a typed literal's
+    /// never merge, so a guess never shares a field's token).
+    fn token(
+        &mut self,
+        (space, kind): (&str, &str),
+        value: &str,
+        make: impl FnOnce(String) -> Entry,
+    ) -> String {
+        let key = (kind.to_owned(), format!("{space}\u{0}{}", value.to_lowercase()));
         if let Some(token) = self.by_value.get(&key) {
             return token.clone();
         }
         let count = self.counts.entry(kind.to_owned()).or_default();
-        *count += 1;
+        *count = count.saturating_add(1);
         let token = format!("[{kind}_{count}]");
         self.by_value.insert(key, token.clone());
         self.entries.push(make(token.clone()));
@@ -447,6 +482,237 @@ fn splice(text: &str, ranges: &[(usize, usize, String)]) -> String {
 
 fn bad(message: impl Into<String>) -> Refusal {
     Refusal::invalid(message)
+}
+
+
+/// A field reference: object type, id and property.
+type FieldRef = (String, String, String);
+
+/// What tokenizing a prompt produced.
+struct Tokenized {
+    tokens: Tokens,
+    withheld: Vec<String>,
+    field_tokens: BTreeMap<FieldRef, String>,
+    safe_prompt: String,
+}
+
+/// The context rows and the marked values to look for, read in one section.
+/// What the guard reads from the cell for one prompt.
+struct Candidates {
+    /// The context rows.
+    rows: Vec<ObjectRecord>,
+    /// Their marked text fields.
+    context_fields: Vec<Candidate>,
+    /// Marked text values elsewhere in the cell (bounded).
+    scanned: Vec<Candidate>,
+    /// Every marked property of the context rows, whatever its type.
+    marked: std::collections::BTreeSet<FieldRef>,
+}
+
+fn read_candidates<E: SqlEngine>(
+    host: &DevHost<E>,
+    request: &NornGuardRequest,
+) -> Result<Candidates, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let catalog = host.marking_catalog(&reader)?;
+    let mut context = Vec::new();
+    for reference in &request.context {
+        if !reader.model().has_type(&reference.object_type) {
+            return Err(not_found());
+        }
+        let row = reader
+            .object(MAIN_WORLD, &reference.object_type, &reference.id)
+            .map_err(Refusal::host)?
+            .ok_or_else(not_found)?;
+        if reader
+            .observation_is_quarantined(MAIN_WORLD, &row)
+            .map_err(Refusal::host)?
+        {
+            return Err(not_found());
+        }
+        context.push(row);
+    }
+    // Marked values anywhere in the cell, bounded: they are tokenized
+    // wherever the text names them, whoever may read them.
+    let mut scanned = Vec::new();
+    if !catalog.is_empty() {
+        let mut budget = MAX_SCAN_ROWS;
+        let types: Vec<String> = reader
+            .model()
+            .object_types()
+            .map(|def| def.name.as_str().to_owned())
+            .collect();
+        for object_type in types {
+            if budget == 0 {
+                break;
+            }
+            let marked = reader
+                .marking_property_names(&object_type)
+                .map_err(Refusal::host)?;
+            if marked.is_empty() {
+                continue;
+            }
+            let rows = reader
+                .list_after(MAIN_WORLD, &object_type, None, budget)
+                .map_err(Refusal::host)?;
+            budget = budget.saturating_sub(rows.len());
+            for row in rows.into_iter().filter(|row| row.object_type == object_type) {
+                scanned.extend(marked_fields(&reader, &catalog, &row)?);
+            }
+        }
+    }
+    let mut fields = Vec::new();
+    let mut marked = std::collections::BTreeSet::new();
+    for row in &context {
+        fields.extend(marked_fields(&reader, &catalog, row)?);
+        let markings = privacy::row_markings(&reader, &catalog, row)?;
+        for property in row.values.keys() {
+            let is_marked = markings
+                .as_ref()
+                .is_none_or(|markings| markings.get(property).is_some_and(|ids| !ids.is_empty()));
+            if is_marked {
+                marked.insert((row.object_type.clone(), row.id.clone(), property.clone()));
+            }
+        }
+    }
+    Ok(Candidates {
+        rows: context,
+        context_fields: fields,
+        scanned,
+        marked,
+    })
+}
+
+/// Replace marked values (context fields first, then any marked value the
+/// text names) and detected identifiers with numbered tokens.
+fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> Tokenized {
+    let mut tokens = Tokens::default();
+    let mut withheld = Vec::new();
+    let entry_of = |candidate: &Candidate, token: String| Entry {
+        token,
+        kind: candidate.kind.clone(),
+        label: candidate.label.clone(),
+        source: NornGuardSource::Field,
+        object_type: Some(candidate.row.object_type.clone()),
+        id: Some(candidate.row.id.clone()),
+        property: Some(candidate.property.clone()),
+        version: Some(candidate.row.version),
+        markings: candidate.markings.clone(),
+        literal: None,
+    };
+    // Context fields first, so their tokens number from 1 in reading order.
+    let mut field_tokens: BTreeMap<FieldRef, String> = BTreeMap::new();
+    for candidate in &context_fields {
+        let token = tokens.token(("field", &candidate.kind), &candidate.value, |token| {
+            entry_of(candidate, token)
+        });
+        field_tokens.insert(
+            (
+                candidate.row.object_type.clone(),
+                candidate.row.id.clone(),
+                candidate.property.clone(),
+            ),
+            token,
+        );
+        withheld.push(format!(
+            "{}/{}.{}",
+            candidate.row.object_type, candidate.row.id, candidate.property
+        ));
+    }
+    // 1. Marked values in the text (longest first, never inside a token).
+    let mut values: Vec<&Candidate> = context_fields
+        .iter()
+        .chain(&scanned)
+        .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
+        .collect();
+    values.sort_by(|a, b| {
+        b.value
+            .len()
+            .cmp(&a.value.len())
+            .then(a.value.cmp(&b.value))
+    });
+    let mut spans: Vec<(usize, usize, String)> = Vec::new();
+    let overlaps = |spans: &[(usize, usize, String)], start: usize, end: usize| {
+        spans.iter().any(|(s, e, _)| start < *e && *s < end)
+    };
+    for candidate in values {
+        for (start, end) in occurrences(text, &candidate.value) {
+            let bounded = !request
+                .text
+                .get(..start)
+                .and_then(|before| before.chars().last())
+                .is_some_and(char::is_alphanumeric)
+                && !request
+                    .text
+                    .get(end..)
+                    .and_then(|after| after.chars().next())
+                    .is_some_and(char::is_alphanumeric);
+            if bounded && !overlaps(&spans, start, end) {
+                let token = tokens.token(("field", &candidate.kind), &candidate.value, |token| {
+                    entry_of(candidate, token)
+                });
+                let field = format!(
+                    "{}/{}.{}",
+                    candidate.row.object_type, candidate.row.id, candidate.property
+                );
+                if !withheld.contains(&field) {
+                    withheld.push(field);
+                }
+                spans.push((start, end, token));
+            }
+        }
+    }
+    // 2. The detector pass over what is left.
+    for (kind, start, end) in detect(text) {
+        if overlaps(&spans, start, end) {
+            continue;
+        }
+        let literal = text.get(start..end).unwrap_or("").to_owned();
+        let token = tokens.token(("detected", kind), &literal, |token| Entry {
+            token,
+            kind: kind.to_owned(),
+            label: title_case(kind),
+            source: NornGuardSource::Detected,
+            object_type: None,
+            id: None,
+            property: None,
+            version: None,
+            markings: Vec::new(),
+            literal: Some(literal.clone()),
+        });
+        spans.push((start, end, token));
+    }
+    spans.sort_by_key(|(start, _, _)| *start);
+    let safe_prompt = splice(text, &spans);
+    Tokenized { tokens, withheld, field_tokens, safe_prompt }
+}
+
+/// The context block: each record's fields, marked ones as tokens.
+fn context_block(
+    rows: &[ObjectRecord],
+    marked: &std::collections::BTreeSet<FieldRef>,
+    field_tokens: &BTreeMap<FieldRef, String>,
+) -> String {
+    let mut block = String::new();
+    // The context block: each record's fields, marked ones as tokens.
+    for row in rows {
+        let _ = write!(block, "\n\nRecord {} {}:", row.object_type, row.id);
+        for (property, value) in &row.values {
+            let shown = field_tokens
+                .get(&(row.object_type.clone(), row.id.clone(), property.clone()))
+                .cloned()
+                .or_else(|| {
+                    // Any marked property, whatever its type, is withheld.
+                    let field = (row.object_type.clone(), row.id.clone(), property.clone());
+                    (!marked.contains(&field))
+                        .then(|| text_of(value).unwrap_or_else(|| format!("{value:?}")))
+                })
+                .unwrap_or_else(|| "[WITHHELD]".to_owned());
+            let _ = write!(block, "\n- {property}: {shown}");
+        }
+    }
+    block
 }
 
 /// PRIVACY-GUARD-1: tokenize a prompt for a model call (see the module docs).
@@ -476,181 +742,31 @@ pub fn guard<E: SqlEngine>(
     }
     let actor = actor.ok_or_else(crate::authz::read_denied)?;
     scope_gate(host, scope, actor)?;
-    // Context rows: readable by the caller, read in one section.
-    let (_catalog, context, scanned) = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        let catalog = host.marking_catalog(&reader)?;
-        let mut context = Vec::new();
-        for reference in &request.context {
-            if !reader.model().has_type(&reference.object_type) {
-                return Err(not_found());
-            }
-            let row = reader
-                .object(MAIN_WORLD, &reference.object_type, &reference.id)
-                .map_err(Refusal::host)?
-                .ok_or_else(not_found)?;
-            context.push(row);
-        }
-        // Marked values anywhere in the cell, bounded: they are tokenized
-        // wherever the text names them, whoever may read them.
-        let mut scanned = Vec::new();
-        if !catalog.is_empty() {
-            let mut budget = MAX_SCAN_ROWS;
-            let types: Vec<String> = reader
-                .model()
-                .object_types()
-                .map(|def| def.name.as_str().to_owned())
-                .collect();
-            for object_type in types {
-                if budget == 0 {
-                    break;
-                }
-                let marked = reader
-                    .marking_property_names(&object_type)
-                    .map_err(Refusal::host)?;
-                if marked.is_empty() {
-                    continue;
-                }
-                let rows = reader
-                    .list_after(MAIN_WORLD, &object_type, None, budget)
-                    .map_err(Refusal::host)?;
-                budget = budget.saturating_sub(rows.len());
-                for row in rows
-                    .into_iter()
-                    .filter(|row| row.object_type == object_type)
-                {
-                    scanned.extend(marked_fields(&reader, &catalog, &row)?);
-                }
-            }
-        }
-        let mut fields = Vec::new();
-        for row in &context {
-            fields.extend(marked_fields(&reader, &catalog, row)?);
-        }
-        (catalog, (context, fields), scanned)
-    };
-    let (rows, context_fields) = context;
+    let Candidates {
+        rows,
+        context_fields,
+        scanned,
+        marked,
+    } = read_candidates(host, request)?;
+    // Only values this caller may reveal are matched in free text: matching
+    // any other would confirm a value (and name its record) to someone who
+    // may only see its pseudonym. Those fall to the detector pass.
+    let scanned: Vec<Candidate> = scanned
+        .into_iter()
+        .filter(|candidate| {
+            !candidate.markings.is_empty()
+                && row_readable(host, access, actor, &candidate.row)
+                && candidate.markings.iter().all(|id| host.reveals(actor, id))
+        })
+        .collect();
     for row in &rows {
         if !row_readable(host, access, actor, row) {
             return Err(not_found());
         }
     }
-    let mut tokens = Tokens::default();
-    let mut withheld = Vec::new();
-    let entry_of = |candidate: &Candidate, token: String| Entry {
-        token,
-        kind: candidate.kind.clone(),
-        label: candidate.label.clone(),
-        source: NornGuardSource::Field,
-        object_type: Some(candidate.row.object_type.clone()),
-        id: Some(candidate.row.id.clone()),
-        property: Some(candidate.property.clone()),
-        version: Some(candidate.row.version),
-        markings: candidate.markings.clone(),
-        literal: None,
-    };
-    // Context fields first, so their tokens number from 1 in reading order.
-    let mut field_tokens: BTreeMap<(String, String, String), String> = BTreeMap::new();
-    for candidate in &context_fields {
-        let token = tokens.token(&candidate.kind, &candidate.value, |token| {
-            entry_of(candidate, token)
-        });
-        field_tokens.insert(
-            (
-                candidate.row.object_type.clone(),
-                candidate.row.id.clone(),
-                candidate.property.clone(),
-            ),
-            token,
-        );
-        withheld.push(format!(
-            "{}/{}.{}",
-            candidate.row.object_type, candidate.row.id, candidate.property
-        ));
-    }
-    // 1. Marked values in the text (longest first, never inside a token).
-    let mut values: Vec<&Candidate> = context_fields
-        .iter()
-        .chain(&scanned)
-        .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
-        .collect();
-    values.sort_by(|a, b| {
-        b.value
-            .len()
-            .cmp(&a.value.len())
-            .then(a.value.cmp(&b.value))
-    });
-    let mut taken: Vec<(usize, usize, String)> = Vec::new();
-    let overlaps = |taken: &[(usize, usize, String)], start: usize, end: usize| {
-        taken.iter().any(|(s, e, _)| start < *e && *s < end)
-    };
-    for candidate in values {
-        for (start, end) in occurrences(&request.text, &candidate.value) {
-            let bounded = !request
-                .text
-                .get(..start)
-                .and_then(|before| before.chars().last())
-                .is_some_and(char::is_alphanumeric)
-                && !request
-                    .text
-                    .get(end..)
-                    .and_then(|after| after.chars().next())
-                    .is_some_and(char::is_alphanumeric);
-            if bounded && !overlaps(&taken, start, end) {
-                let token = tokens.token(&candidate.kind, &candidate.value, |token| {
-                    entry_of(candidate, token)
-                });
-                let field = format!(
-                    "{}/{}.{}",
-                    candidate.row.object_type, candidate.row.id, candidate.property
-                );
-                if !withheld.contains(&field) {
-                    withheld.push(field);
-                }
-                taken.push((start, end, token));
-            }
-        }
-    }
-    // 2. The detector pass over what is left.
-    for (kind, start, end) in detect(&request.text) {
-        if overlaps(&taken, start, end) {
-            continue;
-        }
-        let literal = request.text.get(start..end).unwrap_or("").to_owned();
-        let token = tokens.token(kind, &literal, |token| Entry {
-            token,
-            kind: kind.to_owned(),
-            label: title_case(kind),
-            source: NornGuardSource::Detected,
-            object_type: None,
-            id: None,
-            property: None,
-            version: None,
-            markings: Vec::new(),
-            literal: Some(literal.clone()),
-        });
-        taken.push((start, end, token));
-    }
-    taken.sort_by_key(|(start, _, _)| *start);
-    let mut safe_prompt = splice(&request.text, &taken);
-    // The context block: each record's fields, marked ones as tokens.
-    for row in &rows {
-        safe_prompt.push_str(&format!("\n\nRecord {} {}:", row.object_type, row.id));
-        for (property, value) in &row.values {
-            let shown = field_tokens
-                .get(&(row.object_type.clone(), row.id.clone(), property.clone()))
-                .cloned()
-                .or_else(|| {
-                    let marked = context_fields.iter().any(|candidate| {
-                        candidate.row.id == row.id && candidate.property == *property
-                    });
-                    (!marked).then(|| text_of(value).unwrap_or_else(|| format!("{value:?}")))
-                })
-                .unwrap_or_else(|| "[WITHHELD]".to_owned());
-            safe_prompt.push_str(&format!("\n- {property}: {shown}"));
-        }
-    }
+    let Tokenized { tokens, withheld, field_tokens, mut safe_prompt } =
+        tokenize(&request.text, &context_fields, &scanned);
+    safe_prompt.push_str(&context_block(&rows, &marked, &field_tokens));
     let event = Guarded {
         kind: GUARDED.to_owned(),
         actor: actor.to_owned(),
@@ -663,14 +779,17 @@ pub fn guard<E: SqlEngine>(
     let outcome = {
         let mut cell = host.cell()?;
         cell.record_privacy_event(&format!("guard:{actor}:{key}"), encoded)
-            .map_err(|error| match error {
-                norn_cell::CellError::IdempotencyConflict(_) => Refusal::new(
-                    http::StatusCode::CONFLICT,
-                    "guard.idempotency_conflict",
-                    "the idempotency key was used for another prompt",
-                    "use a new key for a new prompt",
-                ),
-                other => Refusal::host(other),
+            .map_err(|error| {
+                if matches!(error, norn_cell::CellError::IdempotencyConflict(_)) {
+                    Refusal::new(
+                        http::StatusCode::CONFLICT,
+                        "guard.idempotency_conflict",
+                        "the idempotency key was used for another prompt",
+                        "use a new key for a new prompt",
+                    )
+                } else {
+                    Refusal::host(error)
+                }
             })?
     };
     let receipt = outcome.receipt();
@@ -770,11 +889,11 @@ fn pieces<'a>(text: &'a str, known: &BTreeMap<&str, &Entry>) -> Vec<(&'a str, bo
     let mut at = 0;
     let mut search = 0;
     while let Some(open) = text.get(search..).and_then(|rest| rest.find('[')) {
-        let open = search + open;
+        let open = search.saturating_add(open);
         let Some(close) = text.get(open..).and_then(|rest| rest.find(']')) else {
             break;
         };
-        let close = open + close + 1;
+        let close = open.saturating_add(close).saturating_add(1);
         let candidate = text.get(open..close).unwrap_or("");
         if known.contains_key(candidate) {
             if open > at {
@@ -783,7 +902,7 @@ fn pieces<'a>(text: &'a str, known: &BTreeMap<&str, &Entry>) -> Vec<(&'a str, bo
             out.push((candidate, true));
             at = close;
         }
-        search = open + 1;
+        search = open.saturating_add(1);
     }
     if at < text.len() {
         out.push((text.get(at..).unwrap_or(""), false));
@@ -886,14 +1005,14 @@ fn scope_gate<E: SqlEngine>(
     // reading the cell's definitions, in the cell's own scope.
     host.scope()
         .admit(scope.org_id.as_deref(), scope.environment_id.as_deref())
-        .map_err(|_| crate::authz::read_denied())?;
+        .map_err(|_outside| crate::authz::read_denied())?;
     host.authorizer
         .authorize(&crate::authz::AccessRequest {
             scope: host.scope(),
             actor: Some(actor),
             operation: crate::authz::Operation::ReadDefinitions,
         })
-        .map_err(|_| crate::authz::read_denied())
+        .map_err(|_denied| crate::authz::read_denied())
 }
 
 /// One token for `actor`: `(text, state)`.
@@ -919,20 +1038,43 @@ fn restore_one<E: SqlEngine>(
             else {
                 return kept();
             };
-            let row = {
+            // The row as it is now, its current markings joined with those
+            // the guard saw: a marking added since still decides.
+            let read = {
                 let cell = host.cell()?;
                 let reader = cell.store().read();
-                reader
+                match reader
                     .object(MAIN_WORLD, object_type, id)
                     .map_err(Refusal::host)?
+                {
+                    Some(row)
+                        if !reader
+                            .observation_is_quarantined(MAIN_WORLD, &row)
+                            .map_err(Refusal::host)? =>
+                    {
+                        let current = reader
+                            .effective_markings(MAIN_WORLD, &row.object_type, &row.id, None)
+                            .map_err(Refusal::host)?;
+                        Some((row, current))
+                    }
+                    Some(_) | None => None,
+                }
             };
-            let Some(mut row) = row else {
+            let Some((mut row, current)) = read else {
                 return kept();
             };
             if !row_readable(host, access, actor, &row) {
                 return kept();
             }
-            let markings = entry.markings.clone();
+            let Some(current) = current else {
+                return kept();
+            };
+            let mut markings = entry.markings.clone();
+            for marking in current.get(property).into_iter().flatten() {
+                if !markings.contains(marking) {
+                    markings.push(marking.clone());
+                }
+            }
             let allowed =
                 !markings.is_empty() && markings.iter().all(|marking| host.reveals(actor, marking));
             if allowed && let Some(value) = row.values.get(property).and_then(text_of) {
@@ -940,7 +1082,7 @@ fn restore_one<E: SqlEngine>(
                     host,
                     actor,
                     &row,
-                    (property, markings),
+                    (property, markings.clone()),
                     &format!("restore guarded model reply {}", entry.token),
                     &format!("{key}:{}", entry.token),
                 )?;
@@ -948,7 +1090,7 @@ fn restore_one<E: SqlEngine>(
                 return Ok((value, "restored".to_owned()));
             }
             // Everyone else reads the field's projection.
-            let mask = privacy::strongest(catalog, &entry.markings)
+            let mask = privacy::strongest(catalog, &markings)
                 .unwrap_or(norn_ir::MaskPolicy::Refuse {});
             match row.values.get_mut(property) {
                 Some(value) => {
