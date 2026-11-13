@@ -383,7 +383,7 @@ pub fn admit_submission(
         ))
     })?;
     if request.base_sha256 != base.sha256 {
-        return Err(Refusal::new(
+        let mut refusal = Refusal::new(
             StatusCode::CONFLICT,
             codes::BASE_MISMATCH,
             "the submission was authored against another trusted base",
@@ -391,7 +391,9 @@ pub fn admit_submission(
                 "this host's trusted base is sha256 {}; rebuild the submission against it",
                 base.sha256
             ),
-        ));
+        );
+        refusal.base_sha256 = Some(base.sha256.clone());
+        return Err(refusal);
     }
     let tenant = tenant_artifacts(cell, &request.artifacts)?;
     let position = |id: &str| {
@@ -592,6 +594,7 @@ mod tests {
         assert_eq!(refusal.code, codes::BASE_MISMATCH);
         assert_eq!(refusal.status, 409);
         assert!(refusal.explanation.contains(base.sha256()));
+        assert_eq!(refusal.base_sha256.as_deref(), Some(base.sha256()));
     }
 
     #[test]

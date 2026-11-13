@@ -1,0 +1,73 @@
+# Norn, self-hosted: `docker compose up` from apps/self-host (see README.md).
+#   norn   celld serving the tenant cell Worker and Studio
+#   s3     the fleet bucket (SeaweedFS); any S3-compatible store works in its place
+#   proxy  Caddy, the only published port
+name: norn
+
+services:
+  norn:
+    build:
+      context: ../..
+      dockerfile: apps/self-host/Dockerfile
+      args:
+        NORN_COMMIT: ${NORN_COMMIT:-}
+    environment:
+      NORN_PUBLIC_URL: ${NORN_PUBLIC_URL:-http://localhost:8080}
+      NORN_OWNER_EMAIL: ${NORN_OWNER_EMAIL:-owner@norn.localhost}
+      NORN_OWNER_PASSWORD: ${NORN_OWNER_PASSWORD:-}
+      CELLD_BUCKET: s3://norn
+      S3_ENDPOINT: http://s3:8333
+      AWS_REGION: us-east-1
+      # The store accepts only requests from this compose network (see s3 below).
+      AWS_ACCESS_KEY_ID: norn
+      AWS_SECRET_ACCESS_KEY: norn-local-store
+    volumes:
+      - norn-data:/data
+    networks: [internal, edge]
+    depends_on:
+      s3-bucket:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
+    volumes:
+      - s3-data:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null"]
+      interval: 3s
+      retries: 40
+    restart: unless-stopped
+
+  s3-bucket:
+    image: chrislusf/seaweedfs:3.97
+    entrypoint: ["/bin/sh", "-c", "echo 's3.bucket.create -name norn' | weed shell -master=s3:9333 2>&1 | grep -v 'already exists' || true"]
+    networks: [internal]
+    depends_on:
+      s3:
+        condition: service_healthy
+
+  proxy:
+    image: caddy:2.10.2
+    environment:
+      NORN_SITE: ${NORN_SITE:-:8080}
+    ports:
+      - "${NORN_PORT:-8080}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks: [edge]
+    depends_on: [norn]
+    restart: unless-stopped
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  norn-data:
+  s3-data:
+  caddy-data:

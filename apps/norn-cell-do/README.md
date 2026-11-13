@@ -37,7 +37,7 @@ POST /v1/cell:provision?orgId=<org>&environmentId=<environment>
   it was built with (`registry/core/artifacts`) and admits the tenant's
   artifacts as candidates against it with the shared checker. `baseSha256`
   names the base the set was authored against; another digest is refused with
-  `cell.base_mismatch`, which states the host's.
+  `cell.base_mismatch`, which states the host's digest in its `baseSha256` field (told only to the scope's provisioner), so a client learns it from its first submission.
 - **What is written, atomically** (HOST-PROVISION-ATOMIC): the store schema,
   the scope binding, a fresh cell identity, the definitions as version 1, their
   admission receipt and the ledger commit, in one storage transaction. A

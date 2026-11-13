@@ -108,6 +108,13 @@ pub struct Refusal {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
     pub restatement: Option<Box<RefusalRestatement>>,
+    /// On `cell.base_mismatch` only: the digest of the trusted base this
+    /// host provisions cells against, the `baseSha256` a provisioning
+    /// submission must name. Told only to a caller authorized to provision
+    /// the scope, so a client learns it from its first submission. Absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_sha256: Option<String>,
 }
 
 /// One checker finding in a refusal.
@@ -231,6 +238,7 @@ impl Refusal {
             explanation: explanation.into(),
             diagnostics: Vec::new(),
             restatement: None,
+            base_sha256: None,
         }
     }
 

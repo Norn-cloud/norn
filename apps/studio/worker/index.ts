@@ -78,6 +78,32 @@ export async function publicSignUp(response: Response): Promise<Response> {
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
 }
 
+/**
+ * Whether the deployment's sign-up policy (migration 0009, `studio_setting` 'signup') refuses this
+ * address: 'first-owner' admits the first account, then only an address with a pending, unexpired
+ * invitation. The database trigger is the authority (it decides inside the insert); this answers
+ * the same question first, so a refused sign-up gets a plain 403 instead of a failed insert.
+ */
+export async function inviteOnly(db: D1Database, request: Request): Promise<boolean> {
+  let email: unknown
+  try { email = ((await request.clone().json()) as { email?: unknown }).email } catch { return false }
+  if (typeof email !== "string") return false
+  const sql = `select 1 as "refused" where (select "value" from "studio_setting" where "key" = 'signup') = 'first-owner'
+    and exists (select 1 from "user")
+    and not exists (select 1 from "invitation" where lower("email") = lower(?) and "status" = 'pending'
+      and case typeof("expiresAt") when 'text' then "expiresAt" > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        when 'integer' then "expiresAt" > unixepoch('now') * 1000 else 0 end)`
+  try {
+    const statement = db.prepare(sql) as unknown as { bind?: (...values: string[]) => { first(): Promise<unknown> }; get?: (...values: string[]) => unknown }
+    const row = statement.bind ? await statement.bind(email).first() : statement.get?.(email)
+    return row !== null && row !== undefined
+  } catch (error) {
+    // A database from before migration 0009 has no policy: sign-up is open, as it was. Anything else fails.
+    if (String(error).includes("no such table: studio_setting")) return false
+    throw error
+  }
+}
+
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
@@ -101,7 +127,10 @@ export default {
       if ([request.headers.get("host"), request.headers.get("x-forwarded-host")].some((value) => value !== null && value.toLowerCase() !== host.toLowerCase())) return refuse(403, "Magic link host does not match this origin.")
     }
     if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
-    if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    if (pathname === "/api/auth/sign-up/email") {
+      if (await inviteOnly(env.AUTH_DB, request)) return refuse(403, "Sign-up on this Studio is by invitation. Ask its owner to invite you.")
+      return publicSignUp(await auth(env).handler(request))
+    }
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")

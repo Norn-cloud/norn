@@ -1,0 +1,8 @@
+# On a server with a domain name: `docker compose -f compose.yaml -f compose.domain.yaml up -d`
+# with NORN_SITE=<domain> and NORN_PUBLIC_URL=https://<domain>. Caddy answers on 80 and 443 and
+# obtains the certificate itself; the domain's DNS must point at this machine.
+services:
+  proxy:
+    ports: !override
+      - "80:80"
+      - "443:443"
