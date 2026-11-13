@@ -168,7 +168,7 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
 
 /** The record's key facts, in its definition's presentation order, each opening where it came from. */
 function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
-  const fields = keyFacts(concept)
+  const fields = keyFacts(concept, reads.object.document.values)
   if (fields.length === 0) return null
   return (
     <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-node border border-node-border bg-node-border shadow-[var(--node-highlight),var(--elevation-1)] sm:grid-cols-3 xl:grid-cols-6">
