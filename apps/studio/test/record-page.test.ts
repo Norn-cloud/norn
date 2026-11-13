@@ -14,8 +14,9 @@ test("key facts follow the definition's order, skip the title facts and nested v
 })
 
 test("a measure's unit and currency sources are read inside it, and an empty fact takes no slot", () => {
-  const quantity = { ...field("quantity", "decimal"), decimal: { unit: undefined, perUnit: undefined, currencyFrom: undefined, unitFrom: ["unit", "currency"] } }
-  const cost = { ...field("stock_cost", "decimal"), decimal: { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" } }
+  const measure = (id: string, decimal: object) => ({ id, type: "decimal", optional: false, scalar: { kind: "decimal" }, decimal }) as never
+  const quantity = measure("quantity", { unit: undefined, perUnit: undefined, currencyFrom: undefined, unitFrom: ["unit", "currency"] })
+  const cost = measure("stock_cost", { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" })
   const fields = [field("resource_code"), quantity, field("unit"), field("currency"), field("location"), cost, field("cost_currency")] as never
   expect(keyFacts({ fields }).map(({ id }) => id)).toEqual(["resource_code", "quantity", "location", "stock_cost"])
   expect(keyFacts({ fields }, { resource_code: "GOLD", quantity: 200, location: null, stock_cost: 9000 }).map(({ id }) => id)).toEqual(["resource_code", "quantity", "stock_cost"])
