@@ -139,6 +139,8 @@ struct Serving<E: SqlEngine> {
     compiled: Option<u64>,
     /// Why the active definitions installed no action policy, if they failed.
     policy_error: Option<String>,
+    /// How many times the action policy was compiled, for the operator.
+    policy_compiles: u64,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -167,6 +169,7 @@ impl<E: SqlEngine> Serving<E> {
             reads,
             compiled: None,
             policy_error: None,
+            policy_compiles: 0,
         })
     }
 
@@ -207,10 +210,16 @@ impl<E: SqlEngine> Serving<E> {
                 .map_err(|refusal| refusal.explanation)?;
             policy::recompile_reads(&self.reads, served.object_types()).map_err(|error| error.0)?;
             self.object_types = collections(served.object_types());
-            ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
+            // The policy itself is the version's: a policy that does not
+            // compile fails the same way on every retry.
+            self.policy_compiles = self.policy_compiles.saturating_add(1);
+            Ok(ActionPolicy::compile(&model, &artifacts, self.host.scope())
+                .map_err(|error| error.0))
         });
         match compiled {
-            Some(Ok(policy)) => self.install_actions(policy, version, None),
+            Some(Ok(Ok(policy))) => self.install_actions(policy, version, None),
+            // Marked compiled: the reason stands until the definitions change.
+            Some(Ok(Err(reason))) => self.install_actions(None, version, Some(reason)),
             // Not marked compiled: the next request tries again.
             Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
             None => self.install_actions(None, version, None),
@@ -323,6 +332,27 @@ impl<E: SqlEngine> Tenant<E> {
         match &self.state {
             State::Serving(serving) => serving.policy_error.as_deref(),
             State::Vacant => None,
+        }
+    }
+
+    /// The definitions version the action policy was last settled for, or
+    /// `None` when the next request recompiles: a policy that does not
+    /// compile is settled for its version, a read that failed is not.
+    #[must_use]
+    pub fn action_policy_version(&self) -> Option<u64> {
+        match &self.state {
+            State::Serving(serving) => serving.compiled,
+            State::Vacant => None,
+        }
+    }
+
+    /// How many times the cell compiled its action policy since it opened:
+    /// once per definitions version, unless a read failed and was retried.
+    #[must_use]
+    pub fn action_policy_compiles(&self) -> u64 {
+        match &self.state {
+            State::Serving(serving) => serving.policy_compiles,
+            State::Vacant => 0,
         }
     }
 
