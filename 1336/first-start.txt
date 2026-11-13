@@ -1,0 +1,71 @@
+$ docker compose up -d --build
+ Volume norn_caddy-data Creating 
+ Volume norn_caddy-data Created 
+ Volume norn_norn-data Creating 
+ Volume norn_norn-data Created 
+ Volume norn_s3-data Creating 
+ Volume norn_s3-data Created 
+ Container norn-norn-1 Creating 
+ Container norn-s3-1 Creating 
+ Container norn-s3-1 Created 
+ Container norn-norn-1 Created 
+ Container norn-proxy-1 Creating 
+ Container norn-proxy-1 Created 
+ Container norn-s3-1 Starting 
+ Container norn-norn-1 Starting 
+ Container norn-s3-1 Started 
+ Container norn-norn-1 Started 
+ Container norn-proxy-1 Starting 
+ Container norn-proxy-1 Started 
+
+real	11m21.879s
+user	0m1.850s
+sys	0m0.979s
+
+$ docker compose logs norn   # first start
+ celld 0.6.3
+───────────────────────────────────────────────
+Total Upload: 34270.38 KiB / gzip: 6365.81 KiB
+Your Worker has access to the following bindings:
+Binding                                  Resource
+env.CELLS (Cell)                         Durable Object (SQLite)
+env.NORN_HOST_ISSUER (Text)              Environment Variable
+env.NORN_HOST_JWKS_URL (Text)            Environment Variable
+env.NORN_LINEAGE_KEY (Text)              Environment Variable
+env.NORN_TENANT_ENVIRONMENTS (Text)      Environment Variable
+Bundled norn-cell (0.11 sec)
+Current Version ID: aa00588767aa15fd
+Uploaded norn-cell (0.12 sec)
+  s3://norn/deploy/norn-cell/aa00588767aa15fd
+Nodes adopt this version at their next pointer poll, without a restart.
+wrote /opt/norn/studio/wrangler.json for norn-studio-self
+ celld 0.6.3
+───────────────────────────────────────────────
+Total Upload: 2196.59 KiB / gzip: 389.02 KiB
+Static Assets: 28 files / 16849.82 KiB (28 unique bodies)
+Your Worker has access to the following bindings:
+Binding                                       Resource
+env.NORN_HOST (Service)                       norn-cell
+env.AUTH_DB (D1)                              norn-studio-auth-self
+env.AUTH_SCRYPT (Text)                        Environment Variable
+env.BETTER_AUTH_SECRET (Text)                 Environment Variable
+env.BETTER_AUTH_URL (Text)                    Environment Variable
+env.STUDIO_BUILD (Text)                       Environment Variable
+env.STUDIO_CLIENT_IP_HEADER (Text)            Environment Variable
+env.STUDIO_DEFAULT_ENVIRONMENT_ID (Text)      Environment Variable
+env.ASSETS (Assets)                           Static Assets
+Bundled norn-studio-self (0.12 sec)
+Uploaded norn-studio-self (0.11 sec)
+  s3://norn/deploy/norn-studio-self/9e8b09e18d0044ad
+Nodes adopt this version at their next pointer poll, without a restart.
+Current Version ID: 9e8b09e18d0044ad
+celld listening on 127.0.0.1:8080 (ownership=s3)
+celld internal listening on 127.0.0.1:8081 (advertise=127.0.0.1:8081)
+Executed 1 statement(s) in 0ms
+
+Set up: the owner and their workspace's cell exist.
+Sign in as owner@norn.localhost. The password is in the data volume: docker compose exec norn cat /data/secrets/owner-password
+
+celld listening on 0.0.0.0:8080 (ownership=s3)
+celld internal listening on 127.0.0.1:8081 (advertise=127.0.0.1:8081)
+Norn is ready at http://localhost:8080
