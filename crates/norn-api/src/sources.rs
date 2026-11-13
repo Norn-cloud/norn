@@ -175,12 +175,14 @@ enum Next {
 }
 
 /// Why a sync could not be claimed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimError {
     /// No such connection.
     Unknown,
     /// A sync of it is already running.
     Running,
+    /// SYNC-SERIAL-1: another connection of the cell is syncing (its id).
+    Busy(String),
 }
 
 struct Run {
@@ -294,7 +296,8 @@ impl Sources {
     /// SYNC-ONE-1: claim a sync of `id` for `actor`, or refuse.
     ///
     /// # Errors
-    /// [`ClaimError::Unknown`] or [`ClaimError::Running`].
+    /// [`ClaimError::Unknown`], [`ClaimError::Running`], or
+    /// [`ClaimError::Busy`] while another connection of the cell syncs.
     pub fn claim(
         &mut self,
         id: &str,
@@ -304,6 +307,9 @@ impl Sources {
     ) -> Result<String, ClaimError> {
         if !self.connections.iter().any(|c| c.id == id) {
             return Err(ClaimError::Unknown);
+        }
+        if let Some(other) = self.syncing(now_ms).filter(|other| other != id) {
+            return Err(ClaimError::Busy(other));
         }
         let state = self.state.entry(id.to_owned()).or_default();
         if state.run.as_ref().is_some_and(|run| held(run, now_ms)) {
@@ -342,6 +348,16 @@ impl Sources {
         }
     }
 
+    /// SYNC-SERIAL-1: the connection whose sync holds the cell at `now_ms`,
+    /// if any. One sync runs per cell at a time, so syncs never interleave
+    /// their steps in one host instance.
+    fn syncing(&self, now_ms: u64) -> Option<String> {
+        self.state
+            .iter()
+            .find(|(_, s)| s.run.as_ref().is_some_and(|run| held(run, now_ms)))
+            .map(|(id, _)| id.clone())
+    }
+
     /// Rows the last step of `id` mapped (SYNC-YIELD-2).
     #[must_use]
     pub fn mapped(&self, id: &str) -> usize {
@@ -351,6 +367,9 @@ impl Sources {
     /// SYNC-ONE-1, SYNC-ACTOR-1: claim the first connection whose schedule
     /// is due at `now_ms` and that is not running, as its own principal.
     pub fn due(&mut self, now_ms: u64) -> Option<String> {
+        if self.syncing(now_ms).is_some() {
+            return None;
+        }
         let id = self.connections.iter().find_map(|c| {
             let state = self.state.get(&c.id);
             if c.every_minutes == 0

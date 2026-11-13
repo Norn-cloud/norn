@@ -1134,3 +1134,41 @@ fn a_paced_sync_maps_at_most_its_rows_per_step() {
     assert!(matches!(step, Step::Continue), "{step:?}");
     assert_eq!(sources.mapped("odoo.sandbox"), 3);
 }
+
+/// SYNC-SERIAL-1: one sync runs per cell at a time. While one connection
+/// syncs, another's claim is refused naming it and the schedule claims
+/// nothing; once it ends, the next one runs.
+#[test]
+fn one_sync_runs_per_cell_at_a_time() {
+    let host = host();
+    let mut sources = sources();
+    sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("claimed");
+    assert_eq!(
+        sources.claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS
+        ),
+        Err(ClaimError::Busy("odoo.sandbox".to_owned()))
+    );
+    assert_eq!(sources.due(EXTRACTED_AT_MS), None);
+    let _ = sync(
+        &host,
+        &mut sources,
+        "odoo.sandbox",
+        ("odoo", true),
+        EXTRACTED_AT_MS,
+    );
+    assert!(!sources.running("odoo.sandbox"));
+    sources
+        .claim(
+            "erpnext.sandbox",
+            Trigger::Manual,
+            "user:a",
+            EXTRACTED_AT_MS + 1,
+        )
+        .expect("the next one runs");
+}
