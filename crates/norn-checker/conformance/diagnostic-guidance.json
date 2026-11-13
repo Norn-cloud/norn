@@ -1300,6 +1300,10 @@
     "fix": "Use a lowercase unique event id, and ignore an event only in listed states, with a reason, where no transition handles it."
   },
   {
+    "code": "lifecycle.soundness.invalid_module_name",
+    "fix": "Name the module with a letter followed by letters, digits or underscores."
+  },
+  {
     "code": "lifecycle.soundness.invalid_trigger",
     "fix": "Give timers positive canonical milliseconds, trigger only on declared events, leave triggered transitions as facts, and compensate with another declared transition."
   },
@@ -1310,6 +1314,14 @@
   {
     "code": "lifecycle.soundness.no_ending",
     "fix": "Declare the lifecycle's endings: terminal states with outcomes, or resting states for a perpetual object."
+  },
+  {
+    "code": "lifecycle.soundness.product_limit",
+    "fix": "Split the page machine or the lifecycle so their product stays within 65,536 states."
+  },
+  {
+    "code": "lifecycle.soundness.sync_conflict",
+    "fix": "Give each UI edge one entry: together with one backend transition, or alone."
   },
   {
     "code": "lifecycle.soundness.timer_cycle",
