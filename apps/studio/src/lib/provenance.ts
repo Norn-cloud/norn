@@ -100,7 +100,7 @@ export function bucketProvenance(answer: Answer, bucket: Pick<Bucket, "members">
     receipt: { kind: "head", seq: answer.revision.seq, hash: answer.revision.hash },
     digests: [],
     asOf: [
-      { label: "Known", value: `after ${answer.knownAsOf} committed ${answer.knownAsOf === 1 ? "change" : "changes"}` },
+      { label: "Known", value: `after ${answer.knownAsOf} ${answer.knownAsOf === 1 ? "commit" : "commits"}` },
       { label: "Window to", value: answer.effectiveAsOf },
       { label: "Read", value: instant(answer.nowMs) },
     ],

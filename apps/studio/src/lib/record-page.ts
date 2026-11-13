@@ -8,11 +8,17 @@ const TITLE_FIELDS = new Set(["id", "label", "display_name"])
 const KEY_FACTS = 6
 
 /**
- * The record's key facts: the first facts its definition declares, in its presentation order,
- * that read as one value (no nested records or JSON), at most six. The order is the author's.
+ * The record's key facts: the first facts its definition declares, in its presentation order, that
+ * read as one value (no nested records or JSON), at most six. A measure's unit and currency sources
+ * are read inside the measure ("200 g"), never as facts of their own, and a fact with no value
+ * takes no slot. The order is the author's.
  */
-export function keyFacts(concept: Pick<Concept, "fields">): Field[] {
-  return concept.fields.filter((field) => !TITLE_FIELDS.has(field.id) && field.scalar.kind !== "record" && field.scalar.kind !== "json-ext").slice(0, KEY_FACTS)
+export function keyFacts(concept: Pick<Concept, "fields">, values?: Readonly<Record<string, unknown>>): Field[] {
+  const sources = new Set(concept.fields.flatMap(({ decimal }) => [...decimal?.unitFrom ?? [], ...decimal?.currencyFrom ? [decimal.currencyFrom] : []]))
+  return concept.fields
+    .filter((field) => !TITLE_FIELDS.has(field.id) && !sources.has(field.id) && field.scalar.kind !== "record" && field.scalar.kind !== "json-ext")
+    .filter((field) => values === undefined || (values[field.id] !== null && values[field.id] !== undefined))
+    .slice(0, KEY_FACTS)
 }
 
 /** The server's counts of a record's visible links by type and direction (HOST-READ-4b), as `/links` sends them on a first page. */
