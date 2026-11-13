@@ -73,7 +73,10 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
  * credential and need no Origin.
  */
 export function originAllowed(request: Request, actor: NornActor, studioOrigins: readonly string[]): boolean {
-  if (actor.actorKind === "service" || SAFE_METHODS.has(request.method)) return true
+  // A WebSocket upgrade is a GET the browser makes cross-site with the cookie and lets the page
+  // read: a live socket (UI-LIVE-1) must come from the Studio origin like any state change.
+  const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket"
+  if (actor.actorKind === "service" || (SAFE_METHODS.has(request.method) && !upgrade)) return true
   return studioOrigins.includes(request.headers.get("origin") ?? "")
 }
 
@@ -85,6 +88,14 @@ export function originAllowed(request: Request, actor: NornActor, studioOrigins:
 export async function forwardToHost(request: Request, host: Fetcher, auth: Auth, actor: NornActor, path: string): Promise<Response> {
   const url = new URL(request.url)
   const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}` })
+  // A live socket (UI-LIVE-1) passes through with its handshake headers; the host answers it.
+  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    for (const name of ["upgrade", "connection", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) {
+      const value = request.headers.get(name)
+      if (value !== null) headers.set(name, value)
+    }
+    return host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: "GET", headers }))
+  }
   for (const name of ["content-type", "accept"]) {
     const value = request.headers.get(name)
     if (value !== null) headers.set(name, value)

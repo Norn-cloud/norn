@@ -32,6 +32,8 @@ test("every transition of the sheet's machine has a walk", () => {
 })
 
 const DECISION = "dec_QXBwcm92ZS1yZWZ1bmQ"
+/** Room for the expression engine to compile in a fresh page under the suite's load. */
+const ENGINE_MS = 30_000
 const STATUS = { visibility: 404, permission: 403, precondition: 422, conflict: 409, invalid: 422, limit: 429, internal: 500 } as const
 
 /** The stand-in's answer to the next decide call, for one outcome message. `null` hangs (a timeout). */
@@ -61,14 +63,17 @@ async function openRefund(page: Page) {
   await session(page)
   await decisionCell(page)
   // Each queued answer is held until the walk reaches its outcome step, so the page is seen in the
-  // pending state first and the answer can never race the assertion.
-  const pending: { answer: ReturnType<typeof answer>; gate: Promise<void>; open: () => void }[] = []
+  // pending state first and the answer can never race the assertion. Each call takes its answer when
+  // it arrives, so a call that is never answered blocks no later one.
+  type Pending = { answer: ReturnType<typeof answer>; gate: Promise<void>; open: () => void }
+  const pending: Pending[] = []
+  let inFlight: Pending | undefined
   // Registered after the stand-in, so it answers decide calls first.
   await page.route("**/api/host/v1/decisions/*:decide**", async (route: Route) => {
-    const next = pending[0]
+    const next = pending.shift()
     if (next === undefined) return route.fallback()
+    inFlight = next
     await next.gate
-    pending.shift()
     if (next.answer === null) return
     await route.fulfill({ status: next.answer.status, contentType: "application/json", body: typeof next.answer.body === "string" ? next.answer.body : JSON.stringify(next.answer.body) })
   })
@@ -76,7 +81,10 @@ async function openRefund(page: Page) {
   await page.goto("/decisions")
   await page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Refund 1,240.00 USD" }).click()
   const sheet = page.locator("norn-decision-sheet .norn-sheet")
+  // The sheet draws its first state at once; it takes input once the expression engine (WASM) is
+  // here, which the walk waits for before its first step (the decisions rows time both).
   await expect(sheet).toHaveAttribute("data-state", machine.initialStateId)
+  await expect(sheet).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
   return {
     sheet,
     queue: (next: ReturnType<typeof answer>) => {
@@ -84,7 +92,12 @@ async function openRefund(page: Page) {
       const gate = new Promise<void>((resolve) => { open = resolve })
       pending.push({ answer: next, gate, open })
     },
-    release: () => pending[0]?.open(),
+    /** Answer the call in flight. Waits until the page has sent it, so the answer cannot be early. */
+    release: async () => {
+      await expect.poll(() => inFlight !== undefined).toBe(true)
+      inFlight?.open()
+      inFlight = undefined
+    },
   }
 }
 
@@ -95,14 +108,16 @@ for (const walk of all) {
       const { msg, transition } = step
       const next = walk.steps[index + 1]?.msg
       // The answer a started call gets is the next step's outcome, queued before the person acts.
-      if (next?.kind === "outcome") queue(answer(next))
+      // A call the walk never answers is held, never left to the stand-in: an instant answer would
+      // move the sheet past the state this step asserts.
+      if (transition.effects?.some((effect) => effect.kind === "start")) queue(next?.kind === "outcome" ? answer(next) : null)
       if (msg.kind === "user") {
         const event = machine.events.find((candidate) => candidate.eventId === msg.eventId)!
         const node = event.source.kind === "user" ? event.source.nodeId : ""
         if (node === "option-choice") await sheet.locator(`ui-radio[value="${String(msg.payload?.value)}"]`).click()
         else if (node === "note-input") await sheet.locator("textarea").fill(String(msg.payload?.value ?? ""))
         else await sheet.locator(`button[data-node="${node}"]`).click()
-      } else if (msg.kind === "outcome") release()
+      } else if (msg.kind === "outcome") await release()
       if (msg.kind === "outcome" && msg.outcome === "timeout") {
         await page.clock.runFor(machine.states.find((state) => state.stateId === transition.from)?.deadlineMs ?? 0)
       }
