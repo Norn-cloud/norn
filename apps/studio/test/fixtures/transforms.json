@@ -287,7 +287,9 @@
             "property": "region"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "placed_at",
@@ -301,7 +303,9 @@
             "property": "placed_at"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "revenue",
@@ -315,7 +319,9 @@
             "property": "amount"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "orders",
@@ -324,7 +330,9 @@
         "additivity": "additive",
         "identity": null,
         "origins": [],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "largest",
@@ -338,7 +346,9 @@
             "property": "amount"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "week_number",
@@ -347,7 +357,9 @@
         "additivity": "non_additive",
         "identity": null,
         "origins": [],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "to_date",
@@ -361,7 +373,9 @@
             "property": "amount"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       },
       {
         "name": "previous_week",
@@ -375,7 +389,9 @@
             "property": "amount"
           }
         ],
-        "markings": []
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": []
       }
     ],
     "grain": [
@@ -818,7 +834,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "amount",
@@ -832,7 +850,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "channel",
@@ -846,7 +866,9 @@
                 "property": "channel"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -860,7 +882,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -886,7 +910,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "amount",
@@ -900,7 +926,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "channel",
@@ -914,7 +942,9 @@
                 "property": "channel"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -928,7 +958,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -954,7 +986,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "name",
@@ -968,7 +1002,9 @@
                 "property": "name"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "region",
@@ -982,7 +1018,9 @@
                 "property": "region"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -1009,7 +1047,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "amount",
@@ -1023,7 +1063,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "channel",
@@ -1037,7 +1079,9 @@
                 "property": "channel"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -1051,7 +1095,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "customer_id",
@@ -1065,7 +1111,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "customer_name",
@@ -1079,7 +1127,9 @@
                 "property": "name"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "customer_region",
@@ -1093,7 +1143,9 @@
                 "property": "region"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -1119,7 +1171,9 @@
                 "property": "id"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "region",
@@ -1133,7 +1187,9 @@
                 "property": "region"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "amount",
@@ -1147,7 +1203,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -1161,7 +1219,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -1188,7 +1248,9 @@
                 "property": "region"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -1202,7 +1264,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "revenue",
@@ -1216,7 +1280,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "orders",
@@ -1225,7 +1291,9 @@
             "additivity": "additive",
             "identity": null,
             "origins": [],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "largest",
@@ -1239,7 +1307,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       },
@@ -1266,7 +1336,9 @@
                 "property": "region"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "placed_at",
@@ -1280,7 +1352,9 @@
                 "property": "placed_at"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "revenue",
@@ -1294,7 +1368,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "orders",
@@ -1303,7 +1379,9 @@
             "additivity": "additive",
             "identity": null,
             "origins": [],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "largest",
@@ -1317,7 +1395,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "week_number",
@@ -1326,7 +1406,9 @@
             "additivity": "non_additive",
             "identity": null,
             "origins": [],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "to_date",
@@ -1340,7 +1422,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           },
           {
             "name": "previous_week",
@@ -1354,7 +1438,9 @@
                 "property": "amount"
               }
             ],
-            "markings": []
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": []
           }
         ]
       }

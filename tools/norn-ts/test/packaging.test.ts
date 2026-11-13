@@ -211,7 +211,9 @@ test("an installed @norn/authoring is never what the checker reads: the intrinsi
     const bundle = join(root, "authoring-version.mjs")
     const built = spawnSync(process.execPath, ["build", join(TOOL_ROOT, "src/authoring-version.ts"), "--target=node", "--format=esm", "--outfile", bundle], { encoding: "utf8" })
     expect({ status: built.status, err: built.stderr }).toMatchObject({ status: 0 })
-    const node = spawnSync("node", ["-e", `import(${JSON.stringify(pathToFileURL(bundle).href)}).then((m) => console.log(m.installedAuthoringVersion(${JSON.stringify(join(dir, "src"))})))`], { encoding: "utf8" })
+    // The paths travel as arguments, never spliced into the script text.
+    const probe = "const [url, src] = process.argv.slice(1); import(url).then((m) => console.log(m.installedAuthoringVersion(src)))"
+    const node = spawnSync("node", ["-e", probe, pathToFileURL(bundle).href, join(dir, "src")], { encoding: "utf8" })
     expect(node.error).toBeUndefined()
     expect({ status: node.status, out: node.stdout.trim(), err: node.stderr }).toEqual({ status: 0, out: "0.0.0", err: "" })
     writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@norn/authoring", version: CLI_VERSION, exports: { ".": { types: "./profile/norn-authoring.d.ts" } } }))

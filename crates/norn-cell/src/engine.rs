@@ -552,6 +552,8 @@ impl NativeEngine {
         // as its own text.
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false)?;
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false)?;
+        // The cell runs a bounded set of statement shapes; keep them prepared.
+        conn.set_prepared_statement_cache_capacity(512);
         let user_sql = Arc::new(AtomicBool::new(false));
         let authorizer_flag = Arc::clone(&user_sql);
         // Let SQLite parse transaction controls, including quoted SQL and
@@ -677,14 +679,20 @@ impl SqlEngine for NativeEngine {
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        self.conn.execute(sql, rusqlite::params_from_iter(params))?;
+        // Every statement is prepared under the same authorizer state (the
+        // user-SQL flag is set for every call), so a cached statement was
+        // authorized exactly as a fresh one would be; a denied statement
+        // fails to prepare and is never cached.
+        self.conn
+            .prepare_cached(sql)?
+            .execute(rusqlite::params_from_iter(params))?;
         Ok(())
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        let mut statement = self.conn.prepare(sql)?;
+        let mut statement = self.conn.prepare_cached(sql)?;
         let width = statement.column_count();
         let mut rows = statement.query(rusqlite::params_from_iter(params))?;
         let mut result = Vec::new();

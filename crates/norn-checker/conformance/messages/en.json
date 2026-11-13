@@ -956,6 +956,60 @@
     "ledger.validation.too_many_diagnostics": {
       "message": "ledger validation stopped at its diagnostic count or byte limit"
     },
+    "lifecycle.soundness.cancellation_dead_end": {
+      "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {$detail}"
+    },
+    "lifecycle.soundness.compensation_not_closed": {
+      "message": "a lifecycle run can end cancelled, compensated or breached without compensating a dispatched effect: {$detail}"
+    },
+    "lifecycle.soundness.completion_unknown": {
+      "message": "a lifecycle ending is reachable from a state only through a guarded transition: {$detail}"
+    },
+    "lifecycle.soundness.deadline_without_remedy": {
+      "message": "a lifecycle timer leads to a state from which no ending is reachable: {$detail}"
+    },
+    "lifecycle.soundness.fact_guarded": {
+      "message": "a fact transition has a guard, so it could be refused: {$detail}"
+    },
+    "lifecycle.soundness.fact_refused": {
+      "message": "a governing law refuses a fact transition: {$detail}"
+    },
+    "lifecycle.soundness.invalid_ending": {
+      "message": "a lifecycle ending is malformed: {$detail}"
+    },
+    "lifecycle.soundness.invalid_event": {
+      "message": "a lifecycle external event is malformed: {$detail}"
+    },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "a generated Quint module name is not a plain identifier: {$detail}"
+    },
+    "lifecycle.soundness.invalid_trigger": {
+      "message": "a lifecycle transition trigger or compensation is invalid: {$detail}"
+    },
+    "lifecycle.soundness.law_blocked_exit": {
+      "message": "governing laws refuse every exit of a reachable lifecycle state: {$detail}"
+    },
+    "lifecycle.soundness.no_ending": {
+      "message": "a lifecycle declares no terminal or resting state: {$detail}"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "the composed UI and lifecycle machine exceeds its state bound: {$detail}"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "a UI and lifecycle sync table names one UI edge twice: {$detail}"
+    },
+    "lifecycle.soundness.timer_cycle": {
+      "message": "a lifecycle cycle fires on timers alone: {$detail}"
+    },
+    "lifecycle.soundness.trap": {
+      "message": "no lifecycle ending is reachable from a reachable state: {$detail}"
+    },
+    "lifecycle.soundness.unhandled_event": {
+      "message": "a reachable lifecycle state neither handles nor ignores a declared event: {$detail}"
+    },
+    "lifecycle.soundness.wait_without_deadline": {
+      "message": "a lifecycle state only waits on external events and has no deadline: {$detail}"
+    },
     "lifecycle.validation.dead_end_state": {
       "message": "state {$state} has no outgoing transition; declare one or list it as terminal"
     },
