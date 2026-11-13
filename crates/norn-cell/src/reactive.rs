@@ -303,6 +303,18 @@ impl DecodeBudget {
         self.rows
     }
 
+    /// Run `step` with `extra` bytes on top of this budget; whatever the step
+    /// spends beyond `extra` comes out of this budget, and unspent extra is
+    /// not kept, so the allowance serves that one step only.
+    pub(crate) fn with_allowance<T>(&mut self, extra: u64, step: impl FnOnce(&mut Self) -> T) -> T {
+        let before = self.bytes;
+        self.bytes = before.saturating_add(extra);
+        let result = step(self);
+        let spent = before.saturating_add(extra).saturating_sub(self.bytes);
+        self.bytes = before.saturating_sub(spent.saturating_sub(extra));
+        result
+    }
+
     /// Admit candidate or retained query-state bytes into this shared budget.
     /// Returns false without changing the budget when they do not fit.
     pub fn charge(&mut self, bytes: u64) -> bool {

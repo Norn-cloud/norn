@@ -60,6 +60,30 @@
       },
       {
         "actions": [
+          "ml.predictionbatch.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "ml.PredictionBatch",
+        "ruleId": "apply",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
           "ml.modelversion.retire"
         ],
         "allOf": [

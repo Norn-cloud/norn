@@ -1222,15 +1222,18 @@ class DefinitionCompiler {
   /**
    * `Norn.model` (#1171 M1): a typed model with opaque internals. Outputs are
    * an Effect Schema struct lowered like properties (`Schema.NullOr` is a
-   * nullable column); the Rust checker resolves the input and its features.
+   * nullable column); the Rust checker resolves the input and its features,
+   * and the predictions type (a referenced `Norn.type` or a qualified name)
+   * against the outputs.
    */
   private model(call: ts.CallExpression): MD.ModelDef {
-    const members = this.meta(call, ["id", "title", "version", "input", "features", "target", "outputs", "trust", "contracts", "method"])
+    const members = this.meta(call, ["id", "title", "version", "input", "features", "target", "outputs", "trust", "contracts", "predictions", "method"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const trust = this.string(need("trust"))
     if (!TRUST_LEVELS.has(trust)) throw new CompileError("NORN-FLOW-LITERAL", "trust is native, proven, contract_checked or opaque", need("trust"))
     const method = this.closedRecord(need("method"), ["label", "version"], ["label"])
     const methodVersion = method.get("version"), target = members.get("target"), contracts = members.get("contracts")
+    const predictions = members.get("predictions")
     return MD.model({
       id: this.string(need("id")),
       title: this.string(need("title")),
@@ -1241,6 +1244,7 @@ class DefinitionCompiler {
       outputs: this.schemas.properties(this.schemas.read(need("outputs"))).map((p) => ({ id: p.id, type: p.projection.type, nullable: p.projection.nullable })),
       trust: trust as MD.TrustLevel,
       ...(contracts ? { contracts: this.list(contracts).map((node) => this.modelContract(node)) } : {}),
+      ...(predictions ? { predictions: this.typeName(predictions, OBJECT_TYPES) } : {}),
       method: { label: this.string(method.get("label")!), ...(methodVersion ? { version: this.string(methodVersion) } : {}) },
       at: this.at(call),
     })

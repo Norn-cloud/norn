@@ -67,6 +67,14 @@ pub struct ConnectionConfig {
     /// Minutes between scheduled syncs; `0` turns scheduling off.
     #[serde(default = "default_every")]
     pub every_minutes: u32,
+    /// Rows per source request for every feed, in place of the connector's
+    /// (SYNC-PAGE-1): a host tunes how many requests a sync makes without a
+    /// new definitions version. At most the pull's item bound
+    /// ([`Limits`]); the cell still maps and commits
+    /// what a request returns in its own pages
+    /// ([`PAGE_ROWS`](crate::host::PAGE_ROWS)).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
 }
 
 const fn default_every() -> u32 {
@@ -238,6 +246,16 @@ impl Sources {
             if connection.instance == CELL_INSTANCE {
                 return Err(format!(
                     "source configuration: {} may not use the instance {CELL_INSTANCE}, which is the cell's own",
+                    connection.id
+                ));
+            }
+            let bound = u32::try_from(Limits::default().max_items).unwrap_or(u32::MAX);
+            if connection
+                .page_size
+                .is_some_and(|size| size == 0 || size > bound)
+            {
+                return Err(format!(
+                    "source configuration: {} pageSize is 1 to {bound}",
                     connection.id
                 ));
             }
@@ -444,7 +462,7 @@ fn begin<E: SqlEngine>(
             )
         })?;
     let payload = connector.get("payload").cloned().unwrap_or_default();
-    let profile = PullProfile::from_connector(&payload)
+    let mut profile = PullProfile::from_connector(&payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?
         .ok_or_else(|| {
             fail(
@@ -452,6 +470,16 @@ fn begin<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
+    // SYNC-PAGE-1: the host's page size, when it sets one.
+    if let Some(rows) = config.page_size {
+        for feed in &mut profile.feeds {
+            match &mut feed.paging {
+                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
+                    *size = rows;
+                }
+            }
+        }
+    }
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets)?;
@@ -776,7 +804,8 @@ pub struct UploadRun<'a> {
     pub uri: &'a str,
     /// The object's SHA-256.
     pub sha256: &'a str,
-    /// The generated mapping.
+    /// The generated mapping; empty for a dataset load, which its admitted
+    /// definition types directly.
     pub mapping: &'a str,
     /// Who loaded it.
     pub actor: &'a str,
@@ -802,6 +831,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         base_url: upload.uri.to_owned(),
         headers: BTreeMap::new(),
         every_minutes: 0,
+        page_size: None,
     };
     let (read, landed, quarantined) = upload.counts;
     let run = Run {
@@ -839,6 +869,15 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         &watermark,
         Some(upload.ended_ms),
     );
+}
+
+/// The source schema a mapping reads; none for a load without a mapping.
+fn source_schema_id(mapping: &str) -> String {
+    if mapping.is_empty() {
+        String::new()
+    } else {
+        format!("{}.source", mapping.trim_end_matches(".mapping"))
+    }
 }
 
 /// SYNC-REPORT-1: the run, as the cell's own observations. A cell without
@@ -881,7 +920,7 @@ fn report<E: SqlEngine>(
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
         "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => format!("{}.source", config.mapping.trim_end_matches(".mapping")),
+        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&config.mapping),
         "mapping_id" => config.mapping.as_str(),
     };
     let phase = if ended.is_some() { "end" } else { "start" };
@@ -975,14 +1014,18 @@ pub fn kept_upload_key(upload_id: &str) -> String {
 
 /// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
 /// are already kept; new bytes for the same upload are its next version.
+/// A cell whose definitions predate `source.Upload` first gets the cell's
+/// own sources pack through the governed install ([`ensure_upload_records`]).
 ///
 /// # Errors
-/// The cell has no `source.Upload` definitions, or refused the record.
+/// The pack could not be installed, the cell refused the record, or the
+/// write failed.
 pub fn keep_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload: &KeptUpload,
     now_ms: u64,
 ) -> Result<(), String> {
+    ensure_upload_records(host, now_ms)?;
     let key = kept_upload_key(&upload.upload_id);
     let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
     let store = match upload.store {
@@ -1029,6 +1072,44 @@ pub fn keep_upload<E: SqlEngine>(
     }
 }
 
+/// The cell's own sources pack: connections, sync runs and upload records,
+/// and the mapping that lands the cell's reports as them.
+const SOURCES_PACK: [&str; 6] = [
+    include_str!("../../../registry/packs/sources/artifacts/source.Synced.interface.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Connection.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.SyncRun.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Upload.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.source.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.mapping.json"),
+];
+
+/// UPLOAD-RECORD-1 for a cell provisioned before `source.Upload`: install the
+/// cell's own sources pack as the next governed definitions version (the
+/// shared install path, DEFS-REOPEN-1), once. `Ok(true)` when it installed.
+///
+/// # Errors
+/// The pack is refused or the install fails; the upload is then refused,
+/// never completed without its record.
+pub fn ensure_upload_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    installed_at: u64,
+) -> Result<bool, String> {
+    if host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(false);
+    }
+    let pack = SOURCES_PACK
+        .iter()
+        .map(|text| serde_json::from_str::<norn_ir::ArtifactEnvelope>(text))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("the sources pack: {e}"))?;
+    host.install_artifacts(&pack, installed_at)
+        .map_err(|reason| format!("the sources pack was not installed: {reason}"))?;
+    Ok(true)
+}
+
 /// The kept record of the upload `upload_id`, if the cell completed it.
 ///
 /// # Errors
@@ -1037,6 +1118,12 @@ pub fn kept_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload_id: &str,
 ) -> Result<Option<KeptUpload>, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(None);
+    }
     let Some(object) = host
         .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
         .map_err(|refusal| refusal.message)?

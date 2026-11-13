@@ -13,7 +13,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::{Value, json};
 
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
@@ -91,4 +91,58 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
     big["snapshot"] = Value::Array(vec![export["snapshot"][0].clone(); 501]);
     let (status, _) = load(&mut connect, &host, &principals, ADMIN, &big.to_string());
     assert_eq!(status, 400);
+}
+
+/// A large page's objects keep their per-record lineage through the route.
+#[test]
+fn objects_of_a_large_page_trace_to_their_own_source_row() {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    let mut connect = connect();
+    let export: Value = serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap();
+    let rows = export["snapshot"].as_array().unwrap();
+    let mut snapshot: Vec<Value> = rows
+        .iter()
+        .filter(|row| row["dataset"] != "Sales Order Item")
+        .cloned()
+        .collect();
+    let order = rows
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .unwrap();
+    // One full page: 500 order lines.
+    for n in 1..=(500 - snapshot.len()) {
+        let mut line = order.clone();
+        line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
+        line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
+        snapshot.push(line);
+    }
+    let body = json!({ "profile": export["profile"], "snapshot": snapshot }).to_string();
+    let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
+    assert_eq!(status, 200, "{loaded}");
+    assert_eq!(loaded["quarantined"], 0, "{loaded}");
+
+    let request = server::Request {
+        method: "GET",
+        path: "/v1/objects/canon.OrderLine/demo%2Forder%2F00123%2Fline%2F1/lineage",
+        query: SCOPE,
+        authorization: ADMIN,
+        now: 0,
+        body: "",
+    };
+    let response = server::handle(&host, &principals, &request);
+    assert_eq!(response.status, 200, "{}", response.body);
+    let lineage: Value = serde_json::from_str(&response.body).unwrap();
+    assert!(
+        lineage.to_string().contains("SYN-ERPNEXT-order-00123"),
+        "{lineage}"
+    );
 }

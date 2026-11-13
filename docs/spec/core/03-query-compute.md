@@ -277,7 +277,10 @@ property tests run both at the same frontier.
   cell recorded. Every row is typed exactly by its column: no value is
   rounded, and a timestamp is admitted exactly when the cell reads it as one,
   with the cell's own ordering key. A row that cannot be typed, or misses a
-  required value, is quarantined with its first reason (`bulk.*`).
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
 - **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
   sha256)`; every row is numbered from its file, so each number traces to
   `(uri, sha256, row)`, and an answer over the dataset is exact at its load.

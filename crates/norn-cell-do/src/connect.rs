@@ -18,9 +18,9 @@
 //! - `/v1/uploads/{id}:load`: [`LoadRequest`]; installs and loads.
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
-//! - `/v1/observations:load`: one page of a recorded export
-//!   ([`crate::recorded`], at most [`norn_api::host::PAGE_ROWS`] rows) through
-//!   the admitted mappings → each row's outcome.
+//! - `/v1/observations:load`: a slice of a recorded export
+//!   ([`crate::recorded`], at most 500 rows) through the admitted mappings, in
+//!   OBS-PAGE-1 pages → counts of the rows' outcomes.
 //!
 //! CONNECT-AUTH-1: every route is decided by the cell's policy as
 //! `Operation::SyncSource` before anything else; a denied caller, or a scope
@@ -103,6 +103,8 @@ pub struct UploadRecord {
     pub content_type: String,
     /// The profiled columns (CSV), empty otherwise.
     pub columns: Vec<uploads::Column>,
+    /// The file's name, as uploaded.
+    pub file_name: String,
 }
 
 enum Waiting {
@@ -357,6 +359,7 @@ impl Connect {
             size,
             content_type: upload.content_type.clone(),
             columns: upload.columns.clone(),
+            file_name: upload.file_name.clone(),
         })
     }
 
@@ -717,11 +720,14 @@ impl Connect {
             owner: actor.to_owned(),
             completed_at: norn_api::sources::rfc3339(now_ms),
         };
+        // UPLOAD-RECORD-1: never complete without the record. A cell whose
+        // definitions predate source.Upload gets the pack first; one that
+        // cannot is refused with a typed reason.
         if let Err(reason) = norn_api::sources::keep_upload(host, &kept, now_ms) {
             return refused(
-                500,
-                "host.error",
-                &format!("the upload was read but not kept: {reason}"),
+                409,
+                "upload.not_recorded",
+                &format!("the upload was read but its record was not kept: {reason}"),
             );
         }
         self.uploads.insert(id.to_owned(), upload.clone());
@@ -846,6 +852,9 @@ impl Connect {
     }
 }
 
+/// The most rows one load carries; the host maps them in pages.
+const MAX_LOAD_ROWS: usize = 500;
+
 /// `POST /v1/observations:load`: one page of a recorded export, captured and
 /// mapped through the cell's admitted mappings exactly as a source sync's
 /// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
@@ -862,10 +871,9 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         Ok(recorded) => recorded,
         Err(error) => return answer(&Refusal::invalid(error)),
     };
-    if recorded.rows.is_empty() || recorded.rows.len() > norn_api::host::PAGE_ROWS {
+    if recorded.rows.is_empty() || recorded.rows.len() > MAX_LOAD_ROWS {
         return answer(&Refusal::invalid(format!(
-            "a load carries 1 to {} rows; send a longer export in slices",
-            norn_api::host::PAGE_ROWS
+            "a load carries 1 to {MAX_LOAD_ROWS} rows; send a longer export in slices"
         )));
     }
     let rows = match recorded.observations() {

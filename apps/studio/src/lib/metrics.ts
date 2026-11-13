@@ -13,6 +13,48 @@ export interface MetricSummary {
   readonly denominator: string | null
   /** The properties a question summing this metric must fix to one value each (mixed units are refused), when the cell names them. */
   readonly unitPartition?: readonly string[]
+  /** How its values may be added up, when the cell says (the metric's declared additivity). */
+  readonly additivity?: Additivity
+}
+
+/** A metric's declared additivity: summed anywhere, reduced along time, or computed per bucket from its records. */
+export type Additivity =
+  | { readonly kind: "additive" }
+  | { readonly kind: "semi_additive"; readonly over: "time"; readonly aggregate: "first" | "last" | "min" | "max" }
+  | { readonly kind: "non_additive" }
+
+/**
+ * How the metric's values combine, from its declared additivity, or, on a cell that does not send
+ * it yet, from the label the metric deriver writes (`sum(p); …` sums; `p, as of t; last value …`
+ * takes each period's last value). Undefined when neither says.
+ */
+export function additivityOf(metric: Pick<MetricSummary, "additivity" | "label">): Additivity | undefined {
+  if (metric.additivity) return metric.additivity
+  if (/^sum\(/.test(metric.label) && !metric.label.includes(" / ")) return { kind: "additive" }
+  if (/, as of [^;]+; last value/.test(metric.label)) return { kind: "semi_additive", over: "time", aggregate: "last" }
+  return undefined
+}
+
+const REDUCTION: Record<"first" | "last" | "min" | "max", (grain: string) => string> = {
+  first: (grain) => `start of ${grain}`,
+  last: (grain) => `end of ${grain}`,
+  min: (grain) => `lowest in the ${grain}`,
+  max: (grain) => `highest in the ${grain}`,
+}
+
+/**
+ * A metric card's heading in plain words: "Total quantity" only for a sum the cell may add across
+ * time; "Quantity, end of week" for a balance read at each period's end; the property alone when
+ * the cell does not say how its values combine.
+ */
+export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label" | "expression" | "kind">, grain = "period"): string {
+  const property = (metric.expression ?? "").replaceAll("_", " ")
+  if (metric.kind !== "simple" || property === "") return metric.label
+  const additivity = additivityOf(metric)
+  const word = property.charAt(0).toUpperCase() + property.slice(1)
+  if (additivity?.kind === "additive") return `Total ${property}`
+  if (additivity?.kind === "semi_additive") return `${word}, ${REDUCTION[additivity.aggregate](grain)}`
+  return word
 }
 
 /** The metrics this reader may ask about; a cell without the route says so. */
