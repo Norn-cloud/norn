@@ -1266,8 +1266,9 @@ async fn obs_page_commits_export_and_restore_with_their_members() {
     );
 }
 
-/// OBS-PAGE-1: an object of a large page traces to its own source row under
-/// the default decode budget of one trace.
+/// OBS-PAGE-1: an object of a page of 500 records traces to its own source
+/// row under the default decode budget of one trace: the page commit's receipt
+/// (about 1.3 KB per record) is read within the trace's receipt allowance.
 #[test]
 fn obs_page_members_trace_under_the_default_budget() {
     let directory = tempfile::tempdir().expect("directory");
@@ -1296,8 +1297,7 @@ fn obs_page_members_trace_under_the_default_budget() {
     }
     let mut lines = Vec::new();
     let mut input = None;
-    // A host page (norn_api's PAGE_ROWS, 64): its receipt fits the budget.
-    for n in 1..=64 {
+    for n in 1..=500 {
         let mut line = order.clone();
         line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
         line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));

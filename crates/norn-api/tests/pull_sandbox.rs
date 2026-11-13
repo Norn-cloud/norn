@@ -72,7 +72,10 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
 }
 
 fn host() -> DevHost<norn_cell::engine::NativeEngine> {
-    let artifacts = artifacts();
+    host_with(&artifacts())
+}
+
+fn host_with(artifacts: &[ArtifactEnvelope]) -> DevHost<norn_cell::engine::NativeEngine> {
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()
@@ -116,11 +119,11 @@ fn host() -> DevHost<norn_cell::engine::NativeEngine> {
     }
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("governing laws");
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
-            RuntimeValue::from_json(serde_json::to_value(&artifacts).expect("set"))
+            RuntimeValue::from_json(serde_json::to_value(artifacts).expect("set"))
                 .expect("value")
                 .canonical_json()
                 .expect("canonical"),
@@ -983,6 +986,42 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         replaced.sha256
     );
     assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
+
+    // A cell whose definitions predate source.Upload gets the cell's sources
+    // pack through the governed install on its first record, then keeps it.
+    let older = host_with(
+        &artifacts()
+            .into_iter()
+            .filter(|a| {
+                !matches!(
+                    a.artifact_id.as_str(),
+                    "source.Upload.entity" | "norn.connect.source" | "norn.connect.mapping"
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(kept_upload(&older, &kept.upload_id).expect("read"), None);
+    let before = older
+        .active_definitions()
+        .expect("read")
+        .expect("active")
+        .version;
+    keep_upload(&older, &kept, EXTRACTED_AT_MS).expect("pack installed, record kept");
+    assert!(
+        older
+            .active_definitions()
+            .expect("read")
+            .expect("active")
+            .version
+            > before
+    );
+    assert_eq!(
+        kept_upload(&older, &kept.upload_id)
+            .expect("read")
+            .expect("the record")
+            .sha256,
+        kept.sha256
+    );
 }
 
 /// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)
