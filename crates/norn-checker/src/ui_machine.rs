@@ -26,10 +26,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use norn_expr::{EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_ir::{
-    ArtifactEnvelope, JsonValue, RuntimeValue, WidgetCallOutcome, WidgetMachine, WidgetMachineCall,
-    WidgetMachineEffect, WidgetMachineEvent, WidgetMachineEventSource, WidgetMachineField,
-    WidgetMachineState, WidgetNode, WidgetPage, WidgetRefusalCategory, WidgetStateRole, WidgetUx,
-    WidgetValueType,
+    ArtifactEnvelope, JsonValue, RuntimeValue, WidgetCallOutcome, WidgetComponent,
+    WidgetControlInput, WidgetMachine, WidgetMachineCall, WidgetMachineEffect, WidgetMachineEvent,
+    WidgetMachineEventSource, WidgetMachineField, WidgetMachineState, WidgetNode, WidgetPage,
+    WidgetRefusalCategory, WidgetStateRole, WidgetUx, WidgetValueType,
 };
 
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
@@ -57,9 +57,10 @@ const CANCEL_OUTSIDE_PENDING: &str = "widget.machine.cancel_outside_pending";
 const ERROR_WITHOUT_RECOVERY: &str = "widget.machine.error_without_recovery";
 const INPUT_FREE_CYCLE: &str = "widget.machine.input_free_cycle";
 const NONDETERMINISTIC: &str = "widget.machine.nondeterministic";
+const CONTROL_WITHOUT_EVENT: &str = "widget.machine.control_without_event";
 
 /// Every code these laws can emit.
-pub const CODES: [&str; 23] = [
+pub const CODES: [&str; 24] = [
     DUPLICATE_ID,
     UNKNOWN_REFERENCE,
     INVALID_EVENT,
@@ -83,6 +84,7 @@ pub const CODES: [&str; 23] = [
     ERROR_WITHOUT_RECOVERY,
     INPUT_FREE_CYCLE,
     NONDETERMINISTIC,
+    CONTROL_WITHOUT_EVENT,
 ];
 
 const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
@@ -97,6 +99,9 @@ const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
 
 /// One concrete way an awaited call ends: an outcome, and for `refused` its category.
 type OutcomeValue = (WidgetCallOutcome, Option<WidgetRefusalCategory>);
+
+/// Outcome value to the unguarded transitions that take it: `(index, specific)`.
+type Covered = BTreeMap<OutcomeValue, Vec<(usize, bool)>>;
 
 /// State graph keyed by state id.
 type Graph<'m> = BTreeMap<&'m str, BTreeSet<&'m str>>;
@@ -284,8 +289,8 @@ fn initial_fits(value: &JsonValue, value_type: WidgetValueType, required: bool) 
     }
 }
 
-fn collect_nodes<'n>(node: &'n WidgetNode, out: &mut BTreeSet<&'n str>) {
-    out.insert(node.node_id.as_str());
+fn collect_nodes<'n>(node: &'n WidgetNode, out: &mut BTreeMap<&'n str, &'n WidgetComponent>) {
+    out.insert(node.node_id.as_str(), &node.component);
     for child in &node.children {
         collect_nodes(child, out);
     }
@@ -360,8 +365,10 @@ struct Facts<'m> {
     cancellable: BTreeSet<&'m str>,
     /// `(state, event)` to unguarded transition indexes, for non-outcome events.
     unguarded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
-    /// `state` to outcome value to unguarded transition indexes.
-    covered: BTreeMap<&'m str, BTreeMap<OutcomeValue, Vec<usize>>>,
+    /// `state` to outcome value to unguarded transitions: `(index, specific)`, where `specific`
+    /// marks an event that names the refusal category. A specific transition takes precedence over
+    /// a catch-all one, so only two of the same specificity conflict.
+    covered: BTreeMap<&'m str, Covered>,
 }
 
 struct MachineChecker<'m> {
@@ -554,18 +561,25 @@ impl<'m> MachineChecker<'m> {
 
     /// Events: sources name declared things; payloads only where the source carries one.
     fn check_events(&mut self, page: &WidgetPage) {
-        let mut nodes = BTreeSet::new();
+        let mut nodes = BTreeMap::new();
         collect_nodes(&page.root, &mut nodes);
+        let mut raised: BTreeSet<&str> = BTreeSet::new();
         for (index, event) in self.machine.events.iter().enumerate() {
             let pointer = format!("{}/events/{index}", self.base);
             let carries_payload = match &event.source {
                 WidgetMachineEventSource::User { node_id } => {
-                    if !nodes.contains(node_id.as_str()) {
-                        self.push(
+                    match nodes.get(node_id.as_str()) {
+                        None => self.push(
                             UNKNOWN_REFERENCE,
                             format!("{pointer}/source/nodeId"),
                             format!("node `{node_id}` is not in this page's tree"),
-                        );
+                        ),
+                        Some(component) => {
+                            if let WidgetComponent::Control { input, .. } = component {
+                                raised.insert(node_id.as_str());
+                                self.check_control_event(event, *input, node_id, &pointer);
+                            }
+                        }
                     }
                     true
                 }
@@ -614,6 +628,40 @@ impl<'m> MachineChecker<'m> {
                 );
             }
             self.check_fields(&event.payload, &format!("events/{index}/payload"), true);
+        }
+        // A control does nothing but raise events: one that raises none is dead.
+        for (node_id, component) in &nodes {
+            if matches!(component, WidgetComponent::Control { .. }) && !raised.contains(node_id) {
+                self.push(
+                    CONTROL_WITHOUT_EVENT,
+                    format!("{}/events", self.base),
+                    format!("control `{node_id}` raises no event of this page's machine"),
+                );
+            }
+        }
+    }
+
+    /// An event from a choice or text control carries the control's value as `value: text`.
+    fn check_control_event(
+        &mut self,
+        event: &WidgetMachineEvent,
+        input: WidgetControlInput,
+        node_id: &str,
+        pointer: &str,
+    ) {
+        let carries_value = event.payload.iter().any(|member| {
+            member.field_id == "value"
+                && member.value_type == WidgetValueType::Text
+                && member.required
+        });
+        if input != WidgetControlInput::Trigger && !carries_value {
+            self.push(
+                INVALID_EVENT,
+                format!("{pointer}/payload"),
+                format!(
+                    "an event from the choice or text control `{node_id}` declares the required text payload member `value`"
+                ),
+            );
         }
     }
 
@@ -807,7 +855,9 @@ impl<'m> MachineChecker<'m> {
                         } else if transition.guard.is_none() {
                             let slot = facts.covered.entry(from).or_default();
                             for value in matched {
-                                slot.entry(value).or_default().push(index);
+                                slot.entry(value)
+                                    .or_default()
+                                    .push((index, category.is_some()));
                             }
                         }
                     }
@@ -918,7 +968,13 @@ impl<'m> MachineChecker<'m> {
             }
         }
         for (from, values) in &facts.covered {
-            for (value, indexes) in values {
+            for (value, entries) in values {
+                let specific = entries.iter().any(|(_, specific)| *specific);
+                let indexes: Vec<usize> = entries
+                    .iter()
+                    .filter(|(_, is_specific)| *is_specific == specific)
+                    .map(|(index, _)| *index)
+                    .collect();
                 if let Some(second) = indexes.get(1) {
                     self.push(
                         NONDETERMINISTIC,

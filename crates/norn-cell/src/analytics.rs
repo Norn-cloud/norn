@@ -1,7 +1,7 @@
 //! D102: the tenant analytics engine's typed contract.
 //!
 //! The cell decides who may read what, lowers an admitted plan and verifies
-//! every answer; the engine (`DuckDB` in a native sidecar, [`engine`]) only
+//! every answer; the engine (`DuckDB` in a native sidecar, the `engine` module) only
 //! executes these typed operations over one tenant's own database. No
 //! operation carries SQL, a table path or a column expression (#733): the
 //! engine builds its statements from admitted names and binds every value.

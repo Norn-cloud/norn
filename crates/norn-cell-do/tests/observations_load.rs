@@ -13,7 +13,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::{Value, json};
 
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 

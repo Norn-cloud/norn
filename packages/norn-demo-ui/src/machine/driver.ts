@@ -52,7 +52,7 @@ interface InFlight {
 /** A transport over `fetch` for host routes: the page supplies how a call maps to a request. */
 export function fetchTransport(
   request: (call: MachineCall, input: Fields, idempotencyKey: string) => { readonly url: string; readonly init: RequestInit },
-  fetcher: typeof fetch = fetch,
+  fetcher: (input: string, init?: RequestInit) => Promise<Response> = (input, init) => fetch(input, init),
 ): Transport {
   return {
     async call(call, input, options) {

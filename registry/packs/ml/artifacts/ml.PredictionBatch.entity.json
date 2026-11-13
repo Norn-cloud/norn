@@ -1,0 +1,83 @@
+{
+  "artifactId": "ml.PredictionBatch.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Prediction batch",
+  "namespace": "ml",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "batch_id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "applied",
+          "target": "ml.ModelVersion"
+        }
+      ],
+      "name": "ml.PredictionBatch",
+      "properties": [
+        {
+          "id": "batch_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "model_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "input_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "input_revision",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "rows",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "default": "recorded",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "recorded"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.PredictionBatch.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

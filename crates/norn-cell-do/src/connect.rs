@@ -103,6 +103,8 @@ pub struct UploadRecord {
     pub content_type: String,
     /// The profiled columns (CSV), empty otherwise.
     pub columns: Vec<uploads::Column>,
+    /// The file's name, as uploaded.
+    pub file_name: String,
 }
 
 enum Waiting {
@@ -357,6 +359,7 @@ impl Connect {
             size,
             content_type: upload.content_type.clone(),
             columns: upload.columns.clone(),
+            file_name: upload.file_name.clone(),
         })
     }
 
