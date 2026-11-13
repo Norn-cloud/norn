@@ -2,6 +2,7 @@ import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { currentMode, liveTransport } from "./live-transport.ts"
 import { readsOf } from "./objects.ts"
+import type { CountedLinkPage } from "./record-page.ts"
 
 export type { Schemas }
 export type Envelope = Schemas["NornArtifactEnvelope"]
@@ -20,7 +21,8 @@ export type SourceLineage = Schemas["NornInstanceSourceProvenance"]
 /** The reads behind one object: itself, the links touching it and where it came from. */
 export interface ObjectReads {
   readonly object: Read<ObjectRecord>
-  readonly links: Read<LinkPage>
+  /** The first page of its links, with the server's counts by link type when the cell counts them. */
+  readonly links: Read<CountedLinkPage>
   /** `null` for an object no mapping produced. */
   readonly source: Read<SourceLineage> | null
 }

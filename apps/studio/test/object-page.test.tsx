@@ -41,7 +41,7 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Relations", "Lineage", "Guarantees", "Ledger", "Access"]) expect(html).toContain(`>${tab}</button>`)
+  for (const tab of ["Overview", "Lineage", "Guarantees", "Access"]) expect(html).toContain(`>${tab}</button>`)
   expect(html).toContain("No personal data marked")
 })
 

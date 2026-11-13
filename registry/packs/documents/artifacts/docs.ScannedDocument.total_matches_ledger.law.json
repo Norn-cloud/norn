@@ -1,0 +1,51 @@
+{
+  "artifactId": "docs.ScannedDocument.total_matches_ledger.law",
+  "dependencies": [
+    {
+      "artifactId": "docs.ScannedDocument.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A booked document's total equals its journal entry",
+  "namespace": "docs",
+  "payload": {
+    "condition": "self.ledger_entry != null",
+    "id": "docs.ScannedDocument.total_matches_ledger",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "docs",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/documents/documents.ts"
+    },
+    "rationale": "A document booked to a journal entry must carry that entry's amount; a document that disagrees with its own booking was misread or mis-booked.",
+    "response": {
+      "expression": "self.total == self.ledger_entry.amount",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "docs.ScannedDocument"
+      ],
+      "root": {
+        "id": "docs.ScannedDocument",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "docs.ScannedDocument"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.ScannedDocument.total_matches_ledger.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

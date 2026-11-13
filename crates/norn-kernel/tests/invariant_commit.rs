@@ -3983,7 +3983,7 @@ norn_testkit::proptest::proptest! {
         let again = finding(&delivery);
         prop_assert_eq!(&first.id, &again.id);
         prop_assert_eq!(&first.dedupe_key, &again.dedupe_key);
-        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &catalog.effective_object_values(&key.object_type, &values).expect("effective defaults"), &first).expect("verify"));
+        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &catalog.effective_object_values(&key.object_type, &values).expect("effective defaults"), &first, &mut norn_kernel::governing_laws::NoLinkTargets).expect("verify"));
         prop_assert_eq!(catalog.classify_data_quality_rule(&first.rule_ref).expect("classification"), norn_kernel::DataQualityRuleClassification::Integrity);
     }
 }

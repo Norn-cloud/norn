@@ -6,7 +6,9 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
-use crate::cell_host::{LinkReadTarget, ObjectTypeName, PredicateQuery, PredicateReadMember};
+use crate::cell_host::{
+    JsonObject, LinkReadTarget, ObjectTypeName, PredicateQuery, PredicateReadMember,
+};
 use crate::{CellCommit, CommitError, CommitView, Consumed, FactKey, FactVersion, LinkKey};
 
 pub use crate::profile_ownership::{AtomicOwnership, supports_local};
@@ -174,5 +176,10 @@ impl<V: CommitView + ?Sized> CommitView for ProfileView<'_, V> {
             self.link(link);
         }
         Ok(links)
+    }
+
+    fn object_values(&self, key: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
+        self.fact(key);
+        self.inner.object_values(key)
     }
 }
