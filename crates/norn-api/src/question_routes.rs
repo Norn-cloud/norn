@@ -855,9 +855,14 @@ pub struct NornMetricSummary {
     /// The aggregated expression (a property), for a simple metric.
     #[schema(required = true, nullable = true)]
     pub expression: Option<String>,
-    /// The time property its buckets use, for a simple metric.
+    /// The time property its buckets use, for a simple metric: a property of
+    /// the measured object, or of the object [`Self::time_links`] reach.
     #[schema(required = true, nullable = true)]
     pub time_property: Option<String>,
+    /// The to-one links from the measured object to the object holding
+    /// [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
+    /// event's); empty when the time is the object's own.
+    pub time_links: Vec<String>,
     /// The numerator metric, for a ratio.
     #[schema(required = true, nullable = true)]
     pub numerator: Option<String>,
@@ -875,6 +880,46 @@ pub struct NornMetricSummary {
     /// bucket.
     #[schema(schema_with = metric_additivity_schema)]
     pub additivity: norn_ir::metric::MetricAdditivity,
+}
+
+/// One listed metric, named from its definition: the time is the definition's
+/// own path (a property and the links to it), never the semantic model's
+/// encoded field name.
+#[must_use]
+pub fn metric_summary(
+    definition: &MetricDefinition,
+    unit_partition: Vec<String>,
+) -> NornMetricSummary {
+    let aggregation = definition.type_params.metric_aggregation_params.as_ref();
+    let time = definition.norn.time_dimension.as_ref();
+    NornMetricSummary {
+        name: definition.name.clone(),
+        label: definition.label.clone(),
+        kind: serde_json::to_value(definition.metric_type)
+            .ok()
+            .and_then(|kind| kind.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        object_type: aggregation.map(|params| params.semantic_model.0.clone()),
+        expression: definition.type_params.expr.clone(),
+        time_property: aggregation.map(|params| {
+            time.map_or_else(
+                || params.agg_time_dimension.clone(),
+                |path| path.property.0.clone(),
+            )
+        }),
+        time_links: time
+            .map(|path| {
+                path.links
+                    .iter()
+                    .map(|link| link.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        numerator: definition.type_params.numerator.clone(),
+        denominator: definition.type_params.denominator.clone(),
+        unit_partition,
+        additivity: definition.norn.additivity.clone(),
+    }
 }
 
 fn metric_additivity_schema() -> utoipa::openapi::Ref {
@@ -918,24 +963,7 @@ pub fn list_metrics<E: SqlEngine>(
     let mut metrics: Vec<NornMetricSummary> = runtime
         .definitions()
         .iter()
-        .map(|definition| {
-            let aggregation = definition.type_params.metric_aggregation_params.as_ref();
-            NornMetricSummary {
-                name: definition.name.clone(),
-                label: definition.label.clone(),
-                kind: serde_json::to_value(definition.metric_type)
-                    .ok()
-                    .and_then(|kind| kind.as_str().map(str::to_owned))
-                    .unwrap_or_default(),
-                object_type: aggregation.map(|params| params.semantic_model.0.clone()),
-                expression: definition.type_params.expr.clone(),
-                time_property: aggregation.map(|params| params.agg_time_dimension.clone()),
-                numerator: definition.type_params.numerator.clone(),
-                denominator: definition.type_params.denominator.clone(),
-                unit_partition: runtime.unit_partition(&definition.name),
-                additivity: definition.norn.additivity.clone(),
-            }
-        })
+        .map(|definition| metric_summary(definition, runtime.unit_partition(&definition.name)))
         .collect();
     // A ratio is listed when both of its operands are.
     let simple: BTreeSet<String> = metrics

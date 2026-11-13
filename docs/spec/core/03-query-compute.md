@@ -127,7 +127,8 @@ own time derives no linked-time sum).
 **METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
 `unitSource`: one or more distinct sibling properties whose values together
 are its unit (canon's quantities take theirs from `unit` or, for money,
-`currency`). It is declared inline or at a `ref` use site, under the same
+`currency`), or what one of it counts (a canon holding's `quantity_basis`:
+on-hand and available grams never add). It is declared inline or at a `ref` use site, under the same
 chain rule as use-site additivity. A decimal declares at most one of a static
 `unit`, `currencySource`, `perUnit` or `unitSource`. Each source must be
 another stored property of the same object type whose values are codes: text

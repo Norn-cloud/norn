@@ -1806,3 +1806,79 @@ fn installed_flat_legacy_exceptions_admit_through_the_base_decode() {
     }]);
     assert!(codes(partial).0);
 }
+
+/// LIFE-SOUND-9 (ruling on #1313): a defeasible `within` stays refused by LAW-WITHIN-1, and is
+/// admitted only when every live state where its exception could cancel the deadline still
+/// reaches a declared good or compensated ending; otherwise it is refused with the failing
+/// states and the smallest blocking set.
+#[test]
+fn a_defeasible_within_is_admitted_only_with_a_cancellation_proof() {
+    use norn_checker::deontic::{
+        DefeasibleWithinRefusal, RequirementRefusal as R, check_defeasible_requirement,
+    };
+    let env = requirement_env();
+    let mut defeasible = within_requirement();
+    let law_id = defeasible.norm.law.id.clone();
+    defeasible
+        .norm
+        .law
+        .exceptions
+        .push(law_exception("exempt", &law_id, "input.active"));
+    // Reading B is still the law without a proof.
+    assert_eq!(
+        check_requirement(&defeasible, &env),
+        Err(R::UnsupportedActivation)
+    );
+    let chart = |pay: bool| -> norn_ir::Lifecycle {
+        let mut transitions = vec![
+            json!({"id": "post", "from": ["draft"], "to": "posted"}),
+            json!({"id": "write_off", "from": ["posted"], "to": "written_off"}),
+        ];
+        if pay {
+            transitions.push(json!({"id": "pay", "from": ["posted"], "to": "paid"}));
+        }
+        serde_json::from_value(json!({
+            "property": "status", "initial": ["draft"], "terminal": ["paid", "written_off"],
+            "endings": [
+                {"state": "paid", "outcome": "completed"},
+                {"state": "written_off", "outcome": "cancelled"}
+            ],
+            "transitions": transitions
+        }))
+        .expect("lifecycle")
+    };
+    let states: Vec<String> = ["draft", "posted", "paid", "written_off"]
+        .map(str::to_owned)
+        .to_vec();
+    check_defeasible_requirement(&defeasible, &env, &chart(true), &states)
+        .expect("posted can still be paid");
+    let refused = check_defeasible_requirement(&defeasible, &env, &chart(false), &states)
+        .expect_err("posted can only be written off");
+    assert_eq!(refused.code(), "lifecycle.soundness.cancellation_dead_end");
+    let DefeasibleWithinRefusal::CancellationDeadEnd(failure) = refused else {
+        panic!("a cancellation refusal");
+    };
+    assert_eq!(failure.states, ["posted"]);
+    assert_eq!(failure.unreachable, ["posted"]);
+    // The proof relaxes only the exception: a condition or defeat edge still refuses.
+    let mut conditioned = defeasible.clone();
+    conditioned.norm.law.condition = Some(norn_ir::ZenExpression("input.active".into()));
+    assert_eq!(
+        check_defeasible_requirement(&conditioned, &env, &chart(true), &states),
+        Err(DefeasibleWithinRefusal::Requirement(
+            R::UnsupportedActivation
+        ))
+    );
+    // The trigger must be a transition of the subject's lifecycle.
+    let mut unbound = defeasible.clone();
+    if let norn_ir::deontic::RequirementTiming::Within(within) = &mut unbound.timing {
+        within.trigger = "settle".into();
+    }
+    assert_eq!(
+        check_defeasible_requirement(&unbound, &env, &chart(true), &states),
+        Err(DefeasibleWithinRefusal::Requirement(R::InvalidBinding))
+    );
+    // A strict within is exactly LAW-WITHIN-1.
+    check_defeasible_requirement(&within_requirement(), &env, &chart(false), &states)
+        .expect("no exception, no proof needed");
+}

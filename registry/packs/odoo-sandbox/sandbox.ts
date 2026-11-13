@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 // A live Odoo sandbox (#921): the same rows as the synthetic export, read
 // through Odoo's JSON-2 API (`web_search_read` with a field specification, so
@@ -284,7 +284,7 @@ export const SandboxSource = Norn.sourceSchema({
       origin: "declared",
       values: [{value: "moving_average"}]
     },
-    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "product.product", fields: ["id"], origin: "declared"},
@@ -298,7 +298,7 @@ export const SandboxMapping = Norn.mapping({
   id: "odoo.sandbox.mapping",
   title: "Odoo sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "dcb889dffef87077780602a8e2af8f3865b5532f1c42eb5f0188b84bcb25d1e4"},
+  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "dde679781b9ca64ea7ef178c33f29db003731e9c850f444e9452d53947e2230e"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [

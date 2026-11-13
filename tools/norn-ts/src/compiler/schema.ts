@@ -99,6 +99,19 @@ export class SchemaProjection {
     return e
   }
 
+  /** A literal array, or a const binding (local or imported) whose initializer is one, such as a shared code list. */
+  private constArray(input: ts.Expression): ts.Expression {
+    let e = this.unwrap(input)
+    for (let hops = 0; ts.isIdentifier(e); hops++) {
+      if (hops > 128) throw new CompileError("NORN-FLOW-UNBOUNDED", "constant references exceed the compiler bound", input)
+      const d = this.symbol(e)?.valueDeclaration
+      if (!d || !ts.isVariableDeclaration(d) || !d.initializer || (d.parent.flags & ts.NodeFlags.Const) === 0) return e
+      e = this.unwrap(d.initializer)
+    }
+    this.guard(e)
+    return e
+  }
+
   private readAt(input: ts.Expression, depth: number): SchemaNode {
     this.guard(input)
     if (depth > MAX_SCHEMA_DEPTH) throw new CompileError("NORN-FLOW-UNBOUNDED", "schema nesting exceeds the compiler bound", input)
@@ -187,7 +200,7 @@ export class SchemaProjection {
       case "effect/Schema#Literal":
         return { kind: "literals", values: [this.literal(arg(0))], node: call }
       case "effect/Schema#Literals": {
-        const list = this.unwrap(arg(0))
+        const list = this.constArray(arg(0))
         if (!ts.isArrayLiteralExpression(list) || list.elements.length === 0) throw projection("Schema.Literals takes a non-empty literal array", list)
         return { kind: "literals", values: list.elements.map((x) => this.literal(x)), node: call }
       }

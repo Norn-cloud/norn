@@ -467,7 +467,7 @@
     ],
     "source": {
       "schemaId": "shopify.three.source",
-      "sha256": "96924c86db3fa3d8585eb41e44b313a0e69d5f963e6eacd733b9b166e32f81f3",
+      "sha256": "cb5f00539f986adf07b0ed0bc29f9dd2aa2606935e48cba5c306ec5693fc1120",
       "version": "0.1.0"
     }
   },
