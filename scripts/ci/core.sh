@@ -251,6 +251,10 @@ PY
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
+      # runnable-docs runs each release test the status matrix names; build
+      # them first so its bounded runs only execute (#1171 integrated gate).
+      grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
+        while read -r build; do $build --no-run; done
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json

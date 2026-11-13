@@ -1283,3 +1283,102 @@ fn platform_tables_leave_an_engine_fresh_but_foreign_tables_do_not() {
         .expect("foreign table");
     assert!(!CellStore::engine_is_fresh(&engine).expect("not fresh"));
 }
+
+// Read revisions: every write path changes an engine's revision, so a read
+// cached under a revision reflects every write. The Durable Object engine
+// (here its native emulator, the same glue as Workers) counts its own writes;
+// the native engine reads SQLite's change counters.
+
+/// A read cached under the engine's revision, as the cell's read caches are.
+struct Cached(std::cell::RefCell<Option<((u64, u64), i64)>>);
+
+impl Cached {
+    fn count(&self, engine: &impl SqlEngine) -> i64 {
+        let revision = engine.read_cache_revision().expect("revision");
+        if let (Some(revision), Some((seen, count))) = (revision, *self.0.borrow()) {
+            if revision == seen {
+                return count;
+            }
+        }
+        let count: i64 = engine
+            .query_row(
+                "SELECT count(*) FROM t",
+                &[],
+                |row: &norn_cell::engine::SqlRow| row.get(0),
+            )
+            .expect("count");
+        if let Some(revision) = revision {
+            *self.0.borrow_mut() = Some((revision, count));
+        }
+        count
+    }
+}
+
+fn every_write_path_shows_in_a_cached_read(engine: &impl SqlEngine) {
+    engine
+        .execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        .expect("schema");
+    let cache = Cached(std::cell::RefCell::new(None));
+    assert_eq!(cache.count(engine), 0);
+
+    // A read leaves the revision as it was.
+    let before = engine.read_cache_revision().expect("revision");
+    assert!(before.is_some());
+    engine.query("SELECT v FROM t", &[]).expect("read");
+    assert_eq!(engine.read_cache_revision().expect("revision"), before);
+
+    // `execute`.
+    engine
+        .execute(
+            "INSERT INTO t (v) VALUES (?1)",
+            &[SqlValue::Text("a".into())],
+        )
+        .expect("insert");
+    assert_eq!(cache.count(engine), 1);
+    // A write through `query`.
+    engine
+        .query("INSERT INTO t (v) VALUES ('b') RETURNING id", &[])
+        .expect("insert returning");
+    assert_eq!(cache.count(engine), 2);
+    // A write behind a leading `WITH`.
+    engine
+        .query(
+            "WITH one AS (SELECT 'c' AS v) INSERT INTO t (v) SELECT v FROM one",
+            &[],
+        )
+        .expect("with insert");
+    assert_eq!(cache.count(engine), 3);
+    // `execute_batch`.
+    engine
+        .execute_batch("INSERT INTO t (v) VALUES ('d'); INSERT INTO t (v) VALUES ('e')")
+        .expect("batch");
+    assert_eq!(cache.count(engine), 5);
+    // A committed transaction; no revision while it is open.
+    engine
+        .transaction(|| -> Result<(), CellError> {
+            assert_eq!(engine.read_cache_revision()?, None);
+            engine.execute("DELETE FROM t WHERE v = 'a'", &[])
+        })
+        .expect("commit");
+    assert_eq!(cache.count(engine), 4);
+    // A rolled-back write still changes the revision, and the read is exact.
+    let refused = engine.transaction(|| -> Result<(), CellError> {
+        engine.execute("DELETE FROM t", &[])?;
+        Err(CellError::Engine("roll back".into()))
+    });
+    assert!(refused.is_err());
+    assert_eq!(cache.count(engine), 4);
+}
+
+#[test]
+fn the_do_engine_counts_every_write() {
+    let engine = norn_cell::engine::DoEngine::new(norn_cell::engine::DoStorageEmulator::new(
+        NativeEngine::open_in_memory().expect("open"),
+    ));
+    every_write_path_shows_in_a_cached_read(&engine);
+}
+
+#[test]
+fn the_native_engine_revision_follows_every_write() {
+    every_write_path_shows_in_a_cached_read(&NativeEngine::open_in_memory().expect("open"));
+}
