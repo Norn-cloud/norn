@@ -79,6 +79,7 @@ pub mod mapping;
 mod markings;
 pub mod metric;
 pub mod metric_interchange;
+pub mod source_agreement;
 mod model;
 #[allow(
     missing_docs,

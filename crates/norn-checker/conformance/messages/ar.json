@@ -518,6 +518,10 @@
       "message": "عضوية النسخة المحفوظة مفقودة أو ملتبسة أو قديمة أو تتجاوز ميزانيتها",
       "review": "needs_review"
     },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: مصدران يبلّغان عن قيمتين مختلفتين لوحدة المقياس أو عملته أو أساسه لسجل واحد؛ يُحتفظ بالبلاغين ولا يُستبعد السجل.",
+      "review": "needs_review"
+    },
     "core.projection.publication_guard": {
       "message": "النشر التحليلي مرفوض بموجب سياسة معلَنة: {$detail}",
       "review": "needs_review"
