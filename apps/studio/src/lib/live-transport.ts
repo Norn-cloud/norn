@@ -8,6 +8,7 @@ import { CellUnavailable, StudioScopeError, readStudioScope, scopedHostFetch, ty
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
+import type { CountedLinkPage, LinkCounts } from "./record-page.ts"
 
 /** A read this cell does not serve. While a cell is connected nothing recorded stands in for it. */
 export class NotServed extends Error {
@@ -23,10 +24,10 @@ export function subRead<T>(read: Read<unknown>, prefix: string, document: T): Re
   return { document, numbers, origin: read.origin }
 }
 
-/** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`). */
-function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null }>): Read<LinkPage> {
-  const { objectType, id, items, next } = read.document
-  return { ...read, document: { objectType, id, items, hasMore: typeof next === "string" } }
+/** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`), with its counts when it sends them. */
+function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }>): Read<CountedLinkPage> {
+  const { objectType, id, items, next, counts } = read.document
+  return { ...read, document: { objectType, id, items, hasMore: typeof next === "string", ...counts ? { counts } : {} } }
 }
 
 /** Where Studio's documents come from: the connected cell, or the recording when no cell is connected. */
@@ -86,7 +87,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     object: async (objectType, id) => {
       const [object, links, source] = await Promise.all([
         read<ObjectRecord>(objectPath(objectType, id)),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null }>(objectPath(objectType, id, "links")),
+        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath(objectType, id, "links")),
         // 404: no mapping produced this object (or its source is not readable): there is no lineage to show.
         read<SourceLineage>(objectPath(objectType, id, "lineage")),
       ])

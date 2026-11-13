@@ -158,7 +158,7 @@ const fn law_category(reason: &crate::governing_laws::LawEvaluationError) -> Ref
     use crate::governing_laws::LawEvaluationError as Law;
     match reason {
         Law::Violated(_) => RefusalCategory::Precondition,
-        Law::BudgetExceeded => RefusalCategory::Limit,
+        Law::BudgetExceeded | Law::LinkFanOutExceeded { .. } => RefusalCategory::Limit,
         Law::UnsupportedUntilB2(_) | Law::Unsupported(_) | Law::Invalid(_) => {
             RefusalCategory::Invalid
         }

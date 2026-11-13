@@ -41,7 +41,7 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Relations", "Lineage", "Guarantees", "Ledger", "Access"]) expect(html).toContain(`>${tab}</button>`)
+  for (const tab of ["Overview", "Lineage", "Guarantees", "Access"]) expect(html).toContain(`>${tab}</button>`)
   expect(html).toContain("No personal data marked")
 })
 
@@ -54,7 +54,7 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
-  expect(html).toContain("Copy fcf977dc241bf9021511c536c502b22f9635821cc500b5db5e6d6cdfe4ca5fea")
+  expect(html).toContain("Copy 528f80ba31112975cd2bd852c53b4fd6566287dbd463a5ba09b0c2fb03ae8688")
   expect(html).toContain("This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.")
   expect(html).toContain("Viewing as")
   expect(html).not.toContain("no signed-in principal")

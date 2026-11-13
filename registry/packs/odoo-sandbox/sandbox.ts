@@ -283,7 +283,8 @@ export const SandboxSource = Norn.sourceSchema({
       field: "valuation_method",
       origin: "declared",
       values: [{value: "moving_average"}]
-    }
+    },
+    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "product.product", fields: ["id"], origin: "declared"},
@@ -297,7 +298,7 @@ export const SandboxMapping = Norn.mapping({
   id: "odoo.sandbox.mapping",
   title: "Odoo sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "76b16f0b382657832285372b79062ec0b243f00fd212fb6c928c1c4fc65e777d"},
+  source: {schemaId: "odoo.sandbox.source", version: "0.1.0", sha256: "dcb889dffef87077780602a8e2af8f3865b5532f1c42eb5f0188b84bcb25d1e4"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [
