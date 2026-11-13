@@ -481,3 +481,69 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
         (others > 0).then(|| counts(others))
     );
 }
+
+/// SOURCE-AGREE-1 parity on the real analytics engine (D102): `DuckDB` answers
+/// the stock question itself, the host then counts disagreements as
+/// `EngineQuestions` does, and the whole envelope equals the exact engine's
+/// (only the engine label differs, as QUERY-ENGINE-1 requires).
+#[cfg(feature = "duckdb")]
+#[test]
+fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_does() {
+    use norn_cell::analytics::TenantId;
+    use norn_cell::analytics::engine::{Engine, Settings};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("engine.sqlite"));
+    load(&mut cell, "erpnext");
+    load(&mut cell, "shopify");
+    let plan = stock_plan();
+    let store = cell.store();
+    let exact = store
+        .evaluate_question(&plan, context(), |_| Ok(true))
+        .expect("the exact engine answers");
+    assert!(exact.source_disagreements.is_some(), "{exact:#?}");
+    let engine_directory = tempfile::tempdir().expect("engine directory");
+    let engine = Engine::new(Settings {
+        root: engine_directory.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("engine");
+    let tenant = TenantId::of_scope("org_demo/dev");
+    // ANALYTICS-FRONTIER-1: bring the mirror to the cell's verified head.
+    let mut frontier = engine
+        .frontier(
+            &store
+                .analytics_frontier(&tenant, MAIN_WORLD)
+                .expect("tables"),
+        )
+        .expect("frontier")
+        .frontier;
+    loop {
+        let batch = store
+            .analytics_delta(&tenant, MAIN_WORLD, frontier, 64)
+            .expect("delta");
+        frontier = engine.sync(&batch.request).expect("sync").frontier;
+        if batch.complete {
+            break;
+        }
+    }
+    let prepared = store
+        .analytics_prepare(&plan, context(), &tenant)
+        .expect("prepared");
+    let response = engine.evaluate(&prepared.request).expect("DuckDB answers");
+    let mut answered = store
+        .analytics_answer(prepared, response)
+        .expect("the engine's answer");
+    // What EngineQuestions does after the engine (norn-api analytics_routes).
+    answered.source_disagreements = store
+        .answer_source_disagreements(
+            &plan,
+            &answered.context.clone(),
+            answered.known_as_of,
+            &mut |_| Ok(true),
+        )
+        .expect("host counts");
+    assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
+    answered.engine = norn_cell::compute::Engine::Cell;
+    assert_eq!(answered, exact);
+}
