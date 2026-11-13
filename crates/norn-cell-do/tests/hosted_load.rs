@@ -50,10 +50,13 @@ const PACKS: [&str; 9] = [
     "shopify",
     "sources",
 ];
-/// Cell-owned evidence types the cell writes for every mapped link and
-/// source row; submitted only while the base lacks them.
-const CELL_OWNED: [&str; 2] = [
+/// Core evidence types the base lacks: the link claims and source evidence the
+/// cell writes for every mapped link and source row, and the source-document
+/// interface the documents pack implements. Submitted only while the base
+/// lacks them.
+const CELL_OWNED: [&str; 3] = [
     "norn.ObservedLinkClaim.entity.json",
+    "norn.SourceDocument.interface.json",
     "norn.SourceEvidence.interface.json",
 ];
 
