@@ -205,7 +205,7 @@ fn every_categorical_property_is_counted_exactly_most_rows_first() {
             .iter()
             .map(|facet| facet.property.as_str())
             .collect::<Vec<_>>(),
-        ["status", "region"]
+        ["region", "status"]
     );
     assert_eq!(
         read(&found, "status"),
@@ -241,7 +241,7 @@ fn a_row_the_caller_cannot_see_or_whose_values_are_withheld_is_never_counted() {
     assert_eq!(few.rows, 4);
     assert_eq!(
         read(&few, "status").0,
-        vec![("open".into(), 2), ("closed".into(), 2)]
+        vec![("closed".into(), 2), ("open".into(), 2)]
     );
     let pop = facets(&host, "pop", Some("status"), None).unwrap();
     assert_eq!(pop.rows, 0);

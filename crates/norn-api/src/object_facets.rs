@@ -59,8 +59,8 @@ pub struct NornObjectFacets {
     pub approximate: bool,
     /// The visible-row scan bound.
     pub scan_limit: u64,
-    /// One facet per property asked for, in the order asked (declared order
-    /// when none was named).
+    /// One facet per property asked for, in the order asked (the order the
+    /// cell's model lists the type's properties when none was named).
     pub facets: Vec<NornFacet>,
 }
 
