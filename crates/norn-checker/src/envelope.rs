@@ -1506,7 +1506,7 @@ fn validate_closed_action_schema(
             unions: if action_input {
                 ClosedSchemaUnions::ActionInput
             } else {
-                ClosedSchemaUnions::None
+                ClosedSchemaUnions::ActionOutput
             },
         },
     );
@@ -1798,6 +1798,10 @@ pub(crate) enum ClosedSchemaUnions {
     /// Existing ActionIR input leaves: nullable primitives or bounded JSON.
     /// ACTION-ACTOR-1 also reserves actor/approved property names at every depth.
     ActionInput,
+    /// ActionIR output leaves: the same two type arrays as inputs (a nullable
+    /// scalar validated as its scalar leaf, or the whole JSON value domain),
+    /// with the output's own keywords and no input-only reservations.
+    ActionOutput,
 }
 
 pub(crate) fn validate_closed_schema(
@@ -1838,15 +1842,17 @@ pub(crate) fn validate_closed_schema(
     };
     if let Some(type_members) = type_value.as_array() {
         match profile.unions {
-            ClosedSchemaUnions::ActionInput => validate_action_type_union(
-                type_members,
-                schema,
-                path,
-                depth,
-                diagnostics,
-                artifact_id,
-                profile,
-            ),
+            ClosedSchemaUnions::ActionInput | ClosedSchemaUnions::ActionOutput => {
+                validate_action_type_union(
+                    type_members,
+                    schema,
+                    path,
+                    depth,
+                    diagnostics,
+                    artifact_id,
+                    profile,
+                )
+            }
             ClosedSchemaUnions::Nullable => validate_nullable_schema(
                 type_members,
                 schema,
@@ -6755,6 +6761,52 @@ mod tests {
             json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 19 } }),
             json!({ "type": ["null", "boolean", "number", "string", "array", "object"], "title": "x" }),
             json!({ "type": ["string", "integer"] }),
+        ] {
+            assert!(!check(refused.clone()).is_empty(), "{refused}");
+        }
+    }
+
+    /// An `ActionIR` output admits the same nullable scalar leaves as an input
+    /// (`Schema.NullOr` in `Norn.action`), with the output's own keywords: no
+    /// input labels, and `actor`/`approved` are ordinary output fields.
+    #[test]
+    fn nullable_action_output_leaves_are_admitted() {
+        let check = |leaf: serde_json::Value| {
+            let output = json!({
+                "type": "object", "required": ["value"], "additionalProperties": false,
+                "properties": { "value": leaf },
+            });
+            let tree = norn_ir::json_tree_from_value(output).expect("schema tree");
+            let mut diagnostics = Vec::new();
+            validate_closed_action_schema(
+                Some(&tree),
+                "$.outputSchema",
+                0,
+                false,
+                &mut diagnostics,
+                Some("app.x.action"),
+            );
+            diagnostics
+                .into_iter()
+                .map(|d| d.message)
+                .collect::<Vec<_>>()
+        };
+        for admitted in [
+            json!({ "type": ["string", "null"] }),
+            json!({ "type": ["integer", "null"] }),
+            json!({ "type": ["boolean", "null"] }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 18 } }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"] }),
+        ] {
+            assert_eq!(check(admitted.clone()), Vec::<String>::new(), "{admitted}");
+        }
+        for refused in [
+            json!({ "type": ["string", "null"], "title": "input labels are input-only" }),
+            json!({ "type": ["string", "null"], "minimum": 0 }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 19 } }),
+            json!({ "type": ["object", "null"] }),
+            json!({ "type": ["string", "integer"] }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"], "title": "x" }),
         ] {
             assert!(!check(refused.clone()).is_empty(), "{refused}");
         }
