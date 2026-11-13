@@ -1495,7 +1495,8 @@
       "review": "needs_review"
     },
     "mapping.model.link_claim_type_missing": {
-      "message": "الخريطة {$map} تعلن روابط، لكن norn.ObservedLinkClaim ليس نوع كائن في المجموعة أو الأساس"
+      "message": "الخريطة {$map} تعلن روابط، لكن norn.ObservedLinkClaim ليس نوع كائن في المجموعة أو الأساس",
+      "review": "needs_review"
     },
     "mapping.model.link_target_mismatch": {
       "message": "الرابط {$link} من {$objectType} يستهدف {$target}، الذي لا يقبل {$produced}",
