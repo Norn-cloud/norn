@@ -17,6 +17,7 @@ const HOPS = [[1, "1 hop"], [2, "2 hops"], [6, "3+ hops"]] as const
 const WIDTH = 220
 const GAP_X = 72
 const ROW = 84
+const HEIGHT = 56
 
 const ICON: Readonly<Record<LineageNode["kind"], LucideIcon>> = { record: Box, fact: Rows3, source: Database, document: FileText }
 
@@ -37,7 +38,8 @@ function NodeCard({ data: { node } }: NodeProps<Card>) {
 
 const NODE_TYPES = { card: NodeCard }
 
-const facts = (names: readonly string[]) => names.length === 0 ? "" : `${names.slice(0, 2).map((name) => name.replaceAll("_", " ")).join(", ")}${names.length > 2 ? ` +${names.length - 2}` : ""}`
+/** An edge's label: the one fact it feeds by name, or how many; the list view names them all. */
+const facts = (names: readonly string[]) => names.length === 0 ? "" : names.length === 1 ? (names[0] ?? "").replaceAll("_", " ") : `${names.length} facts`
 
 /** Sources on the left, the record on the right: each hop one column, its nodes in the order the lineage names them. */
 function Graph({ graph }: { readonly graph: LineageGraph }) {
@@ -47,7 +49,8 @@ function Graph({ graph }: { readonly graph: LineageGraph }) {
     const nodes: Card[] = graph.nodes.map((node) => {
       const row = rows.get(node.hop) ?? 0
       rows.set(node.hop, row + 1)
-      return { id: node.id, type: "card", position: { x: (deepest - node.hop) * (WIDTH + GAP_X), y: row * ROW }, data: { node } }
+      // A known size lets the first fit include every card before the cards are measured.
+      return { id: node.id, type: "card", position: { x: (deepest - node.hop) * (WIDTH + GAP_X), y: row * ROW }, width: WIDTH, height: HEIGHT, data: { node } }
     })
     const edges: Edge[] = graph.edges.map(({ from, to, facts: names }) => ({
       id: `${from}→${to}`, source: from, target: to, type: "smoothstep", label: facts(names), labelStyle: { fontSize: 11 }, markerEnd: { type: MarkerType.ArrowClosed },
