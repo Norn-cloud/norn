@@ -64,18 +64,18 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   // Decimals are written to their declared scale, as everywhere in Studio (195.5 at decimal<2>).
   await expect(page.getByRole("cell", { name: "195.50" }).first()).toBeVisible()
   await expect(page.getByRole("cell", { name: "195.5", exact: true })).toHaveCount(0)
-  // Columns past the right edge are signalled; scrolled to the end, the first column stays put.
-  await expect(page.locator("[data-edge=right]")).toBeVisible()
   await shoot(page, "rows")
+  // Technical: the contract is a second header line and the bucket is its exact date. The wider
+  // headers overflow: the hidden columns are signalled, and scrolled to the end the first column stays put.
+  await page.getByRole("radio", { name: "Technical" }).click()
+  await expect(page.getByRole("columnheader", { name: /revenue/ }).first()).toContainText("additive")
+  await expect(page.getByRole("cell", { name: "2026-10-26" }).first()).toBeVisible()
+  await expect(page.locator("[data-edge=right]")).toBeVisible()
+  await shoot(page, "rows-technical")
   await page.locator("[data-slot=table-container]").first().evaluate((scroller) => { scroller.scrollLeft = scroller.scrollWidth })
   await expect(page.locator("[data-edge=right]")).toHaveCount(0)
   await expect(page.getByRole("cell", { name: "east" }).first()).toBeInViewport()
   await shoot(page, "rows-scrolled")
-  // Technical: the contract is a second header line and the bucket is its exact date.
-  await page.getByRole("radio", { name: "Technical" }).click()
-  await expect(page.getByRole("columnheader", { name: /revenue/ }).first()).toContainText("additive")
-  await expect(page.getByRole("cell", { name: "2026-10-26" }).first()).toBeVisible()
-  await shoot(page, "rows-technical")
   await page.getByRole("radio", { name: "Business" }).click()
 })
 
