@@ -37,7 +37,10 @@ use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::lifecycles::Machine;
 use crate::soundness::compose::{self, Product, Sync};
 use crate::soundness::{self, Completion, Net};
-use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
+use crate::{
+    Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, DiagnosticWitness, Span,
+    WitnessMove, WitnessSide, WitnessStep,
+};
 
 const UNKNOWN_LIFECYCLE: &str = "widget.lifecycle.unknown_lifecycle";
 const UNKNOWN_REFERENCE: &str = "widget.lifecycle.unknown_reference";
@@ -67,6 +70,7 @@ struct Finding {
     code: &'static str,
     pointer: String,
     message: String,
+    witness: Option<DiagnosticWitness>,
 }
 
 /// Compose every page machine of one widget that names a lifecycle with that lifecycle.
@@ -107,6 +111,7 @@ pub(crate) fn check(
             span: Some(Span::pointer(finding.pointer)),
             artifact_id: Some(owner.artifact_id.clone()),
             remediation: Some(DiagnosticRemediation::FixDefinition),
+            witness: finding.witness,
         })
         .collect()
 }
@@ -144,6 +149,7 @@ impl Page<'_> {
             code,
             pointer,
             message,
+            witness: None,
         });
     }
 
@@ -231,14 +237,10 @@ impl Page<'_> {
                 .get(&ui_state)
                 .is_none_or(|states| states.contains(&backend_state))
         };
-        let mut reported = BTreeSet::new();
         for (state, run) in product.assumption_violations(allows) {
             let Some((ui_state, backend_state)) = product.pairs.get(state).copied() else {
                 continue;
             };
-            if !reported.insert(ui_state) {
-                continue;
-            }
             let pointer = self.assumption_pointer(ui_state);
             let message = format!(
                 "page state `{}` is shown while the object is `{}`, which it does not assume{}",
@@ -251,7 +253,12 @@ impl Page<'_> {
                     .unwrap_or_default(),
                 self.run(&ui, &backend, &product, &run)
             );
-            Self::push(findings, ASSUMPTION_VIOLATED, pointer, message);
+            findings.push(Finding {
+                code: ASSUMPTION_VIOLATED,
+                pointer,
+                message,
+                witness: Some(self.witness(&ui, &backend, &product, &run)),
+            });
         }
         let taken = product.backend_labels(&backend_net);
         for (index, entry) in self.lifecycle.syncs.iter().enumerate() {
@@ -512,8 +519,8 @@ impl Page<'_> {
         usable.then_some(assumed)
     }
 
-    /// Option to complete over the product: one finding per page state, naming every object
-    /// state it is stuck (or Unknown) with, each with its shortest run.
+    /// Option to complete over the product: one finding per reachable (page state, object state)
+    /// pair that is stuck or Unknown, each with its shortest run as a witness.
     fn completion(
         &self,
         ui: &Net,
@@ -522,53 +529,79 @@ impl Page<'_> {
         findings: &mut Vec<Finding>,
     ) {
         let verdict = soundness::analyse(product.net());
-        let mut grouped: BTreeMap<(&'static str, usize), BTreeMap<usize, usize>> = BTreeMap::new();
         for (state, found) in verdict.states.iter().enumerate() {
             let Some((ui_state, backend_state)) = product.pairs.get(state).copied() else {
                 continue;
             };
-            let code = if found.stuck() {
-                STUCK
+            let (code, what) = if found.stuck() {
+                (STUCK, "no ending of both is reachable")
             } else if found.reachable && found.completion == Completion::Unknown {
-                COMPLETION_UNKNOWN
+                (
+                    COMPLETION_UNKNOWN,
+                    "an ending of both is reachable only through guarded transitions",
+                )
             } else {
                 continue;
             };
-            grouped
-                .entry((code, ui_state))
-                .or_default()
-                .entry(backend_state)
-                .or_insert(state);
+            let object = backend
+                .machine
+                .states
+                .get(backend_state)
+                .copied()
+                .unwrap_or_default();
+            let run = soundness::witness(product.net(), state).unwrap_or_default();
+            findings.push(Finding {
+                code,
+                pointer: self.state_pointer(ui_state),
+                message: format!(
+                    "page state `{}` with the object `{object}`: {what}{}",
+                    self.ui_state(ui_state),
+                    self.run(ui, backend, product, &run)
+                ),
+                witness: Some(self.witness(ui, backend, product, &run)),
+            });
         }
-        for ((code, ui_state), pairs) in grouped {
-            let cases: Vec<String> = pairs
-                .iter()
-                .map(|(backend_state, state)| {
-                    let object = backend
-                        .machine
-                        .states
-                        .get(*backend_state)
-                        .copied()
-                        .unwrap_or_default();
-                    let run = soundness::witness(product.net(), *state).unwrap_or_default();
-                    format!(
-                        "with the object `{object}` (shortest run: {})",
-                        self.steps(ui, backend, product, &run).join(", ")
-                    )
+    }
+
+    /// A product run as a witness: per step, the product edge and each side's transition.
+    fn witness(
+        &self,
+        ui: &Net,
+        backend: &Backend<'_>,
+        product: &Product,
+        run: &[usize],
+    ) -> DiagnosticWitness {
+        let steps = run
+            .iter()
+            .filter_map(|edge| {
+                let origin = product
+                    .net()
+                    .edges
+                    .get(*edge)
+                    .and_then(|step| product.origins.get(step.label))?;
+                let page = origin
+                    .ui
+                    .and_then(|index| ui.edges.get(index))
+                    .and_then(|step| self.machine.transitions.get(step.label))
+                    .map(|transition| WitnessMove {
+                        side: WitnessSide::Ui,
+                        label: transition.transition_id.clone(),
+                    });
+                let object = origin
+                    .backend
+                    .and_then(|index| backend.net.edges.get(index))
+                    .and_then(|step| backend.machine.transitions.get(step.label))
+                    .map(|transition| WitnessMove {
+                        side: WitnessSide::Backend,
+                        label: transition.id.as_str().to_owned(),
+                    });
+                Some(WitnessStep {
+                    edge: *edge,
+                    moves: page.into_iter().chain(object).collect(),
                 })
-                .collect();
-            let what = if code == STUCK {
-                "no ending of both is reachable"
-            } else {
-                "an ending of both is reachable only through guarded transitions"
-            };
-            let message = format!(
-                "page state `{}`: {what} {}",
-                self.ui_state(ui_state),
-                cases.join(", or ")
-            );
-            Self::push(findings, code, self.state_pointer(ui_state), message);
-        }
+            })
+            .collect();
+        DiagnosticWitness { steps }
     }
 
     /// A product run as the steps of each side.

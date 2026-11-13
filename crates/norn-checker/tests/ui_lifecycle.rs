@@ -126,6 +126,24 @@ fn lifecycle_findings(
     lifecycle: &Value,
     edit: impl FnOnce(&mut Value),
 ) -> Vec<(String, String, String)> {
+    lifecycle_diagnostics(lifecycle, edit)
+        .into_iter()
+        .map(|finding| {
+            let pointer = finding.span.map(|span| span.pointer).unwrap_or_default();
+            (finding.code.as_str().to_owned(), pointer, finding.message)
+        })
+        .collect()
+}
+
+/// The `widget.lifecycle.*` findings as their wire JSON (with any witness).
+fn lifecycle_json(lifecycle: &Value, edit: impl FnOnce(&mut Value)) -> Vec<Value> {
+    lifecycle_diagnostics(lifecycle, edit)
+        .iter()
+        .map(Diagnostic::to_json)
+        .collect()
+}
+
+fn lifecycle_diagnostics(lifecycle: &Value, edit: impl FnOnce(&mut Value)) -> Vec<Diagnostic> {
     let artifacts: Vec<ArtifactEnvelope> = [
         entity(edit),
         read_json("rule-ir-v2/valid/purchase-order-approval.rule.json"),
@@ -146,13 +164,6 @@ fn lifecycle_findings(
     found
         .into_iter()
         .filter(|finding| finding.code.as_str().starts_with("widget.lifecycle."))
-        .map(|finding| {
-            let pointer = finding
-                .span
-                .map(|span| format!("{span:?}"))
-                .unwrap_or_default();
-            (finding.code.as_str().to_owned(), pointer, finding.message)
-        })
         .collect()
 }
 
@@ -174,8 +185,10 @@ fn a_page_synced_with_a_transition_its_decision_emits_composes_cleanly() {
 #[test]
 fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck() {
     // When a draft cannot be cancelled, a rejected order revised back to `draft` waits for the
-    // page's own submit; the page already shows `done`, so the pair can never end.
-    let found = lifecycle_findings(&submit_sync(), |entity| {
+    // page's own submit; the page already shows `done`, so neither pair can ever end. The planted
+    // case is (`done`, `draft`); (`done`, `rejected`) is stuck with it. Exactly these two, each
+    // with its witness.
+    let found = lifecycle_json(&submit_sync(), |entity| {
         let lifecycles = entity["payload"]["objectType"]["lifecycles"]
             .as_array_mut()
             .expect("lifecycles");
@@ -191,25 +204,42 @@ fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck(
             }
         }
     });
-    let stuck: Vec<&(String, String, String)> = found
+    let mut stuck: Vec<Value> = found
         .iter()
-        .filter(|(code, _, _)| code == "widget.lifecycle.stuck")
+        .filter(|finding| finding["code"] == "widget.lifecycle.stuck")
+        .map(|finding| {
+            let steps: Vec<Value> = finding["witness"]["steps"]
+                .as_array()
+                .expect("a witness")
+                .iter()
+                .map(|step| {
+                    json!(step["moves"]
+                        .as_array()
+                        .expect("moves")
+                        .iter()
+                        .map(|one| json!([one["side"], one["label"]]))
+                        .collect::<Vec<_>>())
+                })
+                .collect();
+            json!({ "message": finding["message"], "pointer": finding["span"]["pointer"], "witness": steps })
+        })
         .collect();
-    assert!(!stuck.is_empty(), "{found:#?}");
-    let (_, pointer, message) = stuck.first().expect("a stuck finding");
-    assert!(
-        pointer.contains("/payload/ux/pages/0/machine/states/2"),
-        "{pointer}"
-    );
-    // The planted case is `done` over a draft that only the page could submit; a rejected order
-    // is stuck with it, since it can only be revised back to that draft. Exactly these two, each
-    // with its own shortest run.
-    assert_eq!(stuck.len(), 1, "{found:#?}");
+    stuck.sort_by_key(|finding| finding["message"].to_string());
     assert_eq!(
-        message,
-        "page state `done`: no ending of both is reachable \
-         with the object `draft` (shortest run: page submit, page on-accepted with object submit, object reject, object revise), \
-         or with the object `rejected` (shortest run: page submit, page on-accepted with object submit, object reject)"
+        json!(stuck),
+        json!([
+            {
+                "message": "page state `done` with the object `draft`: no ending of both is reachable; shortest run: page submit, page on-accepted with object submit, object reject, object revise",
+                "pointer": "/payload/ux/pages/0/machine/states/2",
+                "witness": [[["ui", "submit"]], [["ui", "on-accepted"], ["backend", "submit"]], [["backend", "reject"]], [["backend", "revise"]]]
+            },
+            {
+                "message": "page state `done` with the object `rejected`: no ending of both is reachable; shortest run: page submit, page on-accepted with object submit, object reject",
+                "pointer": "/payload/ux/pages/0/machine/states/2",
+                "witness": [[["ui", "submit"]], [["ui", "on-accepted"], ["backend", "submit"]], [["backend", "reject"]]]
+            }
+        ]),
+        "{found:#?}"
     );
 }
 
@@ -220,29 +250,34 @@ fn a_page_state_shown_where_its_assumption_does_not_hold_is_reported_with_its_ru
         { "stateId": "open", "lifecycleStates": ["draft"] },
         { "stateId": "done", "lifecycleStates": ["submitted", "approved", "received"] }
     ]);
-    let found = lifecycle_findings(&lifecycle, |_| {});
-    assert_eq!(
-        codes(&found),
-        ["widget.lifecycle.assumption_violated"; 2],
-        "{found:#?}"
-    );
-    let messages: Vec<&str> = found
-        .iter()
-        .map(|(_, _, message)| message.as_str())
-        .collect();
+    let found = lifecycle_json(&lifecycle, |_| {});
     // The page opens only on a draft order, yet another actor can cancel it under the open page;
-    // after a submit, the order can be rejected or cancelled under `done`.
+    // after a submit the order can be rejected, cancelled or revised back to a draft under `done`.
+    // Every violating pair is reported, each with its own witness.
+    let mut messages: Vec<String> = found
+        .iter()
+        .map(|finding| {
+            assert_eq!(finding["code"], "widget.lifecycle.assumption_violated", "{finding:#}");
+            assert!(
+                finding["witness"]["steps"]
+                    .as_array()
+                    .is_some_and(|steps| !steps.is_empty()),
+                "{finding:#}"
+            );
+            finding["message"].as_str().unwrap_or_default().to_owned()
+        })
+        .collect();
+    messages.sort_unstable();
+    let shown = |page: &str, object: &str| {
+        format!("page state `{page}` is shown while the object is `{object}`, which it does not assume")
+    };
+    let pairs = [("done", "cancelled"), ("done", "draft"), ("done", "rejected"), ("open", "cancelled")];
+    assert_eq!(messages.len(), pairs.len(), "{messages:#?}");
+    for ((page, object), message) in pairs.iter().zip(&messages) {
+        assert!(message.starts_with(&shown(page, object)), "{messages:#?}");
+    }
     assert!(
-        messages.iter().any(|m| m
-            .contains("page state `open` is shown while the object is `cancelled`")
-            && m.contains("shortest run: object cancel")),
-        "{messages:#?}"
-    );
-    assert!(
-        messages.iter().any(
-            |m| m.contains("page state `done` is shown while the object is `")
-                && m.contains("page on-accepted with object submit")
-        ),
+        messages.contains(&format!("{}; shortest run: object cancel", shown("open", "cancelled"))),
         "{messages:#?}"
     );
 }

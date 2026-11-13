@@ -183,7 +183,8 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
+    DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
+    diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
