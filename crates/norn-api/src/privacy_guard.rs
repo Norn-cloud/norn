@@ -102,6 +102,10 @@ pub struct NornGuardToken {
     /// The field's markings (field tokens).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markings: Vec<String>,
+    /// Whether a restore would give this caller the value back: the PDP
+    /// allows them `norn.reveal` on every marking (a field), or they typed
+    /// it (a detected literal).
+    pub revealable: bool,
 }
 
 /// A guarded prompt: what the model may receive, and the receipt that holds
@@ -674,6 +678,13 @@ pub fn guard<E: SqlEngine>(
                     )
                 }),
                 markings: entry.markings.clone(),
+                revealable: match entry.source {
+                    NornGuardSource::Detected => true,
+                    NornGuardSource::Field => {
+                        !entry.markings.is_empty()
+                            && entry.markings.iter().all(|marking| host.reveals(actor, marking))
+                    }
+                },
             })
             .collect(),
         withheld,

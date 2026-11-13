@@ -51,6 +51,13 @@ function cellDouble() {
     get: async (path) => { calls.push({ method: "GET", path }); return path === "/v1/questions:catalog" ? ok(cellCatalog) : { kind: "answer", status: 404, body: null } },
     post: async (path, body) => {
       calls.push({ method: "POST", path, body })
+      // The cell's guard, as a stand-in: one email address becomes [EMAIL_1]; a restore gives it back.
+      if (path === "/v1/guard:prompt") {
+        const text = (body as { text: string }).text
+        const email = /[\w.+-]+@[\w-]+\.[\w.]+/.exec(text)?.[0]
+        return ok({ guardId: 7, receiptHash: "g", safePrompt: email ? text.replace(email, "[EMAIL_1]") : text, tokens: email ? [{ token: "[EMAIL_1]", kind: "EMAIL", label: "Email", source: "detected", revealable: true }] : [] })
+      }
+      if (path === "/v1/guard/7:restore") return ok({ guardId: 7, segments: [{ text: (body as { text: string }).text }], reveals: [], complete: true })
       const payload = (body as { payload: ReturnType<typeof compile> }).payload
       const bad = payload.tiles.findIndex((t) => t.view.kind === "chart" && "chart" in t.view && t.view.chart === "pie" && t.question.aggregate[0]?.metric === "demo.yield")
       if (path === "/v1/definitions:admit") return ok(bad < 0 ? { admitted: true, diagnostics: [], restatement: `${payload.title}\nwords`, restatementSha256: "c".repeat(64) } : { admitted: false, diagnostics: [{ code: "definition.view_invalid", message: "a pie shows the parts of one whole", span: { pointer: `/tiles/${bad}/view` } }], restatement: null, restatementSha256: null })
@@ -133,4 +140,23 @@ test("a refused proposal is kept with its diagnostics and cannot be accepted; th
   expect(capped.status).toBe(429)
   expect((await assistant(post("", { request: "  " }), "", deps)).status).toBe(400)
   expect((await assistant(post("", { request: "x" }), "", { ...deps, model: undefined })).status).toBe(503)
+})
+
+test("every model call goes through the cell's guard: the model reads tokens, never the value; no guard, no call", async () => {
+  const db = stage()
+  const { cell, calls } = cellDouble()
+  const model = scripted(proposed([tile()]))
+  const deps: AssistantDeps = { db, cell, scope: { orgId: "org_demo", environmentId: "analytics", userId: "u1" }, model, capMicroUsd: 20_000_000, now: NOW, newId: () => "g1" }
+  const made = await (await assistant(post("", { request: "Weekly yield for refunds to amira@nilegold.com" }), "", deps)).json() as { verdict: { guard: { safePrompt: string; guardId: number } }; definition: { origin: { request: string } } }
+  expect(JSON.stringify(model.asks)).not.toContain("amira@nilegold.com")
+  expect(model.asks[0]?.turns[0]?.content).toContain("[EMAIL_1]")
+  expect(made.verdict.guard).toMatchObject({ guardId: 7, safePrompt: "Weekly yield for refunds to [EMAIL_1]" })
+  expect(made.definition.origin.request).not.toContain("amira@")
+  expect(calls[0]).toMatchObject({ path: "/v1/guard:prompt" })
+  // A cell without the guard: nothing reaches the model.
+  const unguarded: Cell = { ...cell, post: async (path, body) => path === "/v1/guard:prompt" ? { kind: "answer", status: 404, body: null } : cell.post(path, body) }
+  const silent = scripted(proposed([tile()]))
+  const refusedCall = await assistant(post("", { request: "Weekly yield" }), "", { ...deps, cell: unguarded, model: silent, newId: () => "g2" })
+  expect(refusedCall.status).toBe(503)
+  expect(silent.asks).toHaveLength(0)
 })

@@ -17,7 +17,7 @@ export interface Proposal {
   readonly targetId: string
   readonly targetVersion: number | null
   readonly definition: Definition
-  readonly verdict: Verdict & { readonly note: string }
+  readonly verdict: Verdict & { readonly note: string; readonly guard?: unknown }
   readonly state: ProposalState
   readonly model: string
   readonly installed: { readonly id: string; readonly version: number } | null

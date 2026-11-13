@@ -498,6 +498,48 @@ fn retained_privacy_documents_are_the_servers_own() {
         let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
         assert!(kept == text, "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1");
     };
+    // PRIVACY-GUARD-1: the dashboard assistant's prompt, guarded, and the
+    // model's reply restored for its author (who may reveal) and for a viewer.
+    let asked = "Show weekly refunds for Amira Haddad: she was charged twice on card 4539 1488 0343 6467. Reach her at amira.haddad@fastmail.com or +20 100 555 0132.";
+    let guarded = norn_api::privacy_guard::guard(
+        &cell,
+        &scope,
+        Some("auditor"),
+        &norn_api::privacy_guard::NornGuardRequest {
+            text: asked.into(),
+            context: vec![],
+            purpose: Some("dashboard-assistant".into()),
+            idempotency_key: "demo-guard-1".into(),
+        },
+        &Mapping,
+    )
+    .unwrap();
+    for raw in ["Amira", "4539", "fastmail", "555"] {
+        assert!(!guarded.safe_prompt.contains(raw), "{}", guarded.safe_prompt);
+    }
+    let reply = "Weekly refunds for [CUSTOMER_1]: the duplicate charge on [CARD_1] shows in the October 24 week. The catalog holds no contact fields, so [EMAIL_1] and [PHONE_1] are not used.";
+    let restore_for = |actor: &str, text: &str, key: &str| {
+        norn_api::privacy_guard::restore(
+            &cell,
+            &scope,
+            Some(actor),
+            guarded.guard_id,
+            &norn_api::privacy_guard::NornRestoreRequest {
+                text: text.into(),
+                idempotency_key: key.into(),
+            },
+            &Mapping,
+        )
+        .unwrap()
+    };
+    let reply_auditor = restore_for("auditor", reply, "demo-reply-auditor");
+    let reply_viewer = restore_for("viewer", reply, "demo-reply-viewer");
+    let original = restore_for("auditor", &guarded.safe_prompt, "demo-original");
+    assert!(reply_auditor.complete && !reply_viewer.complete);
+    retained("guard.prompt.json", &guarded);
+    retained("guard.reply.auditor.json", &reply_auditor);
+    retained("guard.reply.viewer.json", &reply_viewer);
+    retained("guard.original.auditor.json", &original);
     retained("canon.Party.viewer.page.json", &viewer);
     retained("canon.Party.auditor.page.json", &auditor);
     retained("canon.Party.reveal.json", &revealed);
