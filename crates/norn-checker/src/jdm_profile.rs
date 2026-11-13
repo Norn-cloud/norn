@@ -1779,6 +1779,7 @@ fn set_finding(
     remediation: DiagnosticRemediation,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

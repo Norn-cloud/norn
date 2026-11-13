@@ -4,6 +4,7 @@
 
 use wasm_bindgen::prelude::*;
 
+#[cfg(feature = "checker")]
 /// `checkArtifactSet(artifactsJson, contextJson)`: see
 /// [`crate::check_artifact_set_json`].
 ///
@@ -15,6 +16,7 @@ pub fn check_artifact_set(artifacts_json: &str, context_json: &str) -> Result<St
     crate::check_artifact_set_json(artifacts_json, context_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `admitQuestion(artifactsJson, metricsJson, questionJson)`: see
 /// [`crate::admit_question_json`].
 ///
@@ -30,6 +32,7 @@ pub fn admit_question(
     crate::admit_question_json(artifacts_json, metrics_json, question_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `lifecycleDiagrams(artifactsJson)`: see [`crate::lifecycle_diagrams_json`].
 ///
 /// # Errors
@@ -40,6 +43,7 @@ pub fn lifecycle_diagrams(artifacts_json: &str) -> Result<String, JsError> {
     crate::lifecycle_diagrams_json(artifacts_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `checkExpression(expr, envArtifactsJson, expectedType, selfType?)`: see
 /// [`crate::check_expression_json`].
 ///
@@ -67,6 +71,7 @@ pub fn check_expression(
 }
 
 /// `evaluateLaw(lawJson, subjectJson)`: see [`crate::evaluate_law_json`].
+#[cfg(feature = "checker")]
 #[wasm_bindgen(js_name = evaluateLaw)]
 #[must_use]
 pub fn evaluate_law(law_json: &str, subject_json: &str) -> String {
@@ -88,6 +93,7 @@ pub fn evaluate_expression(expr: &str, input_json: &str, profile: Option<String>
     crate::evaluate_expression_json(expr, input_json, profile.as_deref())
 }
 
+#[cfg(feature = "checker")]
 /// `canonicalRuntimeValue(json)`: see [`crate::canonical_runtime_value_json`].
 ///
 /// # Errors
@@ -98,6 +104,7 @@ pub fn canonical_runtime_value(json: &str) -> Result<String, JsError> {
     crate::canonical_runtime_value_json(json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `functionContract(manifestJson, invocationJson?, receiptJson?)`: see
 /// [`crate::function_contract_json`].
 ///
@@ -122,6 +129,7 @@ pub fn function_contract(
     .map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `checkAgent(agentJson, contextJson)`: see [`crate::check_agent_json`].
 ///
 /// # Errors
@@ -132,6 +140,7 @@ pub fn check_agent(agent_json: &str, context_json: &str) -> Result<String, JsErr
     crate::check_agent_json(agent_json, context_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `toolPort(schemaJson)`: see [`crate::tool_port_json`].
 ///
 /// # Errors
@@ -142,6 +151,7 @@ pub fn tool_port(schema_json: &str) -> Result<String, JsError> {
     crate::tool_port_json(schema_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `toolEdge(sourceSchemaJson, targetSchemaJson)`: see [`crate::tool_edge_json`].
 ///
 /// # Errors
@@ -152,6 +162,7 @@ pub fn tool_edge(source_schema_json: &str, target_schema_json: &str) -> Result<S
     crate::tool_edge_json(source_schema_json, target_schema_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `version()`: see [`crate::version_json`].
 #[wasm_bindgen]
 #[must_use]
@@ -159,6 +170,7 @@ pub fn version() -> String {
     crate::version_json()
 }
 
+#[cfg(feature = "checker")]
 /// Read-only `explainArtifactSet` shared with the native CLI.
 /// # Errors
 /// Throws on malformed transport input.
@@ -174,6 +186,7 @@ pub fn explain_artifact_set(
         .map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `restateQuestion(questionJson, metricsJson)`: see
 /// [`crate::restate_question_json`].
 ///
@@ -185,6 +198,7 @@ pub fn restate_question(question_json: &str, metrics_json: &str) -> Result<Strin
     crate::restate_question_json(question_json, metrics_json).map_err(JsError::from)
 }
 
+#[cfg(feature = "checker")]
 /// `restateDashboard(payloadJson, metricsJson)`: see
 /// [`crate::restate_dashboard_json`].
 ///

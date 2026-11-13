@@ -43,6 +43,7 @@ fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
         "packs/erpnext",
         "packs/shopify",
         "packs/odoo",
+        "packs/sources",
     ] {
         for file in
             fs::read_dir(root().join(format!("registry/{dir}/artifacts"))).expect("artifacts")
@@ -206,6 +207,42 @@ fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
     cell.process_mapping_bundle(&id).expect("process");
     id
 }
+/// A steward's review of finding `id`, as `source.agreement.accept` or
+/// `reopen` writes it.
+fn review(cell: &mut Cell, id: &str, status: &str, expected: u64) {
+    norn_kernel::CellHost::commit(
+        cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: norn_kernel::FactKey::new("source.AgreementReview", id),
+                expected: norn_kernel::FactVersion(expected),
+                mutation: norn_kernel::FactMutation::Put {
+                    values: BTreeMap::from([
+                        ("id".to_owned(), RuntimeValue::from(id)),
+                        ("status".to_owned(), RuntimeValue::from(status)),
+                        (
+                            "reason".to_owned(),
+                            RuntimeValue::from("Shopify counts what is free to sell"),
+                        ),
+                        ("reviewed_by".to_owned(), RuntimeValue::from("steward")),
+                    ]),
+                },
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("review");
+}
+
+fn north_status(cell: &Cell, index: usize) -> DataQualityFindingStatus {
+    cell.store()
+        .read()
+        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+        .expect("history")[index]
+        .finding
+        .status
+}
+
 fn load(cell: &mut Cell, system: &str) {
     for row in fixture(system)["snapshot"].as_array().expect("rows") {
         capture(cell, system, row, "snapshot");
@@ -318,6 +355,15 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
             .iter()
             .all(|f| !matches!(f.outcome, DataQualityOutcome::SourceDisagreement { .. }))
     );
+    // A steward accepts it with a reason: acknowledged; reopened, open again.
+    let id = finding.id.clone();
+    review(&mut cell, &id, "accepted", 0);
+    assert_eq!(
+        north_status(&cell, 0),
+        DataQualityFindingStatus::Acknowledged
+    );
+    review(&mut cell, &id, "reopened", 1);
+    assert_eq!(north_status(&cell, 0), DataQualityFindingStatus::Open);
     load(&mut cell, "odoo");
     let returned = cell
         .store()
@@ -416,5 +462,22 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
         hidden.source_disagreements,
         (others > 0).then(|| counts(others)),
         "the hidden holding is neither counted nor implied"
+    );
+    // An accepted disagreement is acknowledged and no longer counted.
+    let north = cell
+        .store()
+        .read()
+        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+        .expect("history")
+        .remove(0)
+        .finding
+        .id;
+    review(&mut cell, &north, "accepted", 0);
+    assert_eq!(
+        cell.store()
+            .evaluate_question(&plan, context(), |_| Ok(true))
+            .expect("after the review")
+            .source_disagreements,
+        (others > 0).then(|| counts(others))
     );
 }

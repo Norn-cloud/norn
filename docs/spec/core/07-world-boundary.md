@@ -123,13 +123,19 @@ the members with an open disagreement whose two versions the reader may see, at
 the answer's knowledge frontier, counted after either engine by the same host
 function so the exact and analytics engines agree. A read examines at most 500
 candidates; past that `complete` is false and each count is a lower bound
-(HOST-READ-4b). A governed accept with a reason is the next cut; until it lands,
-a finding resolves only through the data. Named scenarios: **SOURCE-AGREE-FLIP**
+(HOST-READ-4b). A data steward may accept a disagreement with a reason
+(`source.agreement.accept`, the `sources` pack): the review is keyed by the
+finding's id and marks it `acknowledged`, so it is no longer counted, and a later
+disagreement is a finding of its own; `source.agreement.reopen`, also with a
+reason, makes it open again. Reviews are read at the same frontier. Named
+scenarios: **SOURCE-AGREE-FLIP**
 (a second source's different basis opens the finding, and the holding stays in
 stock answers, counted), **SOURCE-AGREE-RETURN** (returning to the earlier
 report resolves it), **SOURCE-AGREE-HIDDEN** (a reader who cannot read one
 version sees neither its values nor a count) and **SOURCE-AGREE-FRONTIER** (a
-flip after an answer's frontier does not change that answer).
+flip after an answer's frontier does not change that answer) and
+**SOURCE-AGREE-ACCEPT** (an accepted disagreement is acknowledged and not
+counted; reopened, it is open again).
 
 **OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
 addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry

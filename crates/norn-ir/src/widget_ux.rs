@@ -56,6 +56,10 @@ pub struct WidgetUx {
     pub navigation_items: Vec<WidgetNavigationItem>,
     /// Bounded changes to semantic ids of composed baseline components.
     pub overrides: Vec<WidgetOverride>,
+    /// Catalog components this contract declares (UI-CATALOG-1): custom UI written in any
+    /// framework, each with a typed props contract, declared events and its machine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub catalog: Vec<WidgetCatalogEntry>,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +78,8 @@ struct WidgetUxWire {
     shell_handlers: Option<WidgetShellHandlers>,
     navigation_items: Vec<WidgetNavigationItem>,
     overrides: Vec<WidgetOverride>,
+    #[serde(default)]
+    catalog: Vec<WidgetCatalogEntry>,
 }
 
 impl From<WidgetUxWire> for WidgetUx {
@@ -90,6 +96,7 @@ impl From<WidgetUxWire> for WidgetUx {
             shell_handlers: wire.shell_handlers,
             navigation_items: wire.navigation_items,
             overrides: wire.overrides,
+            catalog: wire.catalog,
         }
     }
 }
@@ -299,6 +306,9 @@ pub enum WidgetViewKind {
     DecisionInbox,
     /// Where one object's values came from.
     Lineage,
+    /// An object type's lifecycle as a statechart, with the server's live
+    /// per-state counts and the checker's counterexamples to step through.
+    Lifecycle,
 }
 
 /// The domain concept a view presents.
@@ -431,6 +441,54 @@ pub struct WidgetMachine {
     pub states: Vec<WidgetMachineState>,
     /// Declared transitions.
     pub transitions: Vec<WidgetMachineTransition>,
+    /// The backend lifecycle the page acts on (UI-LIFECYCLE-1, #1236). With it the checker
+    /// composes the page with that lifecycle: a page never shows an ending the object has not
+    /// reached, and never sits in a state its assumptions about the object rule out.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lifecycle: Option<WidgetMachineLifecycle>,
+}
+
+/// The backend lifecycle a page machine runs against, and how the two move together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineLifecycle {
+    /// The object type whose lifecycle the page acts on.
+    pub object_type: String,
+    /// The lifecycle's property.
+    pub property: String,
+    /// Page transitions that fire together with a lifecycle transition: an `accepted` outcome of
+    /// a call that fires it. A lifecycle transition named here never fires without the page; every
+    /// other one (another actor, a timer, an event) may fire at any time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub syncs: Vec<WidgetLifecycleSync>,
+    /// The lifecycle states each page state may be shown in. A state without an entry assumes
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assumes: Vec<WidgetLifecycleAssumption>,
+}
+
+/// One page transition that fires with one lifecycle transition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetLifecycleSync {
+    /// The page transition (an `accepted` outcome).
+    pub transition_id: String,
+    /// The lifecycle transition it fires.
+    pub lifecycle_transition: String,
+}
+
+/// The lifecycle states one page state may be shown in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetLifecycleAssumption {
+    /// The page state.
+    pub state_id: String,
+    /// The lifecycle states it may be shown in.
+    pub lifecycle_states: Vec<String>,
 }
 
 /// One typed client-state field, or one typed member of an event payload.
@@ -481,8 +539,18 @@ pub struct WidgetMachineEvent {
 pub enum WidgetMachineEventSource {
     /// The page was opened by the host.
     PageOpened,
-    /// A person used the control at `node_id` in this page's tree.
-    User { node_id: String },
+    /// A person used the control at `node_id` in this page's tree. For a
+    /// catalog component node, `emits` names the entry event it raises.
+    User {
+        node_id: String,
+        #[serde(
+            default,
+            deserialize_with = "present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "String")]
+        emits: Option<String>,
+    },
     /// The server answered the call or read the current state awaits.
     Outcome {
         outcome: WidgetCallOutcome,
@@ -627,6 +695,17 @@ pub struct WidgetMachineTransition {
     )]
     #[schemars(with = "ZenExpression")]
     pub guard: Option<ZenExpression>,
+    /// A guard the catalog component's own code decides (a Foldkit `when` or
+    /// `otherwise` edge), named for reviewers. The checker treats the
+    /// transition as possibly disabled (May); the host accepts it only with
+    /// the target the component reports. Catalog entry machines only.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub component_guard: Option<String>,
     /// New field values, each a ZEN expression over `input.fields` and
     /// `input.event`, typed as the field.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -729,6 +808,122 @@ pub struct WidgetNode {
     pub children: Vec<WidgetNode>,
 }
 
+/// A catalog component named by a page: an entry of this contract's
+/// catalog, or of a pinned widget artifact's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetCatalogRef {
+    /// The widget artifact whose catalog holds the entry; omitted, this one.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ArtifactRef")]
+    pub widget: Option<ArtifactRef>,
+    /// The entry id.
+    pub entry_id: String,
+}
+
+/// Where a catalog component stands on the trust ladder (UI-CATALOG-1).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetTrust {
+    /// Drawn by a Norn renderer from the ontology.
+    Native,
+    /// Custom code whose declared machine the runtime enforces: an event or
+    /// state the contract does not declare is refused and logged.
+    ContractChecked,
+    /// Rich content (canvas, map, 3-D, video) whose pixels and internal render
+    /// state are opaque; only its typed inputs and declared output events take
+    /// part in the checked machine.
+    OpaqueIsland,
+}
+
+/// Density tiers (scan lists, read records, focus canvases), as named tokens.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetDensity {
+    /// Lists and grids: 32 px rows, 13 px tabular figures.
+    Scan,
+    /// Record pages: 28 px key-value rows.
+    Read,
+    /// Canvases and editors with a 320 px inspector.
+    Focus,
+}
+
+/// One declared output event of a catalog component.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetCatalogEvent {
+    /// Event name, unique within the entry.
+    pub event_id: String,
+    /// Typed payload members.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub payload: Vec<WidgetMachineField>,
+}
+
+/// One catalog component (UI-CATALOG-1): custom UI in any framework, joined
+/// to Norn only through these typed contracts. A renderer is an
+/// implementation of the catalog.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetCatalogEntry {
+    /// Stable entry id.
+    pub entry_id: String,
+    /// Human-readable name.
+    pub label: LocaleText,
+    /// Trust ladder position.
+    pub trust: WidgetTrust,
+    /// The framework the implementation is written in (informational, for
+    /// renderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub framework: Option<String>,
+    /// Typed props: the only data the component receives.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub props: Vec<WidgetMachineField>,
+    /// Declared output events: the only things the component can say.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<WidgetCatalogEvent>,
+    /// The component's own interaction machine; an opaque island has none.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetMachine")]
+    pub machine: Option<WidgetMachine>,
+    /// Accessibility behaviours the component implements.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behaviors: Vec<WidgetBehavior>,
+    /// Density tier the component is drawn at.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetDensity")]
+    pub density: Option<WidgetDensity>,
+    /// The field type this component renders everywhere it appears (one
+    /// renderer per field type: grid, record, inspector and tooltips alike).
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WidgetValueType")]
+    pub renders: Option<WidgetValueType>,
+}
+
 /// What a person does with a [`WidgetComponent::Control`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
@@ -813,6 +1008,14 @@ pub enum WidgetComponent {
     Action { placement_id: String },
     /// A navigation item.
     Navigation { item_id: String },
+    /// An instance of a catalog component (UI-CATALOG-1): its props bound by
+    /// ZEN expressions over the page machine's `input.fields`, its declared
+    /// events raised as the page machine's `user` events that name this node.
+    Catalog {
+        entry: WidgetCatalogRef,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        props: BTreeMap<String, ZenExpression>,
+    },
     /// A control whose only effect is to raise the page machine's `user`
     /// events that name this node (UI-MACHINE-1). A `choice` or `text`
     /// control sends its value as the event payload member `value`.
