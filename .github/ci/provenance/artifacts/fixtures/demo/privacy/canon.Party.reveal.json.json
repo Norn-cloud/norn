@@ -8,6 +8,7 @@
   "parents": [
     "crates/norn-api/tests/privacy.rs",
     "crates/norn-api/src/privacy.rs",
+    "crates/norn-api/src/privacy_guard.rs",
     "crates/norn-api/src/object_routes.rs"
   ],
   "rights_evidence": [
