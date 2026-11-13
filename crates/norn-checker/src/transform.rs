@@ -19,9 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_expr::{EnvOptions, Expression, InferredType, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
-    JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyTypeName, RefreshPolicy,
-    ResourceLimitProfile, SortDirection, ViewInputKind, ViewIrPayload, ViewMaintenance, ViewNode,
-    WindowFn,
+    JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyType, PropertyTypeName,
+    RefreshPolicy, ResourceLimitProfile, SortDirection, ViewInputKind, ViewIrPayload,
+    ViewMaintenance, ViewNode, WindowFn,
 };
 
 use norn_ir::metric::TimeGrain;
@@ -104,8 +104,14 @@ pub struct Column {
     pub fanned: bool,
     /// The stored property holding this money value's per-row currency.
     pub currency: Option<Origin>,
+    /// The stored properties whose values together are this quantity's
+    /// unit (METRIC-UNIT-PARTITION-1).
+    pub units: Vec<Origin>,
     /// Effective markings of every origin (VIEW-MARK-1).
     pub markings: BTreeSet<String>,
+    /// What readers call the column, when the definition names it: declared
+    /// where the column is defined, kept wherever it passes through unchanged.
+    pub label: Option<String>,
 }
 
 impl Column {
@@ -119,7 +125,9 @@ impl Column {
             origins: BTreeSet::new(),
             fanned: false,
             currency: None,
+            units: Vec::new(),
             markings: BTreeSet::new(),
+            label: None,
         }
     }
 
@@ -829,7 +837,7 @@ impl Builder<'_, '_> {
 
     fn node(&mut self, node: &ViewNode, at: &str) -> Option<AdmittedNode> {
         let before = self.out.len();
-        let admitted = match node {
+        let mut admitted = match node {
             ViewNode::Scan(scan) => self.scan(&scan.input, at),
             ViewNode::Filter(filter) => self.filter(&filter.input, &filter.predicate, at),
             ViewNode::Project(project) => self.project(project, at),
@@ -842,7 +850,7 @@ impl Builder<'_, '_> {
         if self.out.len() > before {
             return None;
         }
-        if let Some(admitted) = &admitted {
+        if let Some(admitted) = &mut admitted {
             let mut names = BTreeSet::new();
             for column in &admitted.schema.columns {
                 if !names.insert(column.name.as_str()) {
@@ -852,6 +860,24 @@ impl Builder<'_, '_> {
                         at,
                     );
                     return None;
+                }
+            }
+            for (name, label, pointer) in declared_labels(node) {
+                if label.trim().is_empty() {
+                    self.fail(
+                        codes::INVALID_PLAN,
+                        "a column label is not blank",
+                        format!("{at}{pointer}"),
+                    );
+                    return None;
+                }
+                if let Some(column) = admitted
+                    .schema
+                    .columns
+                    .iter_mut()
+                    .find(|column| column.name == name)
+                {
+                    column.label = Some(label.to_owned());
                 }
             }
         }
@@ -915,11 +941,13 @@ impl Builder<'_, '_> {
             origins: BTreeSet::from([Origin::new(alias, "id")]),
             fanned: false,
             currency: None,
+            units: Vec::new(),
             markings: object
                 .markings
                 .iter()
                 .map(|marking| marking.as_str().to_owned())
                 .collect(),
+            label: None,
         }];
         for id in &input.properties {
             let Some(property) = object.property(id) else {
@@ -939,15 +967,30 @@ impl Builder<'_, '_> {
                 ..
             } = strip(&field.ty)
             {
-                Some(if path.links.is_empty() {
-                    Origin::new(alias, path.property.as_str())
+                if path.links.is_empty() {
+                    // A currency held in a non-null one-value enum is one
+                    // currency: nothing to partition (as METRIC-UNIT-PARTITION-1).
+                    let single = object.property(path.property.as_str()).is_some_and(|code| {
+                        !code.nullable
+                            && matches!(&code.kind, EffectiveKind::Base(PropertyType::Enum { values }) if values.len() == 1)
+                    });
+                    (!single).then(|| Origin::new(alias, path.property.as_str()))
                 } else {
                     // A currency read through a link cannot be grouped by a
-                    // column of this row: every sum of it refuses.
-                    Origin::new(alias, "")
-                })
+                    // column of this row: every aggregate of it refuses.
+                    Some(Origin::new(alias, ""))
+                }
             } else {
                 None
+            };
+            let units = match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { unit_source, .. }) => unit_source
+                    .iter()
+                    .map(|unit| Origin::new(alias, unit.as_str()))
+                    .collect(),
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    Vec::new()
+                }
             };
             let mut markings: BTreeSet<String> = object
                 .markings
@@ -969,7 +1012,9 @@ impl Builder<'_, '_> {
                 origins: BTreeSet::from([Origin::new(alias, id)]),
                 fanned: false,
                 currency,
+                units,
                 markings,
+                label: None,
             });
         }
         Some(AdmittedNode {
@@ -1043,7 +1088,13 @@ impl Builder<'_, '_> {
                 return None;
             }
         };
-        match norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits) {
+        // Admission runs the compile evaluation runs (VAL-EXACT-1): money
+        // compared with a bare number, or a per-row currency in arithmetic,
+        // refuses here rather than at every read.
+        let checked =
+            norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits)
+                .and_then(|checked| expression.check_admitted(&env, expected).map(|()| checked));
+        match checked {
             Ok(checked) => {
                 let inferred = checked.into_inferred();
                 Some((
@@ -1496,28 +1547,51 @@ impl Builder<'_, '_> {
         true
     }
 
-    fn currency_grouped(
-        &mut self,
-        column: &Column,
-        keys: &[&Column],
-        function: &str,
-        at: &str,
-    ) -> bool {
-        let Some(currency) = &column.currency else {
-            return true;
-        };
-        if keys.iter().any(|key| key.exact.as_ref() == Some(currency)) {
-            return true;
-        }
-        self.fail(
-            metric_codes::MIXED_CURRENCY,
-            format!(
-                "{function} of {:?} mixes currencies: group by its currency {:?}",
-                column.name, currency.property
-            ),
-            at,
+    /// METRIC-UNIT-PARTITION-1 / VIEW-AGG-1: an aggregate of a quantity
+    /// groups by its currency and by every unit source, so it never mixes
+    /// USD with EGP or kg with lb. Only a count of rows is exempt.
+    fn partitioned(&mut self, column: &Column, keys: &[&Column], function: &str, at: &str) -> bool {
+        let grouped = |source: &Origin| keys.iter().any(|key| key.exact.as_ref() == Some(source));
+        // Readers wrote the stored property (`SUM(o.amount)`), not the plan's
+        // copy of it: name the property when the column is one.
+        let measured = column.exact.as_ref().map_or_else(
+            || format!("{:?}", column.name),
+            |origin| format!("{}.{}", origin.alias, origin.property),
         );
-        false
+        let mut whole = true;
+        if let Some(currency) = column
+            .currency
+            .as_ref()
+            .filter(|currency| !grouped(currency))
+        {
+            let remedy = if currency.property.is_empty() {
+                "its currency is on a linked record, so no column of this row can group it"
+                    .to_owned()
+            } else {
+                format!(
+                    "group by its currency {}.{}",
+                    currency.alias, currency.property
+                )
+            };
+            self.fail(
+                metric_codes::MIXED_CURRENCY,
+                format!("{function} of {measured} mixes currencies: {remedy}"),
+                at,
+            );
+            whole = false;
+        }
+        for unit in column.units.iter().filter(|unit| !grouped(unit)) {
+            self.fail(
+                metric_codes::MIXED_UNIT,
+                format!(
+                    "{function} of {measured} mixes units: group by its unit {}.{}",
+                    unit.alias, unit.property
+                ),
+                at,
+            );
+            whole = false;
+        }
+        whole
     }
 
     #[allow(
@@ -1644,9 +1718,18 @@ impl Builder<'_, '_> {
             if !self.measure_law(&column, function, sum, &pointer) {
                 continue;
             }
-            if sum && !self.currency_grouped(&column, &key_refs, function, &pointer) {
+            // Counting rows carries no unit. Counting distinct values does:
+            // 10 USD and 10 EGP are one number but two amounts, so it is
+            // partitioned like any aggregate of the quantity.
+            if measure.function != AggregateFn::Count
+                && !self.partitioned(&column, &key_refs, function, &pointer)
+            {
                 continue;
             }
+            let quantity = matches!(
+                measure.function,
+                AggregateFn::Sum | AggregateFn::Min | AggregateFn::Max
+            );
             let (ty, additivity) = match measure.function {
                 AggregateFn::Count | AggregateFn::CountDistinct => {
                     (Type::Integer, PropertyAdditivity::Additive {})
@@ -1667,8 +1750,11 @@ impl Builder<'_, '_> {
             let mut output = Column::derived(&measure.name, ty, additivity);
             output.origins.clone_from(&column.origins);
             output.markings.clone_from(&column.markings);
-            if sum {
+            if quantity {
+                // The quantity keeps its currency and unit sources: they are
+                // group keys of this row, so the output says what it is in.
                 output.currency.clone_from(&column.currency);
+                output.units.clone_from(&column.units);
             }
             columns.push(output);
             measures.push((
@@ -1811,11 +1897,13 @@ impl Builder<'_, '_> {
                     .nullable();
                     output.origins.clone_from(&found.origins);
                     output.markings.clone_from(&found.markings);
+                    output.currency.clone_from(&found.currency);
+                    output.units.clone_from(&found.units);
                     output
                 }
                 (WindowFn::RunningSum, Some((_, Some(found)))) => {
                     if !self.measure_law(&found, "running_sum", true, &pointer)
-                        || !self.currency_grouped(&found, &partition_refs, "running_sum", &pointer)
+                        || !self.partitioned(&found, &partition_refs, "running_sum", &pointer)
                     {
                         continue;
                     }
@@ -1826,6 +1914,8 @@ impl Builder<'_, '_> {
                     );
                     output.origins.clone_from(&found.origins);
                     output.markings.clone_from(&found.markings);
+                    output.currency.clone_from(&found.currency);
+                    output.units.clone_from(&found.units);
                     output
                 }
                 (_, Some((name, None))) => {
@@ -1923,6 +2013,10 @@ impl Builder<'_, '_> {
                         && a.additivity == b.additivity
                         && a.currency.as_ref().map(|c| &c.property)
                             == b.currency.as_ref().map(|c| &c.property)
+                        && a.units
+                            .iter()
+                            .map(|u| &u.property)
+                            .eq(b.units.iter().map(|u| &u.property))
                 });
             if !same {
                 self.fail(
@@ -1962,6 +2056,9 @@ impl Builder<'_, '_> {
                     // Branches read different stored properties: summing
                     // across them needs a common column, never inferred.
                     merged.currency = merged.currency.map(|_| Origin::new("", ""));
+                }
+                if merged.units != other.units {
+                    merged.units = merged.units.iter().map(|_| Origin::new("", "")).collect();
                 }
             }
             columns.push(merged);
@@ -2040,6 +2137,62 @@ impl Builder<'_, '_> {
             },
         })
     }
+}
+
+/// The labels a node declares for the columns it defines: (column, label,
+/// pointer below the node).
+fn declared_labels(node: &ViewNode) -> Vec<(&str, &str, String)> {
+    let mut labels = Vec::new();
+    match node {
+        ViewNode::Project(project) => {
+            for (index, column) in project.columns.iter().enumerate() {
+                if let Some(label) = &column.label {
+                    labels.push((
+                        column.name.as_str(),
+                        label.as_str(),
+                        format!("/columns/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Aggregate(aggregate) => {
+            for (index, key) in aggregate.group_by.iter().enumerate() {
+                if let Some(label) = &key.label {
+                    labels.push((
+                        key.column.as_str(),
+                        label.as_str(),
+                        format!("/groupBy/{index}/label"),
+                    ));
+                }
+            }
+            for (index, measure) in aggregate.measures.iter().enumerate() {
+                if let Some(label) = &measure.label {
+                    labels.push((
+                        measure.name.as_str(),
+                        label.as_str(),
+                        format!("/measures/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Window(window) => {
+            for (index, column) in window.columns.iter().enumerate() {
+                if let Some(label) = &column.label {
+                    labels.push((
+                        column.name.as_str(),
+                        label.as_str(),
+                        format!("/columns/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Scan(_)
+        | ViewNode::Filter(_)
+        | ViewNode::Join(_)
+        | ViewNode::Union(_)
+        | ViewNode::Dedupe(_) => {}
+    }
+    labels
 }
 
 /// `input.<column>` exactly, with optional surrounding whitespace.

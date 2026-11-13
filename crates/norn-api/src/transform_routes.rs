@@ -78,6 +78,18 @@ pub struct NornTransformColumn {
     pub origins: Vec<NornColumnOrigin>,
     /// Effective markings of the origins.
     pub markings: Vec<String>,
+    /// The column of the same row holding this quantity's currency
+    /// (VIEW-AGG-1): null when it has none or the row does not carry it.
+    #[schema(required = true, nullable = true)]
+    pub currency_from: Option<String>,
+    /// The columns of the same row whose values together are this
+    /// quantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;
+    /// empty when it has none or the row does not carry them.
+    pub unit_from: Vec<String>,
+    /// What readers call the column, as its definition labels it; null when
+    /// the definition names it only by `name`.
+    #[schema(required = true, nullable = true)]
+    pub label: Option<String>,
 }
 
 /// One output row.
@@ -411,7 +423,14 @@ fn additivity(value: &PropertyAdditivity) -> &'static str {
     }
 }
 
-fn column(column: &Column) -> NornTransformColumn {
+fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
+    let holding = |source: &norn_checker::transform::Origin| {
+        schema
+            .columns
+            .iter()
+            .find(|candidate| candidate.exact.as_ref() == Some(source))
+            .map(|candidate| candidate.name.clone())
+    };
     let (nullable, inner) = column.describe();
     NornTransformColumn {
         name: column.name.clone(),
@@ -428,11 +447,18 @@ fn column(column: &Column) -> NornTransformColumn {
             })
             .collect(),
         markings: column.markings.iter().cloned().collect(),
+        currency_from: column.currency.as_ref().and_then(holding),
+        unit_from: column.units.iter().filter_map(holding).collect(),
+        label: column.label.clone(),
     }
 }
 
 fn columns(schema: &NodeSchema) -> Vec<NornTransformColumn> {
-    schema.columns.iter().map(column).collect()
+    schema
+        .columns
+        .iter()
+        .map(|item| column(item, schema))
+        .collect()
 }
 
 fn parse_limit(limit: Option<&str>) -> Result<usize, Refusal> {
@@ -663,7 +689,8 @@ pub struct CompileTransformRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NornCompiledTransform {
-    /// The checker admits the lowered plan against the installed definitions.
+    /// Installing the lowered transform over the installed definitions would
+    /// be admitted.
     pub admitted: bool,
     /// The `derived` artifact the query declares; null when refused.
     #[schema(required = true, schema_with = compiled_artifact_schema)]
@@ -675,8 +702,9 @@ pub struct NornCompiledTransform {
     pub diagnostics: Vec<crate::refusal::RefusalDiagnostic>,
 }
 
-/// VIEW-SQL-1: lower a SQL query to a transform and admit it against the
-/// installed definitions. Nothing is installed and no SQL runs.
+/// VIEW-SQL-1: lower a SQL query to a transform and admit it as installing
+/// it would: the installed set re-admitted whole with it added, on the base
+/// the installed receipt records. Nothing is installed and no SQL runs.
 ///
 /// # Errors
 /// A denied definitions read (the opaque 403), no installed definitions
@@ -742,7 +770,21 @@ pub fn compile_transform<E: SqlEngine>(
         };
     let envelope: ArtifactEnvelope =
         serde_json::from_value(artifact.clone()).map_err(Refusal::host)?;
+    // The verdict is an install's: the whole installed set re-admitted with
+    // this transform added, through the path installs take.
+    match crate::kernel_set::admit_over(
+        &installed.canonical_set,
+        installed.admission_receipt.as_deref(),
+        std::slice::from_ref(&envelope),
+    ) {
+        Ok(_) => {}
+        Err(crate::kernel_set::KernelRefusal::Refused(findings)) => return Ok(refused(&findings)),
+        Err(crate::kernel_set::KernelRefusal::Invalid(detail)) => {
+            return Err(Refusal::host(detail));
+        }
+    }
     let mut all = pool;
+    all.retain(|artifact| artifact.artifact_id != envelope.artifact_id);
     all.push(envelope.clone());
     match admit(&envelope, &all, &registry) {
         Ok(plan) => Ok(NornCompiledTransform {

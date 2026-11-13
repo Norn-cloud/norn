@@ -1,18 +1,22 @@
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Link, useParams } from "@tanstack/react-router"
-import { Blend, GitBranch, ListTree, Rows3 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useMutation } from "@tanstack/react-query"
+import { Blend, FileCheck2, GitBranch, ListTree, Rows3 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { member, type Read } from "@/lib/exact"
 import { NotServed } from "@/lib/live-transport"
-import { exactValue, nodeDefinition, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
+import { groupDigits } from "@/lib/format"
+import { checkQuery, columnTitle, describeStep, exactValue, grainsOf, nodeDeclaration, nodeDefinition, periodOf, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
 import { cn } from "@/lib/utils"
+import { useView, type View } from "@/lib/view"
 import { useCatalog } from "./sources.tsx"
 
 /** A refusal or an unserved read, said plainly. */
@@ -51,16 +55,67 @@ export function TransformsPage() {
           </Table>
         </TableCard>
       )}
+      {read.data && <CheckQuery reads={transforms[0]?.inputs[0]} />}
     </div>
   )
 }
 
-/** A column's contract in one line: its type, whether it may be null, and how it may be aggregated. */
-function ColumnHead({ column }: { readonly column: TransformColumn }) {
+/**
+ * Check a query in the transform dialect (VIEW-SQL-1) against the installed definitions: the
+ * cell's checker lowers and types it and says why it refuses one. Nothing runs, nothing installs.
+ */
+function CheckQuery({ reads }: { readonly reads: string | undefined }) {
+  const { view } = useView()
+  const [sql, setSql] = useState("")
+  const check = useMutation({ mutationFn: checkQuery })
+  const result = check.data?.document
+  const plan = result?.plan ?? undefined
+  const output = plan?.nodes.find((node) => node.id === plan.output)
+  return (
+    <Panel icon={FileCheck2} label="Check a query">
+      <div className="space-y-3 px-2.5 pb-2.5">
+        <p className="text-sm text-muted-foreground">Write a query in the transform dialect. The cell's checker types it against the installed definitions, as it would a transform, and says why it refuses one. Nothing runs and nothing is installed.</p>
+        <Textarea aria-label="Query" rows={3} spellCheck={false} value={sql} placeholder={`SELECT t.id FROM "${reads ?? "namespace.Type"}" t`} className="font-mono text-xs" onChange={(event) => { setSql(event.target.value); check.reset() }} />
+        <div className="flex gap-2">
+          <Button size="sm" disabled={sql.trim() === "" || check.isPending} onClick={() => check.mutate(sql)}>{check.isPending ? "Checking…" : "Check"}</Button>
+          <Button size="sm" variant="ghost" disabled={sql === ""} onClick={() => { setSql(""); check.reset() }}>Clear</Button>
+        </div>
+        {check.isError && <ReadError error={check.error} />}
+        {result && !result.admitted && (
+          <Well className="space-y-1.5 border-destructive/40 px-3 py-2 text-sm">
+            <p role="status" className="font-medium text-destructive">Refused</p>
+            <ul aria-label="Why the query is refused" className="space-y-1.5">
+              {result.diagnostics.map((finding, at) => (
+                <li key={`${finding.code}/${at}`}>
+                  <p>{finding.message}</p>
+                  {view === "technical" && <p className="font-mono text-meta text-muted-foreground">{finding.code}{finding.span === null ? "" : ` at ${finding.span.pointer}`}</p>}
+                </li>
+              ))}
+            </ul>
+          </Well>
+        )}
+        {result?.admitted && output && (
+          <div className="space-y-2">
+            <p role="status" className="text-sm"><span className="font-medium">Admitted</span> <span className="text-muted-foreground">· one row per {output.grain.length === 0 ? "query" : output.grain.join(", ")}</span></p>
+            <ColumnList label="Columns of the checked query" node={output} view={view} />
+          </div>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+/** A column's contract in one line: its type, whether it may be null, and how it may be aggregated (`decimal<2> · additive`). */
+const contract = (column: TransformColumn) =>
+  `${column.type}${column.nullable ? "?" : ""}${column.additivity === "undeclared" ? "" : ` · ${column.additivity.replaceAll("_", " ")}`}`
+
+/** A column header: its label and its contract in the tooltip (Business), or its name and contract on a second line (Technical). */
+function ColumnHead({ column, view }: { readonly column: TransformColumn; readonly view: View }) {
+  if (view === "business") return <span title={contract(column)}>{columnTitle(column, view)}</span>
   return (
     <div className="space-y-0.5">
       <div>{column.name}</div>
-      <div className="font-mono text-[11px] font-normal text-muted-foreground">{column.type}{column.nullable ? "?" : ""}{column.additivity === "undeclared" ? "" : ` · ${column.additivity.replaceAll("_", " ")}`}</div>
+      <div className="font-mono text-[11px] font-normal text-muted-foreground">{contract(column)}</div>
     </div>
   )
 }
@@ -70,23 +125,58 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 
 const numeric = (column: TransformColumn) => column.type.startsWith("decimal") || column.type === "integer" || column.type === "number"
 
-/** One page of rows. While columns are hidden past the right edge, the edge fades, as the records grid's does. */
-function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>; readonly page: TransformPage; readonly onTrace: (rowId: string) => void }) {
+/**
+ * Whether content is hidden past the right edge of the scroller `selector` finds inside `frame`:
+ * the edge then fades, as the records grid's does.
+ */
+function useRightEdge(selector: string, deps: readonly unknown[]) {
   const frame = useRef<HTMLDivElement>(null)
   const [right, setRight] = useState(false)
   useEffect(() => {
-    const scroller = frame.current?.querySelector<HTMLElement>("[data-slot=table-container]")
+    const scroller = frame.current?.querySelector<HTMLElement>(selector)
     if (scroller === null || scroller === undefined) return
     const measure = () => setRight(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1)
     measure()
     scroller.addEventListener("scroll", measure, { passive: true })
+    // The scroller keeps its box when its content widens (Technical's two-line headers): observe the content too.
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure)
     observer?.observe(scroller)
+    for (const content of Array.from(scroller.children)) observer?.observe(content)
     return () => {
       scroller.removeEventListener("scroll", measure)
       observer?.disconnect()
     }
-  }, [page.rows.length, page.columns.length])
+  }, [selector, ...deps])
+  return { frame, right }
+}
+
+function EdgeFade() {
+  return <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px right-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />
+}
+
+/**
+ * One value as the reader reads it. Technical: the exact text the cell sent. Business: numbers
+ * grouped in thousands with the unit or currency their row names, and a bucketed date as its
+ * period (`Week of 26 Oct 2026`).
+ */
+function displayed(read: Read<TransformPage>, at: number, column: TransformColumn, grains: ReadonlyMap<string, string>, view: View): string {
+  const row = read.document.rows[at]
+  const value = row?.values[column.name]
+  const exact = exactValue(read, `/rows/${at}/values/${member(column.name)}`, value, scaleOf(column.type))
+  if (view === "technical" || value === null || value === undefined) return exact
+  const grain = grains.get(column.name)
+  if (grain !== undefined && typeof value === "string") return periodOf(value, grain)
+  if (!numeric(column)) return exact
+  const sources = [...(column.unitFrom ?? []), ...(column.currencyFrom ? [column.currencyFrom] : [])]
+  const unit = sources.map((source) => row?.values[source]).filter((part): part is string => typeof part === "string" && part !== "").join(" ")
+  return unit === "" ? groupDigits(exact) : `${groupDigits(exact)} ${unit}`
+}
+
+/** One page of rows, with a sticky first column and a faded edge while columns are hidden past it. */
+function RowsGrid({ read, grains, onTrace }: { readonly read: Read<TransformPage>; readonly grains: ReadonlyMap<string, string>; readonly onTrace: (rowId: string) => void }) {
+  const page = read.document
+  const { view } = useView()
+  const { frame, right } = useRightEdge("[data-slot=table-container]", [page.rows.length, page.columns.length])
   return (
     <div ref={frame} className="relative">
       <TableCard>
@@ -94,7 +184,7 @@ function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>;
           <TableHeader>
             <TableRow>
               {page.columns.map((column, at) => (
-                <TableHead scope="col" key={column.name} className={cn(at === 0 && cn(STICKY, "bg-surface-subtle"), numeric(column) && "text-right")}><ColumnHead column={column} /></TableHead>
+                <TableHead scope="col" key={column.name} className={cn(at === 0 && cn(STICKY, "bg-surface-subtle"), numeric(column) && "text-right")}><ColumnHead column={column} view={view} /></TableHead>
               ))}
               <TableHead scope="col">Lineage</TableHead>
             </TableRow>
@@ -103,8 +193,8 @@ function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>;
             {page.rows.map((row, index) => (
               <TableRow key={row.rowId}>
                 {page.columns.map((column, at) => (
-                  <TableCell key={column.name} className={cn(at === 0 && cn(STICKY, "bg-card font-medium"), numeric(column) && "text-right font-mono tabular-nums")}>
-                    {exactValue(read, `/rows/${index}/values/${member(column.name)}`, row.values[column.name], scaleOf(column.type))}
+                  <TableCell key={column.name} className={cn("whitespace-nowrap", at === 0 && cn(STICKY, "bg-card font-medium"), numeric(column) && "text-right font-mono tabular-nums")}>
+                    {displayed(read, index, column, grains, view)}
                   </TableCell>
                 ))}
                 <TableCell><Button variant="ghost" size="sm" onClick={() => onTrace(row.rowId)}>{row.memberCount} {row.memberCount === 1 ? "record" : "records"}</Button></TableCell>
@@ -113,7 +203,7 @@ function RowsGrid({ read, page, onTrace }: { readonly read: Read<TransformPage>;
           </TableBody>
         </Table>
       </TableCard>
-      {right && <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px right-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />}
+      {right && <EdgeFade />}
     </div>
   )
 }
@@ -123,6 +213,8 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const after = cursors.at(-1)
   const rows = useTransformRows(id, after)
+  const { read: catalog } = useCatalog()
+  const grains = useMemo(() => catalog.data ? grainsOf(catalog.data.document, id) : new Map<string, string>(), [catalog.data, id])
   if (rows.isPending) return <p className="text-muted-foreground">Reading rows…</p>
   if (rows.isError) return <ReadError error={rows.error} />
   const page = rows.data.document
@@ -135,7 +227,7 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
         {withheld.map(([input, count]) => <Badge key={input} variant="outline">{count} {input} withheld</Badge>)}
         {page.excluded > 0 && <Badge variant="outline">{page.excluded} quarantined</Badge>}
       </div>
-      <RowsGrid read={rows.data} page={page} onTrace={onTrace} />
+      <RowsGrid read={rows.data} grains={grains} onTrace={onTrace} />
       <div className="flex gap-2">
         <Button variant="outline" size="sm" disabled={cursors.length === 1} onClick={() => setCursors(cursors.slice(0, -1))}>Previous</Button>
         <Button variant="outline" size="sm" disabled={page.nextAfter === null} onClick={() => page.nextAfter !== null && setCursors([...cursors, page.nextAfter])}>Next</Button>
@@ -146,6 +238,7 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
 
 /** The lineage tab: the input records one row derives from, each a link to its record page. */
 function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string | undefined }) {
+  const { view } = useView()
   const lineage = useTransformLineage(id, rowId)
   const plan = useTransformPlan(id)
   const planDocument = plan.data?.document
@@ -162,7 +255,7 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
     <div className="space-y-3">
       <Well className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-sm">
         {Object.entries(document.values).map(([name, value]) => (
-          <span key={name}><span className="text-muted-foreground">{name}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
+          <span key={name}><span className="text-muted-foreground">{columnTitle(output?.columns.find((column) => column.name === name) ?? { name }, view)}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
         ))}
       </Well>
       <TableCard>
@@ -181,6 +274,27 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
         </Table>
       </TableCard>
     </div>
+  )
+}
+
+/** A node's columns: each one's title, contract and where it comes from. */
+function ColumnList({ label, node, view }: { readonly label: string; readonly node: TransformNode; readonly view: View }) {
+  return (
+    <ul aria-label={label} className="divide-y rounded-md border text-sm">
+      {node.columns.map((column) => (
+        <li key={column.name} className="space-y-0.5 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{columnTitle(column, view)}</span>
+            {node.grain.includes(column.name) && <Badge variant="outline">grain</Badge>}
+            <span className="ms-auto font-mono text-meta text-muted-foreground">{contract(column)}</span>
+          </div>
+          <div className="break-words font-mono text-meta text-muted-foreground">
+            {column.origins.length === 0 ? "computed here" : `from ${column.origins.map(({ input, property }) => `${input}.${property}`).join(", ")}`}
+            {column.currencyFrom ? ` · per ${column.currencyFrom}` : ""}
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -244,13 +358,14 @@ function PlanTab({ id }: { readonly id: string }) {
   const plan = useTransformPlan(id)
   const rows = useTransformRows(id, undefined)
   const { read } = useCatalog()
+  const { view } = useView()
   const [lens, setLens] = useState<Lens>("operator")
   const [picked, setPicked] = useState<string | undefined>(undefined)
   const volumes = rows.data?.document.nodeRows
   const document = plan.data?.document
   const selected = picked ?? document?.output
   const graph = useMemo(() => {
-    if (!document) return { nodes: [], edges: [], height: 1 }
+    if (!document) return { nodes: [], edges: [], height: 1, width: 1 }
     const positions = planLayout(document.nodes)
     const ids = new Set(document.nodes.map(({ id: node }) => node))
     const largest = Math.max(1, ...Object.values(volumes ?? {}))
@@ -267,13 +382,17 @@ function PlanTab({ id }: { readonly id: string }) {
       ...(input === selected || node.id === selected ? { style: { strokeWidth: 2 } } : {}),
     })))
     const height = Math.max(1, ...nodes.map(({ position }) => position.y + HEIGHT))
-    return { nodes, edges, height }
+    const width = Math.max(1, ...nodes.map(({ position }) => position.x + WIDTH))
+    return { nodes, edges, height, width }
   }, [document, volumes, lens, selected])
+  const edge = useRightEdge("[data-slot=plan-scroller]", [graph.width])
   if (plan.isPending) return <p className="text-muted-foreground">Reading the plan…</p>
   if (plan.isError) return <ReadError error={plan.error} />
   const shown = plan.data.document
   const focus = shown.nodes.find((node) => node.id === selected)
   const definition = read.data ? nodeDefinition(read.data.document, id, selected) : undefined
+  const declared = read.data ? nodeDeclaration(read.data.document, id, selected) : undefined
+  const inputs = new Map(shown.inputs.map(({ alias, objectType }) => [alias, objectType]))
   return (
     <div className="space-y-4">
       <Panel icon={GitBranch} label="Definition graph" action={
@@ -286,13 +405,18 @@ function PlanTab({ id }: { readonly id: string }) {
           ))}
         </div>
       }>
-        <div className="h-[min(60vh,max(260px,calc(var(--plan-height)*1px+80px)))] overflow-hidden rounded-md border bg-surface-subtle" style={{ "--plan-height": graph.height } as CSSProperties}>
-          <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={NODE_TYPES} fitView colorMode="system" minZoom={0.2}
-            onNodeClick={(_, node) => setPicked(node.id)}
-            nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
-            <Background />
-            <Controls showInteractive={false} />
-          </ReactFlow>
+        {/* Read at full size, never shrunk to fit: a wide plan scrolls sideways, and the panel is as tall as the plan. */}
+        <div ref={edge.frame} className="relative">
+          <div data-slot="plan-scroller" className="overflow-x-auto rounded-md border bg-surface-subtle">
+            <div style={{ width: graph.width + 48, height: graph.height + 48 }}>
+              <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={NODE_TYPES} colorMode="system" defaultViewport={{ x: 24, y: 24, zoom: 1 }}
+                onNodeClick={(_, node) => setPicked(node.id)} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} panOnDrag={false} preventScrolling={false}
+                nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
+                <Background />
+              </ReactFlow>
+            </div>
+          </div>
+          {edge.right && <EdgeFade />}
         </div>
         <p className="mt-2 px-2.5 pb-1 text-meta text-muted-foreground">{shown.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}</p>
       </Panel>
@@ -322,25 +446,15 @@ function PlanTab({ id }: { readonly id: string }) {
                 <Badge variant="secondary" className="font-mono text-[11px]">{focus.op}</Badge>
                 <span>grain {focus.grain.length === 0 ? "one row" : focus.grain.join(", ")}</span>
               </div>
-              {definition !== undefined && (
+              {view === "business" && declared !== undefined && (
+                <p aria-label={`What ${focus.id} does`} className="text-sm">{describeStep(declared, inputs)}</p>
+              )}
+              {view === "technical" && definition !== undefined && (
                 <Well className="max-h-64 overflow-auto px-3 py-2">
                   <pre aria-label={`Definition of ${focus.id}`} className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap">{definition}</pre>
                 </Well>
               )}
-              <TableCard>
-                <Table>
-                  <TableHeader><TableRow><TableHead scope="col">Column</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Comes from</TableHead></TableRow></TableHeader>
-                  <TableBody>
-                    {focus.columns.map((column) => (
-                      <TableRow key={column.name}>
-                        <TableCell className="font-medium">{column.name}{focus.grain.includes(column.name) && <Badge variant="outline" className="ms-2">grain</Badge>}</TableCell>
-                        <TableCell className="font-mono text-meta">{column.type}{column.nullable ? "?" : ""}{column.additivity === "undeclared" ? "" : ` · ${column.additivity.replaceAll("_", " ")}`}</TableCell>
-                        <TableCell className="font-mono text-meta">{column.origins.map(({ input, property }) => `${input}.${property}`).join(", ") || "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableCard>
+              <ColumnList label={`Columns of ${focus.id}`} node={focus} view={view} />
             </div>
           </Panel>
         )}
