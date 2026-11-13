@@ -152,6 +152,10 @@ routes! {
     ObjectFindings => ("GET", "/v1/objects/{type}/{id}/findings"),
     /// `GET /v1/objects/{type}/{id}/history`.
     ObjectHistory => ("GET", "/v1/objects/{type}/{id}/history"),
+    /// `POST /v1/guard:prompt` (PRIVACY-GUARD-1).
+    GuardPrompt => ("POST", "/v1/guard:prompt"),
+    /// `POST /v1/guard/{id}:restore` (PRIVACY-GUARD-1).
+    GuardRestore => ("POST", "/v1/guard/{id}:restore"),
     /// `POST /v1/objects/{type}/{id}/reveal` (PRIVACY-2).
     ObjectReveal => ("POST", "/v1/objects/{type}/{id}/reveal"),
     /// `GET /v1/objects/{type}:quarantined`.
@@ -250,6 +254,7 @@ impl Route {
             "/v1/decisions" => return Some(Self::Decisions),
             "/v1/datasets:load" => return Some(Self::DatasetLoad),
             "/v1/transforms:compile" => return Some(Self::TransformsCompile),
+            "/v1/guard:prompt" => return Some(Self::GuardPrompt),
             _ => {}
         }
         if path
@@ -258,6 +263,9 @@ impl Route {
             .is_some_and(|id| !id.is_empty() && !id.contains('/'))
         {
             return Some(Self::Decide);
+        }
+        if guard_restore_path(path).is_some() {
+            return Some(Self::GuardRestore);
         }
         if path
             .strip_prefix("/v1/runs/")
@@ -673,6 +681,10 @@ fn route<E: SqlEngine>(
         compile(cell(host)?, actor, method, query, body)
     } else if let Some(transform) = transform_refresh_path(path) {
         refresh(cell(host)?, actor, transform, (method, query, now))
+    } else if path == "/v1/guard:prompt" {
+        guarded(cell(host)?, actor, (method, query, body))
+    } else if let Some(id) = guard_restore_path(path) {
+        guard_restored(cell(host)?, actor, id, (method, query, body))
     } else if let Some((kind, Some(id), Some("reveal"))) = object {
         revealed(cell(host)?, actor, (kind, id), (method, query, body))
     } else if method != "GET" {
@@ -980,6 +992,72 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
         return None;
     }
     Some((kind, id, leaf))
+}
+
+/// The guard id of `/v1/guard/{id}:restore`.
+fn guard_restore_path(path: &str) -> Option<u64> {
+    path.strip_prefix("/v1/guard/")
+        .and_then(|rest| rest.strip_suffix(":restore"))
+        .and_then(|id| id.parse::<u64>().ok())
+}
+
+fn post_only(method: &str) -> Result<(), Refusal> {
+    if method == "POST" {
+        Ok(())
+    } else {
+        Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the guard takes POST",
+        ))
+    }
+}
+
+fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    Ok(ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    })
+}
+
+/// PRIVACY-GUARD-1: `POST /v1/guard:prompt`.
+fn guarded<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (method, query, body): (&str, &str, &str),
+) -> Result<String, Refusal> {
+    post_only(method)?;
+    let request: norn_api::privacy_guard::NornGuardRequest = serde_json::from_str(body)
+        .map_err(|error| Refusal::invalid(format!("the request body is not a prompt: {error}")))?;
+    document_json(&norn_api::privacy_guard::guard(
+        host,
+        &scope_of(query)?,
+        actor,
+        &request,
+        &CellObjectAccess,
+    )?)
+}
+
+/// PRIVACY-GUARD-1: `POST /v1/guard/{id}:restore`.
+fn guard_restored<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    id: u64,
+    (method, query, body): (&str, &str, &str),
+) -> Result<String, Refusal> {
+    post_only(method)?;
+    let request: norn_api::privacy_guard::NornRestoreRequest = serde_json::from_str(body)
+        .map_err(|error| Refusal::invalid(format!("the request body is not a restore: {error}")))?;
+    document_json(&norn_api::privacy_guard::restore(
+        host,
+        &scope_of(query)?,
+        actor,
+        id,
+        &request,
+        &CellObjectAccess,
+    )?)
 }
 
 /// PRIVACY-2: `POST /v1/objects/{type}/{id}/reveal`, scoped by the query

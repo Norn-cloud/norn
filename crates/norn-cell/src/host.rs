@@ -302,6 +302,20 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         idempotency_key: &str,
         reveal: &MarkingReveal,
     ) -> Result<CommitOutcome, CellError> {
+        self.record_privacy_event(idempotency_key, reveal.ledger_event()?)
+    }
+
+    /// Append one privacy receipt event (a reveal, a guarded model call) to
+    /// the ledger at this host's clock, under a durable idempotency key. The
+    /// boundary takes one event only: it writes no fact and enqueues nothing.
+    ///
+    /// # Errors
+    /// An idempotency conflict, serialization or storage failure.
+    pub fn record_privacy_event(
+        &mut self,
+        idempotency_key: &str,
+        event: Value,
+    ) -> Result<CommitOutcome, CellError> {
         let logical_time = self
             .store
             .read()
@@ -312,7 +326,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             scope: self.scope.clone(),
             logical_time,
             idempotency_key: Some(idempotency_key.to_owned()),
-            events: vec![reveal.ledger_event()?],
+            events: vec![event],
             ..CommitBatch::default()
         })
     }

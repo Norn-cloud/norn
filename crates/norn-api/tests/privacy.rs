@@ -514,3 +514,62 @@ mod erased {
         }
     }
 }
+
+#[test]
+fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_through_the_pdp() {
+    use norn_api::privacy_guard::{NornGuardRequest, NornRestoreRequest, guard, restore};
+    let (cell, _dir) = host("org_a", &pseudonym(), Some(&SECRET));
+    let text = "Refund the duplicate charge for ada@example.com on card 4539 1488 0343 6467; call +1 415 555 0132.";
+    let guarded = guard(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        &NornGuardRequest {
+            text: text.into(),
+            context: vec![norn_api::privacy_guard::NornGuardRef {
+                object_type: TYPE.into(),
+                id: "c3".into(),
+            }],
+            purpose: Some("test".into()),
+            idempotency_key: "g1".into(),
+        },
+        &Mapping,
+    )
+    .unwrap();
+    let safe = &guarded.safe_prompt;
+    for raw in ["ada@example.com", "4539", "415 555", "grace@example.com"] {
+        assert!(!safe.contains(raw), "{raw} reached the model: {safe}");
+    }
+    assert!(safe.contains("[CUSTOMER_1]") && safe.contains("[CUSTOMER_2]"), "{safe}");
+    assert!(safe.contains("[CARD_1]") && safe.contains("[PHONE_1]"), "{safe}");
+    assert!(safe.contains("- name: Grace"), "unmarked context stays: {safe}");
+    let document = serde_json::to_string(&guarded).unwrap();
+    assert!(!document.contains("example.com") && !document.contains("4539"), "{document}");
+    // The reply restores for the auditor (a logged reveal) and the author's own literals.
+    let reply = "Refunded [CARD_1] for [CUSTOMER_2]; we will call [PHONE_1].";
+    let restore_as = |actor: &str, key: &str| {
+        restore(
+            &cell,
+            &scope("org_a"),
+            Some(actor),
+            guarded.guard_id,
+            &NornRestoreRequest {
+                text: reply.into(),
+                idempotency_key: key.into(),
+            },
+            &Mapping,
+        )
+        .unwrap()
+    };
+    let auditor = restore_as("auditor", "r1");
+    let joined: String = auditor.segments.iter().map(|s| s.text.as_str()).collect();
+    assert!(joined.contains("ada@example.com") && joined.contains("4539 1488 0343 6467"), "{joined}");
+    assert!(auditor.complete);
+    assert_eq!(auditor.reveals.len(), 1, "one logged reveal for the one field");
+    // A viewer reads the pseudonym and keeps the placeholders it did not type.
+    let viewer = restore_as("viewer", "r2");
+    let joined: String = viewer.segments.iter().map(|s| s.text.as_str()).collect();
+    assert!(joined.contains("Customer #") && joined.contains("[CARD_1]"), "{joined}");
+    assert!(!joined.contains("ada@example.com"), "{joined}");
+    assert!(viewer.reveals.is_empty() && !viewer.complete);
+}

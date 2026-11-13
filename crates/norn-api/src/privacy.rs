@@ -253,7 +253,7 @@ pub struct Projected {
 }
 
 /// The strongest projection among `markings`; `None` when one is undeclared.
-fn strongest(catalog: &MarkingCatalog, markings: &[String]) -> Option<MaskPolicy> {
+pub(crate) fn strongest(catalog: &MarkingCatalog, markings: &[String]) -> Option<MaskPolicy> {
     let mut chosen: Option<MaskPolicy> = None;
     for id in markings {
         let mask = &catalog.get(id)?.mask;
@@ -282,7 +282,7 @@ fn text_of(value: &RuntimeValue) -> String {
 }
 
 /// Apply `mask` to `value` in place; the mode actually applied.
-fn apply(mask: &MaskPolicy, key: Option<&PseudonymKey>, value: &mut RuntimeValue) -> NornMaskMode {
+pub(crate) fn apply(mask: &MaskPolicy, key: Option<&PseudonymKey>, value: &mut RuntimeValue) -> NornMaskMode {
     if matches!(value, RuntimeValue::Null) {
         return match mask {
             MaskPolicy::Pseudonym { .. } => NornMaskMode::Pseudonym,
@@ -546,18 +546,37 @@ pub fn reveal<E: SqlEngine>(
     if !ids.iter().all(|marking| host.reveals(&actor, marking)) {
         return Err(reveal_denied());
     }
+    let receipt = record_reveal(host, &actor, &row, (&request.property, ids), &purpose, key)?;
+    Ok(NornRevealed { value, receipt })
+}
+
+/// Commit the receipt of revealing `property` (with its effective
+/// `markings`) of `row` to `actor`, after checking the row is still at the
+/// version read. The caller has already had the PDP allow every marking.
+///
+/// # Errors
+/// The row moved (409), the key was used for another reveal (409), or a
+/// host failure.
+pub(crate) fn record_reveal<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    row: &ObjectRecord,
+    (property, markings): (&str, Vec<String>),
+    purpose: &str,
+    key: &str,
+) -> Result<NornRevealReceipt, Refusal> {
     let receipt = norn_cell::MarkingReveal {
         object_type: row.object_type.clone(),
         key: row.id.clone(),
-        property: request.property.clone(),
+        property: property.to_owned(),
         version: row.version,
-        markings: ids,
-        actor: actor.clone(),
-        purpose,
+        markings,
+        actor: actor.to_owned(),
+        purpose: purpose.to_owned(),
     };
     let outcome = {
         let mut cell = host.cell()?;
-        // The value read above must still be the current one.
+        // The value read must still be the current one.
         let current = cell
             .store()
             .read()
@@ -579,21 +598,18 @@ pub fn reveal<E: SqlEngine>(
     };
     let replayed = matches!(outcome, norn_cell::CommitOutcome::Replayed(_));
     let committed = outcome.receipt();
-    Ok(NornRevealed {
-        value,
-        receipt: NornRevealReceipt {
-            commit_seq: committed.body.commit_seq,
-            receipt_hash: committed.hash.clone(),
-            revealed_at: committed.body.logical_time,
-            actor: receipt.actor,
-            object_type: receipt.object_type,
-            id: receipt.key,
-            property: receipt.property,
-            version: receipt.version,
-            markings: receipt.markings,
-            purpose: receipt.purpose,
-            replayed,
-        },
+    Ok(NornRevealReceipt {
+        commit_seq: committed.body.commit_seq,
+        receipt_hash: committed.hash.clone(),
+        revealed_at: committed.body.logical_time,
+        actor: receipt.actor,
+        object_type: receipt.object_type,
+        id: receipt.key,
+        property: receipt.property,
+        version: receipt.version,
+        markings: receipt.markings,
+        purpose: receipt.purpose,
+        replayed,
     })
 }
 
