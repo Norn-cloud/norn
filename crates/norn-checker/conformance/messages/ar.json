@@ -519,7 +519,7 @@
       "review": "needs_review"
     },
     "core.observation.source_disagreement": {
-      "message": "SOURCE-AGREE-1: مصدران يبلّغان عن قيمتين مختلفتين لوحدة المقياس أو عملته أو أساسه لسجل واحد؛ يُحتفظ بالبلاغين ولا يُستبعد السجل.",
+      "message": "SOURCE-AGREE-1: مصدران يبلّغان عن قيمتين مختلفتين لسجل واحد في وحدة المقياس أو عملة المبلغ أو الأساس؛ يُحتفظ بالبلاغين ولا يُستبعد السجل.",
       "review": "needs_review"
     },
     "core.projection.publication_guard": {
