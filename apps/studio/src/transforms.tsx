@@ -38,7 +38,7 @@ export function TransformsPage() {
       </header>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <ReadError error={read.error} />}
-      {read.data && transforms.length === 0 && <EmptyState icon={Blend}>No transform is installed in this cell.</EmptyState>}
+      {read.data && transforms.length === 0 && <EmptyState icon={Blend} title="No transforms yet">A transform turns loaded records into a checked dataset (a join, a total per week). Load records first, then define one in code with <code className="font-mono">norn.transform</code>.</EmptyState>}
       {transforms.length > 0 && (
         <TableCard>
           <Table>

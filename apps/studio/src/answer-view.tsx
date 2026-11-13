@@ -16,6 +16,9 @@ import { buckets, contribution, declarations, fraction, shown, type Bucket } fro
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, groupDigits, headline, period, scope, stamp } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
+import { CodedMessage } from "@/components/coded-message"
+import { useLocale } from "@/lib/locale"
+import { plainWords } from "./lib/plain-words.ts"
 import type { Read } from "./lib/exact.ts"
 import type { Question, QuestionAnswer } from "./lib/transport.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -97,12 +100,24 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale 
   )
 }
 
-/** The server's refusal, as an answer: its reason in its own words, and its code. */
+/**
+ * The server's refusal, as an answer: what it means in plain words (the reader's language), with
+ * the engine's own message, code and explanation under Technical.
+ */
 export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
+  const { locale } = useLocale()
+  const plain = plainWords(refusal.code, locale)
   return (
-    <div role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-      <div><span className="font-medium">Refused:</span> {refusal.message}</div>
-      <div className="font-mono text-xs text-muted-foreground">{refusal.code}{refusal.explanation ? ` · ${refusal.explanation}` : ""}</div>
+    <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
+      <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+      <details className="text-meta text-muted-foreground">
+        <summary className="cursor-pointer select-none">{locale === "ar" ? "تقني" : "Technical"}</summary>
+        <div className="mt-1 grid gap-0.5 font-mono [overflow-wrap:anywhere]" dir="ltr">
+          <span>{refusal.code}</span>
+          <span>{refusal.message}</span>
+          {refusal.explanation && <span>{refusal.explanation}</span>}
+        </div>
+      </details>
     </div>
   )
 }

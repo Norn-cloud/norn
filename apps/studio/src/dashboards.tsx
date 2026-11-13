@@ -96,7 +96,8 @@ export function DashboardsPage() {
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
-      {rows?.length === 0 && <EmptyState icon={LayoutDashboard} title="No dashboards yet">Save a set of questions as a dashboard; the cell checks it before it is kept.</EmptyState>}
+      {rows?.length === 0 && <EmptyState icon={LayoutDashboard} title="No dashboards yet"
+        next={cellAvailable && <Button size="sm" variant="outline" onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>}>Save a set of questions as a dashboard; the cell checks it before it is kept.</EmptyState>}
       {rows?.map((stored) => (
         <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
           <div className="flex items-center gap-1">
@@ -213,7 +214,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       <label className="grid max-w-xl gap-1.5 text-sm" data-field="title"><span className={invalid("title") ? "text-destructive" : "text-muted-foreground"}>Title</span>
         <Input value={dashboard.title} aria-invalid={invalid("title") || undefined} placeholder="e.g. Refinery weekly" onChange={(event) => set((current) => ({ ...current, title: event.target.value }))} />
       </label>
-      <div data-field="tiles" className="grid gap-4 lg:grid-cols-2">
+      <div data-field="tiles" className="grid items-start gap-4 lg:grid-cols-2">
         {dashboard.tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard}>No questions on this dashboard yet.</EmptyState></div>}
         {dashboard.tiles.map((tile, index) => (
           <TileCard key={tile.id} tile={tile} index={index} count={dashboard.tiles.length} invalid={invalid(`tile.${index}`)} catalog={catalog}
@@ -278,11 +279,12 @@ export function DashboardEditorPage() {
 }
 
 /** A saved dashboard as its readers see it: every tile answered live from the cell and drawn as its view. */
-export function DashboardBoard({ dashboard, catalog }: { readonly dashboard: Dashboard; readonly catalog: QuestionCatalog }) {
+export function DashboardBoard({ dashboard, catalog, id }: { readonly dashboard: Dashboard; readonly catalog: QuestionCatalog; readonly id?: string }) {
   const tiles = layoutTiles(dashboard.tiles)
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard}>No questions on this dashboard yet.</EmptyState></div>}
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      {tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard} title="An empty dashboard"
+        next={id !== undefined && <Button asChild size="sm" variant="outline"><Link to="/dashboards/$id/edit" params={{ id }}><Pencil />Add a question</Link></Button>}>No questions on this dashboard yet.</EmptyState></div>}
       {tiles.map((tile) => (
         <Panel key={tile.id} icon={viewIcon(tile.view)} label={questionTitle(tile)} className={tile.layout.w === 2 ? "lg:col-span-2" : ""}>
           <TileAnswer tile={tile} catalog={catalog} />
@@ -348,7 +350,7 @@ export function DashboardBoardPage() {
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
       {removed && <Button asChild variant="ghost" size="sm"><Link to="/dashboards">Back to dashboards</Link></Button>}
       {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
-      {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} />}
+      {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} id={board.id} />}
       {board && catalog.data && (
         <details className="group rounded-xl border bg-card p-3">
           <summary className="cursor-pointer text-sm font-medium">Change it with the assistant</summary>

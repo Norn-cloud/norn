@@ -94,7 +94,7 @@ export function SourceConnections() {
           </div>
         ))}
       {connections.data && (connections.data.document.records.length === 0
-        ? <Well><EmptyState icon={Cable} title="No connections">No system is connected to this cell yet.</EmptyState></Well>
+        ? <Well><EmptyState icon={Cable} title="No connections" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>
         : <div className="p-1"><TableCard><Table>
           <TableHeader><TableRow>
             <TableHead>Connection</TableHead><TableHead>Status</TableHead><TableHead>Last sync</TableHead><TableHead>Up to</TableHead>

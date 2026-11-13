@@ -11,7 +11,7 @@ import { factProvenance, versionShown, type ValueProvenance } from "@/lib/proven
 import type { SourceLineage } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
-import { readableTime } from "@/lib/format"
+import { readableTime, words } from "@/lib/format"
 import { readHistory } from "../evidence/review.ts"
 
 /** One link in the chain, in its kind's icon; receipt and time steps have no kind and use their own. */
@@ -61,7 +61,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
     </Step>,
   )
   else if (transform?.kind === "question") steps.push(
-    <Step key="transform" kind="question" title={transform.metrics.join(", ")}>
+    <Step key="transform" kind="question" title={view === "technical" ? <span className="font-mono text-xs">{transform.metrics.join(", ")}</span> : transform.metrics.map(words).join(", ")}>
       <Line>{transform.records} {transform.records === 1 ? "record" : "records"} added up exactly</Line>
       {transform.engine !== null && <Line>{transform.engine}</Line>}
     </Step>,

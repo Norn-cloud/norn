@@ -72,7 +72,7 @@ test("the page says where its answer came from: live from the cell, or the recor
 test("a refused live read shows the server's reason over the recorded snapshot", async () => {
   const html = await page({ kind: "refused", refusal: { code: "authz.denied", message: "The policy does not permit Population for this principal." } })
   expect(html).toContain("The policy does not permit Population for this principal.")
-  expect(html).toContain(">Refused:<")
+  expect(html).toContain(">Can&#x27;t answer this: <")
   expect(html).toContain("authz.denied")
   expect(html).toContain(">Recorded snapshot<")
 })

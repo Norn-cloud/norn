@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { readDocument } from "../src/lib/exact.ts"
-import { bucketLabel, headline, percent, period, scope } from "../src/lib/format.ts"
+import { bucketLabel, derivedMetricWords, headline, pathWords, percent, period, scope, words } from "../src/lib/format.ts"
 import { measured, operandUnits } from "../src/lib/units.ts"
 import type { Answer, Metric, ObjectType, Question } from "../src/lib/transport.ts"
 
@@ -67,4 +67,31 @@ test("a ratio reads as a percentage rounded on its decimal text, never a float",
   expect(percent("1")).toBe("100.00%")
   expect(percent("-0.000049")).toBe("0.00%")
   expect(percent("unavailable")).toBe("unavailable")
+})
+
+// The metric compiler's path encoding (crates/norn-checker/src/metric.rs `field_name`), restated so
+// the decoder is checked against it over many names, underscores and lengths included.
+const encodePath = (parts: readonly string[]) => `norn_path_${parts.map((part) => `${part.length}_${part.replaceAll("_", "_u")}`).join("_")}_value`
+
+test("a compiled link path reads as the links' possessives and the property, for any parts", () => {
+  let seed = 20261113
+  const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32
+  const letters = "abcdefghijklmnopqrstuvwxyz_0123456789"
+  const part = () => { let text = String.fromCharCode(97 + Math.floor(next() * 26)); for (let n = Math.floor(next() * 14); n > 0; n--) text += letters[Math.floor(next() * letters.length)]; return text }
+  for (let round = 0; round < 500; round++) {
+    const parts = Array.from({ length: 1 + Math.floor(next() * 4) }, part)
+    const spoken = parts.map((one) => one.replaceAll("_", " "))
+    expect(pathWords(encodePath(parts))).toBe([...spoken.slice(0, -1).map((link) => `${link}'s`), spoken.at(-1)].join(" "))
+  }
+  expect(pathWords("occurred_at")).toBeUndefined()
+  expect(pathWords("norn_path_9_event_value")).toBeUndefined()
+})
+
+test("a derived metric's id reads as what it measures; the raw id never reaches the words", () => {
+  const time = encodePath(["event", "occurred_at"])
+  expect(derivedMetricWords(`analysis.object_63616e6f6e2e506f7374696e67.amount.by_${time}`)).toBe("Amount")
+  expect(derivedMetricWords("analysis.object_63616e6f6e2e486f6c64696e67.quantity.as_of_observed_at")).toBe("Quantity, as of observed at")
+  expect(words(`analysis.object_63616e6f6e2e506f7374696e67.amount.by_${time}`)).toBe("Amount")
+  expect(words(time)).toBe("Event's occurred at")
+  expect(words("demo.yield_week")).toBe("Yield week")
 })
