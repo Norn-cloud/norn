@@ -301,9 +301,7 @@ fn input_fields(expression: &str) -> Vec<String> {
     let mut rest = expression;
     while let Some(at) = rest.find("input.") {
         let before = rest.get(..at).and_then(|text| text.chars().last());
-        let after = rest
-            .get(at.saturating_add("input.".len())..)
-            .unwrap_or("");
+        let after = rest.get(at.saturating_add("input.".len())..).unwrap_or("");
         let field: String = after
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')

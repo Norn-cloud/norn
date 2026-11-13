@@ -149,7 +149,11 @@ fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellEr
                     .any_of
                     .iter()
                     .any(|id| id.as_str() == marking),
-                _ => true,
+                norn_ir::access::AccessCondition::Role(_)
+                | norn_ir::access::AccessCondition::Rel(_)
+                | norn_ir::access::AccessCondition::Context(_)
+                | norn_ir::access::AccessCondition::Resource(_)
+                | norn_ir::access::AccessCondition::Entitlement(_) => true,
             });
             if reveals && names {
                 let mut unnamed = rule.clone();
