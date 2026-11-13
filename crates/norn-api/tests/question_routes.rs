@@ -1670,15 +1670,24 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
     // Every pack at once over the core base packs implement, as the registry's
     // admission test checks them (registry standards such as iso4217 are not installed).
     let mut set: Vec<norn_ir::ArtifactEnvelope> = [
-        "core.Agent.interface", "core.AgentRole.interface", "core.Resource.interface",
-        "core.Commitment.interface", "core.Hold.interface", "core.EconomicEvent.interface",
-        "core.LedgerEffect.interface", "core.Claim.interface", "norn.SourceEvidence.interface",
-        "core.value_types.entity", "std.value_types.entity", "core.units",
+        "core.Agent.interface",
+        "core.AgentRole.interface",
+        "core.Resource.interface",
+        "core.Commitment.interface",
+        "core.Hold.interface",
+        "core.EconomicEvent.interface",
+        "core.LedgerEffect.interface",
+        "core.Claim.interface",
+        "norn.SourceEvidence.interface",
+        "core.value_types.entity",
+        "std.value_types.entity",
+        "core.units",
     ]
     .iter()
     .map(|name| {
         let path = root.join(format!("registry/core/artifacts/{name}.json"));
-        serde_json::from_str(&std::fs::read_to_string(path).expect("core artifact")).expect("envelope")
+        serde_json::from_str(&std::fs::read_to_string(path).expect("core artifact"))
+            .expect("envelope")
     })
     .collect();
     let mut packs: Vec<_> = std::fs::read_dir(root.join("registry/packs"))
@@ -1688,7 +1697,11 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         .collect();
     packs.sort();
     for pack in &packs {
-        let name = pack.file_name().expect("name").to_string_lossy().into_owned();
+        let name = pack
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
         set.extend(read(&format!("registry/packs/{name}/artifacts")));
     }
     let space = norn_checker::metric::derive::derive_metric_space(
@@ -1703,10 +1716,14 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         let mut shown = summary.unit_partition.clone();
         shown.extend(summary.time_links.iter().cloned());
         shown.extend(
-            [&summary.time_property, &summary.expression, &summary.object_type]
-                .into_iter()
-                .flatten()
-                .cloned(),
+            [
+                &summary.time_property,
+                &summary.expression,
+                &summary.object_type,
+            ]
+            .into_iter()
+            .flatten()
+            .cloned(),
         );
         shown.push(summary.label.clone());
         for text in &shown {
