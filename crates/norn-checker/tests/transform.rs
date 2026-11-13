@@ -959,17 +959,44 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
             "metric.validation.mixed_currency",
         );
     }
-    // Counting carries no unit.
+    // Counting rows carries no unit; counting distinct amounts does: 10 USD
+    // and 10 EGP are one number but two amounts.
     let counted = shipments(
         by(
             json!([{"column": "lane"}]),
-            json!([{"name": "n", "fn": "count"},
-            {"name": "d", "fn": "count_distinct", "column": "weight"}]),
+            json!([{"name": "n", "fn": "count"}]),
         ),
         "a",
     );
     let found = findings_of(&counted);
     assert!(found.is_empty(), "{found:#?}");
+    refused(
+        by(
+            json!([{"column": "lane"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "weight"}]),
+        ),
+        "metric.validation.mixed_unit",
+    );
+    refused(
+        by(
+            json!([{"column": "lane"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "price"}]),
+        ),
+        "metric.validation.mixed_currency",
+    );
+    let distinct = shipments(
+        by(
+            json!([{"column": "currency"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "price"}]),
+        ),
+        "a",
+    );
+    let found = findings_of(&distinct);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan =
+        admit(distinct.last().expect("view"), &distinct, &BTreeSet::new()).expect("admitted");
+    // The count is a number of amounts, not an amount: it carries no source.
+    assert_eq!(plan.output_schema().column("d").expect("d").currency, None);
     // Grouped by its unit and currency, each quantity is admitted, and its
     // output column still names where its unit and currency come from.
     let pool = shipments(

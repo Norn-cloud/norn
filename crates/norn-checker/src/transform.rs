@@ -1519,7 +1519,7 @@ impl Builder<'_, '_> {
 
     /// METRIC-UNIT-PARTITION-1 / VIEW-AGG-1: an aggregate of a quantity
     /// groups by its currency and by every unit source, so it never mixes
-    /// USD with EGP or kg with lb. Counts carry no unit and are exempt.
+    /// USD with EGP or kg with lb. Only a count of rows is exempt.
     fn partitioned(&mut self, column: &Column, keys: &[&Column], function: &str, at: &str) -> bool {
         let grouped = |source: &Origin| keys.iter().any(|key| key.exact.as_ref() == Some(source));
         let mut whole = true;
@@ -1676,13 +1676,18 @@ impl Builder<'_, '_> {
             if !self.measure_law(&column, function, sum, &pointer) {
                 continue;
             }
-            let counted = matches!(
-                measure.function,
-                AggregateFn::Count | AggregateFn::CountDistinct
-            );
-            if !counted && !self.partitioned(&column, &key_refs, function, &pointer) {
+            // Counting rows carries no unit. Counting distinct values does:
+            // 10 USD and 10 EGP are one number but two amounts, so it is
+            // partitioned like any aggregate of the quantity.
+            if measure.function != AggregateFn::Count
+                && !self.partitioned(&column, &key_refs, function, &pointer)
+            {
                 continue;
             }
+            let quantity = matches!(
+                measure.function,
+                AggregateFn::Sum | AggregateFn::Min | AggregateFn::Max
+            );
             let (ty, additivity) = match measure.function {
                 AggregateFn::Count | AggregateFn::CountDistinct => {
                     (Type::Integer, PropertyAdditivity::Additive {})
@@ -1703,7 +1708,7 @@ impl Builder<'_, '_> {
             let mut output = Column::derived(&measure.name, ty, additivity);
             output.origins.clone_from(&column.origins);
             output.markings.clone_from(&column.markings);
-            if !counted {
+            if quantity {
                 // The quantity keeps its currency and unit sources: they are
                 // group keys of this row, so the output says what it is in.
                 output.currency.clone_from(&column.currency);
