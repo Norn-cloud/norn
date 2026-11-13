@@ -967,7 +967,7 @@ mod body_tests {
                 .iter()
                 .zip(&body.children)
                 .all(|(value, body)| agrees(body, value)),
-            _ => true,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
         }
     }
 
