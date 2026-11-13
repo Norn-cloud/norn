@@ -24,7 +24,7 @@ export interface Env {
   readonly NORN_HOST?: Fetcher
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
-  /** The header the edge sets to the client's address (client-ip.ts); unset on Cloudflare. */
+  /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
   readonly STUDIO_CLIENT_IP_HEADER?: string
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
   readonly TOOL_GATEWAY_URL?: string

@@ -12,7 +12,7 @@ function stage(): Env {
   db.exec(MIGRATION)
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN }
+  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip" }
 }
 
 let address = 0
@@ -174,7 +174,7 @@ test("an IPv6 client is one /64: rotating within it is one bucket, another /64 i
   expect(neighbour.status).toBe(401)
 })
 
-test("on Cloudflare (the default), X-Real-Ip is client-written and ignored", async () => {
+test("on Cloudflare (cf-connecting-ip), X-Real-Ip is client-written and ignored", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })
   const statuses = await guesses(env, "cf-connecting-ip", "203.0.113.7", (attempt) => ({ "x-real-ip": `198.51.100.${attempt}` }))
@@ -182,9 +182,12 @@ test("on Cloudflare (the default), X-Real-Ip is client-written and ignored", asy
   expect(statuses.at(-1)).toBe(429)
 })
 
-test("an unknown client-address header refuses rather than falling back to a shared bucket", async () => {
+test("an unknown or missing client-address header refuses auth rather than defaulting", async () => {
   const env: Env = { ...stage(), STUDIO_CLIENT_IP_HEADER: "x-forwarded-for" }
   await expect(post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" })).rejects.toThrow("STUDIO_CLIENT_IP_HEADER")
+  // A stale or hand-written config without the variable never falls back to cf-connecting-ip.
+  const { STUDIO_CLIENT_IP_HEADER: _unset, ...missing } = stage()
+  await expect(post(missing, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" })).rejects.toThrow("STUDIO_CLIENT_IP_HEADER is required")
 })
 
 test("magic links refuse when the deployment has no mail sender", async () => {

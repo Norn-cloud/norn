@@ -9,9 +9,13 @@
 export const CLIENT_IP_HEADERS = ["cf-connecting-ip", "x-real-ip"] as const
 export type ClientIpHeader = (typeof CLIENT_IP_HEADERS)[number]
 
-/** The configured header, `cf-connecting-ip` when unset; any other value refuses. */
+/**
+ * The configured header. Unset refuses as any unknown value does: no deployment
+ * gets a default, so a stale or hand-written config cannot fall back to a header
+ * its clients write (#1328 r2).
+ */
 export function clientIpHeader(value: string | undefined): ClientIpHeader {
-  if (value === undefined) return "cf-connecting-ip"
+  if (value === undefined) throw new Error(`STUDIO_CLIENT_IP_HEADER is required: one of ${CLIENT_IP_HEADERS.join(", ")}, the header this deployment's edge sets`)
   const header = CLIENT_IP_HEADERS.find((known) => known === value)
   if (header === undefined) throw new Error(`STUDIO_CLIENT_IP_HEADER must be one of ${CLIENT_IP_HEADERS.join(", ")}, got ${JSON.stringify(value)}`)
   return header

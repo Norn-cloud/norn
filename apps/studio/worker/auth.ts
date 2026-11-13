@@ -58,8 +58,8 @@ export interface AuthConfig {
   readonly scrypt?: PasswordScrypt
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
-  /** The header the edge sets to the client's address (rate limits); `cf-connecting-ip` when absent. */
-  readonly clientIpHeader?: ClientIpHeader
+  /** The header the edge sets to the client's address (rate limits); never defaulted. */
+  readonly clientIpHeader: ClientIpHeader
 }
 
 /** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
@@ -269,7 +269,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
       // Only the header this deployment's edge sets itself (client-ip.ts); X-Forwarded-For is client-controlled.
-      ipAddress: { ipAddressHeaders: [config.clientIpHeader ?? "cf-connecting-ip"] },
+      ipAddress: { ipAddressHeaders: [config.clientIpHeader] },
     },
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
