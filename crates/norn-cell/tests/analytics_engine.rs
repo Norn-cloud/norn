@@ -1967,6 +1967,10 @@ mod known_at {
     /// a deletion committed under another model, the exact engine refuses;
     /// the engine must refuse with the same code, never answer without the row.
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scenario: history under one model, the install, the cutoffs"
+    )]
     fn a_deletion_under_another_model_refuses_as_the_exact_engine_refuses() {
         let (_dir, engine) = engine();
         let (mut store, plan, context) = by_metal(true, 100);
