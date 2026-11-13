@@ -12,6 +12,7 @@
 //! reference interpreter. Admission grants no read authority.
 
 pub mod eval;
+pub mod sql;
 
 use std::collections::{BTreeMap, BTreeSet};
 

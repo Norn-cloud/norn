@@ -30,7 +30,8 @@ use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::scope::ScopeQuery;
 use norn_api::transform_routes::{
-    TransformRowsParams, get_transform_plan, get_transform_row_lineage, get_transform_rows,
+    CompileTransformRequest, TransformRowsParams, compile_transform, get_transform_plan,
+    get_transform_row_lineage, get_transform_rows,
 };
 use norn_cell::engine::SqlEngine;
 
@@ -144,6 +145,8 @@ routes! {
     TransformRowLineage => ("GET", "/v1/transforms/{transform}/rows/{row}/lineage"),
     /// `GET /v1/transforms/{transform}/plan`.
     TransformPlan => ("GET", "/v1/transforms/{transform}/plan"),
+    /// `POST /v1/transforms:compile`.
+    TransformsCompile => ("POST", "/v1/transforms:compile"),
 }
 
 impl Route {
@@ -156,6 +159,7 @@ impl Route {
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            "/v1/transforms:compile" => return Some(Self::TransformsCompile),
             _ => {}
         }
         if let Some(route) = definitions_route(path) {
@@ -202,6 +206,33 @@ enum TransformLeaf<'p> {
     Rows,
     Lineage(&'p str),
     Plan,
+}
+
+/// VIEW-SQL-1: `POST /v1/transforms:compile`, scoped by the query string and
+/// carrying the query in a JSON body. Nothing is installed and no SQL runs.
+fn compile<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+    body: &str,
+) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "transforms are compiled with POST",
+        ));
+    }
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let request: CompileTransformRequest = serde_json::from_str(body)
+        .map_err(|_invalid| Refusal::invalid("the body is not a transform compile request"))?;
+    document_json(&compile_transform(host, &scope, actor, &request)?)
 }
 
 /// The transform id and leaf of a `/v1/transforms/...` path.
@@ -429,6 +460,8 @@ fn route<E: SqlEngine>(
         // either: the base's answer, whatever the body (D84).
         let published = questions.filter(|runtime| runtime.publishes_questions());
         ad_hoc_question(host, published, actor, method, path, query, body)
+    } else if path == "/v1/transforms:compile" {
+        compile(cell(host)?, actor, method, query, body)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,

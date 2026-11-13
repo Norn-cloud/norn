@@ -454,6 +454,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transforms:compile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * VIEW-SQL-1: lower a SQL query to a transform and admit it as installing
+         *     it would: the installed set re-admitted whole with it added, on the base
+         *     the installed receipt records. Nothing is installed and no SQL runs.
+         * @description # Errors
+         *     A denied definitions read (the opaque 403), no installed definitions
+         *     (404 `defs.version_not_found`) or a host failure. A query the dialect or
+         *     the checker refuses is a 200 with `admitted: false` and its diagnostics.
+         */
+        post: operations["compile_transform"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -538,6 +563,17 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /** @description A SQL transform to compile against the installed definitions (VIEW-SQL-1). */
+        CompileTransformRequest: {
+            /** @description The transform id to give the artifact (`shop.revenue_by_region`). */
+            id: string;
+            /** @description The query in the transform dialect. It is lowered, never run. */
+            sql: string;
+            /** @description Its title. */
+            title: string;
+            /** @description Its version. */
+            version: string;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -1147,6 +1183,21 @@ export interface components {
             input: string;
             /** @description The stored property, or `id`. */
             property: string;
+        };
+        /** @description What a SQL transform lowers to, and whether the checker admits it. */
+        NornCompiledTransform: {
+            /**
+             * @description Installing the lowered transform over the installed definitions would
+             *     be admitted.
+             */
+            admitted: boolean;
+            /** @description The `derived` artifact the query declares, as an artifact envelope; null when refused. */
+            artifact: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Every refusal, with its stable code; empty when admitted. */
+            diagnostics: components["schemas"]["RefusalDiagnostic"][];
+            plan: components["schemas"]["NornTransformPlan"] | null;
         };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
@@ -11583,6 +11634,71 @@ export interface operations {
             };
             /** @description The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`). */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    compile_transform: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompileTransformRequest"];
+            };
+        };
+        responses: {
+            /** @description The lowered artifact and plan when the checker admits it; otherwise its diagnostics, among them `derived.validation.sql_unsupported` for anything without a typed operator. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornCompiledTransform"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`defs.version_not_found`): nothing is installed yet. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
