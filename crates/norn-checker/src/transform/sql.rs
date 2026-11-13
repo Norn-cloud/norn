@@ -938,11 +938,18 @@ impl Scope {
                 if args.len() < 2 {
                     return Err(refusal("COALESCE takes two or more values", at));
                 }
-                let parts = args
-                    .iter()
-                    .map(|arg| self.zen(arg, at))
-                    .collect::<Result<Vec<_>, _>>()?;
-                format!("({})", parts.join(" ?? "))
+                // Nested left to right, so the tree does not rest on how ZEN
+                // associates `??`.
+                let mut parts = args.iter().map(|arg| self.zen(arg, at));
+                let first = parts
+                    .next()
+                    .ok_or_else(|| refusal("COALESCE takes two or more values", at))??;
+                parts.try_fold(
+                    first,
+                    |left, right: Result<String, Refusal>| -> Result<String, Refusal> {
+                        Ok(format!("({left} ?? {})", right?))
+                    },
+                )?
             }
             Ex::Call(call) => {
                 return Err(refusal(
@@ -1465,12 +1472,15 @@ mod properties {
     use proptest::sample::select;
     use serde_json::{Value, json};
 
+    use norn_expr::{RowArithmetic, RowComparison, RowExpr, row_expression};
+
     use super::{
-        Call, Ex, Item, JoinClause, Over, RESERVED, Select, Source, SqlMeta, constant, parse,
-        sql_artifact,
+        Call, Ex, Item, JoinClause, Over, RESERVED, Scope, Select, Source, SqlMeta, constant,
+        lower_sql, parse, sql_artifact,
     };
     use crate::Diagnostic;
     use crate::codes;
+    use crate::entity_instance::EffectiveCatalog;
 
     fn print_query(selects: &[Select]) -> String {
         selects
@@ -1531,7 +1541,17 @@ mod properties {
     }
 
     fn print_ex(ex: &Ex) -> String {
+        print_ex_with(ex, false)
+    }
+
+    /// `quoted`: every column name double-quoted, so a name the dialect
+    /// reserves (`null`, `in`) is still a column.
+    fn print_ex_with(ex: &Ex, quoted: bool) -> String {
+        let print_ex = |inner: &Ex| print_ex_with(inner, quoted);
+        let print_list = |items: &[Ex]| items.iter().map(print_ex).collect::<Vec<_>>().join(", ");
         match ex {
+            Ex::Column(Some(alias), column) if quoted => format!("{alias}.\"{column}\""),
+            Ex::Column(None, column) if quoted => format!("\"{column}\""),
             Ex::Column(Some(alias), column) => format!("{alias}.{column}"),
             Ex::Column(None, column) | Ex::Number(column) => column.clone(),
             Ex::Text(text) => format!("'{}'", text.replace('\'', "''")),
@@ -1563,6 +1583,66 @@ mod properties {
             Ex::Coalesce(args) => format!("COALESCE({})", print_list(args)),
             Ex::Call(call) => print_call(call),
         }
+    }
+
+    /// The tree the ZEN that `zen()` emits for `ex` must parse to: `ex` node
+    /// for node, its columns as `scope` names them. `None` for a call, which
+    /// is not a row expression.
+    fn expected(ex: &Ex, scope: &Scope) -> Option<RowExpr> {
+        let boxed = |inner: &Ex| expected(inner, scope).map(Box::new);
+        Some(match ex {
+            Ex::Column(alias, column) => {
+                RowExpr::Column(scope.column(alias.as_deref(), column, 0).ok()?)
+            }
+            Ex::Number(text) => RowExpr::Number(text.parse().ok()?),
+            Ex::Text(text) => RowExpr::Text(text.clone()),
+            Ex::Bool(flag) => RowExpr::Bool(*flag),
+            Ex::Null => RowExpr::Null,
+            Ex::Not(inner) => RowExpr::Not(boxed(inner)?),
+            Ex::Negate(inner) => RowExpr::Negate(boxed(inner)?),
+            Ex::Binary(op, left, right) => {
+                let (left, right) = (boxed(left)?, boxed(right)?);
+                let compare =
+                    |comparison| RowExpr::Compare(comparison, left.clone(), right.clone());
+                match *op {
+                    "+" => RowExpr::Arithmetic(RowArithmetic::Add, left, right),
+                    "-" => RowExpr::Arithmetic(RowArithmetic::Subtract, left, right),
+                    "*" => RowExpr::Arithmetic(RowArithmetic::Multiply, left, right),
+                    "==" => compare(RowComparison::Equal),
+                    "!=" => compare(RowComparison::NotEqual),
+                    "<" => compare(RowComparison::Less),
+                    "<=" => compare(RowComparison::LessOrEqual),
+                    ">" => compare(RowComparison::Greater),
+                    ">=" => compare(RowComparison::GreaterOrEqual),
+                    "and" => RowExpr::And(left, right),
+                    "or" => RowExpr::Or(left, right),
+                    _ => return None,
+                }
+            }
+            Ex::IsNull(inner, negated) => RowExpr::Compare(
+                if *negated {
+                    RowComparison::NotEqual
+                } else {
+                    RowComparison::Equal
+                },
+                boxed(inner)?,
+                Box::new(RowExpr::Null),
+            ),
+            Ex::Case(condition, then, otherwise) => {
+                RowExpr::Conditional(boxed(condition)?, boxed(then)?, boxed(otherwise)?)
+            }
+            Ex::Coalesce(args) => {
+                let mut args = args.iter();
+                let first = expected(args.next()?, scope)?;
+                args.try_fold(first, |left, arg| {
+                    Some(RowExpr::Coalesce(
+                        Box::new(left),
+                        Box::new(expected(arg, scope)?),
+                    ))
+                })?
+            }
+            Ex::Call(_) => return None,
+        })
     }
 
     fn print_call(call: &Call) -> String {
@@ -2016,8 +2096,122 @@ mod properties {
         ";",
     ];
 
+    /// Column names that are plain SQL identifiers but name ZEN keywords,
+    /// builtins and the row root.
+    const TRICKY: [&str; 20] = [
+        "amount",
+        "input",
+        "null",
+        "true",
+        "false",
+        "and",
+        "or",
+        "not",
+        "in",
+        "len",
+        "map",
+        "some",
+        "none",
+        "all",
+        "date",
+        "d",
+        "_",
+        "__proto__",
+        "Amount",
+        "x1",
+    ];
+
+    /// Row expressions over adversarial names and text: ZEN keywords as
+    /// (quoted) column names, and text with quotes, backslashes, template
+    /// markers, control characters and non-ASCII.
+    fn adversarial_expression() -> BoxedStrategy<Ex> {
+        let columns = (option::of(Just("o".to_owned())), select(&TRICKY[..]))
+            .prop_map(|(alias, column)| Ex::Column(alias, column.to_owned()))
+            .boxed();
+        let leaf = prop_oneof![
+            3 => columns,
+            1 => "[0-9]{1,4}(\\.[0-9]{1,2})?".prop_map(Ex::Number),
+            2 => "[a-z\"\\\\'`$}{\n\t é漢😀-]{0,8}".prop_map(Ex::Text),
+            1 => any::<bool>().prop_map(Ex::Bool),
+            1 => Just(Ex::Null),
+        ];
+        leaf.prop_recursive(3, 16, 3, |inner| {
+            prop_oneof![
+                inner.clone().prop_map(|ex| Ex::Not(Box::new(ex))),
+                inner.clone().prop_map(|ex| Ex::Negate(Box::new(ex))),
+                (select(&OPERATORS[..]), inner.clone(), inner.clone())
+                    .prop_filter(
+                        "a comparison with a NULL literal refuses",
+                        |(op, left, right)| {
+                            !(COMPARISONS.contains(op)
+                                && (matches!(left, Ex::Null) || matches!(right, Ex::Null)))
+                        }
+                    )
+                    .prop_map(|(op, left, right)| Ex::Binary(op, Box::new(left), Box::new(right))),
+                (inner.clone(), any::<bool>())
+                    .prop_map(|(ex, negated)| Ex::IsNull(Box::new(ex), negated)),
+                (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| Ex::Case(
+                    Box::new(c),
+                    Box::new(t),
+                    Box::new(e)
+                )),
+                vec(inner, 2..4).prop_map(Ex::Coalesce),
+            ]
+        })
+        .boxed()
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// `zen()` builds ZEN text; this proves the text means the SQL. A
+        /// query filtering and projecting adversarial expressions is lowered,
+        /// and each emitted ZEN expression, parsed by the engine's own ZEN
+        /// parser, equals the parsed SQL expression node for node: the same
+        /// operators, column references, literals and null handling.
+        #[test]
+        fn emitted_zen_parses_to_the_sql_tree(
+            filter in adversarial_expression(),
+            value in adversarial_expression(),
+        ) {
+            let sql = format!(
+                "SELECT {} AS v FROM \"shop.Order\" AS o WHERE {}",
+                print_ex_with(&value, true),
+                print_ex_with(&filter, true)
+            );
+            let parsed = parse(&sql).map_err(|refused| {
+                TestCaseError::fail(format!("{sql}: {} at {}", refused.message, refused.at))
+            })?;
+            let select = parsed.first().expect("one select");
+            let scope = Scope {
+                aliases: std::collections::BTreeMap::from([(
+                    "o".to_owned(),
+                    ("shop.Order".to_owned(), String::new()),
+                )]),
+                base: "o".to_owned(),
+            };
+            let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool(), &BTreeSet::new());
+            let plan = lower_sql(&sql, &catalog)
+                .map_err(|found| TestCaseError::fail(format!("{sql}: {found:?}")))?;
+            let nodes = plan.nodes.as_object().expect("nodes");
+            let predicate = nodes
+                .values()
+                .find(|node| node["op"] == "filter")
+                .and_then(|node| node["predicate"].as_str())
+                .expect("a filter node");
+            let projected = nodes
+                .values()
+                .filter(|node| node["op"] == "project")
+                .flat_map(|node| node["columns"].as_array().into_iter().flatten())
+                .find(|column| column["name"] == "v")
+                .and_then(|column| column["expression"].as_str())
+                .expect("the projected value");
+            for (zen, ex) in [(predicate, select.filter.as_ref().expect("filter")), (projected, &select.items[0].ex)] {
+                let tree = row_expression(zen, "input")
+                    .map_err(|error| TestCaseError::fail(format!("{zen:?} does not parse: {error}")))?;
+                prop_assert_eq!(tree, expected(ex, &scope), "SQL {} lowered to {:?}", sql, zen);
+            }
+        }
 
         /// print → parse → print is the identity: the parser reads every
         /// construct of the dialect as written, with nothing dropped.
