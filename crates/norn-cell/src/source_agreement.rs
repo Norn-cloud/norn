@@ -55,6 +55,9 @@ pub struct SourceDisagreementCount {
     pub subjects: u64,
 }
 
+/// A steward's review of one disagreement (the `sources` pack).
+const REVIEW: &str = "source.AgreementReview";
+
 /// One version's partition values, by property.
 type Reports = BTreeMap<PropertyId, Option<String>>;
 
@@ -101,6 +104,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         Ok(ids.into_iter().take(limit).collect())
+    }
+
+    /// Whether a steward's review accepts finding `id` at `frontier`
+    /// (`source.AgreementReview`, keyed by the finding id).
+    fn accepted(&self, world: &str, id: &str, frontier: Option<u64>) -> Result<bool, CellError> {
+        if !self.model().has_type(REVIEW) {
+            return Ok(false);
+        }
+        let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND (?4 IS NULL OR \"commit_seq\" <= ?4) ORDER BY \"version\" DESC LIMIT 1"),
+            params![world, REVIEW, id, frontier],
+        )?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(false);
+        };
+        let version = to_u64(SqlRow(row).get(0)?, "review version")?;
+        Ok(self
+            .object_at_version(world, REVIEW, id, version)?
+            .is_some_and(|review| {
+                review.values.get("status") == Some(&RuntimeValue::String("accepted".to_owned()))
+            }))
     }
 
     /// A subject's verified versions up to `frontier`, oldest first, with their
@@ -229,6 +254,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 current.as_deref(),
                 seen,
             )?;
+            let mut finding = finding;
+            // A steward's accepted review acknowledges an open disagreement.
+            if finding.status == DataQualityFindingStatus::Open
+                && self.accepted(world, &finding.id, frontier)?
+            {
+                finding.status = DataQualityFindingStatus::Acknowledged;
+            }
             let (Some(earlier), Some(later)) = (
                 records.get(change.earlier).cloned(),
                 records.get(change.later).cloned(),
