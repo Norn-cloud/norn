@@ -182,16 +182,24 @@ pub struct RefusalRestatement {
 }
 
 /// The rarely present parts of a refusal, boxed so every refusal stays small.
+/// Its fields sit flat in the refusal, exactly where the restatement always
+/// did, so the wire shape only gains `incidentId` (D84).
 #[derive(Debug, Clone, Default, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RefusalExtra {
-    /// On `definition.signoff_mismatch` only: the host's restatement.
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    #[schema(inline)]
-    pub restatement: Option<RefusalRestatement>,
+    /// The plain-words restatement the host recomputed. Present, with its
+    /// digest, only on `definition.signoff_mismatch`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub restatement: Option<String>,
+    /// Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub restatement_sha256: Option<String>,
     /// INCIDENT-1: the id under which the host logged this internal
     /// refusal's cause. The caller quotes it; the cause is never served.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
     pub incident_id: Option<String>,
     /// INCIDENT-1: the error chain, for the operator's log only: never
     /// serialized, never compared.
@@ -200,10 +208,20 @@ pub struct RefusalExtra {
     pub cause: Option<String>,
 }
 
+impl RefusalExtra {
+    /// Carry the host's restatement (`definition.signoff_mismatch`).
+    pub fn set_restatement(&mut self, restatement: RefusalRestatement) {
+        self.restatement = Some(restatement.restatement);
+        self.restatement_sha256 = Some(restatement.restatement_sha256);
+    }
+}
+
 /// Two refusals that differ only in their cause are the same refusal.
 impl PartialEq for RefusalExtra {
     fn eq(&self, other: &Self) -> bool {
-        self.restatement == other.restatement && self.incident_id == other.incident_id
+        self.restatement == other.restatement
+            && self.restatement_sha256 == other.restatement_sha256
+            && self.incident_id == other.incident_id
     }
 }
 
@@ -238,6 +256,7 @@ impl Refusal {
             self.diagnostics.clear();
             if let Some(extra) = self.extra.as_mut() {
                 extra.restatement = None;
+                extra.restatement_sha256 = None;
             }
         }
         self
