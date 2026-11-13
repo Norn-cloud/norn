@@ -91,8 +91,10 @@ function useRightEdge(selector: string, deps: readonly unknown[]) {
     const measure = () => setRight(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1)
     measure()
     scroller.addEventListener("scroll", measure, { passive: true })
+    // The scroller keeps its box when its content widens (Technical's two-line headers): observe the content too.
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure)
     observer?.observe(scroller)
+    for (const content of Array.from(scroller.children)) observer?.observe(content)
     return () => {
       scroller.removeEventListener("scroll", measure)
       observer?.disconnect()
