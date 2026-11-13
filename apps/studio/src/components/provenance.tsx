@@ -148,7 +148,7 @@ export function ProvenancePopover({ children, variant = "inline", className, lab
     <>
       <button type="button" onClick={(event) => { keep(event); change(true) }} className={cn(variant === "inline" && TRIGGER, className)} {...variant === "block" ? { "aria-label": `${label}: where this value came from` } : {}}>{children}</button>
       <Sheet open={shown} onOpenChange={change}>
-        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl px-4 pt-4 pb-6" onClick={keep} onKeyDown={keep}>
+        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl px-4 pt-12 pb-6" onClick={keep} onKeyDown={keep}>
           <SheetTitle className="sr-only">Where {label} came from</SheetTitle>
           {card}
         </SheetContent>

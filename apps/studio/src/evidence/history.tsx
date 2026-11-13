@@ -9,6 +9,8 @@ import { systemName } from "../lib/catalog.ts"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { readMetrics } from "../lib/metrics.ts"
 import { atScale } from "../lib/objects.ts"
+import { readableTime } from "../lib/format.ts"
+import { useView } from "../lib/view.tsx"
 import { byValidTime, timePropertyOf, timeline, writerCounts, type TimelineEntry, type WriterKind } from "../lib/record-page.ts"
 import { useCatalog } from "../sources.tsx"
 import { changedProperties, readHistory, versionValue, type ObjectVersion } from "./review.ts"
@@ -101,13 +103,14 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
   readonly open: boolean
   readonly onToggle: () => void
 }) {
+  const { view } = useView()
   const versions = history.document.versions
   const version = versions[index]
   if (version === undefined) return null
   const first = index === versions.length - 1 && !truncated
   const changed = first ? [] : changedProperties(history, index)
   const Icon = KIND[entry.kind].icon
-  const when = time === "valid" ? entry.valid ?? "no valid time" : entry.known
+  const when = time === "valid" ? entry.valid === null ? "no valid time" : view === "technical" ? entry.valid : readableTime(entry.valid) : view === "technical" ? entry.known : readableTime(entry.known)
   const change = (property: string) => `${property.replaceAll("_", " ")} ${atScale(versionValue(history, index + 1, property), scales.get(property))} → ${atScale(versionValue(history, index, property), scales.get(property))}`
   const writer = version.writer
   return (

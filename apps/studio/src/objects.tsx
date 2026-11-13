@@ -27,6 +27,7 @@ import { History } from "./evidence/history.tsx"
 import { readFindings, readHistory, type Evidence, type EvidenceRef } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
+import { stamp } from "./lib/format.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -161,7 +162,7 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
   const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
     <span className="text-meta tabular-nums" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>
-      version {version}{entry ? <> · commit {entry.commit} · as of <span className="font-mono text-xs">{new Date(entry.logicalTime).toISOString()}</span></> : null}
+      version {version}{entry ? <> · commit {entry.commit} · as of <time dateTime={new Date(entry.logicalTime).toISOString()} title={new Date(entry.logicalTime).toISOString()}>{stamp(entry.logicalTime)}</time></> : null}
     </span>
   )
 }
