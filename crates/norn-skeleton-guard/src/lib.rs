@@ -227,8 +227,17 @@ pub const CRATES: &[CrateRule] = &[
     rule(
         "norn-checker-wasm",
         Ring::One,
-        &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
+        &[
+            "norn-checker",
+            "norn-projections",
+            "norn-expr",
+            "norn-expr-wasm",
+            "norn-ir",
+        ],
     ),
+    // The ZEN engine alone (D105): the checker ABI's one evaluation entry point over norn-expr,
+    // which norn-checker-wasm re-exports; pages load it instead of the whole checker.
+    rule("norn-expr-wasm", Ring::One, &["norn-expr", "norn-ir"]),
     // Format-family readers (XSD first; norn-platform#2739, #3507): decisions +
     // expr evaluate the type tables; the checker runs the conformance harness
     // in tests only. Standards and systems are packs, never Rust.

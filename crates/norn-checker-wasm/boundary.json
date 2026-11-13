@@ -5,6 +5,7 @@
     "norn-checker",
     "norn-projections",
     "norn-expr",
+    "norn-expr-wasm",
     "norn-ir"
   ],
   "dev_only_norn": [],
