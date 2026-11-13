@@ -699,7 +699,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"] | components["schemas"]["NornArtifactEnvelopeModel"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -841,6 +841,18 @@ export interface components {
              * @enum {string}
              */
             kind: "mapping";
+        };
+        /** NornArtifactEnvelopeModel */
+        NornArtifactEnvelopeModel: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "model";
+            payload: components["schemas"]["NornIrModelPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "model";
         };
         /** NornArtifactEnvelopePolicy */
         NornArtifactEnvelopePolicy: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -1909,7 +1921,7 @@ export interface components {
             artifactId: string;
             version: string;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels";
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels" | "model";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -2545,6 +2557,34 @@ export interface components {
             name: string;
             op: components["schemas"]["NornIrCompareOp"];
             value: components["schemas"]["NornIrAccessLiteral"];
+        };
+        /** @description A closed check on one output's values. There are no free expressions. */
+        NornIrContractRule: components["schemas"]["NornIrContractRuleOneOf0"] | components["schemas"]["NornIrContractRuleOneOf1"] | components["schemas"]["NornIrContractRuleOneOf2"] | components["schemas"]["NornIrContractRuleOneOf3"];
+        /** @description Inclusive bounds on a numeric output; at least one bound. */
+        NornIrContractRuleOneOf0: {
+            /** @enum {string} */
+            kind: "range";
+            /** @description Inclusive upper bound. */
+            max?: string;
+            /** @description Inclusive lower bound. */
+            min?: string;
+        };
+        /** @description Every object gets a value. */
+        NornIrContractRuleOneOf1: {
+            /** @enum {string} */
+            kind: "notNull";
+        };
+        /** @description A numeric output is never NaN or infinite. */
+        NornIrContractRuleOneOf2: {
+            /** @enum {string} */
+            kind: "finite";
+        };
+        /** @description A categorical (`enum` or `text`) output takes one of these values. */
+        NornIrContractRuleOneOf3: {
+            /** @enum {string} */
+            kind: "oneOf";
+            /** @description The admitted values; non-empty and unique. */
+            values: string[];
         };
         /**
          * @description Conversion outputs.
@@ -5567,6 +5607,101 @@ export interface components {
             /** @description Numerator metric. */
             numerator?: string;
         };
+        /** @description A named contract on one output. */
+        NornIrModelContract: {
+            /** @description Unique contract id (`[a-z][a-z0-9_]*`). */
+            id: string;
+            /** @description The output it checks, by [`ModelOutput::id`]. */
+            output: string;
+            /** @description The check. */
+            rule: components["schemas"]["NornIrContractRule"];
+        };
+        /**
+         * @description What a model reads. A tagged union so later inputs (a transform, a
+         *     dataset) are additive variants.
+         */
+        NornIrModelInput: components["schemas"]["NornIrModelInputOneOf0"];
+        /**
+         * @description The live objects of one object type, by qualified name
+         *     (`sales.Customer`). Features and the target are its properties.
+         */
+        NornIrModelInputOneOf0: {
+            /** @enum {string} */
+            kind: "objectType";
+            /** @description The input object type. */
+            objectType: string;
+        };
+        /** @description How the model was built: display text only. */
+        NornIrModelMethod: {
+            /** @description The method (`logistic regression`). */
+            label: string;
+            /** @description The tool or method version (`sklearn 1.6`). */
+            version?: string;
+        };
+        /** @description One prediction column a model writes. */
+        NornIrModelOutput: {
+            /** @description Unique column id (`[a-z][a-z0-9_]*`). */
+            id: string;
+            /** @description Whether the model may leave the column empty for an object. */
+            nullable: boolean;
+            /**
+             * @description The column's value type, in the property type representation
+             *     (`EntityIR`); a quantity carries its unit inside a `decimal` type, as a
+             *     property does.
+             */
+            type: components["schemas"]["NornIrPropertyType"];
+        };
+        /** @description A typed predictive model with opaque internals ([`model`]). */
+        NornIrModelPayload: {
+            /** @description Checks every output must meet before it is written. Omitted when empty. */
+            contracts?: components["schemas"]["NornIrModelContract"][];
+            extensions?: components["schemas"]["NornIrModelPayloadPropertyExtensions"];
+            /** @description Input properties the model uses, in order; non-empty and unique. */
+            features: components["schemas"]["NornIrPropertyId"][];
+            /** @description What the model reads. */
+            input: components["schemas"]["NornIrModelInput"];
+            /** @description Display-only description of how the model was built. */
+            method: components["schemas"]["NornIrModelMethod"];
+            /** @description Dotted model id ([`MODEL_ID_PATTERN`], `sales.churn_model`). */
+            modelId: string;
+            /** @description Prediction columns; non-empty, ids unique. */
+            outputs: components["schemas"]["NornIrModelOutput"][];
+            /**
+             * @description The typed object type predictions are written to; omitted when the
+             *     model names none.
+             */
+            predictions?: components["schemas"]["NornIrModelPredictions"];
+            /** @description The supervised target property; omitted for a scoring-only model. */
+            target?: string;
+            /** @description Human-readable title. */
+            title: string;
+            /**
+             * @description How far the outputs can be trusted without running the model.
+             * @enum {string}
+             */
+            trust: "native" | "proven" | "contract_checked" | "opaque";
+            /** @description The model artifact's version (SemVer 2.0.0). */
+            version: string;
+        };
+        /** @description Reserved versioned extension slots, as on other artifact roots. */
+        NornIrModelPayloadPropertyExtensions: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description Where a model's predictions are written (#1171 M4): one object per scored
+         *     input object, of a typed object type.
+         *
+         *     Admission (`norn-checker`, over a set): the type resolves in the candidate
+         *     set or the installed base; it has a text property `subject` (the scored
+         *     input object's id) and a text property `model_version` (the
+         *     `ml.ModelVersion` id that produced it); and every output of the model is a
+         *     property of it with the same id, the same type (a decimal's scale and unit,
+         *     an enum's values as a superset) and the same nullability.
+         */
+        NornIrModelPredictions: {
+            /** @description The predictions object type, by qualified name (`sales.ChurnPrediction`). */
+            objectType: string;
+        };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
          * @enum {string}
@@ -6098,7 +6233,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Artifact kinds a composition pack may contain (not `derived`). */
-        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law" | "labels";
+        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law" | "labels" | "model";
         /** @description One exact artifact version in a composition pack. */
         NornIrPackArtifactRef: {
             artifactId: string;
@@ -8026,6 +8161,11 @@ export interface components {
             /** @description ZEN over the translated target record. */
             target: string;
         };
+        /**
+         * @description VIEW-TRUST-1: how far a definition's output can be trusted without running it.
+         * @enum {string}
+         */
+        NornIrTrustLevel: "native" | "proven" | "contract_checked" | "opaque";
         /**
          * @description Budget for one synchronous cell turn (§1 row 2): one aggregate budget that
          *     every triggered decision, validation, and helper debits.
