@@ -1692,7 +1692,11 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
     packs.sort();
     let mut linked = 0;
     for pack in packs {
-        let name = pack.file_name().expect("name").to_string_lossy().into_owned();
+        let name = pack
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
         let mut set = core.clone();
         if name != "canon" {
             set.extend(canon.iter().cloned());
@@ -1705,14 +1709,19 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         )
         .unwrap_or_else(|findings| panic!("{name} derives: {findings:#?}"));
         for candidate in space.candidates() {
-            let summary = norn_api::question_routes::metric_summary(&candidate.definition, Vec::new());
+            let summary =
+                norn_api::question_routes::metric_summary(&candidate.definition, Vec::new());
             let mut shown = summary.unit_partition.clone();
             shown.extend(summary.time_links.iter().cloned());
             shown.extend(
-                [&summary.time_property, &summary.expression, &summary.object_type]
-                    .into_iter()
-                    .flatten()
-                    .cloned(),
+                [
+                    &summary.time_property,
+                    &summary.expression,
+                    &summary.object_type,
+                ]
+                .into_iter()
+                .flatten()
+                .cloned(),
             );
             shown.push(summary.label.clone());
             for text in &shown {
@@ -1724,7 +1733,11 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
             }
             if !summary.time_links.is_empty() {
                 linked += 1;
-                assert_eq!(summary.time_property.as_deref(), Some("occurred_at"), "{name}");
+                assert_eq!(
+                    summary.time_property.as_deref(),
+                    Some("occurred_at"),
+                    "{name}"
+                );
             }
         }
     }

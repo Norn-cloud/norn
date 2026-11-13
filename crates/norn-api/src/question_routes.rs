@@ -879,7 +879,10 @@ pub struct NornMetricSummary {
 /// own path (a property and the links to it), never the semantic model's
 /// encoded field name.
 #[must_use]
-pub fn metric_summary(definition: &MetricDefinition, unit_partition: Vec<String>) -> NornMetricSummary {
+pub fn metric_summary(
+    definition: &MetricDefinition,
+    unit_partition: Vec<String>,
+) -> NornMetricSummary {
     let aggregation = definition.type_params.metric_aggregation_params.as_ref();
     let time = definition.norn.time_dimension.as_ref();
     NornMetricSummary {
@@ -898,7 +901,12 @@ pub fn metric_summary(definition: &MetricDefinition, unit_partition: Vec<String>
             )
         }),
         time_links: time
-            .map(|path| path.links.iter().map(|link| link.as_str().to_owned()).collect())
+            .map(|path| {
+                path.links
+                    .iter()
+                    .map(|link| link.as_str().to_owned())
+                    .collect()
+            })
             .unwrap_or_default(),
         numerator: definition.type_params.numerator.clone(),
         denominator: definition.type_params.denominator.clone(),
