@@ -371,12 +371,9 @@ mod tests {
             totals.iter().any(|total| total.starts_with("7.25")),
             "{totals:?}"
         );
-        let engine = answer["engine"].as_str().unwrap();
-        if cfg!(feature = "duckdb") {
-            assert_eq!(engine, "duckdb");
-        } else {
-            assert_eq!(engine, "cell");
-        }
+        // No engine is wired here, so the cell answers; a host with the
+        // tenant's engine answers there alone (D102).
+        assert_eq!(answer["engine"].as_str(), Some("cell"));
         // The trace of a bucket reaches the objects that contributed to it.
         let (bucket, _) = rows
             .iter()
@@ -568,7 +565,7 @@ mod tests {
                 &json!({"question": question(&definition.name)}),
             );
             assert_eq!(status, 200, "{} {answer}", definition.name);
-            assert!(matches!(answer["engine"].as_str(), Some("cell" | "duckdb")));
+            assert_eq!(answer["engine"].as_str(), Some("cell"));
         }
     }
 

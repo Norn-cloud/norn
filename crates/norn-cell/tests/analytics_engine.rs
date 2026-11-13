@@ -74,7 +74,14 @@ fn ask(
     let prepared = store
         .analytics_prepare(plan, context, &tenant())
         .map_err(|e| code(&e))?;
-    let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+    // An engine fault keeps its detail: it never equals a Core 03 refusal.
+    let response = engine.evaluate(&prepared.request).map_err(|r| {
+        if r.code == "analytics.engine" {
+            format!("{}: {}", r.code, r.detail)
+        } else {
+            r.code
+        }
+    })?;
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
@@ -143,11 +150,26 @@ fn shaped(
     max_items: u32,
     dimensions: &serde_json::Value,
 ) -> (CellStore, QuestionPlan, QueryContext) {
+    declared(sum, max_items, dimensions, [3, 3])
+}
+
+/// As [`shaped`], with `recovered` declared at `scales[1]` decimal places and
+/// the other decimals at `scales[0]`.
+fn declared(
+    sum: bool,
+    max_items: u32,
+    dimensions: &serde_json::Value,
+    scales: [u64; 2],
+) -> (CellStore, QuestionPlan, QueryContext) {
     let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
-        if property.id.as_str() == "recovered" {
+        let recovered = property.id.as_str() == "recovered";
+        if recovered {
             property.constraints.nullable = true;
+        }
+        if let norn_ir::PropertyType::Decimal { scale, .. } = &mut property.property_type {
+            *scale = norn_ir::WholeNumber(scales[usize::from(recovered)]);
         }
     }
     let mut artifacts: Vec<ArtifactEnvelope> =
@@ -461,6 +483,7 @@ fn a_sync_that_skips_commits_is_refused() {
         after: 7,
         through: 9,
         rows: Vec::new(),
+        links: Vec::new(),
     };
     assert_eq!(
         engine.sync(&skipping).expect_err("refused").code,
@@ -864,6 +887,7 @@ fn bulk_path_measurements() {
                 after: batch,
                 through: batch + 1,
                 rows,
+                links: Vec::new(),
             })
             .expect("sync");
     }
@@ -872,4 +896,961 @@ fn bulk_path_measurements() {
         "mirror sync: {seq} versions, {sync_secs:.3}s, {:.0} rows/s",
         seq as f64 / sync_secs
     );
+}
+
+/// METRIC-SNAPSHOT-ASOF-1 on the engine: a semi-additive stock read as of
+/// each period's end equals the exact engine's snapshot answer, by week,
+/// by week and location, by location alone (as of the window's end), and
+/// ungrouped.
+mod snapshot {
+    use super::{Engine, compare, engine};
+    use norn_cell::compute::QueryContext;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+    use norn_checker::metric::compute::QuestionPlan;
+    use norn_ir::{
+        ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
+    };
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const TYPE: &str = "demo.Stock";
+    const WORLD: &str = "synthetic-stock";
+    const CLOCK: u64 = 1_792_972_800_000;
+    const INSTANTS: [&str; 10] = [
+        "2026-06-01T00:00:00Z",
+        "2026-07-05T23:59:59Z",
+        "2026-07-06T00:00:00Z",
+        "2026-07-09T12:00:00Z",
+        "2026-07-13T00:00:00Z",
+        "2026-07-19T23:59:59Z",
+        "2026-07-24T08:00:00Z",
+        "2026-07-27T00:00:00Z",
+        "2026-08-05T18:30:00Z",
+        "2026-08-10T00:00:00Z",
+    ];
+
+    fn object_type() -> ObjectTypeDef {
+        serde_json::from_value(json!({"name": TYPE, "properties": [
+            {"id": "quantity", "type": {"kind": "decimal", "scale": 3, "additivity": {"kind": "semi_additive"}}, "constraints": {"nullable": true}},
+            {"id": "observed_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "location", "type": {"kind": "text"}},
+        ]}))
+        .expect("typed model")
+    }
+
+    fn context() -> QueryContext {
+        QueryContext {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            population_pin: "all-stock".into(),
+            authorization_epoch: 1,
+            mapping_pin: "fixture:stock".into(),
+            now_ms: CLOCK + 1_000_000,
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
+        }
+    }
+
+    fn plan(north_only: bool, group_by: &serde_json::Value) -> (CellStore, QuestionPlan) {
+        let artifact: ArtifactEnvelope = serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": "demo.Stock.entity", "kind": "entity", "namespace": "demo",
+            "name": TYPE, "version": "0.1.0", "lifecycle": "active", "scope": {}, "dependencies": [],
+            "provenance": {"source": "system"}, "payload": {"entityVersion": "2.0", "objectType": object_type()},
+        }))
+        .expect("artifact");
+        let space = norn_checker::metric::derive::derive_metric_space(
+            &[artifact],
+            &BTreeSet::new(),
+            &LawRoot::Entity(TYPE.to_owned()),
+        )
+        .expect("derived space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|c| c.definition.name.ends_with(".quantity.as_of_observed_at"))
+            .expect("the snapshot candidate");
+        let filters = if north_only {
+            json!([{"path": {"property": "location"}, "operator": "eq", "value": "north"}])
+        } else {
+            json!([])
+        };
+        let question: QuestionIR = serde_json::from_value(json!({
+            "irVersion": "0.1", "name": "demo.stock_week", "objectSet": TYPE,
+            "aggregate": [{"metric": metric.definition.name}],
+            "groupBy": group_by, "filter": filters,
+            "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+            "freshness": {"kind": "live", "maxAgeMs": 5000},
+        }))
+        .expect("question");
+        let plan = space
+            .admit(&question, 100)
+            .expect("admitted snapshot question");
+        assert!(plan.as_of());
+        let model = Model::from_definitions(&[object_type()], &[]).expect("model");
+        (CellStore::open_in_memory(model).expect("cell"), plan)
+    }
+
+    fn put(
+        store: &mut CellStore,
+        tick: u64,
+        key: &str,
+        quantity: Option<i64>,
+        at: &str,
+        location: &str,
+    ) {
+        let quantity = quantity.map_or(V::Null, |q| {
+            V::from(Decimal::parse(&q.to_string()).expect("exact"))
+        });
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK.checked_add(tick).expect("clock"),
+                writes: vec![FactWriteRow::Put {
+                    object_type: TYPE.into(),
+                    key: key.into(),
+                    values: BTreeMap::from([
+                        ("quantity".into(), quantity),
+                        ("observed_at".into(), V::from(at)),
+                        ("location".into(), V::from(location)),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("version commits");
+    }
+
+    fn shapes() -> [serde_json::Value; 4] {
+        [
+            json!([{"path": {"property": "observed_at"}, "grain": "week"}]),
+            json!([{"path": {"property": "observed_at"}, "grain": "week"}, {"path": {"property": "location"}}]),
+            json!([{"path": {"property": "location"}}]),
+            json!([]),
+        ]
+    }
+
+    fn check(
+        engine: &Engine,
+        history: &[(usize, Option<i64>, usize, bool)],
+        north_only: bool,
+        shape: &serde_json::Value,
+    ) {
+        let (mut store, plan) = plan(north_only, shape);
+        for (tick, (subject, quantity, at, north)) in (1u64..).zip(history) {
+            let location = if *north { "north" } else { "south" };
+            put(
+                &mut store,
+                tick,
+                &format!("s{subject}"),
+                *quantity,
+                INSTANTS[*at],
+                location,
+            );
+        }
+        compare(&store, engine, &plan, &context());
+    }
+
+    #[test]
+    fn the_scenario_history_matches_the_exact_snapshot_in_every_shape() {
+        let history = [
+            (1, Some(10), 3, true),
+            (1, Some(5), 4, true),
+            (1, Some(7), 5, true),
+            (2, Some(100), 6, true),
+            (1, Some(3), 7, false),
+            (2, Some(50), 5, true),
+            (3, Some(1), 0, true),
+            (3, Some(2), 0, true),
+            (4, None, 3, true),
+        ];
+        for shape in shapes() {
+            for north_only in [false, true] {
+                let (_dir, engine) = engine();
+                check(&engine, &history, north_only, &shape);
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+        /// Generated histories with valid-time ties, nulls, location flips and
+        /// versions before the window and on period boundaries.
+        #[test]
+        fn generated_snapshot_histories_match_the_exact_engine(
+            history in proptest::collection::vec((0usize..3, proptest::option::weighted(0.85, 0i64..1_000), 0usize..10, proptest::bool::ANY), 1..14),
+            north_only in proptest::bool::ANY,
+            shape in 0usize..4,
+        ) {
+            let (_dir, engine) = engine();
+            check(&engine, &history, north_only, &shapes()[shape]);
+        }
+    }
+}
+
+/// The cases the retired in-process SQL path carried, held by the engine:
+/// declared scales 0–7 per operand, signed midpoint rounding, a coefficient
+/// near the bound, zero inputs, a hostile identity and a non-NFC bucket, each
+/// through correction and retraction; and the calendar labels.
+mod scales {
+    use super::{
+        CellStore, Decimal, FactWriteRow, QueryContext, QuestionPlan, RuntimeValue, TYPE, commit,
+        compare, declared, engine,
+    };
+    use std::collections::BTreeMap;
+
+    fn by_metal(scales: [u64; 2], sum: bool) -> (CellStore, QuestionPlan, QueryContext) {
+        declared(
+            sum,
+            100,
+            &serde_json::json!([{"path": {"property": "metal"}}]),
+            scales,
+        )
+    }
+
+    fn row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWriteRow {
+        let exact = |value: i64, scale: u64| {
+            RuntimeValue::from(Decimal::parse(&format!("{value}e-{scale}")).expect("declared"))
+        };
+        FactWriteRow::Put {
+            object_type: TYPE.into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                ("input".into(), exact(input, scales[0])),
+                ("recovered".into(), exact(recovered, scales[1])),
+                ("loss".into(), exact(0, scales[0])),
+                (
+                    "occurred_at".into(),
+                    RuntimeValue::from("2026-10-23T12:00:00Z"),
+                ),
+                ("metal".into(), RuntimeValue::from("e\u{301}")),
+            ]),
+        }
+    }
+
+    #[test]
+    fn rounding_scales_and_hostile_ids_match_exact_after_correction_and_retraction() {
+        let id = "quoted'); DROP TABLE input;--";
+        for (scales, input, recovered) in [
+            ([3, 3], 128, 1i64),
+            ([3, 3], 128, -1),
+            ([3, 3], -128, 1),
+            ([3, 3], -128, -1),
+            ([3, 3], 0, 0),
+            ([3, 3], 1, 9_000_000_000_000_000),
+            ([0, 3], 128, 1),
+            ([6, 0], 3, 1),
+            ([0, 6], 1, -1),
+            ([6, 0], 0, 1),
+        ] {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = by_metal(scales, false);
+            for recovered in [recovered, recovered.checked_neg().expect("bounded sign")] {
+                commit(&mut store, vec![row(id, input, recovered, scales)]);
+                let answer = compare(&store, &engine, &plan, &context).expect("answered");
+                assert_eq!(answer.rows.len(), 1, "{scales:?} {input} {recovered}");
+            }
+            commit(
+                &mut store,
+                vec![FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: id.into(),
+                }],
+            );
+            let answer = compare(&store, &engine, &plan, &context).expect("answered");
+            assert!(answer.rows.is_empty());
+        }
+    }
+
+    /// A declared scale past six: the engine answers exactly as the cell
+    /// does, or refuses as it does.
+    #[test]
+    fn a_scale_past_six_answers_as_the_cell_does() {
+        for sum in [true, false] {
+            let (_dir, engine) = engine();
+            let (mut store, plan, context) = by_metal([7, 7], sum);
+            compare(&store, &engine, &plan, &context);
+            commit(
+                &mut store,
+                vec![
+                    row("G1", 1_234_567, 7_654_321, [7, 7]),
+                    row("G2", -5, 3, [7, 7]),
+                ],
+            );
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn generated_declared_scales_match_exact_envelopes(
+            scales in (0u64..7, 0u64..7),
+            population in proptest::collection::vec((-1000i64..1000, -1000i64..1000), 1..8),
+            sum in proptest::bool::ANY,
+        ) {
+            let (_dir, engine) = engine();
+            let scales = [scales.0, scales.1];
+            let (mut store, plan, context) = by_metal(scales, sum);
+            let writes = population
+                .iter()
+                .enumerate()
+                .map(|(i, (input, recovered))| row(&format!("G{i}"), *input, *recovered, scales))
+                .collect();
+            commit(&mut store, writes);
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+
+    /// The grain labels the exact engine buckets by equal `DuckDB`'s
+    /// `date_trunc` in UTC, cast to a date: at every month, quarter and year
+    /// boundary of 2024 (one second either side), around the epoch, on a leap
+    /// day, across an ISO week that spans a year end, and at instants swept
+    /// through 2024.
+    #[test]
+    #[allow(clippy::arithmetic_side_effects, reason = "instant sweep fixture")]
+    fn grain_labels_equal_duckdb_date_trunc() {
+        use norn_checker::metric::compute::contribution::period_start;
+        use norn_ir::metric::TimeGrain;
+        let conn = duckdb::Connection::open_in_memory().expect("duckdb");
+        let edges = [
+            1_704_067_199,
+            1_704_067_200,
+            1_706_745_599,
+            1_706_745_600,
+            1_709_251_199,
+            1_709_251_200,
+            1_711_929_599,
+            1_711_929_600,
+            1_714_521_599,
+            1_714_521_600,
+            1_717_199_999,
+            1_717_200_000,
+            1_719_791_999,
+            1_719_792_000,
+            1_722_470_399,
+            1_722_470_400,
+            1_725_148_799,
+            1_725_148_800,
+            1_727_740_799,
+            1_727_740_800,
+            1_730_419_199,
+            1_730_419_200,
+            1_733_011_199,
+            1_733_011_200,
+            1_735_689_599,
+            1_735_689_600,
+            -86401,
+            -1,
+            0,
+            951_782_400,
+            951_868_799,
+            4_102_444_799,
+            1_735_516_800,
+            1_735_516_799,
+        ];
+        let sweep = (0..1_500_i64).map(|step| 1_703_462_400 + step * 21_599);
+        for (grain, name) in [
+            (TimeGrain::Day, "day"),
+            (TimeGrain::Week, "week"),
+            (TimeGrain::Month, "month"),
+            (TimeGrain::Quarter, "quarter"),
+            (TimeGrain::Year, "year"),
+        ] {
+            let sql = format!(
+                "SELECT CAST(CAST(date_trunc('{name}', make_timestamp(CAST(? AS BIGINT) * 1000000)) AS DATE) AS VARCHAR)"
+            );
+            for seconds in edges.into_iter().chain(sweep.clone()) {
+                let expected: String = conn
+                    .query_row(&sql, [seconds], |row| row.get(0))
+                    .expect("date_trunc");
+                assert_eq!(
+                    period_start(seconds, grain).expect("label"),
+                    expected,
+                    "{name} at {seconds}"
+                );
+            }
+        }
+    }
+}
+
+/// METRIC-GRAIN-LINK-1 on the engine: an entry's time is its event's,
+/// through the to-one link the mirror keeps; an entry without an event is
+/// skipped and counted (`unlinked`); a corrected event time moves its
+/// entries; an unlinked or retargeted entry moves too. Every answer equals
+/// the exact engine's (`linked_time_question.rs` is the oracle scenario).
+mod linked_time {
+    use super::{compare, engine};
+    use norn_cell::compute::QueryContext;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
+    use norn_checker::metric::compute::QuestionPlan;
+    use norn_checker::metric::derive::derive_metric_space;
+    use norn_ir::{
+        ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
+    };
+    use serde_json::json;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    const WORLD: &str = "synthetic-ledger";
+    const CLOCK: u64 = 1_792_972_800_000;
+
+    fn types() -> [ObjectTypeDef; 2] {
+        [
+            serde_json::from_value(json!({"name": "demo.Event", "properties": [
+                {"id": "occurred_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+            ]}))
+            .expect("event type"),
+            serde_json::from_value(json!({"name": "demo.Entry", "properties": [
+                {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"}}},
+                {"id": "side", "type": {"kind": "text"}},
+            ], "links": [
+                {"id": "event", "target": "demo.Event", "cardinality": {"to": "one", "from": "many"}},
+            ]}))
+            .expect("entry type"),
+        ]
+    }
+
+    fn envelope(object: &ObjectTypeDef) -> ArtifactEnvelope {
+        let name = object.name.as_str();
+        serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
+            "namespace": "demo", "name": name, "version": "0.1.0", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {"entityVersion": "2.0", "objectType": object},
+        }))
+        .expect("artifact")
+    }
+
+    /// "amount by `event.occurred_at`", grouped as `group_by`, optionally
+    /// only the `debit` side.
+    fn fixture(group_by: &serde_json::Value, debit_only: bool) -> (CellStore, QuestionPlan) {
+        let [event, entry] = types();
+        let space = derive_metric_space(
+            &[envelope(&event), envelope(&entry)],
+            &BTreeSet::new(),
+            &LawRoot::Entity("demo.Entry".to_owned()),
+        )
+        .expect("derived space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate.definition.type_params.expr.as_deref() == Some("amount")
+                    && candidate
+                        .definition
+                        .norn
+                        .time_dimension
+                        .as_ref()
+                        .is_some_and(|time| time.links.len() == 1)
+            })
+            .expect("the entry's linked-time sum");
+        let filter = if debit_only {
+            json!([{"path": {"property": "side"}, "operator": "eq", "value": "debit"}])
+        } else {
+            json!([])
+        };
+        let question: QuestionIR = serde_json::from_value(json!({
+            "irVersion": "0.1", "name": "demo.entries", "objectSet": "demo.Entry",
+            "aggregate": [{"metric": metric.definition.name}],
+            "groupBy": group_by,
+            "filter": filter,
+            "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+            "freshness": {"kind": "live", "maxAgeMs": 5000},
+        }))
+        .expect("question");
+        let plan = space
+            .admit(&question, 100)
+            .expect("admitted linked question");
+        assert!(plan.time_link().is_some());
+        let model = Model::from_definitions(&types(), &[]).expect("model");
+        (CellStore::open_in_memory(model).expect("cell"), plan)
+    }
+
+    fn weekly() -> serde_json::Value {
+        json!([{"path": {"links": ["event"], "property": "occurred_at"}, "grain": "week"}])
+    }
+
+    fn context() -> QueryContext {
+        QueryContext {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            population_pin: "all-entries".into(),
+            authorization_epoch: 1,
+            mapping_pin: "fixture:ledger".into(),
+            now_ms: CLOCK.checked_add(1_000_000).expect("clock"),
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
+        }
+    }
+
+    fn event(key: &str, at: &str) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: "demo.Event".into(),
+            key: key.into(),
+            values: BTreeMap::from([("occurred_at".into(), V::from(at))]),
+        }
+    }
+
+    fn entry(key: &str, amount: i64, side: &str) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: "demo.Entry".into(),
+            key: key.into(),
+            values: BTreeMap::from([
+                (
+                    "amount".into(),
+                    V::from(Decimal::parse(&amount.to_string()).expect("exact amount")),
+                ),
+                ("side".into(), V::from(side)),
+            ]),
+        }
+    }
+
+    fn link(entry: &str, event: &str, add: bool) -> LinkChange {
+        if add {
+            LinkChange::Add {
+                object_type: "demo.Entry".into(),
+                link: "event".into(),
+                source: entry.into(),
+                target: event.into(),
+                values: BTreeMap::new(),
+                target_type: None,
+            }
+        } else {
+            LinkChange::Remove {
+                object_type: "demo.Entry".into(),
+                link: "event".into(),
+                source: entry.into(),
+                target: event.into(),
+                target_type: None,
+            }
+        }
+    }
+
+    fn commit(
+        store: &mut CellStore,
+        tick: u64,
+        writes: Vec<FactWriteRow>,
+        links: Vec<LinkChange>,
+    ) -> bool {
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK.checked_add(tick).expect("clock"),
+                writes,
+                links,
+                ..CommitBatch::default()
+            })
+            .is_ok()
+    }
+
+    #[test]
+    fn an_entry_takes_its_events_time_and_one_without_an_event_is_counted_never_bucketed() {
+        for (group_by, debit_only) in [
+            (weekly(), false),
+            (weekly(), true),
+            (json!([{"path": {"property": "side"}}]), false),
+            (json!([]), false),
+        ] {
+            let (_dir, engine) = engine();
+            let (mut store, plan) = fixture(&group_by, debit_only);
+            assert!(commit(
+                &mut store,
+                1,
+                vec![
+                    event("e1", "2026-07-07T10:00:00Z"),
+                    event("e2", "2026-07-15T09:00:00Z"),
+                    event("e3", "2026-07-22T00:00:00Z"),
+                    entry("x1", 10, "debit"),
+                    entry("x2", 20, "credit"),
+                    entry("x3", 5, "debit"),
+                    entry("x4", 7, "debit"),
+                    entry("x5", 3, "credit"),
+                ],
+                vec![
+                    link("x1", "e1", true),
+                    link("x2", "e1", true),
+                    link("x3", "e2", true),
+                    link("x5", "e3", true),
+                ],
+            ));
+            let answered = compare(&store, &engine, &plan, &context()).expect("answered");
+            assert_eq!(answered.unlinked, 1, "{group_by}");
+            // A corrected event time moves its entries; an unlinked entry is
+            // counted again; a linked one joins a bucket.
+            for (tick, writes, links) in [
+                (2, vec![event("e2", "2026-07-08T00:00:00Z")], Vec::new()),
+                (
+                    3,
+                    Vec::new(),
+                    vec![link("x3", "e2", false), link("x4", "e3", true)],
+                ),
+                (4, vec![event("e3", "2026-09-01T00:00:00Z")], Vec::new()),
+            ] {
+                assert!(commit(&mut store, tick, writes, links));
+                compare(&store, &engine, &plan, &context());
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+        /// Generated ledgers: events and entries written, linked, unlinked
+        /// and relinked over several commits; after every commit the engine
+        /// answers exactly as the cell.
+        #[test]
+        fn generated_ledgers_match_exact_envelopes(
+            steps in proptest::collection::vec(
+                (0u8..4, 0u8..5, 0u8..3, 0usize..6, -500i64..500, proptest::bool::ANY),
+                1..12,
+            ),
+            shape in 0u8..3,
+        ) {
+            const TIMES: [&str; 6] = [
+                "2026-07-01T00:00:00Z",
+                "2026-07-06T00:00:00Z",
+                "2026-07-12T23:59:59.999Z",
+                "2026-07-20T08:00:00+02:00",
+                "2026-08-09T23:59:59Z",
+                "2026-08-10T00:00:00Z",
+            ];
+            let (_dir, engine) = engine();
+            let group_by = match shape {
+                0 => weekly(),
+                1 => json!([{"path": {"property": "side"}}, {"path": {"links": ["event"], "property": "occurred_at"}, "grain": "month"}]),
+                _ => json!([]),
+            };
+            let (mut store, plan) = fixture(&group_by, shape == 2);
+            for (tick, (kind, entry_key, event_key, at, amount, debit)) in (1u64..).zip(steps) {
+                let (x, e) = (format!("x{entry_key}"), format!("e{event_key}"));
+                let side = if debit { "debit" } else { "credit" };
+                let (writes, links) = match kind {
+                    0 => (vec![event(&e, TIMES[at])], Vec::new()),
+                    1 => (vec![entry(&x, amount, side)], Vec::new()),
+                    2 => (vec![entry(&x, amount, side), event(&e, TIMES[at])], vec![link(&x, &e, true)]),
+                    _ => (Vec::new(), vec![link(&x, &e, false)]),
+                };
+                if commit(&mut store, tick, writes, links) {
+                    compare(&store, &engine, &plan, &context());
+                }
+            }
+        }
+    }
+}
+
+/// The sources pack's own types (a typed registry instant, enums, nullable
+/// text, an interface) mirror, profile, page and export on the engine like
+/// any other type.
+mod sources_pack {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{ExportFormat, ExportRequest, PageRequest, ProfileRequest};
+    use norn_ir::{ArtifactEnvelope, EntityRoot};
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+
+    fn artifact(path: &str) -> ArtifactEnvelope {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path),
+        )
+        .expect(path);
+        serde_json::from_str(&text).expect(path)
+    }
+
+    fn store() -> CellStore {
+        let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
+        for path in [
+            "registry/core/artifacts/std.value_types.entity.json",
+            "registry/packs/sources/artifacts/source.Synced.interface.json",
+            "registry/packs/sources/artifacts/source.Connection.entity.json",
+            "registry/packs/sources/artifacts/source.SyncRun.entity.json",
+        ] {
+            let artifact = artifact(path);
+            let root: EntityRoot = serde_json::from_value(
+                serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
+            )
+            .expect("entity root");
+            match root {
+                EntityRoot::V2(root) => objects.push(root.object_type),
+                EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+                EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+                EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+                    panic!("{path} is outside this profile")
+                }
+            }
+        }
+        let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+            .expect("model");
+        CellStore::open_in_memory(model).expect("cell")
+    }
+
+    fn connection(id: &str, ended: Option<&str>, read: i64) -> FactWriteRow {
+        let text = |t: &str| RuntimeValue::from(t);
+        FactWriteRow::Put {
+            object_type: "source.Connection".into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                ("id".into(), text(id)),
+                ("system".into(), text("upload")),
+                ("label".into(), text("items.csv")),
+                ("target".into(), text("s3://uploads/demo/items.csv")),
+                ("auth".into(), text("presigned_upload")),
+                ("status".into(), text("partial")),
+                (
+                    "last_sync_started_at".into(),
+                    text("2026-11-12T12:00:00.000Z"),
+                ),
+                (
+                    "last_sync_ended_at".into(),
+                    ended.map_or(RuntimeValue::Null, text),
+                ),
+                ("last_trigger".into(), text("upload")),
+                ("watermark".into(), text("{\"rows\":4}")),
+                ("rows_read".into(), RuntimeValue::from(read)),
+                (
+                    "rows_landed".into(),
+                    RuntimeValue::from(read.saturating_sub(1)),
+                ),
+                ("rows_quarantined".into(), RuntimeValue::from(1i64)),
+                ("quarantine_reasons".into(), text("bulk.type=1")),
+                ("last_error_code".into(), RuntimeValue::Null),
+                ("last_error_message".into(), RuntimeValue::Null),
+                ("connector_id".into(), text("")),
+                ("source_schema_id".into(), text("")),
+                ("mapping_id".into(), text("")),
+            ]),
+        }
+    }
+
+    #[test]
+    fn the_sources_types_mirror_profile_page_and_export() {
+        let (_dir, engine) = engine();
+        let mut store = store();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes: vec![
+                    connection("upload.a", Some("2026-11-12T12:00:01.000Z"), 4),
+                    connection("upload.b", None, 9),
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("connections commit");
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "source.Connection")
+            .expect("source");
+        let table = store.analytics_table("source.Connection").expect("table");
+        let columns: Vec<String> = table.columns.iter().map(|c| c.id.clone()).collect();
+        // A row carries its own `id` and `version`; no property is exported under them.
+        let exported: Vec<String> = columns
+            .iter()
+            .filter(|c| !["id", "version"].contains(&c.as_str()))
+            .cloned()
+            .collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns,
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 2);
+        let page = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: Vec::new(),
+                sort: Vec::new(),
+                ids: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("page");
+        assert_eq!(page.total, 2);
+        let path = engine
+            .export(&ExportRequest {
+                tenant: tenant(),
+                source,
+                columns: exported,
+                format: ExportFormat::Jsonl,
+            })
+            .expect("export");
+        std::fs::remove_file(path).expect("scratch export");
+    }
+}
+
+/// A property may be named like any alias the engine's SQL uses: every
+/// operation reads such a type as any other (the `label` profile fault).
+mod alias_names {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{
+        ExportFormat, ExportRequest, PageClause, PageKey, PageOp, PageOperand, PageRequest,
+        ProfileRequest,
+    };
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+    /// Every bare alias in the engine's statements, and their numbered forms.
+    const ALIASES: [&str; 25] = [
+        "a",
+        "b",
+        "base",
+        "c",
+        "contributes",
+        "digest",
+        "f",
+        "first",
+        "g",
+        "gk",
+        "label",
+        "n",
+        "p",
+        "pk",
+        "r",
+        "refuse",
+        "rn",
+        "s",
+        "t",
+        "v",
+        "x",
+        "g0",
+        "a0",
+        "n0",
+        "c0",
+    ];
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one type through every engine operation"
+    )]
+    fn a_type_whose_properties_are_named_like_engine_aliases_profiles_pages_and_exports() {
+        let mut properties: Vec<serde_json::Value> = ALIASES
+            .iter()
+            .map(|id| serde_json::json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}}))
+            .collect();
+        properties
+            .push(serde_json::json!({"id": "amount", "type": {"kind": "decimal", "scale": 2}}));
+        properties.push(
+            serde_json::json!({"id": "at", "type": {"kind": "timestamp", "timezone": "utc"}}),
+        );
+        let object: norn_ir::ObjectTypeDef = serde_json::from_value(
+            serde_json::json!({"name": "demo.Aliased", "properties": properties}),
+        )
+        .expect("type");
+        let mut store =
+            CellStore::open_in_memory(Model::from_definitions(&[object], &[]).expect("model"))
+                .expect("cell");
+        let writes = (0..3i64)
+            .map(|i| {
+                let mut values: BTreeMap<String, RuntimeValue> = ALIASES
+                    .iter()
+                    .map(|id| {
+                        (
+                            (*id).to_owned(),
+                            RuntimeValue::from(format!("{id}-{i}").as_str()),
+                        )
+                    })
+                    .collect();
+                values.insert(
+                    "amount".into(),
+                    RuntimeValue::from(
+                        norn_ir::Decimal::parse(&format!("{i}.25")).expect("decimal"),
+                    ),
+                );
+                values.insert(
+                    "at".into(),
+                    RuntimeValue::from(format!("2026-11-1{i}T12:00:00Z").as_str()),
+                );
+                FactWriteRow::Put {
+                    object_type: "demo.Aliased".into(),
+                    key: format!("k{i}"),
+                    values,
+                }
+            })
+            .collect();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes,
+                ..CommitBatch::default()
+            })
+            .expect("rows commit");
+        let (_dir, engine) = engine();
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "demo.Aliased")
+            .expect("source");
+        let columns: Vec<String> = store
+            .analytics_table("demo.Aliased")
+            .expect("table")
+            .columns
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns: columns.clone(),
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 3);
+        for id in &columns {
+            let page = engine
+                .page(&PageRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    filters: vec![PageClause {
+                        column: id.clone(),
+                        op: PageOp::Present,
+                        operands: Vec::new(),
+                    }],
+                    sort: vec![PageKey {
+                        column: id.clone(),
+                        descending: true,
+                    }],
+                    ids: vec!["k1".into(), "k0".into(), "k2".into()],
+                    offset: 1,
+                    limit: 1,
+                })
+                .expect("page");
+            assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
+            assert_eq!(page.rows[0].id, "k1", "{id}");
+        }
+        let text = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: vec![PageClause {
+                    column: "label".into(),
+                    op: PageOp::Eq,
+                    operands: vec![PageOperand::Text("label-2".into())],
+                }],
+                sort: Vec::new(),
+                ids: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("label page");
+        assert_eq!(text.total, 1);
+        for format in [ExportFormat::Jsonl, ExportFormat::Parquet] {
+            let path = engine
+                .export(&ExportRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    columns: columns.clone(),
+                    format,
+                })
+                .expect("export");
+            assert!(std::fs::metadata(&path).expect("exported").len() > 0);
+            std::fs::remove_file(path).expect("scratch export");
+        }
+    }
 }

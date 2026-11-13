@@ -17,7 +17,7 @@ use std::time::Duration;
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
-    ProfileRequest, SyncRequest,
+    PageRequest, ProfileRequest, SyncRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -182,6 +182,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/evaluate" => answer(stream, &request, |r: EvaluateRequest| engine.evaluate(&r)),
         "/v1/members" => answer(stream, &request, |r: MembersRequest| engine.members(&r)),
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
+        "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
         "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
         _ => refuse(

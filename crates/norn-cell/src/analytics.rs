@@ -217,6 +217,10 @@ pub struct FrontierRequest {
     /// The current schemas of every mirrored root type; any changed pin
     /// clears the world's mirror, so it is synced again from the start.
     pub tables: Vec<TableSchema>,
+    /// Every link table the mirror keeps edges of; a changed set clears the
+    /// mirror as a changed pin does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 /// The last commit the mirror applied for the world.
@@ -241,6 +245,29 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
+    /// Every link edge those commits changed, in commit order, as it stands
+    /// after its last change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkEdge>,
+}
+
+/// One link edge a commit changed (METRIC-GRAIN-LINK-1): whether it is
+/// live after its last change, and the commit of that change. The mirror
+/// keeps each edge's latest state, so an answer through a link is exact
+/// only at a frontier no edge of that link changed after.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkEdge {
+    /// The link table.
+    pub table: String,
+    /// The source object id.
+    pub source: String,
+    /// The target object id.
+    pub target: String,
+    /// The edge is live after its last change.
+    pub live: bool,
+    /// The commit of its last change.
+    pub commit_seq: u64,
 }
 
 /// Where an analytical question reads.
@@ -372,6 +399,18 @@ pub struct Operand {
     pub filters: Vec<Filter>,
 }
 
+/// METRIC-SNAPSHOT-ASOF-1: a semi-additive sum reads, per period, each
+/// current subject's last version before the period's end (by valid time,
+/// then version), never summing a subject over time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AsOf {
+    /// The valid-time property the versions are ordered by.
+    pub column: String,
+    /// Each period's label (none without a time grouping) and its exclusive end.
+    pub periods: Vec<(Option<String>, (i64, u32))>,
+}
+
 /// QUERY-ENGINE-1: an admitted keyed sum or ratio, lowered from the shared
 /// plan with the shared projection's semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +425,28 @@ pub struct Lowered {
     pub dimensions: Vec<Dimension>,
     /// One operand, or numerator then denominator.
     pub operands: Vec<Operand>,
+    /// A snapshot sum's periods; its time grouping is the period's label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<AsOf>,
+    /// METRIC-GRAIN-LINK-1: the time is the linked object's; the window and
+    /// a time grouping on [`TIME_LINK_COLUMN`] read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_link: Option<TimeLink>,
+}
+
+/// The column a linked time is read as.
+pub const TIME_LINK_COLUMN: &str = ":link";
+
+/// METRIC-GRAIN-LINK-1: the to-one link a sum's time is read through.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeLink {
+    /// The link table the source rows' edges are in.
+    pub link: String,
+    /// The target's mirrored root table.
+    pub target: String,
+    /// The target's time column.
+    pub column: String,
 }
 
 /// Evaluate a lowered question.
@@ -470,6 +531,10 @@ pub struct EvaluateResponse {
     pub excluded: Vec<String>,
     /// Buckets in group order.
     pub buckets: Vec<BucketTotals>,
+    /// METRIC-GRAIN-LINK-1: rows that would count but have no linked
+    /// object, so no time: skipped and counted.
+    #[serde(default)]
+    pub unlinked: u64,
 }
 
 /// Page one bucket's members in identity order.
@@ -671,6 +736,121 @@ pub enum ExportFormat {
     Parquet,
     /// One JSON object per line.
     Jsonl,
+}
+
+/// A comparison of the records grammar (HOST-READ-3), lowered by the cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageOp {
+    /// Equal.
+    Eq,
+    /// Present and not equal.
+    Ne,
+    /// Equal to one of the operands.
+    In,
+    /// Text containing the operand.
+    Contains,
+    /// Text starting with the operand.
+    Prefix,
+    /// Less than.
+    Lt,
+    /// At most.
+    Lte,
+    /// Greater than.
+    Gt,
+    /// At least.
+    Gte,
+    /// Within the two operands, inclusive.
+    Between,
+    /// Absent.
+    Empty,
+    /// Present.
+    Present,
+}
+
+/// An operand of a records clause, typed as its column compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "t", content = "v")]
+pub enum PageOperand {
+    /// Text (and enum values), compared by bytes.
+    Text(String),
+    /// A canonical exact decimal.
+    Number(String),
+    /// A boolean.
+    Bool(bool),
+    /// A timestamp or date by its ordering key.
+    Instant {
+        /// Whole UTC seconds.
+        secs: i64,
+        /// Nanoseconds.
+        nanos: u32,
+    },
+}
+
+/// One filter clause of a records page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageClause {
+    /// The column.
+    pub column: String,
+    /// The comparison.
+    pub op: PageOp,
+    /// Its operands: none, one, a set, or a range's two ends.
+    pub operands: Vec<PageOperand>,
+}
+
+/// One sort key of a records page; absent values sort last either way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageKey {
+    /// The column.
+    pub column: String,
+    /// Descending rather than ascending.
+    pub descending: bool,
+}
+
+/// One page of a source's rows: filtered, ordered by `sort` then identity,
+/// from `offset`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// What it reads.
+    pub source: Source,
+    /// Every clause must hold.
+    pub filters: Vec<PageClause>,
+    /// The order before the identity tie-break.
+    pub sort: Vec<PageKey>,
+    /// Only these identities, when any are named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// Rows skipped in that order.
+    pub offset: u64,
+    /// Rows returned at most.
+    pub limit: u32,
+}
+
+/// One row of a records page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageRow {
+    /// The identity.
+    pub id: String,
+    /// Its version.
+    pub version: u64,
+    /// Every column's present value.
+    pub values: BTreeMap<String, Value>,
+}
+
+/// A records page and how many rows match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageResponse {
+    /// The matching rows.
+    pub total: u64,
+    /// The page.
+    pub rows: Vec<PageRow>,
 }
 
 /// Export columns of every row of a source, with identity and version.

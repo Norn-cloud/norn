@@ -91,9 +91,23 @@ impl<E: SqlEngine> CellStore<E> {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
         let bound = self.check_question_plan(plan)?;
-        let query = lower(plan)?;
+        let mut query = lower(plan)?;
         let revision = self.verified_head()?;
         let grain = plan.grain().as_str();
+        // METRIC-GRAIN-LINK-1: the link's mirrored table and its target's root.
+        if let Some(link) = &mut query.time_link {
+            let unknown = |_error| refused(UNSUPPORTED_ENGINE);
+            let (_, table) = self.model().link(grain, &link.link).map_err(unknown)?;
+            let root = self
+                .model()
+                .chain(&link.target)
+                .map_err(unknown)?
+                .first()
+                .cloned()
+                .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+            link.link.clone_from(&table.table);
+            link.target = root;
+        }
         // BULK-LINEAGE-1: a loaded dataset is read at its current load; its
         // rows are not cell facts, so no finding excludes them.
         let (source, exclusions) = if let Some(dataset) = self.analytics_dataset(grain)? {
@@ -263,6 +277,7 @@ impl<E: SqlEngine> CellStore<E> {
             &BTreeMap::new(),
         )?;
         result.rows = rows;
+        result.unlinked = response.unlinked;
         result.engine = Engine::Duckdb;
         let evidence = crate::compute::FindingEvidence {
             context: &result.context,
