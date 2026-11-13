@@ -752,7 +752,8 @@
                 "target": "refused",
                 "assign": {
                   "lastCode": "input.event.code",
-                  "refusedChoice": "input.fields.choice"
+                  "refusedChoice": "input.fields.choice",
+                  "choice": "null"
                 }
               },
               {
@@ -762,7 +763,8 @@
                 "target": "refused",
                 "assign": {
                   "lastCode": "input.event.code",
-                  "refusedChoice": "input.fields.choice"
+                  "refusedChoice": "input.fields.choice",
+                  "choice": "null"
                 }
               },
               {
