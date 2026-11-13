@@ -199,7 +199,7 @@ fn clauses(id: &str, kind: ColumnKind, value: &Value) -> Vec<Value> {
             out.extend([
                 clause("eq", value.clone()),
                 clause("ne", value.clone()),
-                clause("in", json!([value, "no such value"])),
+                clause("in", json!([value, value])),
                 clause("prefix", json!(head)),
                 clause("contains", json!(middle)),
             ]);

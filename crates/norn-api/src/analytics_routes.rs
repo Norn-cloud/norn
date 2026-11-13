@@ -699,7 +699,7 @@ pub fn page_objects<E: SqlEngine>(
 ) -> Result<crate::objects::NornObjectQueryPage, Refusal> {
     use crate::object_query::{self, Cursor};
     use crate::objects::{NornAppliedQuery, NornObjectQueryPage, NornQueryTotal};
-    use norn_cell::analytics::{PageKey, PageRequest, PageResponse};
+    use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let actor = actor.unwrap_or_default();
     let guard = host.cell()?;
@@ -735,21 +735,7 @@ pub fn page_objects<E: SqlEngine>(
     // A caller without Values reads every row withheld: a withheld row
     // matches no clause and has no sort value, so only identity orders it.
     let (filters, sort) = if values {
-        (
-            query
-                .filter
-                .iter()
-                .map(page_clause)
-                .collect::<Result<Vec<_>, _>>()?,
-            query
-                .sort
-                .iter()
-                .map(|key| PageKey {
-                    column: key.property.clone(),
-                    descending: key.descending,
-                })
-                .collect(),
-        )
+        page_order(&query)?
     } else {
         (Vec::new(), Vec::new())
     };
@@ -805,6 +791,33 @@ pub fn page_objects<E: SqlEngine>(
             approximate: false,
         }),
     })
+}
+
+/// A parsed grid query's clauses and keys as the engine takes them.
+fn page_order(
+    query: &crate::object_query::ObjectQuery,
+) -> Result<
+    (
+        Vec<norn_cell::analytics::PageClause>,
+        Vec<norn_cell::analytics::PageKey>,
+    ),
+    Refusal,
+> {
+    Ok((
+        query
+            .filter
+            .iter()
+            .map(page_clause)
+            .collect::<Result<Vec<_>, _>>()?,
+        query
+            .sort
+            .iter()
+            .map(|key| norn_cell::analytics::PageKey {
+                column: key.property.clone(),
+                descending: key.descending,
+            })
+            .collect(),
+    ))
 }
 
 /// One records page from the engine. A cursor whose dataset was loaded
