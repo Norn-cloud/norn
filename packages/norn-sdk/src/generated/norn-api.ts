@@ -32,6 +32,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cell:provision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Provision the scope's cell from the caller's definitions (owner only).
+         * @description One engine transaction (HOST-PROVISION-ATOMIC) writes the store schema, the
+         *     scope binding, a fresh cell identity, the definitions, their receipt and
+         *     the ledger commit together, or nothing. The host calls this on a fresh
+         *     engine after [`authorize`] and [`admit_submission`]; `now_ms` is the host
+         *     clock (Unix milliseconds), recorded as the install time.
+         *
+         *     # Errors
+         *     `cell.provision_conflict` (409) when the engine already holds a cell
+         *     provisioned from something else; `host.error` (500) for a storage failure,
+         *     which leaves the engine as it was.
+         */
+        post: operations["provision_cell"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/definitions": {
         parameters: {
             query?: never;
@@ -9513,6 +9542,37 @@ export interface components {
                 commit: string;
             };
         };
+        /**
+         * @description Whether the call provisioned the cell or found it provisioned.
+         * @enum {string}
+         */
+        ProvisionOutcome: "provisioned" | "replayed";
+        /** @description The provisioned cell. */
+        ProvisionReceipt: {
+            /** @description The trusted base the set was admitted against. */
+            baseSha256: string;
+            /** @description The cell's logical identity, bound when it was created. */
+            cellId: string;
+            /**
+             * Format: int64
+             * @description The definitions version the submission was installed as.
+             */
+            definitionsVersion: number;
+            /** @description Whether this call created the cell. */
+            outcome: components["schemas"]["ProvisionOutcome"];
+            /** @description The checker's admission receipt digest for the installed set. */
+            receiptSha256: string;
+        };
+        /** @description `POST /v1/cell:provision`. */
+        ProvisionRequest: {
+            /** @description The tenant's artifact envelopes; none in a reserved namespace (core., std.). */
+            artifacts: components["schemas"]["NornArtifactEnvelope"][];
+            /**
+             * @description Lower-case hex SHA-256 of the trusted base the artifacts were
+             *     authored against; it must be the host's.
+             */
+            baseSha256: string;
+        };
         /** @description A refused request. */
         Refusal: ({
             /**
@@ -9699,6 +9759,98 @@ export interface operations {
             };
             /** @description The request was refused: a declared limit was exceeded. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    provision_cell: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProvisionRequest"];
+            };
+        };
+        responses: {
+            /** @description The cell was provisioned, or already holds exactly this submission. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvisionReceipt"];
+                };
+            };
+            /** @description The request was refused as invalid, or carries an artifact in a reserved namespace. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the route takes POST. */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the cell holds other definitions, or the submission names another trusted base. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the definitions are not admissible. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
