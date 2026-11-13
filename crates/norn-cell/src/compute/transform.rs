@@ -89,12 +89,29 @@ pub struct TransformResult {
     pub lineage_pin: String,
 }
 
-/// One snapshot's readable rows, withheld counts and quarantine exclusions.
+/// One snapshot's readable rows, withheld counts, quarantine exclusions and
+/// whether any row was invisible to the reader.
 type Inputs = (
     TransformInput,
     BTreeMap<String, u64>,
     BTreeMap<String, String>,
+    bool,
 );
+
+/// One authorized snapshot of a transform's inputs (VIEW-ROWS-1).
+pub(crate) struct Snapshot {
+    /// The verified ledger head read.
+    pub(crate) revision: LedgerHead,
+    /// The reader's readable rows and the link edges.
+    pub(crate) input: TransformInput,
+    /// Rows the reader may count but not read, by input alias.
+    pub(crate) withheld: BTreeMap<String, u64>,
+    /// Quarantined rows: `alias/id` → durable finding id.
+    pub(crate) exclusions: BTreeMap<String, String>,
+    /// The reader may read every input row (VIEW-MAT-1): none was counted
+    /// only or invisible.
+    pub(crate) whole: bool,
+}
 
 /// The exact engine's read bounds: rows across all inputs and decoded bytes.
 fn limits() -> ReactiveLimits {
@@ -150,64 +167,111 @@ impl<E: SqlEngine> CellStore<E> {
         run: impl FnOnce(&TransformPlan, &TransformInput) -> Result<eval::TransformOutput, CellError>,
     ) -> Result<TransformResult, CellError> {
         self.conn.transaction(|| {
-            self.check_question_scope(scope)?;
-            let revision = self.verified_head()?;
-            let (input, withheld, exclusions) =
-                self.transform_inputs(plan, world, scope, &mut access)?;
-            let output = run(plan, &input)?;
-            let definition_pin = self.transform_definition_pin()?;
-            let plan_pin = crate::codec::hash_json(&(
-                "norn.transform/1",
-                &plan.artifact_id,
-                &plan.version,
-                &definition_pin,
-            ))?;
-            let types: BTreeMap<&str, &str> = plan
-                .inputs
-                .iter()
-                .map(|(alias, scan)| (alias.as_str(), scan.object_type.as_str()))
-                .collect();
-            let rows = output
-                .rows
-                .into_iter()
-                .map(|row| {
-                    Ok(TransformRow {
-                        id: crate::codec::hash_json(&("norn.transform-row/1", &row.key))?,
-                        key: row.key,
-                        values: row.values,
-                        members: row
-                            .members
-                            .into_iter()
-                            .map(|member| TransformMember {
-                                object_type: types
-                                    .get(member.alias.as_str())
-                                    .map_or_else(String::new, |t| (*t).to_owned()),
-                                alias: member.alias,
-                                id: member.id,
-                                version: member.version,
-                            })
-                            .collect(),
-                    })
+            let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
+            let output = run(plan, &snapshot.input)?;
+            self.transform_envelope(plan, snapshot, output, engine)
+        })
+    }
+
+    /// Read one authorized snapshot of the plan's inputs, inside the
+    /// caller's transaction.
+    pub(crate) fn transform_snapshot(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
+        access: &mut impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<Snapshot, CellError> {
+        self.check_question_scope(scope)?;
+        let revision = self.verified_head()?;
+        let (input, withheld, exclusions, hidden) =
+            self.transform_inputs(plan, world, scope, access)?;
+        let whole = !hidden && withheld.is_empty();
+        Ok(Snapshot {
+            revision,
+            input,
+            withheld,
+            exclusions,
+            whole,
+        })
+    }
+
+    /// The plan's content identity under the installed definitions, and
+    /// those definitions' pin.
+    pub(crate) fn transform_pins(
+        &self,
+        plan: &TransformPlan,
+    ) -> Result<(String, String), CellError> {
+        let definition_pin = self.transform_definition_pin()?;
+        let plan_pin = crate::codec::hash_json(&(
+            "norn.transform/1",
+            &plan.artifact_id,
+            &plan.version,
+            &definition_pin,
+        ))?;
+        Ok((plan_pin, definition_pin))
+    }
+
+    /// The envelope of one evaluation of `snapshot`: rows with their ids and
+    /// lineage, the pins and the coverage.
+    pub(crate) fn transform_envelope(
+        &self,
+        plan: &TransformPlan,
+        snapshot: Snapshot,
+        output: eval::TransformOutput,
+        engine: Engine,
+    ) -> Result<TransformResult, CellError> {
+        let Snapshot {
+            revision,
+            withheld,
+            exclusions,
+            ..
+        } = snapshot;
+        let (plan_pin, definition_pin) = self.transform_pins(plan)?;
+        let types: BTreeMap<&str, &str> = plan
+            .inputs
+            .iter()
+            .map(|(alias, scan)| (alias.as_str(), scan.object_type.as_str()))
+            .collect();
+        let rows = output
+            .rows
+            .into_iter()
+            .map(|row| {
+                Ok(TransformRow {
+                    id: crate::codec::hash_json(&("norn.transform-row/1", &row.key))?,
+                    key: row.key,
+                    values: row.values,
+                    members: row
+                        .members
+                        .into_iter()
+                        .map(|member| TransformMember {
+                            object_type: types
+                                .get(member.alias.as_str())
+                                .map_or_else(String::new, |t| (*t).to_owned()),
+                            alias: member.alias,
+                            id: member.id,
+                            version: member.version,
+                        })
+                        .collect(),
                 })
-                .collect::<Result<Vec<_>, CellError>>()?;
-            let complete = withheld.is_empty() && exclusions.is_empty();
-            let lineage_pin =
-                crate::codec::hash_json(&(&plan_pin, &revision, &rows, &withheld, &exclusions))?;
-            Ok(TransformResult {
-                transform: plan.artifact_id.clone(),
-                version: plan.version.clone(),
-                plan_pin,
-                definition_pin,
-                engine,
-                revision,
-                columns: output.columns,
-                grain: output.grain,
-                rows,
-                withheld,
-                exclusions,
-                complete,
-                lineage_pin,
             })
+            .collect::<Result<Vec<_>, CellError>>()?;
+        let complete = withheld.is_empty() && exclusions.is_empty();
+        let lineage_pin =
+            crate::codec::hash_json(&(&plan_pin, &revision, &rows, &withheld, &exclusions))?;
+        Ok(TransformResult {
+            transform: plan.artifact_id.clone(),
+            version: plan.version.clone(),
+            plan_pin,
+            definition_pin,
+            engine,
+            revision,
+            columns: output.columns,
+            grain: output.grain,
+            rows,
+            withheld,
+            exclusions,
+            complete,
+            lineage_pin,
         })
     }
 
@@ -225,6 +289,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut input = TransformInput::default();
         let mut withheld = BTreeMap::new();
         let mut exclusions = BTreeMap::new();
+        let mut hidden = false;
         for step in plan.nodes.values().map(|node| &node.step) {
             let Step::Scan { alias } = step else {
                 continue;
@@ -256,7 +321,10 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 // Visibility precedes data quality (HOST-READ-2).
                 match access(&record)? {
-                    RowAccess::None => continue,
+                    RowAccess::None => {
+                        hidden = true;
+                        continue;
+                    }
                     RowAccess::Count => {
                         let count = withheld.entry(alias.clone()).or_insert(0_u64);
                         *count = count.saturating_add(1);
@@ -300,7 +368,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             input.links.insert((alias.clone(), link.clone()), edges);
         }
-        Ok((input, withheld, exclusions))
+        Ok((input, withheld, exclusions, hidden))
     }
 
     fn transform_definition_pin(&self) -> Result<String, CellError> {

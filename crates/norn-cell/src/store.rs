@@ -2256,6 +2256,7 @@ impl<E: SqlEngine> CellStore<E> {
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
+        crate::compute::materialize::init(conn)?;
         crate::payload_storage::init(conn)?;
         // Before the model's indexes name `p:` columns of an older file.
         crate::migration::upgrade_raw_property_columns(conn, model)?;
@@ -2883,6 +2884,7 @@ impl<E: SqlEngine> CellStore<E> {
                         self.conn.execute_batch(statement)?;
                     }
                     crate::retained::init(&self.conn)?;
+                    crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),

@@ -31,6 +31,7 @@ use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::scope::ScopeQuery;
 use norn_api::transform_routes::{
     TransformRowsParams, get_transform_plan, get_transform_row_lineage, get_transform_rows,
+    refresh_transform,
 };
 use norn_cell::engine::SqlEngine;
 
@@ -141,6 +142,8 @@ routes! {
     TransformRowLineage => ("GET", "/v1/transforms/{transform}/rows/{row}/lineage"),
     /// `GET /v1/transforms/{transform}/plan`.
     TransformPlan => ("GET", "/v1/transforms/{transform}/plan"),
+    /// `POST /v1/transforms/{transform}:refresh`.
+    TransformRefresh => ("POST", "/v1/transforms/{transform}:refresh"),
 }
 
 impl Route {
@@ -178,6 +181,9 @@ impl Route {
                 (Some(_), Some("lineage")) => Self::ObjectLineage,
                 (Some(_), Some(_)) => return None,
             });
+        }
+        if transform_refresh_path(path).is_some() {
+            return Some(Self::TransformRefresh);
         }
         if let Some((_, leaf)) = transform_path(path) {
             return Some(match leaf {
@@ -221,14 +227,49 @@ fn transform_path(path: &str) -> Option<(&str, TransformLeaf<'_>)> {
     Some((transform, leaf))
 }
 
+/// The transform id of a `/v1/transforms/{transform}:refresh` path.
+fn transform_refresh_path(path: &str) -> Option<&str> {
+    path.strip_prefix("/v1/transforms/")?
+        .strip_suffix(":refresh")
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// `POST /v1/transforms/{transform}:refresh` (VIEW-MAT-1), scoped by the
+/// query string; the body is ignored.
+fn refresh<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transform: &str,
+    query: &str,
+    now: u64,
+) -> Result<String, Refusal> {
+    let transform = percent_encoding::percent_decode_str(transform)
+        .decode_utf8()
+        .map_err(|_invalid| Refusal::invalid("a transform path segment is not UTF-8"))?;
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    document_json(&refresh_transform(
+        host,
+        &scope,
+        actor,
+        &transform,
+        &CellObjectAccess,
+        norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000)),
+    )?)
+}
+
 /// `GET /v1/transforms/{transform}/rows`, `/rows/{row}/lineage` and `/plan`,
 /// scoped by the query string (VIEW-READ-1).
 fn transforms<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
     (transform, leaf): (&str, TransformLeaf<'_>),
-    query: &str,
+    (query, now): (&str, u64),
 ) -> Result<String, Refusal> {
+    let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
     let decoded = |text: &str| {
         percent_encoding::percent_decode_str(text)
             .decode_utf8()
@@ -254,6 +295,7 @@ fn transforms<E: SqlEngine>(
                 &transform,
                 &params,
                 &CellObjectAccess,
+                now,
             )?)
         }
         TransformLeaf::Lineage(row) => {
@@ -269,6 +311,7 @@ fn transforms<E: SqlEngine>(
                 &transform,
                 &decoded(row)?,
                 &CellObjectAccess,
+                now,
             )?)
         }
         TransformLeaf::Plan => {
@@ -365,6 +408,17 @@ pub fn handle_all<E: SqlEngine>(
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
         ad_hoc_question(host, questions, actor, method, path, query, body)
+    } else if let Some(transform) = transform_refresh_path(path) {
+        if method == "POST" {
+            refresh(host, actor, transform, query, now)
+        } else {
+            Err(Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "a refresh takes POST",
+            ))
+        }
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -380,7 +434,7 @@ pub fn handle_all<E: SqlEngine>(
             ),
             (None, _) if transform_path(path).is_some() => transform_path(path).map_or_else(
                 || Err(norn_api::authz::read_denied()),
-                |target| transforms(host, actor, target, query),
+                |target| transforms(host, actor, target, (query, now)),
             ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(host, &query, actor))
