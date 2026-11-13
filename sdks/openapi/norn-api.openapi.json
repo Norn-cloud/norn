@@ -30338,6 +30338,7 @@
           "objectType",
           "expression",
           "timeProperty",
+          "timeLinks",
           "numerator",
           "denominator",
           "unitPartition",
@@ -30387,12 +30388,19 @@
             ],
             "description": "The concept it aggregates, for a simple metric."
           },
+          "timeLinks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The to-one links from the measured object to the object holding\n[`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its\nevent's); empty when the time is the object's own."
+          },
           "timeProperty": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The time property its buckets use, for a simple metric."
+            "description": "The time property its buckets use, for a simple metric: a property of\nthe measured object, or of the object [`Self::time_links`] reach."
           },
           "unitPartition": {
             "type": "array",
