@@ -1602,6 +1602,54 @@
       "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
       "review": "needs_review"
     },
+    "model.admission.feature_kind": {
+      "message": "خاصية سمة النموذج أو هدفه من نوع لا يستطيع النموذج قراءته",
+      "review": "needs_review"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "نوع تنبؤات النموذج لا يحمل مُخرجاته ولا الموضوع ولا إصدار النموذج",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_feature": {
+      "message": "سمة النموذج أو هدفه ليست خاصية لنوع الكائن المُدخل",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_input": {
+      "message": "نوع الكائن المُدخل للنموذج لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "model.validation.duplicate_id": {
+      "message": "النموذج يذكر معرّف سمة أو مُخرج أو عقد مرتين",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_contract": {
+      "message": "عقد النموذج لا يسمّي مُخرجًا أو لا ينطبق على نوع مُخرجه",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_id": {
+      "message": "معرّف النموذج أو المُدخل أو السمة أو الهدف أو المُخرج أو العقد غير صحيح الصيغة",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_output": {
+      "message": "مُخرج النموذج ليس عمودًا مضمَّنًا من نوع نص أو عدد صحيح أو عشري أو منطقي أو تعداد",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_payload": {
+      "message": "حمولة النموذج لا تطابق جذرها الصارم",
+      "review": "needs_review"
+    },
+    "model.validation.target_in_features": {
+      "message": "هدف النموذج هو أيضًا إحدى سماته",
+      "review": "needs_review"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "نموذج contract_checked لا يعلن أي عقد",
+      "review": "needs_review"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "ثقة النموذج ليست opaque ولا contract_checked",
+      "review": "needs_review"
+    },
     "object_type.validation.computed_key_component": {
       "message": "مكوّن المفتاح {$property} محسوب؛ الهوية تُخزَّن ولا تُشتق",
       "review": "needs_review"

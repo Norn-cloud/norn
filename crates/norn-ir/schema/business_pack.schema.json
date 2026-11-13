@@ -659,6 +659,11 @@
           "description": "Localized labels; a downstream pack may label upstream definitions.",
           "type": "string",
           "const": "labels"
+        },
+        {
+          "description": "A typed predictive model (`ModelIR`).",
+          "type": "string",
+          "const": "model"
         }
       ]
     },
