@@ -88,6 +88,9 @@ upstream=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-upstream.XXXXXX")
 # line (task, commit, PR, VM, start and end in ns, exit code, sccache hit and miss deltas) that
 # a collector ships off the machine. Recording never changes a phase's result or exit status.
 span_task='' span_start=0 span_counts=''
+# Only this invocation records: nested core.sh runs (the canaries call it) inherit no span file.
+spans_file=${NORN_CI_SPANS:-}
+unset NORN_CI_SPANS
 sccache_counts() {
   [[ ${RUSTC_WRAPPER:-} == *sccache* ]] || command -v sccache > /dev/null 2>&1 || return 0
   sccache --show-stats --stats-format=json 2> /dev/null | python3 -c 'import json, sys
@@ -95,12 +98,12 @@ stats = json.load(sys.stdin)["stats"]
 print(*(sum(stats[key]["counts"].values()) for key in ("cache_hits", "cache_misses")))' 2> /dev/null || true
 }
 span_begin() {
-  [[ -n ${NORN_CI_SPANS:-} ]] || return 0
+  [[ -n $spans_file ]] || return 0
   span_task=$1 span_start=$(date +%s%N) span_counts=$(sccache_counts)
   [[ $span_start =~ ^[0-9]+$ ]] || span_task=''
 }
 span_end() {
-  [[ -n ${NORN_CI_SPANS:-} && -n $span_task ]] || return 0
+  [[ -n $spans_file && -n $span_task ]] || return 0
   local end hits='' misses='' after phase=${span_task#*/} shard=''
   [[ $span_task != test/* ]] || { shard=$phase; phase=test; }
   end=$(date +%s%N)
@@ -115,7 +118,7 @@ span_end() {
     "$span_task" "$span_task" "$phase" "$shard" "$(git rev-parse HEAD 2> /dev/null || true)" \
     "$(clean "${NORN_CI_PR:-}")" "$(clean "${NORN_CI_VM:-$(hostname)}")" "$(clean "${NORN_CI_RUNNER:-${RUNNER_ENVIRONMENT:-local}}")" \
     "$span_start" "$end" "$(((end - span_start) / 1000000))" "$1" "$([[ $1 -eq 0 ]] && echo true || echo false)" \
-    "${hits:-null}" "${misses:-null}" >> "$NORN_CI_SPANS" 2> /dev/null || true
+    "${hits:-null}" "${misses:-null}" >> "$spans_file" 2> /dev/null || true
   span_task=''
 }
 # Runs phase $1 (shard $2) as one span; a failing phase is recorded by the EXIT trap. span_end
