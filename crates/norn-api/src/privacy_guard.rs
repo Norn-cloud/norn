@@ -25,7 +25,6 @@
 //! the reader who typed it.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 use norn_ir::RuntimeValue;
@@ -356,7 +355,8 @@ fn emails(text: &str) -> Vec<(&'static str, usize, usize)> {
         while bytes.get(end).copied().is_some_and(domain) {
             end = end.saturating_add(1);
         }
-        while end > host_start && end.checked_sub(1).and_then(|last| bytes.get(last)) == Some(&b'.') {
+        while end > host_start && end.checked_sub(1).and_then(|last| bytes.get(last)) == Some(&b'.')
+        {
             end = end.saturating_sub(1);
         }
         let host = text.get(host_start..end).unwrap_or("");
@@ -428,13 +428,17 @@ fn luhn(digits: &str) -> bool {
         let d = c.to_digit(10).unwrap_or(0);
         let weighted = if position % 2 == 1 {
             let doubled = d.saturating_mul(2);
-            if doubled > 9 { doubled.saturating_sub(9) } else { doubled }
+            if doubled > 9 {
+                doubled.saturating_sub(9)
+            } else {
+                doubled
+            }
         } else {
             d
         };
         sum = sum.saturating_add(weighted);
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// The tokens assigned so far, numbered per kind.
@@ -454,7 +458,10 @@ impl Tokens {
         value: &str,
         make: impl FnOnce(String) -> Entry,
     ) -> String {
-        let key = (kind.to_owned(), format!("{space}\u{0}{}", value.to_lowercase()));
+        let key = (
+            kind.to_owned(),
+            format!("{space}\u{0}{}", value.to_lowercase()),
+        );
         if let Some(token) = self.by_value.get(&key) {
             return token.clone();
         }
@@ -483,7 +490,6 @@ fn splice(text: &str, ranges: &[(usize, usize, String)]) -> String {
 fn bad(message: impl Into<String>) -> Refusal {
     Refusal::invalid(message)
 }
-
 
 /// A field reference: object type, id and property.
 type FieldRef = (String, String, String);
@@ -557,7 +563,10 @@ fn read_candidates<E: SqlEngine>(
                 .list_after(MAIN_WORLD, &object_type, None, budget)
                 .map_err(Refusal::host)?;
             budget = budget.saturating_sub(rows.len());
-            for row in rows.into_iter().filter(|row| row.object_type == object_type) {
+            for row in rows
+                .into_iter()
+                .filter(|row| row.object_type == object_type)
+            {
                 scanned.extend(marked_fields(&reader, &catalog, &row)?);
             }
         }
@@ -683,7 +692,12 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
     }
     spans.sort_by_key(|(start, _, _)| *start);
     let safe_prompt = splice(text, &spans);
-    Tokenized { tokens, withheld, field_tokens, safe_prompt }
+    Tokenized {
+        tokens,
+        withheld,
+        field_tokens,
+        safe_prompt,
+    }
 }
 
 /// The context block: each record's fields, marked ones as tokens.
@@ -695,7 +709,11 @@ fn context_block(
     let mut block = String::new();
     // The context block: each record's fields, marked ones as tokens.
     for row in rows {
-        let _ = write!(block, "\n\nRecord {} {}:", row.object_type, row.id);
+        block.push_str("\n\nRecord ");
+        block.push_str(&row.object_type);
+        block.push(' ');
+        block.push_str(&row.id);
+        block.push(':');
         for (property, value) in &row.values {
             let shown = field_tokens
                 .get(&(row.object_type.clone(), row.id.clone(), property.clone()))
@@ -707,7 +725,10 @@ fn context_block(
                         .then(|| text_of(value).unwrap_or_else(|| format!("{value:?}")))
                 })
                 .unwrap_or_else(|| "[WITHHELD]".to_owned());
-            let _ = write!(block, "\n- {property}: {shown}");
+            block.push_str("\n- ");
+            block.push_str(property);
+            block.push_str(": ");
+            block.push_str(&shown);
         }
     }
     block
@@ -762,8 +783,12 @@ pub fn guard<E: SqlEngine>(
             return Err(not_found());
         }
     }
-    let Tokenized { tokens, withheld, field_tokens, mut safe_prompt } =
-        tokenize(&request.text, &context_fields, &scanned);
+    let Tokenized {
+        tokens,
+        withheld,
+        field_tokens,
+        mut safe_prompt,
+    } = tokenize(&request.text, &context_fields, &scanned);
     safe_prompt.push_str(&context_block(&rows, &marked, &field_tokens));
     let event = Guarded {
         kind: GUARDED.to_owned(),
@@ -854,9 +879,9 @@ fn guarded_at<E: SqlEngine>(
         }
     }
     while low < high {
-        let middle = low + (high - low) / 2;
+        let middle = low.saturating_add(high.saturating_sub(low) / 2);
         match entry_at(middle)? {
-            Some(entry) if entry.commit_seq < guard_id => low = middle + 1,
+            Some(entry) if entry.commit_seq < guard_id => low = middle.saturating_add(1),
             _ => high = middle,
         }
     }
@@ -1088,8 +1113,8 @@ fn restore_one<E: SqlEngine>(
                 return Ok((value, "restored".to_owned()));
             }
             // Everyone else reads the field's projection.
-            let mask = privacy::strongest(catalog, &markings)
-                .unwrap_or(norn_ir::MaskPolicy::Refuse {});
+            let mask =
+                privacy::strongest(catalog, &markings).unwrap_or(norn_ir::MaskPolicy::Refuse {});
             match row.values.get_mut(property) {
                 Some(value) => {
                     let mode = privacy::apply(&mask, host.pseudonym_key(), value);

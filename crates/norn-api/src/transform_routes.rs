@@ -508,7 +508,10 @@ pub fn get_transform_rows<E: SqlEngine>(
     let result = &served.result;
     let commits = result.revision.commits;
     let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
-    let public = |id: &str| key.as_ref().map_or_else(|| id.to_owned(), |key| key.keyed_id(id));
+    let public = |id: &str| {
+        key.as_ref()
+            .map_or_else(|| id.to_owned(), |key| key.keyed_id(id))
+    };
     let start = match params.after.as_deref() {
         None => 0,
         Some(cursor) => {
@@ -596,7 +599,10 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
     let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
-    let public = |id: &str| key.as_ref().map_or_else(|| id.to_owned(), |key| key.keyed_id(id));
+    let public = |id: &str| {
+        key.as_ref()
+            .map_or_else(|| id.to_owned(), |key| key.keyed_id(id))
+    };
     let found = result
         .rows
         .iter()

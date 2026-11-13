@@ -176,6 +176,44 @@ pub fn uniform_gate<E: SqlEngine>(
     Ok(permitted(host, access, &actor, &every, Values))
 }
 
+/// For each listed row: whether it is held back, and (for a visible one)
+/// its effective markings; with the cell's marking catalog.
+type HeldAndMarked = (
+    Vec<bool>,
+    privacy::MarkingCatalog,
+    Vec<Option<std::collections::BTreeMap<String, Vec<String>>>>,
+);
+
+fn held_and_marked<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    visible: &[(bool, ObjectRecord)],
+) -> Result<HeldAndMarked, Refusal> {
+    let held = visible
+        .iter()
+        .map(|(seen, row)| {
+            if *seen {
+                reader.observation_is_quarantined(MAIN_WORLD, row)
+            } else {
+                Ok(false)
+            }
+        })
+        .collect::<Result<Vec<bool>, _>>()
+        .map_err(Refusal::host)?;
+    let catalog = host.marking_catalog(reader)?;
+    let marked = visible
+        .iter()
+        .map(|(seen, row)| {
+            if *seen {
+                privacy::row_markings(reader, &catalog, row)
+            } else {
+                Ok(None)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((held, catalog, marked))
+}
+
 /// One page of a concept's visible, unquarantined objects after `after`.
 ///
 /// # Errors
@@ -264,28 +302,9 @@ pub fn get_object_page<E: SqlEngine>(
         let mut quarantined = Vec::with_capacity(visible.len());
         let mut marked = Vec::with_capacity(visible.len());
         within(&mut |reader| {
-            quarantined = visible
-                .iter()
-                .map(|(seen, row)| {
-                    if *seen {
-                        reader.observation_is_quarantined(MAIN_WORLD, row)
-                    } else {
-                        Ok(false)
-                    }
-                })
-                .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)?;
-            let catalog = host.marking_catalog(reader)?;
-            marked = visible
-                .iter()
-                .map(|(seen, row)| {
-                    if *seen {
-                        privacy::row_markings(reader, &catalog, row)
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let (held, catalog, markings) = held_and_marked(host, reader, &visible)?;
+            quarantined = held;
+            marked = markings;
             marked_catalog = Some(catalog);
             Ok(())
         })?;
