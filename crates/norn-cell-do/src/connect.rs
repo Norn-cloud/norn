@@ -450,7 +450,7 @@ impl Connect {
             | Route::Complete(_)
             | Route::Define(_)
             | Route::Load(_)
-            | Route::Read => Operation::SyncSource(target.clone()),
+            | Route::Read => Operation::SyncSource(target),
         };
         let allowed = host.filter(|host| {
             request.method == "POST"
