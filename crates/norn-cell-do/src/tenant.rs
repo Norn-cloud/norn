@@ -13,6 +13,11 @@
 //! - A restarted host reopens the cell at its active definitions
 //!   (HOST-REOPEN-1): the model is rebuilt from the retained set and nothing
 //!   is written.
+//! - Governed actions (HOST-ACTION-2, #1252) are decided by the scope's own
+//!   policy ([`ActionPolicy`]), compiled from the active definitions and
+//!   recompiled before the first request after they change. A tenant cell's
+//!   receipt handles are keyed by the stage's lineage key; without one it
+//!   serves no action.
 
 use std::sync::Arc;
 
@@ -27,8 +32,16 @@ use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::CellStore;
 use norn_cell::engine::SqlEngine;
 
+use norn_api::authz::ReadCapability;
+use norn_api::question_routes::{QuestionRuntime, QuestionSnapshot};
+use norn_cell::ObjectRecord;
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::QuestionPlan;
+use norn_ir::MetricDefinition;
+
+use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
-use crate::policy::{CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::policy::{self, ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, ReadSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
@@ -47,7 +60,69 @@ pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
         .with_restater(definition_routes::checker_restatement)
         // A binding runs as a role of the cell's declared grant table.
         .with_roles(table.entries.iter().map(|(role, _)| *role))
+        // A flow step performs only a compiled-in built-in (#1252).
+        .with_builtins(norn_cell::builtin_registered)
 }
+
+/// The receipt-disclosure authority of a cell that publishes no questions:
+/// the handle key that keys its receipt coordinates (D53), and nothing else.
+struct ReceiptHandles {
+    key: Vec<u8>,
+    catalog: EffectiveCatalog,
+}
+
+impl<E: SqlEngine> QuestionRuntime<E> for ReceiptHandles {
+    fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn snapshot(
+        &self,
+        _store: &CellStore<E>,
+        _plan: &QuestionPlan,
+        _actor: &str,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn access(
+        &self,
+        _scope: &CellScope,
+        _actor: &str,
+        _question: &str,
+        _capability: ReadCapability,
+        _row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn min_disclosed_bucket(&self) -> usize {
+        norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET
+    }
+    fn handle_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl<E: SqlEngine> AdHocQuestions<E> for ReceiptHandles {
+    /// Receipt handles answer no question: a definition naming one is
+    /// refused as unavailable, never as an authorization failure.
+    fn publishes_questions(&self) -> bool {
+        false
+    }
+    fn definitions(&self) -> &[MetricDefinition] {
+        &[]
+    }
+    fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
+    }
+    fn max_rows(&self) -> u32 {
+        0
+    }
+    fn max_buckets(&self) -> usize {
+        0
+    }
+}
+
+/// The smallest lineage key a cell's receipt handles are keyed with, in bytes.
+pub const MIN_HANDLE_KEY_BYTES: usize = 32;
 
 /// One opened cell and what its requests are served with.
 struct Serving<E: SqlEngine> {
@@ -56,6 +131,14 @@ struct Serving<E: SqlEngine> {
     questions: Option<DemoQuestions>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// Where the cell's action policy is installed.
+    actions: ActionSlot,
+    /// Where the cell's read rules are installed.
+    reads: ReadSlot,
+    /// The definitions version the installed action policy was compiled from.
+    compiled: Option<u64>,
+    /// Why the active definitions installed no action policy, if they failed.
+    policy_error: Option<String>,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -70,11 +153,9 @@ impl<E: SqlEngine> Serving<E> {
         // Data reads are decided by the kernel PDP over this cell's own model.
         let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
             .with_caller(Arc::clone(caller));
-        let object_types = store
-            .model()
-            .object_types()
-            .map(|object_type| object_type.name.as_str().to_owned())
-            .collect();
+        let actions = policy.action_slot();
+        let reads = policy.read_slot();
+        let object_types = collections(store.model().object_types());
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .map_err(|refusal| SeedError(refusal.code))?
             .with_authorizer(policy);
@@ -82,7 +163,71 @@ impl<E: SqlEngine> Serving<E> {
             host,
             questions,
             object_types,
+            actions,
+            reads,
+            compiled: None,
+            policy_error: None,
         })
+    }
+
+    /// Recompile what the active definitions decide (the action policy, the
+    /// read rules and the `/v1/access` collections) when their version
+    /// changed since the last compile: a flow install adds its run type to a
+    /// live cell, and it is served at once, never only after a restart. A
+    /// policy that does not compile, or definitions that cannot be read,
+    /// install no action policy: the cell then serves no action, and the
+    /// reason is kept for the operator ([`Tenant::action_policy_error`]).
+    fn refresh_definitions(&mut self) {
+        let version = match self.host.active_definitions_version() {
+            Ok(version) => version,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
+        if version == self.compiled && version.is_some() {
+            return;
+        }
+        let active = match self.host.active_definitions() {
+            Ok(active) => active,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
+        let compiled = active.map(|set| {
+            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set)?;
+            let model = norn_api::kernel_set::kernel_model(&artifacts)
+                .map_err(|error| format!("{error:?}"))?;
+            // The model the store serves: the admitted set's, with the
+            // kernel's action types, as provisioned.
+            // A read-rule failure is the operator's, retried on the next
+            // request: the cell never runs on rules stale for its model.
+            let served = norn_api::action_admission::prepare_action_model(&model)
+                .map_err(|refusal| refusal.explanation)?;
+            policy::recompile_reads(&self.reads, served.object_types()).map_err(|error| error.0)?;
+            self.object_types = collections(served.object_types());
+            ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
+        });
+        match compiled {
+            Some(Ok(policy)) => self.install_actions(policy, version, None),
+            // Not marked compiled: the next request tries again.
+            Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
+            None => self.install_actions(None, version, None),
+        }
+    }
+
+    fn install_actions(
+        &mut self,
+        policy: Option<ActionPolicy>,
+        version: Option<u64>,
+        error: Option<String>,
+    ) {
+        if let Ok(mut slot) = self.actions.write() {
+            *slot = policy.map(Arc::new);
+            self.compiled = version;
+            self.policy_error = error;
+        }
     }
 }
 
@@ -100,6 +245,8 @@ pub struct Tenant<E: SqlEngine> {
     kinds: DefinitionKinds,
     open: OpenEngine<E>,
     state: State<E>,
+    /// The receipt-disclosure authority of a cell with no questions.
+    handles: Option<ReceiptHandles>,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -113,6 +260,7 @@ impl<E: SqlEngine> Tenant<E> {
         scope: CellScope,
         table: &'static GrantTable,
         open: OpenEngine<E>,
+        handle_key: Option<&[u8]>,
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
@@ -125,6 +273,7 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open,
             state,
+            handles: handles(handle_key)?,
         })
     }
 
@@ -149,6 +298,7 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open: Box::new(|| Err("a seeded cell is never provisioned again".to_owned())),
             state: State::Serving(Box::new(serving)),
+            handles: None,
         })
     }
 
@@ -163,6 +313,17 @@ impl<E: SqlEngine> Tenant<E> {
     #[must_use]
     pub const fn scope(&self) -> &CellScope {
         &self.scope
+    }
+
+    /// Why the cell's active definitions installed no action policy, as of
+    /// the last request: for the operator's log, never for a caller (every
+    /// refused call answers the one opaque action denial).
+    #[must_use]
+    pub fn action_policy_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Serving(serving) => serving.policy_error.as_deref(),
+            State::Vacant => None,
+        }
     }
 
     /// Whether the scope has a cell.
@@ -186,6 +347,9 @@ impl<E: SqlEngine> Tenant<E> {
         if request.path == PROVISION_PATH {
             return server::respond(self.provision(principals, request));
         }
+        if let State::Serving(serving) = &mut self.state {
+            serving.refresh_definitions();
+        }
         match &self.state {
             State::Serving(serving) if request.path == "/v1/access" => server::access(
                 &serving.host,
@@ -195,10 +359,19 @@ impl<E: SqlEngine> Tenant<E> {
                 request,
             ),
             State::Serving(serving) => {
+                // The cell's own questions, if it publishes any; else its
+                // receipt handles, which publish none: a definition naming a
+                // question is then unavailable (422), and every route sees
+                // the same runtime as on a vacant scope (#1297 r2 B1).
                 let questions = serving
                     .questions
                     .as_ref()
-                    .map(|questions| -> &dyn AdHocQuestions<E> { questions });
+                    .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+                    .or_else(|| {
+                        self.handles
+                            .as_ref()
+                            .map(|handles| -> &dyn AdHocQuestions<E> { handles })
+                    });
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
             State::Vacant => self.vacant(principals, request),
@@ -224,7 +397,14 @@ impl<E: SqlEngine> Tenant<E> {
         } else if request.path == "/v1/access" {
             server::access_outside::<E>(principals, request)
         } else {
-            server::outside::<E>(request)
+            // Served with what a provisioned cell of this host is served
+            // with (its receipt handles, its kinds), so no route branches
+            // on whether the scope has a cell (#1297 r1).
+            let questions = self
+                .handles
+                .as_ref()
+                .map(|handles| -> &dyn AdHocQuestions<E> { handles });
+            server::outside_with::<E>(questions, &self.kinds, request)
         }
     }
 
@@ -304,7 +484,7 @@ impl<E: SqlEngine> Tenant<E> {
                     engine,
                     &self.scope,
                     &self.base,
-                    admitted,
+                    &admitted,
                     request.now.saturating_mul(1000),
                 )?;
                 let serving =
@@ -318,6 +498,25 @@ impl<E: SqlEngine> Tenant<E> {
             return Err(Refusal::host("the provisioned cell did not open"));
         };
         server::document_json(&provision::replay(&serving.host, &self.base, &admitted)?)
+    }
+}
+
+/// The receipt handles keyed by `key`; none without a key.
+///
+/// # Errors
+/// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to open
+/// rather than serve unkeyed or weakly keyed handles.
+fn handles(key: Option<&[u8]>) -> Result<Option<ReceiptHandles>, SeedError> {
+    match key {
+        None => Ok(None),
+        Some(key) if key.len() < MIN_HANDLE_KEY_BYTES => Err(SeedError(format!(
+            "the lineage key is {} bytes; at least {MIN_HANDLE_KEY_BYTES} are required",
+            key.len()
+        ))),
+        Some(key) => Ok(Some(ReceiptHandles {
+            key: key.to_vec(),
+            catalog: EffectiveCatalog::default(),
+        })),
     }
 }
 
@@ -340,6 +539,9 @@ fn reopen<E: SqlEngine>(
         .map_err(|e| fail("active definitions", &e))?;
     let model = norn_api::kernel_set::kernel_model(&artifacts)
         .map_err(|refusal| SeedError(format!("active definitions: {refusal:?}")))?;
+    // As provisioned: the kernel's action types are part of the model.
+    let model = norn_api::action_admission::prepare_action_model(&model)
+        .map_err(|refusal| SeedError(format!("action model: {}", refusal.code)))?;
     let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
     // A store bound to another scope is never served under this one.
     store
@@ -348,4 +550,19 @@ fn reopen<E: SqlEngine>(
     Ok(State::Serving(Box::new(Serving::from_store(
         store, scope, table, caller, None,
     )?)))
+}
+
+/// The cell's own collections, for `GET /v1/access`: every model type but the
+/// kernel's call records, which only definition writers read (#1297 r2 B2).
+fn collections<'a>(
+    object_types: impl IntoIterator<Item = &'a norn_ir::ObjectTypeDef>,
+) -> Vec<String> {
+    object_types
+        .into_iter()
+        .map(|object_type| object_type.name.as_str())
+        .filter(|name| {
+            *name != norn_kernel::ACTION_CALL_TYPE && *name != norn_kernel::OWNED_ROWS_TYPE
+        })
+        .map(str::to_owned)
+        .collect()
 }
