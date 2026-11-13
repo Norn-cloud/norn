@@ -100,6 +100,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(ids.into_iter().take(limit).collect())
     }
 
+    /// A subject's verified versions up to `frontier`, oldest first, with their
+    /// partition values.
+    fn partition_history(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        frontier: Option<u64>,
+        partition: &[PropertyId],
+    ) -> Result<(Vec<ObjectRecord>, Vec<BTreeMap<PropertyId, Option<String>>>), CellError> {
+        let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND (?4 IS NULL OR \"commit_seq\" <= ?4) ORDER BY \"version\" LIMIT 4097"),
+            params![world, object_type, key, frontier],
+        )?;
+        if rows.len() > 4096 {
+            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
+        }
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = to_u64(SqlRow(row).get(0)?, "fact version")?;
+            if let Some(record) = self.object_at_version(world, object_type, key, version)? {
+                records.push(record);
+            }
+        }
+        let values = records
+            .iter()
+            .map(|record| {
+                partition
+                    .iter()
+                    .map(|p| (p.clone(), code(record.values.get(p.as_str()))))
+                    .collect()
+            })
+            .collect();
+        Ok((records, values))
+    }
+
     /// SOURCE-AGREE-1 for one subject at `frontier` (a commit; the current
     /// state when `None`), oldest first, resolved where the subject has
     /// returned to the earlier report.
@@ -118,30 +155,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if partition.is_empty() {
             return Ok(Vec::new());
         }
-        let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
-        let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND (?4 IS NULL OR \"commit_seq\" <= ?4) ORDER BY \"version\" LIMIT 4097"),
-            params![world, object_type, key, frontier],
-        )?;
-        if rows.len() > 4096 {
-            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
-        }
-        let mut records = Vec::with_capacity(rows.len());
-        for row in rows {
-            let version = to_u64(SqlRow(row).get(0)?, "fact version")?;
-            if let Some(record) = self.object_at_version(world, object_type, key, version)? {
-                records.push(record);
-            }
-        }
-        let values: Vec<BTreeMap<PropertyId, Option<String>>> = records
-            .iter()
-            .map(|record| {
-                partition
-                    .iter()
-                    .map(|p| (p.clone(), code(record.values.get(p.as_str()))))
-                    .collect()
-            })
-            .collect();
+        let (records, values) = self.partition_history(world, object_type, key, frontier, &partition)?;
         let changes = rule::changes(&values, &partition);
         if changes.is_empty() {
             return Ok(Vec::new());
@@ -154,13 +168,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 let Some(record) = records.get(index) else {
                     return Ok(None);
                 };
-                if !provenance.contains_key(&index) {
-                    let fact = FactRef::new(record.object_type.as_str(), key, record.version);
-                    let read =
-                        self.instance_source_provenance(world, &fact, &mut budget, |_| Ok(true))?;
-                    provenance.insert(index, read);
-                }
-                let Some(Some(source)) = provenance.get(&index) else {
+                let read = match provenance.entry(index) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let fact = FactRef::new(record.object_type.as_str(), key, record.version);
+                        entry.insert(self.instance_source_provenance(
+                            world,
+                            &fact,
+                            &mut budget,
+                            |_| Ok(true),
+                        )?)
+                    }
+                };
+                let Some(source) = read.as_ref() else {
                     return Ok(None);
                 };
                 let lineage = source.field_provenance.get(&change.property).cloned();
