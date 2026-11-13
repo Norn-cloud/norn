@@ -343,11 +343,55 @@ pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
 }
 
 /// Per-transition facts gathered for the graph laws.
+/// A page machine as a [`Net`] (LIFE-SOUND-1's core, shared with the backend lifecycles): states
+/// by declaration index, an `idle` state a resting ending and a `terminal` one a good ending, and
+/// one edge per transition between declared states (its label is the transition's index), may when
+/// a guard (the page's or a catalog component's) decides it. Transitions that name an undeclared
+/// state or event, or leave a terminal state, are reported by the laws and left out.
+pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
+    let index = |id: &str| machine.states.iter().position(|state| state.state_id == id);
+    let edges = machine
+        .transitions
+        .iter()
+        .enumerate()
+        .filter_map(|(label, transition)| {
+            let from = index(&transition.from)?;
+            let to = index(&transition.target)?;
+            let event = machine
+                .events
+                .iter()
+                .find(|event| event.event_id == transition.on)?;
+            if machine.states.get(from)?.role == WidgetStateRole::Terminal {
+                return None;
+            }
+            let input = !matches!(event.source, WidgetMachineEventSource::Timer { .. });
+            Some(
+                if transition.guard.is_some() || transition.component_guard.is_some() {
+                    NetEdge::guarded(from, to, label, input)
+                } else {
+                    NetEdge::unguarded(from, to, label, input)
+                },
+            )
+        })
+        .collect();
+    Net {
+        states: machine.states.len(),
+        initial: index(&machine.initial_state_id).into_iter().collect(),
+        endings: machine
+            .states
+            .iter()
+            .map(|state| match state.role {
+                WidgetStateRole::Idle => Some(Ending::Resting),
+                WidgetStateRole::Terminal => Some(Ending::Good),
+                WidgetStateRole::Pending | WidgetStateRole::Error => None,
+            })
+            .collect(),
+        edges,
+    }
+}
+
 #[derive(Default)]
 struct Facts<'m> {
-    /// The machine as a soundness net (LIFE-SOUND-1's core): one edge per transition between
-    /// declared states, may when a guard (the page's or a catalog component's) decides it.
-    net: Vec<NetEdge>,
     /// States with an exit a person or a timer drives.
     recovers: BTreeSet<&'m str>,
     /// Pending states that offer a cancel.
@@ -389,13 +433,6 @@ impl<'m> MachineChecker<'m> {
                 );
             }
         }
-    }
-
-    fn state_index(&self, id: &str) -> Option<usize> {
-        self.machine
-            .states
-            .iter()
-            .position(|state| state.state_id == id)
     }
 
     fn state(&self, id: &str) -> Option<&'m WidgetMachineState> {
@@ -825,18 +862,6 @@ impl<'m> MachineChecker<'m> {
                 );
                 continue;
             }
-            if let (Some(from_index), Some(target_index)) =
-                (self.state_index(from), self.state_index(target))
-            {
-                let input = !matches!(event.source, WidgetMachineEventSource::Timer { .. });
-                facts.net.push(
-                    if transition.guard.is_some() || transition.component_guard.is_some() {
-                        NetEdge::guarded(from_index, target_index, index, input)
-                    } else {
-                        NetEdge::unguarded(from_index, target_index, index, input)
-                    },
-                );
-            }
             let outcome = outcome_of(event);
             match &event.source {
                 WidgetMachineEventSource::Timer { .. } => {
@@ -1036,34 +1061,11 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    /// Option to complete over the machine as a [`Net`] (LIFE-SOUND-1's core, shared with the
-    /// backend lifecycles): an `idle` state rests, a `terminal` one is a good ending, and a guarded
-    /// transition is may, so a state that settles only through guards is Unknown, never a pass.
-    fn net(&self, facts: &Facts<'m>) -> Net {
-        let machine = self.machine;
-        Net {
-            states: machine.states.len(),
-            initial: self
-                .state_index(&machine.initial_state_id)
-                .into_iter()
-                .collect(),
-            endings: machine
-                .states
-                .iter()
-                .map(|state| match state.role {
-                    WidgetStateRole::Idle => Some(Ending::Resting),
-                    WidgetStateRole::Terminal => Some(Ending::Good),
-                    WidgetStateRole::Pending | WidgetStateRole::Error => None,
-                })
-                .collect(),
-            edges: facts.net.clone(),
-        }
-    }
-
+    /// Option to complete, reachability and timer cycles over [`page_net`].
     fn check_graph(&mut self, facts: &Facts<'m>) {
         let machine = self.machine;
         let base = self.base;
-        let net = self.net(facts);
+        let net = page_net(machine);
         let verdict = soundness::analyse(&net);
         let seeded = !net.initial.is_empty();
         let cycles = soundness::input_free_cycles(&net);

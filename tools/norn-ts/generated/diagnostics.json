@@ -4921,6 +4921,70 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "widget.lifecycle.assumption_violated",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page state is shown while the object is in a lifecycle state it does not assume: {detail}",
+      "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.completion_unknown",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a page state and an object state reach an ending of both only through guarded transitions: {detail}",
+      "fix": "Add an unguarded way on, or accept that the guards decide whether the page and the lifecycle settle.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.stuck",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page state and an object state together reach no ending of both: {detail}",
+      "fix": "Show an ending only once the lifecycle has reached one, or give the page a way on while the object moves.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.sync_not_accepted",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {detail}",
+      "fix": "Sync the page transition that takes the accepted outcome of the action call that fires the lifecycle transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.sync_unfired",
+      "tier": "T2",
+      "severity": "error",
+      "message": "the action behind a synced page transition cannot fire its lifecycle transition: {detail}",
+      "fix": "Sync the transition the action's decision emits, or add it to the decision's fact schema.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.uncovered_transition",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a lifecycle transition the page fires is taken by no run: {detail}",
+      "fix": "Remove the sync, or let the page reach the call while the object can take the transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.unknown_lifecycle",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine names a lifecycle the object type does not declare: {detail}",
+      "fix": "Name an object type of the set and the property of one of its lifecycles.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.unknown_reference",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {detail}",
+      "fix": "Name a transition and states the page and the lifecycle declare.",
+      "no_fix": null
+    },
+    {
       "code": "widget.machine.absorbing_state",
       "tier": "T2",
       "severity": "error",

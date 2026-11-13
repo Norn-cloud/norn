@@ -2460,6 +2460,38 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "widget.lifecycle.assumption_violated",
+    "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption."
+  },
+  {
+    "code": "widget.lifecycle.completion_unknown",
+    "fix": "Add an unguarded way on, or accept that the guards decide whether the page and the lifecycle settle."
+  },
+  {
+    "code": "widget.lifecycle.stuck",
+    "fix": "Show an ending only once the lifecycle has reached one, or give the page a way on while the object moves."
+  },
+  {
+    "code": "widget.lifecycle.sync_not_accepted",
+    "fix": "Sync the page transition that takes the accepted outcome of the action call that fires the lifecycle transition."
+  },
+  {
+    "code": "widget.lifecycle.sync_unfired",
+    "fix": "Sync the transition the action's decision emits, or add it to the decision's fact schema."
+  },
+  {
+    "code": "widget.lifecycle.uncovered_transition",
+    "fix": "Remove the sync, or let the page reach the call while the object can take the transition."
+  },
+  {
+    "code": "widget.lifecycle.unknown_lifecycle",
+    "fix": "Name an object type of the set and the property of one of its lifecycles."
+  },
+  {
+    "code": "widget.lifecycle.unknown_reference",
+    "fix": "Name a transition and states the page and the lifecycle declare."
+  },
+  {
     "code": "widget.machine.absorbing_state",
     "fix": "Add a transition out of the state, or give it the terminal role if the page is done there."
   },

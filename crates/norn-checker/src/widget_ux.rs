@@ -188,6 +188,9 @@ pub(crate) fn check_widget_ux_set(
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
     let catalog = EffectiveCatalog::from_artifacts_with_registry(&combined, context.registry);
     let mut diagnostics = Vec::new();
+    // The effective model of object types, built once and only for a set whose pages name a
+    // lifecycle to compose with (UI-LIFECYCLE-1).
+    let model = std::cell::OnceCell::new();
     for artifact in artifacts {
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
             continue;
@@ -232,6 +235,17 @@ pub(crate) fn check_widget_ux_set(
         diagnostics.extend(crate::ui_machine::check(artifact, &ux));
         diagnostics.extend(crate::ui_view::check(artifact, &ux));
         diagnostics.extend(crate::ui_catalog::check(artifact, &ux, &composed));
+        let names_lifecycle = ux.pages.iter().any(|page| {
+            page.machine
+                .as_ref()
+                .is_some_and(|machine| machine.lifecycle.is_some())
+        });
+        if names_lifecycle {
+            let model = model.get_or_init(|| {
+                crate::action_set::Model::new(artifacts, context.base, context.registry, true)
+            });
+            diagnostics.extend(crate::ui_lifecycle::check(artifact, &ux, &combined, model));
+        }
     }
     diagnostics
 }

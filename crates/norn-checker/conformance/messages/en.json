@@ -1847,6 +1847,30 @@
     "widget.interaction.unreachable_page": {
       "message": "an app page has no control that reaches it from the entry page: {$detail}"
     },
+    "widget.lifecycle.assumption_violated": {
+      "message": "a page state is shown while the object is in a lifecycle state it does not assume: {$detail}"
+    },
+    "widget.lifecycle.completion_unknown": {
+      "message": "a page state and an object state reach an ending of both only through guarded transitions: {$detail}"
+    },
+    "widget.lifecycle.stuck": {
+      "message": "a page state and an object state together reach no ending of both: {$detail}"
+    },
+    "widget.lifecycle.sync_not_accepted": {
+      "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {$detail}"
+    },
+    "widget.lifecycle.sync_unfired": {
+      "message": "the action behind a synced page transition cannot fire its lifecycle transition: {$detail}"
+    },
+    "widget.lifecycle.uncovered_transition": {
+      "message": "a lifecycle transition the page fires is taken by no run: {$detail}"
+    },
+    "widget.lifecycle.unknown_lifecycle": {
+      "message": "a page machine names a lifecycle the object type does not declare: {$detail}"
+    },
+    "widget.lifecycle.unknown_reference": {
+      "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {$detail}"
+    },
     "widget.machine.absorbing_state": {
       "message": "a non-terminal page machine state has no exit: {$detail}"
     },
