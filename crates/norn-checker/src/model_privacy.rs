@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use norn_ir::{ArtifactEnvelope, ArtifactKind, MaskPolicy, MarkingIr, ModelRoot};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, MarkingIr, MaskPolicy, ModelRoot};
 use serde_json::Value;
 
 use crate::Diagnostic;
@@ -40,8 +40,7 @@ fn personal(path: &str) -> bool {
 fn trains_personal_data(catalog: &BTreeMap<String, MarkingIr>, marking: &str) -> bool {
     match catalog.get(marking) {
         Some(declared) => {
-            personal(&declared.category)
-                && !matches!(declared.mask, MaskPolicy::Pseudonym { .. })
+            personal(&declared.category) && !matches!(declared.mask, MaskPolicy::Pseudonym { .. })
         }
         None => personal(marking),
     }
@@ -129,9 +128,7 @@ impl Lineage {
                     }
                 }
                 ArtifactKind::Mapping => {
-                    lineage
-                        .mappings
-                        .push((artifact.artifact_id.clone(), body));
+                    lineage.mappings.push((artifact.artifact_id.clone(), body));
                 }
                 ArtifactKind::SourceSchema => {
                     for field in body
@@ -197,7 +194,10 @@ impl Lineage {
                 .and_then(Value::as_str)
             {
                 if let Some(markings) = self.property_types.get(shared) {
-                    push(markings.clone(), format!("{member} ← property type {shared}"));
+                    push(
+                        markings.clone(),
+                        format!("{member} ← property type {shared}"),
+                    );
                 }
             }
         }
@@ -255,7 +255,9 @@ impl Lineage {
                         {
                             push(
                                 markings.clone(),
-                                format!("{schema}: {dataset}.{field} → mapping {mapping} → {member}"),
+                                format!(
+                                    "{schema}: {dataset}.{field} → mapping {mapping} → {member}"
+                                ),
                             );
                         }
                     }
@@ -323,8 +325,10 @@ pub(crate) fn check(
             if carried.is_empty() {
                 continue;
             }
-            let mut markings: Vec<&str> =
-                carried.iter().map(|carried| carried.marking.as_str()).collect();
+            let mut markings: Vec<&str> = carried
+                .iter()
+                .map(|carried| carried.marking.as_str())
+                .collect();
             markings.dedup();
             let paths = carried
                 .iter()

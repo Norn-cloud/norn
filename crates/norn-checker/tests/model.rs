@@ -505,7 +505,8 @@ fn markings(mask: &Value) -> ArtifactEnvelope {
 /// `sales.Customer` whose `region` is marked by `marking`, directly.
 fn marked_customer(marking: &str) -> ArtifactEnvelope {
     let mut customer = customer();
-    let mut payload: Value = serde_json::to_value(customer.payload.to_json_value()).expect("payload");
+    let mut payload: Value =
+        serde_json::to_value(customer.payload.to_json_value()).expect("payload");
     payload["objectType"]["properties"][3]["markings"] = json!([marking]);
     customer = entity("sales.Customer.entity", &payload["objectType"]);
     customer
@@ -528,19 +529,57 @@ fn refusal(candidates: &[ArtifactEnvelope]) -> Option<String> {
 #[test]
 fn personal_data_never_trains_a_model_unless_pseudonymized_or_dropped() {
     let redacted = json!({ "kind": "redacted" });
-    let message = refusal(&[account(), marked_customer("pii.contact"), markings(&redacted), model(&churn_payload())])
-        .expect("a feature carrying pii.contact is refused");
+    let message = refusal(&[
+        account(),
+        marked_customer("pii.contact"),
+        markings(&redacted),
+        model(&churn_payload()),
+    ])
+    .expect("a feature carrying pii.contact is refused");
     assert!(message.contains("sales.Customer.region"), "{message}");
-    assert!(message.contains("`pii.contact` via sales.Customer.region"), "{message}");
-    assert!(message.contains("pseudonym") && message.contains("dropped"), "{message}");
+    assert!(
+        message.contains("`pii.contact` via sales.Customer.region"),
+        "{message}"
+    );
+    assert!(
+        message.contains("pseudonym") && message.contains("dropped"),
+        "{message}"
+    );
     // A pseudonymized marking passes: the model trains on pseudonyms.
     let pseudonym = json!({ "kind": "pseudonym", "subject": "Customer" });
-    assert_eq!(refusal(&[account(), marked_customer("pii.contact"), markings(&pseudonym), model(&churn_payload())]), None);
+    assert_eq!(
+        refusal(&[
+            account(),
+            marked_customer("pii.contact"),
+            markings(&pseudonym),
+            model(&churn_payload())
+        ]),
+        None
+    );
     // So does dropping the field.
-    let dropped = with("/features", json!(["tenure_months", "monthly_spend", "plan"]));
-    assert_eq!(refusal(&[account(), marked_customer("pii.contact"), markings(&redacted), model(&dropped)]), None);
+    let dropped = with(
+        "/features",
+        json!(["tenure_months", "monthly_spend", "plan"]),
+    );
+    assert_eq!(
+        refusal(&[
+            account(),
+            marked_customer("pii.contact"),
+            markings(&redacted),
+            model(&dropped)
+        ]),
+        None
+    );
     // A marking outside the personal-data category is not this law's concern.
-    assert_eq!(refusal(&[account(), marked_customer("finance.internal"), markings(&redacted), model(&churn_payload())]), None);
+    assert_eq!(
+        refusal(&[
+            account(),
+            marked_customer("finance.internal"),
+            markings(&redacted),
+            model(&churn_payload())
+        ]),
+        None
+    );
 }
 
 #[test]
@@ -563,10 +602,21 @@ fn the_refusal_follows_mapping_lineage_from_a_classified_source_field() {
             "properties": [{ "property": "region", "value": "lower(input.postal_region)" }]
         }] }),
     );
-    let candidates = [account(), customer(), markings(&redacted), source, mapping, model(&churn_payload())];
+    let candidates = [
+        account(),
+        customer(),
+        markings(&redacted),
+        source,
+        mapping,
+        model(&churn_payload()),
+    ];
     let message = check_artifact_set(
         &candidates,
-        &EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None },
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
     )
     .into_iter()
     .find(|finding| finding.code.as_str() == "model.law.personal_data_never_trains")
