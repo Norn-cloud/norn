@@ -443,7 +443,14 @@ export class SchemaProjection {
   }
 
   /** The closed value schema (Function I/O, action input/output, RuleIR contracts). */
-  closed(schema: SchemaNode, nullable = false): S.ValueSchema {
+  /**
+   * A closed schema. `nullable`: `true` admits any `Schema.NullOr` (RuleIR);
+   * `"scalar"` admits `Schema.NullOr` of a scalar only, the nullable leaf ActionIR
+   * inputs and outputs admit (`["string" | "integer" | "number" | "boolean", "null"]`,
+   * with what the scalar leaf carries: a string `enum`, a decimal `nornType`, labels);
+   * `false` admits none.
+   */
+  closed(schema: SchemaNode, nullable: boolean | "scalar" = false): S.ValueSchema {
     this.bounded(schema)
     return this.closedAt(schema, nullable)
   }
@@ -454,7 +461,7 @@ export class SchemaProjection {
     return this.closedAt(schema, true, true)
   }
 
-  private closedAt(schema: SchemaNode, nullable: boolean, temporalWire = false): S.ValueSchema {
+  private closedAt(schema: SchemaNode, nullable: boolean | "scalar", temporalWire = false): S.ValueSchema {
     this.guard(schema.node)
     switch (schema.kind) {
       case "string":
@@ -485,6 +492,11 @@ export class SchemaProjection {
         const members = this.flatten(schema)
         if (nullable && members.length === 2 && members.some((m) => m.kind === "null")) {
           const nonNull = members.find((m) => m.kind !== "null")!
+          const scalar = ["string", "int", "finite", "boolean", "literals"].includes(nonNull.kind)
+            || (nonNull.kind === "value-type" && nonNull.type.kind === "decimal")
+          if (nullable === "scalar" && !scalar) {
+            throw projection("an action's absent value is a nullable scalar: Schema.NullOr of a string, literal set, integer, number, boolean or Norn.decimal (ActionIR admits no nullable struct or array)", schema.node)
+          }
           return S.nullable(this.closedAt(nonNull, nullable, temporalWire))
         }
         if (members.every((m) => m.kind === "literals")) return S.text([...new Set(members.flatMap((m) => (m.kind === "literals" ? m.values : [])))])
