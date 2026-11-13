@@ -311,13 +311,21 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             )?;
         }
         if !bundles.is_empty() {
-            self.store().read().prepare_mapping_links(
+            let reader = self.store().read();
+            reader.prepare_mapping_links(
                 &bundles,
                 &catalog,
                 &turn,
                 &mut commit,
                 &mut authorization,
             )?;
+            // LAW-LINK-1, as one by one (`process_mapping_bundle`): laws that read
+            // a link are evaluated once the page's links are known, over the state
+            // this commit leaves; a changed target re-checks the subjects that
+            // link to it.
+            authorization
+                .refresh_link_findings(&catalog, &mut commit, &crate::host::GuardView(&reader))
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         }
         authorization
             .seal_snapshot_event_chunks(&commit)
