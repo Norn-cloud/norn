@@ -2037,7 +2037,7 @@ export interface components {
              */
             count: number;
             /** @description A stored value: text or a boolean. */
-            value: Record<string, never>;
+            value: unknown;
         };
         /**
          * GuaranteesDocument

@@ -6910,7 +6910,6 @@
             "minimum": 0
           },
           "value": {
-            "type": "object",
             "description": "A stored value: text or a boolean."
           }
         }
