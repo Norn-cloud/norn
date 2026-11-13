@@ -947,6 +947,44 @@
         }
       },
       {
+        "label": {
+          "ar": "مخزون مُقيَّم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.StockValuation"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.StockValuation",
+          "property": "stock_cost"
+        }
+      },
+      {
+        "label": {
+          "ar": "عملة التكلفة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.StockValuation",
+          "property": "cost_currency"
+        }
+      },
+      {
         "description": {
           "ar": "رصيد مقسَّم حسب المالك والموقع"
         },

@@ -677,9 +677,9 @@ fn linked_times(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec
 }
 
 /// The unit-source paths of `measures`, then their currency sources, deduplicated
-/// in declaration order. A direct currency source with a single code needs no
-/// partition; a linked one is grouped by (one group), as the checker cannot
-/// prove it single here.
+/// in declaration order. A direct, non-null currency source with a single code
+/// needs no partition; a linked one is grouped by (one group), as the checker
+/// cannot prove it single here.
 fn unit_partition(object: &EffectiveObjectType, measures: &[&PropertyId]) -> Vec<DimensionPath> {
     let mut paths: Vec<DimensionPath> = Vec::new();
     for id in measures {
@@ -692,7 +692,8 @@ fn unit_partition(object: &EffectiveObjectType, measures: &[&PropertyId]) -> Vec
             let single = |path: &DimensionPath| {
                 path.links.is_empty()
                     && object.property(path.property.as_str()).is_some_and(|code| {
-                        matches!(&code.kind, EffectiveKind::Base(PropertyType::Enum { values }) if values.len() == 1)
+                        !code.nullable
+                            && matches!(&code.kind, EffectiveKind::Base(PropertyType::Enum { values }) if values.len() == 1)
                     })
             };
             let currency = currency_source.iter().filter(|path| !single(path)).cloned();

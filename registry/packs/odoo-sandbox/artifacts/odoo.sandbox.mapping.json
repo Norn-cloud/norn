@@ -323,7 +323,7 @@
     ],
     "source": {
       "schemaId": "odoo.sandbox.source",
-      "sha256": "76b16f0b382657832285372b79062ec0b243f00fd212fb6c928c1c4fc65e777d",
+      "sha256": "dcb889dffef87077780602a8e2af8f3865b5532f1c42eb5f0188b84bcb25d1e4",
       "version": "0.1.0"
     }
   },

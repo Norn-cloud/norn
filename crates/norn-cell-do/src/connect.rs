@@ -883,6 +883,18 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
             "a load carries 1 to {MAX_LOAD_ROWS} rows; send a longer export in slices"
         )));
     }
+    // A mapping this cell has not admitted refuses before anything is
+    // captured, naming the mapping (not a host failure).
+    match host.installed_artifact(&recorded.mapping) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return answer(&Refusal::invalid(format!(
+                "the mapping {} is not admitted in this cell",
+                recorded.mapping
+            )));
+        }
+        Err(refusal) => return answer(&refusal),
+    }
     let rows = match recorded.observations() {
         Ok(rows) => rows,
         Err(error) => return answer(&Refusal::invalid(error)),
