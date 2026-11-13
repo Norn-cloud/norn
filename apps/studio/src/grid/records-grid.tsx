@@ -23,6 +23,7 @@ import { ActionSheet, useActions, type OpenAction } from "../actions/action-shee
 import { offeredFor } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
+import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 
 const ROW = 32
 const DEFAULT_COLUMNS = 8
@@ -59,16 +60,30 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
  * doesn't serve the object route, the recorded documents are shown and the controls say why
  * they're off.
  */
-export function RecordsGrid({ concept, read = readRecords }: { readonly concept: Concept; readonly read?: Read }) {
+/** The query a grid shows, as a saved view keeps it. */
+export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
+
+export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
+  readonly concept: Concept
+  readonly read?: Read
+  /** The query to open with: a saved view's. */
+  readonly initial?: Partial<GridQuery>
+  /** Told the query the grid shows, whenever it changes. */
+  readonly onQuery?: (query: GridQuery) => void
+}) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
-  const [sort, setSort] = useState<readonly SortKey[]>([])
-  const [filter, setFilter] = useState<Predicate | null>(null)
+  const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
+  const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
   const [draft, setDraft] = useState<readonly DraftClause[]>([])
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(initial?.columns?.filter((id) => fields.some((field) => field.id === id)) ?? fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  // The columns in the definition's order, as a view keeps them.
+  const shownList = fields.filter(({ id }) => shown.has(id)).map(({ id }) => id)
+  const reported = JSON.stringify({ filter, sort, shownList })
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -171,9 +186,13 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
+  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
-      <div className="grid gap-3">
+      <div className="grid gap-4 xl:grid-cols-[15rem_minmax(0,1fr)]">
+      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
+      <div className="grid min-w-0 gap-3">
+        {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-sm font-medium">Narrow by</summary><div className="pt-3">{facets}</div></details>}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -235,6 +254,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           </span>
         </div>
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
+        <FilterChips filter={filter} fields={fields} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
           <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
@@ -302,6 +322,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
             onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
         </nav>
+      </div>
       </div>
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
