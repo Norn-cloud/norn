@@ -1270,6 +1270,66 @@
       "message": "توقّف التحقق من الدفتر عند حد عدد التشخيصات أو حجمها بالبايت",
       "review": "needs_review"
     },
+    "lifecycle.soundness.cancellation_dead_end": {
+      "message": "قد يُلغي استثناءٌ مهلةً في حالة لا يثبت منها الوصول إلى نهاية جيدة أو مُعوَّضة معلنة: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.compensation_not_closed": {
+      "message": "يمكن أن ينتهي تشغيل دورة الحياة ملغًى أو مُعوَّضًا أو مُخلًّا به دون تعويض أثر أُرسل: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.completion_unknown": {
+      "message": "لا يمكن الوصول إلى نهاية دورة الحياة من حالة إلا عبر انتقال مشروط: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.deadline_without_remedy": {
+      "message": "مؤقّت في دورة الحياة يؤدي إلى حالة لا يمكن منها الوصول إلى أي نهاية: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.fact_guarded": {
+      "message": "انتقال يسجّل واقعة له شرط، فقد يُرفض: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.fact_refused": {
+      "message": "قانون حاكم يرفض انتقالًا يسجّل واقعة: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.invalid_ending": {
+      "message": "نهاية في دورة الحياة غير سليمة البنية: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.invalid_event": {
+      "message": "حدث خارجي في دورة الحياة غير سليم البنية: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.invalid_trigger": {
+      "message": "مُطلِق انتقال أو تعويضه في دورة الحياة غير صالح: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.law_blocked_exit": {
+      "message": "القوانين الحاكمة ترفض كل مخرج من حالة يمكن الوصول إليها في دورة الحياة: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.no_ending": {
+      "message": "دورة الحياة لا تعلن أي حالة نهائية أو حالة سكون: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.timer_cycle": {
+      "message": "دورة في دورة الحياة تعمل بالمؤقّتات وحدها: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.trap": {
+      "message": "لا يمكن الوصول إلى أي نهاية لدورة الحياة من حالة يمكن الوصول إليها: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.unhandled_event": {
+      "message": "حالة يمكن الوصول إليها في دورة الحياة لا تعالج حدثًا معلنًا ولا تتجاهله: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.wait_without_deadline": {
+      "message": "حالة في دورة الحياة تنتظر أحداثًا خارجية فقط وليس لها مهلة: {$detail}",
+      "review": "needs_review"
+    },
     "lifecycle.validation.dead_end_state": {
       "message": "الحالة {$state} ليس لها انتقال خارج؛ أعلن انتقالًا أو اذكرها كحالة نهائية",
       "review": "needs_review"
