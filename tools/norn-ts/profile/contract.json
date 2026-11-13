@@ -30,6 +30,7 @@
     "`@norn/authoring#Norn.obligation`",
     "`@norn/authoring#Norn.prohibition`",
     "`@norn/authoring#Norn.permission`",
+    "`@norn/authoring#Norn.example`",
     "`@norn/authoring#Norn.labels`",
     "`@norn/authoring#Norn.decimal`",
     "`@norn/authoring#Norn.boundDecimal`",

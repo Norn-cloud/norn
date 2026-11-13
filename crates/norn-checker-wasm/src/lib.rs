@@ -414,6 +414,31 @@ pub fn check_expression_json(
     .to_string())
 }
 
+/// LAW-EXAMPLE-1: the checker's verdict of one law (`LawIR` JSON) on one subject value
+/// (JSON, bound as `self`). Returns `{"ok":true,"verdict":...,"applied"?:[...]}` or
+/// `{"ok":false,"code":"law.example.unsupported","error":...}`; never throws.
+#[must_use]
+pub fn evaluate_law_json(law_json: &str, subject_json: &str) -> String {
+    use norn_checker::law_examples::{codes, evaluate};
+    let refused = |error: String| json!({"ok": false, "code": codes::UNSUPPORTED, "error": error});
+    let law = serde_json::from_str::<norn_ir::LawIR>(law_json).map_err(|error| error.to_string());
+    let subject = serde_json::from_str::<Value>(subject_json).map_err(|error| error.to_string());
+    let result = match (law, subject) {
+        (Ok(law), Ok(subject)) => match evaluate(&law, &subject) {
+            Ok(verdict) => {
+                let mut value = verdict.to_json();
+                if let Value::Object(object) = &mut value {
+                    object.insert("ok".into(), Value::Bool(true));
+                }
+                value
+            }
+            Err(error) => refused(error),
+        },
+        (Err(error), _) | (_, Err(error)) => refused(error),
+    };
+    result.to_string()
+}
+
 /// Evaluate an already-admitted `WidgetIR` ZEN expression against its explicit
 /// `record`, `recordKey`, `row`, `draft`, `selection`, and `context` runtime inputs.
 ///

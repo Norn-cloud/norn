@@ -1295,7 +1295,18 @@ class FileWalk {
       }
       case "@norn/authoring#Norn.decision": {
         if (a[0]) this.expr(a[0], ctx)
-        if (a[1]) this.callback(a[1], call, ctx, true)
+        const rows = a[1] && this.unwrap(a[1])
+        // TABLE-UNIQUE-1: a table is a literal list of { when, then } rows of pure callbacks.
+        if (rows && ts.isArrayLiteralExpression(rows)) {
+          for (const row of rows.elements) {
+            const entry = this.unwrap(row as ts.Expression)
+            if (!ts.isObjectLiteralExpression(entry)) { this.report(row, "NORN-FLOW-LITERAL", "a table row is { when, then }"); continue }
+            for (const p of entry.properties) {
+              if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && (p.name.text === "when" || p.name.text === "then")) this.callback(p.initializer, call, ctx, true)
+              else this.report(p, "NORN-FLOW-LITERAL", "a table row takes when and then callbacks")
+            }
+          }
+        } else if (a[1]) this.callback(a[1], call, ctx, true)
         return
       }
       case "@norn/authoring#Norn.flow": {

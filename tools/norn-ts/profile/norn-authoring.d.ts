@@ -568,6 +568,17 @@ declare module "@norn/authoring" {
     function obligation<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly must: LawPredicate<D> }): NormDefinition
     /** What must not hold. */
     function prohibition<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly never: LawPredicate<D> }): NormDefinition
+    /**
+     * LAW-EXAMPLE-1: a checked case of a law or a norm. `norn check` evaluates it with the
+     * checker's own law semantics (condition, exception tree, response) and reports a
+     * mismatch as `law.example.mismatch`. Evidence about one value only; it proves nothing else.
+     */
+    function example(name: string, spec: {
+      readonly of: LawDefinition | NormDefinition
+      readonly given: { readonly [property: string]: unknown }
+      readonly expect: "holds" | "violated" | "not_applicable" | { readonly excepted: ReadonlyArray<string> }
+    }): ExampleDefinition
+    interface ExampleDefinition { readonly _tag: "NornExample" }
     /** A defeater: where `may` holds, a prohibition that yields to it does not apply. Grants nothing. */
     function permission<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly may: LawPredicate<D> }): NormDefinition
     function law(meta: Localized & {
@@ -643,12 +654,26 @@ declare module "@norn/authoring" {
       readonly output: O
       readonly scopeRequired: ReadonlyArray<string>
       readonly graph?: UnsafeJdmGraph
+      /**
+       * TABLE-UNIQUE-1: with table rows, "unique" has the checker prove the rows disjoint over
+       * the finite input (overlap is refused with a witness; an undecidable table is Unknown
+       * and refused); "first" tries them in order. A callback's branches are always in order.
+       */
+      readonly hit?: "first" | "unique"
     }
 
     /** A RuleIR v2 decision (T7-TS-3). */
     function decision<I extends Schema.Top, O extends Schema.Top, const Result extends O["Type"] = O["Type"]>(
       meta: DecisionMeta<I, O>,
       body?: (input: I["Type"]) => Result,
+    ): DecisionDefinition<I["Type"], O["Type"]>
+    /**
+     * A decision table as rows (TABLE-UNIQUE-1). Each row's `when` stands alone: under
+     * `hit: "unique"` the checker proves no two rows match one input, or refuses the table.
+     */
+    function decision<I extends Schema.Top, O extends Schema.Top>(
+      meta: DecisionMeta<I, O>,
+      rows: ReadonlyArray<{ readonly when: (input: I["Type"]) => boolean; readonly then: (input: I["Type"]) => O["Type"] }>,
     ): DecisionDefinition<I["Type"], O["Type"]>
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }

@@ -25,6 +25,7 @@ import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import type { DeonticRule } from "../builder/deontic.ts"
+import type { CompiledExample, ExampleExpectation } from "../examples.ts"
 import * as LB from "../builder/labels.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
@@ -98,6 +99,8 @@ export type DefinitionsResult =
       readonly flows: number
       readonly sourceMap: ReadonlyArray<DefinitionSource>
       readonly warnings: ReadonlyArray<Diagnostic>
+      /** LAW-EXAMPLE-1 cases the module declares; `norn check` runs them. */
+      readonly examples: ReadonlyArray<CompiledExample>
     }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
@@ -117,6 +120,7 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const EXAMPLE = "@norn/authoring#Norn.example"
 const OBLIGATION = "@norn/authoring#Norn.obligation"
 const PROHIBITION = "@norn/authoring#Norn.prohibition"
 const PERMISSION = "@norn/authoring#Norn.permission"
@@ -213,8 +217,8 @@ export function compileDefinitionFiles(
    */
   mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void } = {},
 ): DefinitionsResult[] {
-  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[] }>(files, overrides, (compiler, source) => {
-    const { definitions, flows } = compiler.compile(source, mode.allowEmpty === true)
+  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[] }>(files, overrides, (compiler, source) => {
+    const { definitions, flows, examples } = compiler.compile(source, mode.allowEmpty === true)
     const envelopeOptions = typeof options === "function" ? options(resolve(source.fileName)) : options
     const artifacts: Json[] = []
     const diagnostics: Diagnostic[] = []
@@ -240,7 +244,7 @@ export function compileDefinitionFiles(
       }
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
     }
-    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings } }
+    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings, examples } }
   }, mode.onModuleWork).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
 }
 
@@ -327,7 +331,7 @@ class DefinitionCompiler {
     return e
   }
 
-  compile(source: ts.SourceFile, allowEmpty = false): { readonly definitions: Definition[]; readonly flows: number } {
+  compile(source: ts.SourceFile, allowEmpty = false): { readonly definitions: Definition[]; readonly flows: number; readonly examples: CompiledExample[] } {
     const out: Definition[] = []
     let flows = 0
     for (const statement of source.statements) {
@@ -372,7 +376,7 @@ class DefinitionCompiler {
       }
     }
     if (out.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, or Norn.connector definition", source)
-    return { definitions: out, flows }
+    return { definitions: out, flows, examples: this.examples(source) }
   }
 
   questions(source: ts.SourceFile): Json[] {
@@ -735,6 +739,127 @@ class DefinitionCompiler {
   }
 
   /**
+   * A decision table as rows (TABLE-UNIQUE-1, #1176): `[{ when: (i) => ..., then: (i) => ({ ... }) }]`.
+   * Each row's `when` is its own condition, never conjoined with the rows before it, so under
+   * `hit: "unique"` the checker must prove the rows disjoint over the finite input (overlap is
+   * refused with a witness; an undecidable table is Unknown and refused). Under `first` the
+   * rows are tried in order.
+   */
+  private tableGraph(rows: ts.ArrayLiteralExpression, hit: "first" | "unique", input: S.ObjectSchema, output: S.ObjectSchema, call: ts.CallExpression): Json {
+    const scope = new Map<string, X.Binding>([["input", { zen: "", schema: input }]])
+    const syntax = new SyntaxCompiler(this.profile, this.program, call.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, (site) => {
+      throw new CompileError("NORN-FLOW-EXPRESSION", "a table row cannot evaluate a sub-decision; use a decision callback", site)
+    })
+    const one = (node: ts.Expression, what: string): X.Expr => {
+      const fn = this.deref(node)
+      if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", `a table row's ${what} is an inline callback`, node)
+      const found = syntax.decisionRows(fn)
+      this.warnings.push(...syntax.warnings)
+      if (found.length !== 1 || found[0]!.condition) throw new CompileError("NORN-FLOW-EXPRESSION", `a table row's ${what} is one expression, without branches`, fn)
+      return found[0]!.value
+    }
+    const outputs = Object.keys(output.properties)
+    if (rows.elements.length === 0) throw new CompileError("NORN-FLOW-LITERAL", "a table has at least one row", rows)
+    const rules = rows.elements.map((element, i): Record<string, Json> => {
+      const m = this.closedRecord(element as ts.Expression, ["when", "then"], ["when", "then"])
+      try {
+        const condition = one(m.get("when")!, "when")
+        if (X.typeOf(condition, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "a table row's when is Boolean")
+        const value = one(m.get("then")!, "then")
+        if (value._tag !== "Record") throw new X.ExprError("NORN-FLOW-RESULT", "a table row's then returns a record of the declared outputs")
+        const cells: Record<string, Json> = { _id: `row_${i}`, condition: X.render(condition, scope) }
+        for (const field of outputs) {
+          const cell = value.fields.find(([key]) => key === field)?.[1]
+          if (!cell) throw new X.ExprError("NORN-FLOW-RESULT", `expected output field ${field}; return every declared output`)
+          cells[`out_${field}`] = X.render(cell, scope)
+        }
+        return cells
+      } catch (error) {
+        if (error instanceof X.ExprError) throw new CompileError(error.code, error.message, element)
+        throw error
+      }
+    })
+    return { contentType: R.JDM_CONTENT_TYPE, nodes: [
+      { id: "in", name: "input", type: "inputNode" },
+      { id: "decision", name: "decision", type: "decisionTableNode", content: { hitPolicy: hit, inputs: [{ id: "condition", name: "condition", type: "expression" }], outputs: outputs.map((field) => ({ id: `out_${field}`, name: field, field })), rules } },
+      { id: "out", name: "output", type: "outputNode" },
+    ], edges: [
+      { id: "edge_0", sourceId: "in", targetId: "decision", type: "edge" },
+      { id: "edge_1", sourceId: "decision", targetId: "out", type: "edge" },
+    ] }
+  }
+
+  /**
+   * `Norn.example(name, { of, given, expect })` (LAW-EXAMPLE-1): a checked case of a law or a
+   * norm, compiled to where its `LawIR` lives (the law artifact, or the norm's slot in its
+   * subject's entity artifact), the subject value and the expected verdict. `norn check`
+   * runs every example with the checker's `evaluateLaw` and reports a mismatch with
+   * `law.example.mismatch`.
+   */
+  private examples(source: ts.SourceFile): CompiledExample[] {
+    const out: CompiledExample[] = []
+    const names = new Set<string>()
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue
+      for (const d of statement.declarationList.declarations) {
+        const call = d.initializer && this.unwrap(d.initializer)
+        if (!call || !ts.isCallExpression(call) || this.id(call) !== EXAMPLE) continue
+        if (call.arguments.length !== 2) throw new CompileError("NORN-FLOW-LITERAL", "an example takes its name and one spec object", call)
+        const name = this.string(call.arguments[0]!)
+        if (names.has(name)) throw new CompileError("NORN-FLOW-LITERAL", `example ${JSON.stringify(name)} is declared twice`, call.arguments[0]!)
+        names.add(name)
+        const spec = this.closedRecord(call.arguments[1]!, ["of", "given", "expect"], ["of", "given", "expect"])
+        const { artifactId, pointer } = this.exampleTarget(spec.get("of")!)
+        out.push({ name, artifactId, pointer, given: this.json(spec.get("given")!), expect: this.expectation(spec.get("expect")!), at: this.at(call) })
+      }
+    }
+    return out
+  }
+
+  /** Where the law an example names lives: a law artifact, or a norm's slot. */
+  private exampleTarget(input: ts.Expression): { readonly artifactId: string; readonly pointer: string } {
+    const target = this.deref(input)
+    const id = ts.isCallExpression(target) ? this.id(target) : undefined
+    if (!ts.isCallExpression(target) || id === undefined || (id !== LAW && !NORMS.has(id))) throw new CompileError("NORN-FLOW-VALUE", "an example is of a Norn.law or a norm", input)
+    if (id === LAW) {
+      const first = target.arguments[0] && this.deref(target.arguments[0])
+      if (!first || !(ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) {
+        return { artifactId: this.string(this.member(this.meta(target, ["id", "title", "version", "law", "dependencies", ...LABEL_MEMBERS]), "id", target)), pointer: "/payload" }
+      }
+      const spec = this.record(target.arguments[1]!)
+      const { call: subjectCall, members } = this.referenced(spec.get("on")!, ANY_TYPE, "a type definition")
+      const subject = this.string(this.member(members, "name", subjectCall))
+      const lawId = spec.has("id") ? this.string(spec.get("id")!) : `${subject}.${this.string(first)}`
+      return { artifactId: `${lawId}.law`, pointer: "/payload" }
+    }
+    const typeCall = this.referenced(this.record(target.arguments[1]!).get("on")!, OBJECT_TYPES, "a Norn.type definition").call
+    const subject = this.string(this.member(this.record(typeCall.arguments[0]!), "name", typeCall))
+    let index = -1, position = 0
+    for (const statement of typeCall.getSourceFile().statements) {
+      if (!ts.isVariableStatement(statement)) continue
+      for (const d of statement.declarationList.declarations) {
+        const init = d.initializer && this.unwrap(d.initializer)
+        if (!init || !ts.isCallExpression(init) || !NORMS.has(this.id(init) ?? "") || !init.arguments[1]) continue
+        if (this.referenced(this.record(init.arguments[1]).get("on")!, OBJECT_TYPES, "a Norn.type definition").call !== typeCall) continue
+        if (init === target) index = position
+        position++
+      }
+    }
+    if (index < 0) throw new CompileError("NORN-FLOW-VALUE", "the norm is not declared in its subject's module", input)
+    return { artifactId: `${subject}.entity`, pointer: `/payload/extensions/norn.normative~11.0.0/${index}/law` }
+  }
+
+  private expectation(input: ts.Expression): ExampleExpectation {
+    const e = this.deref(input)
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+      if (e.text === "holds" || e.text === "violated" || e.text === "not_applicable") return e.text
+      throw new CompileError("NORN-FLOW-LITERAL", "an example expects holds, violated, not_applicable or { excepted: [...] }", input)
+    }
+    const m = this.closedRecord(input, ["excepted"], ["excepted"])
+    return { excepted: this.strings(m.get("excepted")!) }
+  }
+
+  /**
    * `Norn.obligation | prohibition | permission(name, { on, when?, must | never | may, cite,
    * yieldsTo?, unless?, because })` declared in this type's module with `on` this type (#1176
    * unit B). Each lowers to one `DeonticRule` in the type's `norn.normative/1.0.0` slot, in
@@ -1056,7 +1181,12 @@ class DefinitionCompiler {
   }
 
   private decision(call: ts.CallExpression): R.DecisionDef {
-    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph", "hit", ...LABEL_MEMBERS])
+    const hitNode = members.get("hit")
+    const hitText = hitNode ? this.string(hitNode) : "first"
+    if (hitText !== "first" && hitText !== "unique") throw new CompileError("NORN-FLOW-LITERAL", "a decision's hit policy is \"first\" or \"unique\"", hitNode!)
+    const hit = hitText as "first" | "unique"
+    if (hitNode && !call.arguments[1]) throw new CompileError("NORN-FLOW-LITERAL", "hit applies to a decision callback; an imported editor graph carries its own hit policies", hitNode)
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1071,7 +1201,10 @@ class DefinitionCompiler {
     const calledDependencies: R.DecisionDependencyPin[] = []
     const body = call.arguments[1]
     let graph: Json
-    if (body) {
+    if (body && ts.isArrayLiteralExpression(this.deref(body))) {
+      if (members.has("graph")) throw new CompileError("NORN-FLOW-LITERAL", "choose table rows or an imported editor graph", body)
+      graph = this.tableGraph(this.deref(body) as ts.ArrayLiteralExpression, hit, inputSchema, schema("output"), call)
+    } else if (body) {
       if (members.has("graph")) throw new CompileError("NORN-FLOW-LITERAL", "choose a callback or an imported editor graph", body)
       if (!ts.isArrowFunction(body) && !ts.isFunctionExpression(body)) throw new CompileError("NORN-FLOW-CAPTURE", "decision body must be an inline callback", body)
       const scope = new Map<string, X.Binding>([["input", { zen: "", schema: inputSchema }]])
@@ -1153,10 +1286,11 @@ class DefinitionCompiler {
           throw new CompileError(error.code, error.message, body)
         }
       })
+      if (hit === "unique") throw new CompileError("NORN-FLOW-EXPRESSION", "a decision callback's branches are tried in order, so they cannot overlap; declare a unique table as a list of { when, then } rows", body)
       graph = { contentType: R.JDM_CONTENT_TYPE, nodes: [
         { id: "in", name: "input", type: "inputNode" },
         ...calls,
-        { id: "decision", name: "decision", type: "decisionTableNode", content: { hitPolicy: "first", inputs: [{ id: "condition", name: "condition", type: "expression" }], outputs: outputs.map((field) => ({ id: `out_${field}`, name: field, field })), rules } },
+        { id: "decision", name: "decision", type: "decisionTableNode", content: { hitPolicy: hit, inputs: [{ id: "condition", name: "condition", type: "expression" }], outputs: outputs.map((field) => ({ id: `out_${field}`, name: field, field })), rules } },
         { id: "out", name: "output", type: "outputNode" },
       ], edges: ["in", ...calls.map((c) => (c as { id: string }).id), "decision", "out"].slice(1).map((targetId, index) => ({ id: `edge_${index}`, sourceId: ["in", ...calls.map((c) => (c as { id: string }).id), "decision"][index]!, targetId, type: "edge" })) }
       if (exact) {

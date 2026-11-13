@@ -103,6 +103,7 @@ mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod explain;
 pub mod law_enrollment;
+pub mod law_examples;
 pub mod law_exceptions;
 pub mod naming_series;
 pub mod norm_precedence;
