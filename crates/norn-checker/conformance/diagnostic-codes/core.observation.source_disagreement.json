@@ -1,0 +1,7 @@
+{
+  "code": "core.observation.source_disagreement",
+  "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded.",
+  "severity": "warning",
+  "since": "0.2.0",
+  "tier": "T3"
+}

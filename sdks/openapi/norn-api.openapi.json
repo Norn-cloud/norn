@@ -4163,7 +4163,7 @@
         "tags": [
           "crate::transform_routes"
         ],
-        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it against the\ninstalled definitions. Nothing is installed and no SQL runs.",
+        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it as installing\nit would: the installed set re-admitted whole with it added, on the base\nthe installed receipt records. Nothing is installed and no SQL runs.",
         "description": "# Errors\nA denied definitions read (the opaque 403), no installed definitions\n(404 `defs.version_not_found`) or a host failure. A query the dialect or\nthe checker refuses is a 200 with `admitted: false` and its diagnostics.",
         "operationId": "compile_transform",
         "parameters": [
@@ -6867,7 +6867,7 @@
         "properties": {
           "admitted": {
             "type": "boolean",
-            "description": "The checker admits the lowered plan against the installed definitions."
+            "description": "Installing the lowered transform over the installed definitions would\nbe admitted."
           },
           "artifact": {
             "type": [
@@ -12116,6 +12116,38 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "SOURCE-AGREE-1: two sources reported different values of a measure's\npartition source (its unit, currency or basis) for one subject, in\nconsecutive versions. Both reports are true facts about what each\nsource says; the subject is never excluded for it.",
+            "required": [
+              "kind",
+              "property",
+              "earlier",
+              "later"
+            ],
+            "properties": {
+              "earlier": {
+                "$ref": "#/components/schemas/NornIrSourceClaim",
+                "description": "The earlier version's source and value."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "source_disagreement"
+                ]
+              },
+              "later": {
+                "$ref": "#/components/schemas/NornIrSourceClaim",
+                "description": "The later version's source and value."
+              },
+              "property": {
+                "type": "string",
+                "description": "The partition-source property the sources disagree on.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "The result of evaluating a rule or constraint against data."
@@ -14732,6 +14764,10 @@
               "Quarter.",
               "Year."
             ]
+          },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           }
         },
         "additionalProperties": false
@@ -18589,6 +18625,10 @@
               "Greatest non-null value."
             ]
           },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
+          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -21023,6 +21063,10 @@
           "expression": {
             "type": "string",
             "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract."
+          },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           },
           "name": {
             "type": "string",
@@ -25300,6 +25344,29 @@
           "version": {
             "type": "string",
             "description": "The source schema's artifact `version`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceClaim": {
+        "type": "object",
+        "description": "SOURCE-AGREE-1: what one source reported for a partition source, and the\nversion that recorded it.",
+        "required": [
+          "system",
+          "fact"
+        ],
+        "properties": {
+          "fact": {
+            "$ref": "#/components/schemas/NornIrFactRef",
+            "description": "The version that recorded it (its commit)."
+          },
+          "system": {
+            "type": "string",
+            "description": "The reporting source system (`SourceRecordRef::system`)."
+          },
+          "value": {
+            "type": "string",
+            "description": "The reported code, or `None` for null."
           }
         },
         "additionalProperties": false
@@ -30284,6 +30351,10 @@
               "Exact sum of an additive column from the partition start to this row."
             ]
           },
+          "label": {
+            "type": "string",
+            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
+          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -31794,6 +31865,16 @@
               "type": "string"
             }
           },
+          "sourceDisagreements": {
+            "$ref": "#/components/schemas/NornSourceDisagreements",
+            "description": "SOURCE-AGREE-1: members two sources disagree on, by partition source,\nat this answer's frontier and visible to its reader. They are never\nexcluded. Absent when no member is disputed."
+          },
+          "unlinked": {
+            "type": "integer",
+            "format": "int64",
+            "description": "METRIC-GRAIN-LINK-1: rows that would count but whose optional time link\nis absent, so they have no time; skipped, never bucketed. Absent when zero.",
+            "minimum": 0
+          },
           "watermarks": {
             "type": "object",
             "description": "Watermarks for required dependencies: source → partition → watermark.",
@@ -31998,6 +32079,56 @@
           }
         }
       },
+      "NornSourceDisagreementGroup": {
+        "type": "object",
+        "description": "The disputed members of one partition source.",
+        "required": [
+          "property",
+          "subjects"
+        ],
+        "properties": {
+          "property": {
+            "type": "string",
+            "description": "The partition-source property, such as `quantity_basis`."
+          },
+          "subjects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Members with an open disagreement on it.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornSourceDisagreements": {
+        "type": "object",
+        "description": "SOURCE-AGREE-1: the members of an answer two sources disagree on, counted\nas HOST-READ-4b counts links.",
+        "required": [
+          "groups",
+          "complete",
+          "bound"
+        ],
+        "properties": {
+          "bound": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most subjects one read examines.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "True when every candidate was examined; false when the read stopped at\n`bound` subjects, and each count is then a lower bound."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornSourceDisagreementGroup"
+            },
+            "description": "One entry per partition source with at least one disputed member."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornTransformColumn": {
         "type": "object",
         "description": "One typed column of a transform's row (VIEW-TYPE-1).",
@@ -32010,7 +32141,8 @@
           "origins",
           "markings",
           "currencyFrom",
-          "unitFrom"
+          "unitFrom",
+          "label"
         ],
         "properties": {
           "additivity": {
@@ -32030,6 +32162,13 @@
               "null"
             ],
             "description": "The object type whose ids the column holds, if any."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What readers call the column, as its definition labels it; null when\nthe definition names it only by `name`."
           },
           "markings": {
             "type": "array",
@@ -32708,8 +32847,12 @@
             "oneOf": [
               {
                 "type": "object",
-                "description": "The words a signer can sign: what the host reads the submission as.",
+                "description": "The rarely present parts of a refusal, boxed so every refusal stays small.\nIts fields sit flat in the refusal, exactly where the restatement always\ndid, so the wire shape only gains `incidentId` (D84).",
                 "properties": {
+                  "incidentId": {
+                    "type": "string",
+                    "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."
+                  },
                   "restatement": {
                     "type": "string",
                     "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
@@ -32724,7 +32867,7 @@
                 "type": "null"
               }
             ],
-            "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
+            "description": "What only some refusals carry, flattened into the refusal: on\n`definition.signoff_mismatch`, the host's restatement of the caller's\nown admitted payload (`restatement`, `restatementSha256`); on an\ninternal refusal, its `incidentId` (INCIDENT-1). Absent otherwise."
           },
           {
             "type": "object",

@@ -103,10 +103,7 @@ pub fn serve<E: SqlEngine>(
             status: StatusCode::ACCEPTED.as_u16(),
             body: String::new(),
         },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
+        Err(refused) => crate::incident::respond(refused),
     }
 }
 

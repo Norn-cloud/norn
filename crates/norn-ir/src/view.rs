@@ -206,6 +206,15 @@ pub struct ProjectColumn {
     /// A ZEN expression over `input.<column>`; `input.c` alone passes the
     /// column through with its full contract.
     pub expression: String,
+    /// What readers call the column (Studio's Business view); `name` stays
+    /// its id. Kept wherever the column passes through unchanged.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub label: Option<String>,
 }
 
 /// Outputs exactly the listed columns; the input grain must pass through.
@@ -289,6 +298,15 @@ pub struct GroupKey {
     )]
     #[schemars(with = "TimeGrain")]
     pub grain: Option<TimeGrain>,
+    /// What readers call the column (Studio's Business view); `name` stays
+    /// its id. Kept wherever the column passes through unchanged.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub label: Option<String>,
 }
 
 /// An aggregate function.
@@ -324,6 +342,15 @@ pub struct Measure {
     )]
     #[schemars(with = "String")]
     pub column: Option<String>,
+    /// What readers call the column (Studio's Business view); `name` stays
+    /// its id. Kept wherever the column passes through unchanged.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub label: Option<String>,
 }
 
 /// Groups rows; the output grain is the group keys.
@@ -401,6 +428,15 @@ pub struct WindowColumn {
     )]
     #[schemars(with = "WholeNumber")]
     pub offset: Option<WholeNumber>,
+    /// What readers call the column (Studio's Business view); `name` stays
+    /// its id. Kept wherever the column passes through unchanged.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub label: Option<String>,
 }
 
 /// Adds window columns; the grain is unchanged.

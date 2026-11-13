@@ -1045,3 +1045,73 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
     let found = findings_of(&window(json!(["weight_unit"])));
     assert!(found.is_empty(), "{found:#?}");
 }
+
+#[test]
+fn a_column_label_travels_with_the_column_and_a_blank_one_refuses() {
+    let nodes = json!({
+        "s": {"op": "scan", "input": "s"},
+        "p": {"op": "project", "input": "s", "columns": [
+            {"name": "id", "expression": "input.id"},
+            {"name": "lane", "expression": "input.lane", "label": "Lane"},
+            {"name": "weight", "expression": "input.weight"},
+            {"name": "weight_unit", "expression": "input.weight_unit"}]},
+        "a": {"op": "aggregate", "input": "p",
+            "groupBy": [{"column": "lane"}, {"column": "weight_unit", "label": "Unit"}],
+            "measures": [{"name": "total", "fn": "sum", "column": "weight", "label": "Total weight"},
+                {"name": "n", "fn": "count"}]},
+        "w": {"op": "window", "input": "a", "partitionBy": ["weight_unit"],
+            "orderBy": [{"column": "lane", "direction": "asc"}],
+            "columns": [{"name": "place", "fn": "row_number", "label": "Place"}]}
+    });
+    let pool = shipments(nodes.clone(), "w");
+    let found = findings_of(&pool);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
+    let schema = plan.output_schema();
+    let label = |name: &str| schema.column(name).expect("column").label.clone();
+    // Declared where the column is defined, kept wherever it passes through.
+    assert_eq!(label("lane").as_deref(), Some("Lane"));
+    assert_eq!(label("weight_unit").as_deref(), Some("Unit"));
+    assert_eq!(label("total").as_deref(), Some("Total weight"));
+    assert_eq!(label("place").as_deref(), Some("Place"));
+    assert_eq!(label("n"), None);
+    // A blank label names nothing.
+    let mut blank = nodes;
+    blank["a"]["measures"][1]["label"] = json!("  ");
+    let found = findings_of(&shipments(blank, "w"));
+    assert!(
+        found
+            .iter()
+            .any(|finding| finding.code == codes::INVALID_PLAN
+                && finding
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.pointer.ends_with("/nodes/a/measures/1/label"))),
+        "{found:#?}"
+    );
+}
+
+#[test]
+fn admission_refuses_an_expression_every_evaluation_would_refuse() {
+    // VAL-EXACT-1: comparing money with a bare number refuses when the
+    // expression is compiled for evaluation, so admission refuses it too;
+    // otherwise the transform installs and every read fails.
+    refuses(
+        with(json!({"f": {"op": "filter", "input": "order", "predicate": "input.amount > 0"}})),
+        "f",
+        codes::TYPE_MISMATCH,
+    );
+    // A plain decimal compares as before, and what is admitted evaluates.
+    let plan = admitted(
+        with(json!({"f": {"op": "filter", "input": "order", "predicate": "input.flat > 0"}})),
+        "f",
+    );
+    let input = TransformInput {
+        rows: BTreeMap::from([(
+            "order".to_owned(),
+            vec![order("o1", "2026-11-02T10:00:00Z", "EGP", "80.00")],
+        )]),
+        links: BTreeMap::new(),
+    };
+    assert_eq!(evaluate(&plan, &input).expect("evaluated").rows.len(), 1);
+}

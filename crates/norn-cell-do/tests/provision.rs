@@ -1674,3 +1674,69 @@ fn a_cell_that_does_not_open_is_refused_never_retried_or_exposed() {
     );
     assert!(!broken.tenant.is_provisioned());
 }
+
+/// INCIDENT-1: an internal failure is never silent. A storage error while an
+/// admin installs a definition answers the opaque `host.error`, with an
+/// incident id in the problem body; the host logs that id with the error's
+/// cause, and the cause never reaches the caller.
+#[test]
+fn an_internal_failure_is_logged_with_an_incident_id_the_caller_gets() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let path = file(&directory, "incident");
+    drop(provisioned(&path, &scope, &full()));
+    let faults = FaultSwitch::default();
+    let mut cell = open_faulted(&path, &scope, &faults).unwrap();
+    faults.arm(EngineFault {
+        kind: EngineFaultKind::Io,
+        transaction: 0,
+        at_statement: 0,
+    });
+    let install =
+        r#"{"kind":"dashboard","id":"studio.dashboard.ops","payload":{"title":"Ops","tiles":[]}}"#;
+    let response = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &query(&scope),
+        Some(&user("org_a", "admin")),
+        install,
+    );
+    assert!(faults.disarm(), "the fault fired");
+    let document = json_of(&response);
+    assert_eq!(
+        (response.status, document["code"].as_str()),
+        (500, Some("host.error")),
+        "{document}"
+    );
+    let incident = document["incidentId"].as_str().unwrap().to_owned();
+    assert!(incident.starts_with("inc-"), "{incident}");
+    assert!(
+        !response.body.contains("injected fault"),
+        "{}",
+        response.body
+    );
+    let logged = norn_cell_do::incident::recent();
+    let line = logged
+        .iter()
+        .find(|line| line.contains(&incident))
+        .unwrap_or_else(|| panic!("no log line for {incident}: {logged:?}"));
+    assert!(line.contains("host.error"), "{line}");
+    assert!(line.contains("injected fault"), "{line}");
+    // A refusal that is not internal carries no incident and logs nothing.
+    let before = norn_cell_do::incident::recent().len();
+    let denied = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &query(&scope),
+        None,
+        install,
+    );
+    assert!(
+        json_of(&denied).get("incidentId").is_none(),
+        "{}",
+        denied.body
+    );
+    assert_eq!(norn_cell_do::incident::recent().len(), before);
+}

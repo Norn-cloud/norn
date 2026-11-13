@@ -590,12 +590,23 @@ fn relationship_and_context_conditions_never_permit() {
 /// A call the policy grants still reads only what its caller may read: an
 /// action whose precondition slice reads an existing melt is refused to a
 /// viewer (the policy grants the call, but a viewer holds no Values grant on
-/// `constitution.Melt`) with the one opaque denial, and nothing commits.
+/// `constitution.Melt`) with the one opaque denial, and nothing commits; the
+/// same grant commits for a member, who holds Values.
 #[test]
 fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     const RECHECK: &str = "constitution.melt.recheck";
     let directory = tempfile::tempdir().unwrap();
     let mut artifacts = melt(Some(&access()));
+    // The melt records which earlier melt it rechecks (`of`), so the stored
+    // input fits the type and a granted call commits (the positive control).
+    for artifact in &mut artifacts {
+        if artifact["artifactId"] == "constitution.Melt.entity" {
+            artifact["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "id": "of", "type": { "kind": "text" }, "default": "" }));
+        }
+    }
     let mut recheck = artifacts
         .iter()
         .find(|artifact| artifact["kind"] == "action")
@@ -616,7 +627,7 @@ fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     let mut readers = rules["payload"]["rules"][0].clone();
     readers["ruleId"] = json!("readers");
     readers["actions"] = json!([RECHECK]);
-    readers["allOf"] = json!([{ "role": { "anyOf": ["viewer"] } }]);
+    readers["allOf"] = json!([{ "role": { "anyOf": ["viewer", "member"] } }]);
     rules["payload"]["rules"]
         .as_array_mut()
         .unwrap()
@@ -644,6 +655,11 @@ fn a_call_reads_its_slice_only_with_the_callers_read_grant() {
     let denied = denial(&mut cell);
     assert_eq!(recheck(&mut cell, "viewer", "v"), denied);
     assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+    // The positive control: the same grant commits for a member, who holds
+    // Values on `constitution.Melt`. Without the `readers` rule it would not.
+    let member = recheck(&mut cell, "member", "m");
+    assert_eq!(member.status, 200, "{}", member.body);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(2));
 }
 
 /// A referenced policy that does not compile leaves the cell serving no
@@ -671,4 +687,398 @@ fn a_policy_compile_failure_is_reported_to_the_operator() {
         "{reason:?}"
     );
     assert!(!denied.body.contains(reason.as_deref().unwrap_or_default()));
+}
+
+/// A dashboard tile's question, as Studio saves one: any `QuestionIR`.
+fn tile_question() -> Value {
+    let mut question: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/metrics/sales-by-store-day.question.json"
+    ))
+    .unwrap();
+    question["objectSet"] = json!(MELT);
+    question
+}
+
+/// A tenant cell keys receipt handles with the stage's lineage key but
+/// publishes no questions: an admin's dashboard with a question tile, or a
+/// saved question, is refused with the base's 422 finding
+/// `definition.question_unavailable`, never an authorization denial
+/// (#1297 r2 B1).
+#[test]
+fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
+    let directory = tempfile::tempdir().unwrap();
+    // A concept with no additive amount derives no metric: the cell publishes
+    // no questions, and its receipt handles answer none.
+    let note = json!({
+        "irVersion": "0.1", "artifactId": "shop.Note.entity", "kind": "entity",
+        "namespace": "shop", "name": "Note", "version": "0.1.0", "lifecycle": "active",
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "dependencies": [], "provenance": { "source": "system", "sourcePath": "tests/tenant_actions.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": { "name": "shop.Note", "properties": [
+            { "id": "text", "type": { "kind": "text" } }
+        ] } }
+    });
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &[note]);
+    let metrics = cell.call("GET", "/v1/questions:metrics", Some(&user("admin")), "");
+    assert!(!metrics.body.contains("shop.Note"), "{}", metrics.body);
+    let dashboard = json!({ "kind": "dashboard", "id": "studio.dashboard.melts", "payload": {
+        "title": "Melts", "tiles": [{ "id": "t1", "title": "Loss", "question": tile_question(),
+            "view": { "kind": "chart", "chart": "line" }, "layout": { "x": 0, "y": 0, "w": 6, "h": 4 } }] } });
+    let question =
+        json!({ "kind": "question", "id": "studio.question.loss", "payload": tile_question() });
+    for (case, body) in [("dashboard", &dashboard), ("question", &question)] {
+        for path in ["/v1/definitions:admit", "/v1/definitions:install"] {
+            let response = cell.call("POST", path, Some(&user("admin")), &body.to_string());
+            let document: Value = serde_json::from_str(&response.body).unwrap();
+            let codes: Vec<&str> = document["diagnostics"]
+                .as_array()
+                .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
+                .unwrap_or_default();
+            // `:admit` reports its findings (200, not admitted); `:install`
+            // refuses with them (422).
+            let expected = if path.ends_with(":admit") { 200 } else { 422 };
+            assert_eq!(response.status, expected, "{case} {path}: {document}");
+            assert_ne!(
+                document["admitted"],
+                json!(true),
+                "{case} {path}: {document}"
+            );
+            assert_eq!(
+                codes,
+                vec!["definition.question_unavailable"],
+                "{case} {path}: {document}"
+            );
+        }
+    }
+}
+
+/// `GET /v1/access` on a provisioned tenant cell answers every role the
+/// table grants: the kernel's call records (admin and owner only) are not
+/// among the collections it decides over (#1297 r2 B2).
+#[test]
+fn every_role_reads_its_access_on_a_tenant_cell() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    for (who, auth, values) in [
+        ("viewer", user("viewer"), false),
+        ("member", user("member"), true),
+        ("service member", token("service", "org_a", "member"), true),
+        ("service viewer", token("service", "org_a", "viewer"), false),
+        ("admin", user("admin"), true),
+        ("owner", user("owner"), true),
+    ] {
+        let response = cell.call("GET", "/v1/access", Some(&auth), "");
+        assert_eq!(response.status, 200, "{who}: {}", response.body);
+        let document: Value = serde_json::from_str(&response.body).unwrap();
+        let decision = |name: &str| document["capabilities"][name]["decision"].clone();
+        assert_eq!(decision("population"), json!("permit"), "{who}: {document}");
+        let expected = if values { "permit" } else { "deny" };
+        assert_eq!(decision("values"), json!(expected), "{who}: {document}");
+    }
+}
+
+/// A flow install adds its run type to a live tenant cell, and the read
+/// rules and `/v1/access` follow at once, with no restart (#1297 r2 S2).
+#[test]
+fn a_flow_install_is_readable_without_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    let runs = "/v1/objects/ops.ApproveRefundRun";
+    assert_ne!(cell.call("GET", runs, Some(&user("admin")), "").status, 200);
+    install_flow(&mut cell);
+    let after = cell.call("GET", runs, Some(&user("admin")), "");
+    assert_eq!(after.status, 200, "{}", after.body);
+    // The admin's grants now hold over the new collection too.
+    let access = cell.call("GET", "/v1/access", Some(&user("admin")), "");
+    assert_eq!(access.status, 200, "{}", access.body);
+    let document: Value = serde_json::from_str(&access.body).unwrap();
+    assert_eq!(
+        document["capabilities"]["values"]["decision"],
+        json!("permit"),
+        "{document}"
+    );
+}
+
+/// A `resource` condition never permits on a tenant cell: the host compiles
+/// policies without `EntityIR` projection metadata, so the policy does not
+/// compile (`authz.access.projection_required`), the cell serves no action
+/// (even to the admin the rule's role names), nothing commits, and the
+/// operator is told why.
+#[test]
+fn a_resource_condition_never_permits() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut artifacts = melt(Some(&access()));
+    let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    gated["payload"]["rules"][0]["allOf"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "resource": { "name": "id", "op": "eq", "value": "m" } }));
+    artifacts.push(gated);
+    let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
+    assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "m"), denied);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
+    let reason = cell.tenant.action_policy_error().unwrap_or_default();
+    assert!(
+        reason.contains("authz.access.projection_required"),
+        "{reason}"
+    );
+}
+
+/// A tenant concept that derives metrics: additive amounts at a timestamp.
+fn sale() -> Value {
+    json!({
+        "irVersion": "0.1", "artifactId": "shop.Sale.entity", "kind": "entity",
+        "namespace": "shop", "name": "Sale", "version": "0.1.0", "lifecycle": "active",
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "dependencies": [], "provenance": { "source": "system", "sourcePath": "tests/tenant_actions.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": { "name": "shop.Sale", "properties": [
+            { "id": "amount", "type": { "kind": "decimal", "scale": 2, "additivity": { "kind": "additive" } } },
+            { "id": "occurred_at", "type": { "kind": "timestamp", "timezone": "utc" } }
+        ] } }
+    })
+}
+
+/// A question over `metric` on `shop.Sale`, by week, as Studio saves one.
+fn sale_question(metric: &str) -> Value {
+    let mut question = tile_question();
+    let fields = question.as_object_mut().unwrap();
+    fields.remove("compare");
+    fields.remove("filter");
+    fields.insert("name".into(), json!("studio.tile.sales"));
+    fields.insert("objectSet".into(), json!("shop.Sale"));
+    fields.insert("aggregate".into(), json!([{ "metric": metric }]));
+    fields.insert(
+        "groupBy".into(),
+        json!([{ "path": { "property": "occurred_at" }, "grain": "week" }]),
+    );
+    fields.insert(
+        "window".into(),
+        json!({ "start": "2026-01-05T00:00:00Z", "end": "2026-12-28T00:00:00Z" }),
+    );
+    fields.insert(
+        "freshness".into(),
+        json!({ "kind": "live", "maxAgeMs": 5000 }),
+    );
+    question
+}
+
+fn tile(question: &Value) -> Value {
+    json!({ "kind": "dashboard", "id": "studio.dashboard.sales", "payload": {
+        "title": "Sales", "tiles": [{ "id": "t1", "title": "Sales", "question": question,
+            "view": { "kind": "chart", "chart": "line" }, "layout": { "x": 0, "y": 0, "w": 6, "h": 4 } }] } })
+}
+
+/// On a tenant cell that derives metrics (the alpha's case): a member's
+/// question over one answers 200, and an admin's dashboard with that question
+/// as a tile installs; a tile naming a metric the cell does not derive is the
+/// checker's 422 finding, never an authorization refusal (#1297 r3, merged
+/// with the derived-question runtime).
+#[test]
+fn a_tenant_cell_answers_and_installs_its_derived_questions() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("q.sqlite"), &[sale()]);
+    let listed = cell.call("GET", "/v1/questions:metrics", Some(&user("member")), "");
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let listed: Value = serde_json::from_str(&listed.body).unwrap();
+    let metric = listed["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|metric| metric["objectType"] == "shop.Sale" && metric["expression"] == "amount")
+        .and_then(|metric| metric["name"].as_str())
+        .unwrap_or_else(|| panic!("no derived amount metric: {listed}"))
+        .to_owned();
+    let question = sale_question(&metric);
+    let answered = cell.call(
+        "POST",
+        "/v1/questions:evaluate",
+        Some(&user("member")),
+        &json!({ "question": question }).to_string(),
+    );
+    assert_eq!(answered.status, 200, "{}", answered.body);
+    let installed = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&user("admin")),
+        &tile(&question).to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    let unknown = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&user("admin")),
+        &tile(&sale_question("shop.no_such_metric")).to_string(),
+    );
+    let document: Value = serde_json::from_str(&unknown.body).unwrap();
+    assert_eq!(unknown.status, 422, "{document}");
+    let codes: Vec<&str> = document["diagnostics"]
+        .as_array()
+        .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        codes,
+        vec!["metric.validation.unknown_metric"],
+        "{document}"
+    );
+}
+
+/// A caller nobody verified cannot tell a vacant scope from a provisioned
+/// tenant that derives metrics and answers questions on the analytics engine
+/// (the alpha's case: a live question runtime): every route answers the same
+/// status and bytes (#1297 r1 B1, on the merged tree).
+#[test]
+fn outsiders_cannot_tell_a_vacant_scope_from_a_tenant_with_live_questions() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(&directory.path().join("served.sqlite"), &[sale()]);
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    served.tenant.enable_analytics();
+    vacant.tenant.enable_analytics();
+    assert!(served.tenant.is_provisioned() && !vacant.tenant.is_provisioned());
+    let question = json!({ "question": sale_question("shop.amount") }).to_string();
+    let outsiders: [Option<String>; 5] = [
+        None,
+        Some(token("user", "org_b", "owner")),
+        Some(token("service", "org_b", "member")),
+        Some("Bearer nonsense".to_owned()),
+        Some("Basic b3duZXI6b3duZXI=".to_owned()),
+    ];
+    let mut compared = 0;
+    for query in [
+        QUERY,
+        "",
+        "orgId=org_z&environmentId=prod",
+        "orgId=org_a&environmentId=prod&unknown=1",
+    ] {
+        for (method, path, body) in [
+            ("GET", "/v1/questions:metrics", ""),
+            ("POST", "/v1/questions:evaluate", question.as_str()),
+            ("POST", "/v1/questions:trace", question.as_str()),
+            ("GET", "/v1/questions/q/answer", ""),
+            ("GET", "/v1/questions/q/trace", ""),
+            ("GET", "/v1/objects/shop.Sale", ""),
+            ("GET", "/v1/objects/shop.Sale:profile", ""),
+            (
+                "POST",
+                "/v1/definitions:install",
+                &tile(&sale_question("shop.amount")).to_string(),
+            ),
+            ("POST", "/v1/definitions:admit", "{}"),
+            ("GET", "/v1/definitions", ""),
+            ("POST", "/v1/actions/shop.anything", "{}"),
+            ("GET", "/v1/access", ""),
+        ] {
+            for outsider in &outsiders {
+                let request = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method,
+                            path,
+                            query,
+                            authorization: outsider.as_deref(),
+                            now: NOW,
+                            body,
+                        },
+                    )
+                };
+                let (at_served, at_vacant) = (request(&mut served), request(&mut vacant));
+                assert_eq!(
+                    at_served, at_vacant,
+                    "{method} {path}?{query} as {outsider:?}"
+                );
+                assert_ne!(
+                    at_served.status, 200,
+                    "{method} {path}?{query} as {outsider:?}"
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared >= 200, "{compared}");
+}
+
+/// D84: a tenant cell publishes no questions, so a named question is the
+/// base's 404 `question.not_found` on a vacant scope and a provisioned one
+/// alike, for every caller and with any query (#1297 r3 should 1).
+#[test]
+fn a_named_question_is_not_found_on_vacant_and_provisioned_cells_alike() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(
+        &directory.path().join("served.sqlite"),
+        &with_policy(&["admin"]),
+    );
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    for path in ["/v1/questions/q/answer", "/v1/questions/q/trace"] {
+        for query in [QUERY, "orgId=org_a&environmentId=prod&unknown=1"] {
+            for auth in [None, Some(user("admin")), Some(user("viewer"))] {
+                let ask = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method: "GET",
+                            path,
+                            query,
+                            authorization: auth.as_deref(),
+                            now: NOW,
+                            body: "",
+                        },
+                    )
+                };
+                let at_served = ask(&mut served);
+                let document: Value = serde_json::from_str(&at_served.body).unwrap();
+                assert_eq!(
+                    (at_served.status, document["code"].as_str()),
+                    (404, Some("question.not_found")),
+                    "{path}?{query} as {auth:?}"
+                );
+                if auth.is_none() {
+                    assert_eq!(at_served, ask(&mut vacant), "{path}?{query}");
+                }
+            }
+        }
+    }
+}
+
+/// D84: a tenant cell publishes no questions, so an ad-hoc question is the
+/// base's 403 whatever its body (malformed included), on a vacant scope and
+/// a provisioned one alike (#1297 r4 should 1).
+#[test]
+fn an_ad_hoc_question_is_the_base_refusal_on_a_tenant_cell() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(
+        &directory.path().join("served.sqlite"),
+        &with_policy(&["admin"]),
+    );
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    for path in ["/v1/questions:evaluate", "/v1/questions:trace"] {
+        for body in ["not json", "{}", r#"{"question":{"name":"q"}}"#] {
+            for auth in [None, Some(user("admin")), Some(user("viewer"))] {
+                let ask = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method: "POST",
+                            path,
+                            query: QUERY,
+                            authorization: auth.as_deref(),
+                            now: NOW,
+                            body,
+                        },
+                    )
+                };
+                let at_served = ask(&mut served);
+                let document: Value = serde_json::from_str(&at_served.body).unwrap();
+                assert_eq!(
+                    (at_served.status, document["code"].as_str()),
+                    (403, Some("authz.denied")),
+                    "{path} {body} as {auth:?}"
+                );
+                if auth.is_none() {
+                    assert_eq!(at_served, ask(&mut vacant), "{path} {body}");
+                }
+            }
+        }
+    }
 }

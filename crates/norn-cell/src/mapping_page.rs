@@ -174,6 +174,36 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(bundle)
     }
 
+    /// The ids of a pending page's members that are still pending, in page
+    /// order, read without decoding any row; `None` when the page itself is
+    /// not pending. The commit guard compares them with the bundles applied.
+    pub(crate) fn pending_page_member_ids(
+        &self,
+        page: &str,
+    ) -> Result<Option<Vec<String>>, CellError> {
+        let inbox = crate::system::INBOX;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT p.\"observation_id\", m.\"observation_id\" FROM \"{inbox}\" p \
+                 LEFT JOIN json_each(p.\"observed\", '$.input.members') AS listed \
+                 LEFT JOIN \"{inbox}\" m ON m.\"observation_id\" = listed.value AND m.\"consumed_commit_seq\" IS NULL \
+                 WHERE p.\"observation_id\" = ?1 AND p.\"consumed_commit_seq\" IS NULL ORDER BY listed.key"
+            ),
+            crate::engine::params![page],
+        )?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let mut ids = Vec::new();
+        for row in rows {
+            let row = crate::engine::SqlRow(row);
+            if let Some(id) = row.get::<Option<String>>(1)? {
+                ids.push(id);
+            }
+        }
+        Ok(Some(ids))
+    }
+
     /// A pending page's members that are still pending, in page order, with
     /// their bundles. Members consumed earlier (one by one, or by another
     /// page) are skipped: each record is consumed once.

@@ -5,10 +5,15 @@
 Reads a bearer token on stdin (so it stays out of the process list), then
 POSTs each file made by `generate.py` (or any recorded export of that shape)
 to `BASE_URL/v1/observations:load?orgId=...&environmentId=...` in slices, in
-file order: at most 500 snapshot rows and 60 KiB of request body (the hosted
-Worker accepts request bodies up to 64 KiB). Each slice is captured and mapped
-by the cell in OBS-PAGE-1 pages; a row the mapping refuses stays in the
-cell as quarantined evidence. Loading a file again lands nothing new.
+file order. Each slice is sized from the time per row measured on the slices
+before it, to take about TARGET_SECONDS (3 s; NORN_LOAD_TARGET_SECONDS), and
+stays within what one load may carry: 100 rows, 8 page commits (a row that
+repeats a record already in its page starts the next commit, as a record's
+history does) and 60 KiB of request body (the hosted Worker's bound is
+64 KiB). A slice the cell still refuses as too large is halved and retried.
+Each slice is captured and mapped by the cell in OBS-PAGE-1 pages; a row the
+mapping refuses stays in the cell as quarantined evidence. Loading a file
+again lands nothing new.
 
 Prints one JSON line per file (rows, landed, already landed, quarantined
 with reasons, and wall time) and a total line. Exits 1 if any slice is
@@ -23,10 +28,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# NORN_LOAD_SLICE_ROWS lowers the rows per request (default 500), for a host
-# whose per-request time bound a slice of slow rows would exceed.
-SLICE_ROWS = int(os.environ.get("NORN_LOAD_SLICE_ROWS", "500"))
-SLICE_BYTES = 60 * 1024
+MAX_ROWS = 100
+MAX_COMMITS = 8
+MAX_BYTES = 60 * 1024
+TARGET_SECONDS = float(os.environ.get("NORN_LOAD_TARGET_SECONDS", "3"))
+
+
+class TooLarge(Exception):
+    """The cell refused a slice as larger than one load may be."""
 
 
 def post(url: str, token: str, body: dict) -> dict:
@@ -40,23 +49,33 @@ def post(url: str, token: str, body: dict) -> dict:
         with urllib.request.urlopen(request, timeout=600) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        sys.exit(f"{url}: {error.code} {error.read().decode(errors='replace')[:500]}")
+        detail = error.read().decode(errors="replace")[:500]
+        if error.code == 413 and "observations.too_large" in detail:
+            raise TooLarge(detail) from None
+        sys.exit(f"{url}: {error.code} {detail}")
 
 
-def slices(header: dict, rows: list) -> list:
-    """Consecutive rows, at most SLICE_ROWS and SLICE_BYTES of body each."""
-    out, current, size = [], [], len(json.dumps({**header, "snapshot": []}))
-    base = size
-    for row in rows:
-        width = len(json.dumps(row)) + 2
-        if current and (len(current) >= SLICE_ROWS or size + width > SLICE_BYTES):
-            out.append(current)
-            current, size = [], base
-        current.append(row)
-        size += width
-    if current:
-        out.append(current)
-    return out
+def identity(row: dict):
+    record = row.get("record", {})
+    return record.get("id", record.get("name"))
+
+
+def take(header: dict, rows: list, start: int, limit: int) -> int:
+    """How many rows from `start` the next slice carries: at most `limit`
+    rows, MAX_COMMITS page commits and MAX_BYTES of body."""
+    size = len(json.dumps({**header, "snapshot": []}))
+    commits, dataset, seen, count = 0, None, set(), 0
+    for row in rows[start : start + min(limit, MAX_ROWS)]:
+        key = identity(row)
+        if row.get("dataset") != dataset or key in seen:
+            commits += 1
+            dataset, seen = row.get("dataset"), set()
+        seen.add(key)
+        size += len(json.dumps(row)) + 2
+        if count and (commits > MAX_COMMITS or size > MAX_BYTES):
+            break
+        count += 1
+    return max(count, 1)
 
 
 def main() -> None:
@@ -75,8 +94,21 @@ def main() -> None:
         counts = {"rows": 0, "landed": 0, "alreadyLanded": 0, "quarantined": 0}
         reasons: dict = {}
         started = time.monotonic()
-        for page in slices(header, rows):
-            answer = post(url, token, {**header, "snapshot": page})
+        start, limit = 0, 16
+        while start < len(rows):
+            count = take(header, rows, start, limit)
+            begun = time.monotonic()
+            try:
+                answer = post(url, token, {**header, "snapshot": rows[start : start + count]})
+            except TooLarge:
+                if count == 1:
+                    sys.exit(f"{name}: the cell refuses even a one-row load")
+                limit = max(1, count // 2)
+                continue
+            spent = max(time.monotonic() - begun, 0.001)
+            # Size the next slice from this one's time per row.
+            limit = max(1, min(MAX_ROWS, int(count * TARGET_SECONDS / spent)))
+            start += count
             for key in counts:
                 counts[key] += answer[key]
             for code, n in answer.get("quarantineReasons", {}).items():

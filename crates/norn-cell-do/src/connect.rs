@@ -19,8 +19,9 @@
 //! - `/v1/uploads:read`: `{"uri"}` or `{"uploadId"}` → a short-lived signed
 //!   `GET` of an object under a prefix this cell writes.
 //! - `/v1/observations:load`: a slice of a recorded export
-//!   ([`crate::recorded`], at most 500 rows) through the admitted mappings, in
-//!   OBS-PAGE-1 pages → counts of the rows' outcomes.
+//!   ([`crate::recorded`], at most 100 rows and 8 page commits) through the
+//!   admitted mappings, in OBS-PAGE-1 pages → counts of the rows' outcomes;
+//!   a larger slice is refused 413 `observations.too_large`.
 //!
 //! CONNECT-AUTH-1: every route is decided by the cell's policy as
 //! `Operation::SyncSource` before anything else; a denied caller, or a scope
@@ -146,10 +147,7 @@ fn refused(status: u16, code: &str, message: &str) -> Response {
         message,
         message,
     );
-    Response {
-        status: refusal.status,
-        body: serde_json::to_string(&refusal).unwrap_or_else(|_e| String::from("{}")),
-    }
+    crate::incident::respond(refusal)
 }
 
 /// An upload id the cell can check without remembering it:
@@ -864,18 +862,20 @@ impl Connect {
     }
 }
 
-/// The most rows one load carries; the host maps them in pages.
-const MAX_LOAD_ROWS: usize = 500;
+/// The most rows one load carries, and the most page commits it may make (a
+/// row repeating a record already in its page starts the next commit, as a
+/// record's history does). A load runs inside one cell call; on the hosted
+/// cell a commit costs about 0.8 s and a row about 0.1 s, so these keep a load
+/// to roughly 15 s at most, and a client sizes its loads well under them.
+const MAX_LOAD_ROWS: usize = 100;
+const MAX_LOAD_COMMITS: usize = 8;
 
 /// `POST /v1/observations:load`: one page of a recorded export, captured and
 /// mapped through the cell's admitted mappings exactly as a source sync's
 /// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
 /// refuses stays in the inbox as quarantined evidence, with its reasons.
 fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
-    let answer = |refusal: &Refusal| Response {
-        status: refusal.status,
-        body: serde_json::to_string(refusal).unwrap_or_default(),
-    };
+    let answer = |refusal: &Refusal| crate::incident::respond(refusal.clone());
     let recorded = match serde_json::from_str::<Value>(body)
         .map_err(|error| error.to_string())
         .and_then(|document| crate::recorded::Recorded::parse(&document))
@@ -883,10 +883,8 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         Ok(recorded) => recorded,
         Err(error) => return answer(&Refusal::invalid(error)),
     };
-    if recorded.rows.is_empty() || recorded.rows.len() > MAX_LOAD_ROWS {
-        return answer(&Refusal::invalid(format!(
-            "a load carries 1 to {MAX_LOAD_ROWS} rows; send a longer export in slices"
-        )));
+    if recorded.rows.is_empty() {
+        return answer(&Refusal::invalid("a load carries at least one row"));
     }
     // A mapping this cell has not admitted refuses before anything is
     // captured, naming the mapping (not a host failure).
@@ -904,6 +902,17 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         Ok(rows) => rows,
         Err(error) => return answer(&Refusal::invalid(error)),
     };
+    let commits = norn_api::host::page_count(&rows);
+    if rows.len() > MAX_LOAD_ROWS || commits > MAX_LOAD_COMMITS {
+        return refused(
+            413,
+            "observations.too_large",
+            &format!(
+                "a load carries at most {MAX_LOAD_ROWS} rows and {MAX_LOAD_COMMITS} commits (this one: {} rows, {commits} commits); send it in smaller slices",
+                rows.len()
+            ),
+        );
+    }
     let ingested = match host.ingest(&rows) {
         Ok(ingested) => ingested,
         Err(refusal) => return answer(&refusal),

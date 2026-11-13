@@ -258,25 +258,19 @@ impl<E: SqlEngine> DevHost<E> {
             .active_definitions()
             .map_err(|r| r.message)?
             .ok_or("the cell has no definitions to extend")?;
-        let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
-        let ours: std::collections::BTreeSet<&str> =
-            added.iter().map(|a| a.artifact_id.as_str()).collect();
-        let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
-            crate::kernel_set::retained_artifacts(&active.canonical_set)?
-                .into_iter()
-                .filter(|a| !ours.contains(a.artifact_id.as_str()))
-                .collect();
-        artifacts.extend(added.iter().cloned());
-        let admitted = crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(
-            |refusal| match refusal {
-                crate::kernel_set::KernelRefusal::Refused(findings) => findings
-                    .iter()
-                    .map(|f| format!("{}: {}", f.code, f.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
-            },
-        )?;
+        let admitted = crate::kernel_set::admit_over(
+            &active.canonical_set,
+            active.admission_receipt.as_deref(),
+            added,
+        )
+        .map_err(|refusal| match refusal {
+            crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                .iter()
+                .map(|f| format!("{}: {}", f.code, f.message))
+                .collect::<Vec<_>>()
+                .join("; "),
+            crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+        })?;
         // The model this cell reopens under (DEFS-REOPEN-1), by its kind.
         let serving = serves_actions(self.cell().map_err(|r| r.explanation)?.store().model());
         let model = reopen_model(&admitted.canonical_set, serving).map_err(|r| r.explanation)?;
@@ -368,6 +362,19 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The active definitions version alone (no set is read), or `None` for
+    /// a cell with nothing installed: cheap enough to check per request.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn active_definitions_version(&self) -> Result<Option<u64>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .active_definitions_version()
+            .map_err(Refusal::host)
+    }
+
     /// The active definitions revision, read under the definition epoch, or
     /// `None` for a cell with nothing installed. Never writes.
     /// # Errors
@@ -441,6 +448,18 @@ impl<E: SqlEngine> DevHost<E> {
 
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
 pub const PAGE_ROWS: usize = 500;
+
+/// How many OBS-PAGE-1 pages (one commit each) [`DevHost::ingest`] makes of
+/// `rows`, before any canonical-object split inside a page.
+#[must_use]
+pub fn page_count(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> usize {
+    pages(rows).len()
+}
 
 /// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
 /// [`PAGE_ROWS`] and before a source record the page already carries.
