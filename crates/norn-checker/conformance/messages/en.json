@@ -1121,6 +1121,9 @@
     "mapping.model.lifecycle_member": {
       "message": "{$property} of {$objectType}: a lifecycle property changes only through a lifecycle rule"
     },
+    "mapping.model.link_claim_type_missing": {
+      "message": "map {$map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base"
+    },
     "mapping.model.link_target_mismatch": {
       "message": "link {$link} of {$objectType} targets {$target}, which does not admit {$produced}"
     },

@@ -288,34 +288,79 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         let scope = context.scope.clone();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &scope))?;
         let prepared = store.analytics_prepare(plan, context, &self.tenant)?;
-        let response = if admitted {
-            evaluate_on(store, self.transport, &self.tenant, &prepared.request)?
+        let response = self.respond(store, &prepared, admitted)?;
+        let mut result = store.analytics_answer(prepared, response)?;
+        finish_answer(store, plan, &mut result, None, visible)?;
+        Ok(result)
+    }
+    /// ASOF-KNOWLEDGE-1 on the engine: the answer as known at `cutoff`, from
+    /// the mirror at the cutoff's frontier, in the exact engine's historical
+    /// envelope; gated as a current answer is.
+    fn evaluate_known_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: norn_cell::KnowledgeCutoff,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
+        let grain = plan.grain().as_str().to_owned();
+        let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
+        let prepared = store.analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?;
+        let response = self.respond(store, &prepared, admitted)?;
+        let mut answer = store.analytics_answer_known_at(prepared, response)?;
+        finish_answer(store, plan, &mut answer.result, Some(cutoff), visible)?;
+        Ok(answer)
+    }
+}
+
+impl<E: SqlEngine> EngineQuestions<'_, E> {
+    /// The engine's answer to `prepared`, or none when the caller may not
+    /// count the grain's rows.
+    fn respond(
+        &self,
+        store: &CellStore<E>,
+        prepared: &norn_cell::analytics::Prepared,
+        admitted: bool,
+    ) -> Result<EvaluateResponse, CellError> {
+        if admitted {
+            evaluate_on(store, self.transport, &self.tenant, &prepared.request)
         } else {
-            EvaluateResponse {
+            Ok(EvaluateResponse {
                 population: 0,
                 excluded: Vec::new(),
                 buckets: Vec::new(),
                 unlinked: 0,
-            }
-        };
-        let mut result = store.analytics_answer(prepared, response)?;
-        for row in result.rows.values() {
-            for id in row.members.keys() {
-                if !visible(&gate_record(&grain, id, &scope))? {
-                    return Err(CellError::ComputeRefused(UNSUPPORTED_ENGINE));
-                }
+            })
+        }
+    }
+}
+
+/// Gate each listed member, then count disputed members (SOURCE-AGREE-1) with
+/// the exact engine's own function, at the answer's cutoff when it has one.
+fn finish_answer<E: SqlEngine>(
+    store: &CellStore<E>,
+    plan: &QuestionPlan,
+    result: &mut QueryResult,
+    cutoff: Option<norn_cell::KnowledgeCutoff>,
+    visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+) -> Result<(), CellError> {
+    let grain = plan.grain().as_str();
+    let scope = result.context.scope.clone();
+    for row in result.rows.values() {
+        for id in row.members.keys() {
+            if !visible(&gate_record(grain, id, &scope))? {
+                return Err(CellError::ComputeRefused(UNSUPPORTED_ENGINE));
             }
         }
-        // SOURCE-AGREE-1: the host counts disputed members after the engine,
-        // with the exact engine's own function, so both answers agree.
-        result.source_disagreements = store.answer_source_disagreements(
-            plan,
-            &result.context.clone(),
-            result.known_as_of,
-            visible,
-        )?;
-        Ok(result)
     }
+    result.source_disagreements = store.answer_source_disagreements(
+        plan,
+        &result.context.clone(),
+        (result.known_as_of, cutoff),
+        visible,
+    )?;
+    Ok(())
 }
 
 impl<E: SqlEngine> AdHocQuestions<E> for EngineQuestions<'_, E> {
