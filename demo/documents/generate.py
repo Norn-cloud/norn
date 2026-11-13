@@ -52,6 +52,8 @@ REPORTS = range(101, 141)        # RPT-0101..RPT-0140, all through the legacy OC
 SEEDED_ERRORS = [
     {"document": "SCAN-INV-0042", "field": "total", "printed": "72.00", "imported": "720",
      "why": "dropped decimal point; the printed lines 30.00 + 40.00 + 2.00 contradict it (LAW A)"},
+    {"document": "SCAN-INV-0043", "field": "total", "printed": "72.00", "imported": "720", "lines": {"1": "720"},
+     "why": "dropped decimal point on the only line and the total: they agree, so LAW A holds; the booked journal entry JE-0043 says 72.00 (LAW B)"},
     {"document": "SCAN-RPT-0117", "field": "total", "printed": "72.0", "imported": "720",
      "why": "dropped decimal point on a report that prints no lines: no law applies; the profile flags it"},
 ]
@@ -117,6 +119,8 @@ def invoice(number: int, rng: random.Random, start: date) -> dict:
     lines = [(rng.choice(ITEMS), money(rng, 4, 60)) for _ in range(rng.randint(1, 4))]
     if number == 42:
         lines = [("Gift boxes", Decimal("30.00")), ("Tissue paper", Decimal("40.00")), ("Courier fee", Decimal("2.00"))]
+    elif number == 43:
+        lines = [("Freight", Decimal("72.00"))]
     total = sum((amount for _, amount in lines), Decimal("0.00"))
     return {"id": f"SCAN-INV-{number:04d}", "doc_number": f"INV-{number:04d}", "kind": "invoice",
             "vendor": VENDORS[(number * 3) % len(VENDORS)], "issued_on": (start + timedelta(days=number * 3)).isoformat(),
@@ -189,17 +193,21 @@ def number(value: Decimal | str) -> str:
     return f"__D__{value}"
 
 
-def rows(doc: dict, boxes: dict, uri: str, digest: str, extractor: str, version: str, rng: random.Random, total: str) -> dict:
-    """One extracted row in the `docs.scans.source` shape."""
+def rows(doc: dict, boxes: dict, uri: str, digest: str, extractor: str, version: str, rng: random.Random, total: str,
+         imported_lines: dict | None = None) -> dict:
+    """One extracted row in the `docs.scans.source` shape; `imported_lines`
+    replaces line amounts (by line number) the way a misread would."""
+    imported_lines = imported_lines or {}
     def evidence(field, text):
         x, y, w, h = boxes[field]
         return {"name": f"{doc['id']}~{field}", "parent": doc["id"], "field": field, "document_uri": uri,
                 "document_digest": digest, "media_type": "image/png", "page": 1,
                 "bbox_x": number(f"{x:.4f}"), "bbox_y": number(f"{y:.4f}"), "bbox_w": number(f"{w:.4f}"), "bbox_h": number(f"{h:.4f}"),
                 "text": text, "extractor": extractor, "extractor_version": version, "confidence_bp": rng.randint(8600, 9800)}
+    read = [imported_lines.get(str(index), f"{amount:.2f}") for index, (_, amount) in enumerate(doc["lines"], 1)]
     lines = [{"name": f"{doc['id']}~line-{index}", "parent": doc["id"], "line_no": index, "description": description,
-              "amount": number(f"{amount:.2f}")} for index, (description, amount) in enumerate(doc["lines"], 1)]
-    evidences = [evidence("total", total)] + [evidence(f"lines.{index}.amount", f"{amount:.2f}") for index, (_, amount) in enumerate(doc["lines"], 1)]
+              "amount": number(text)} for index, ((description, _), text) in enumerate(zip(doc["lines"], read), 1)]
+    evidences = [evidence("total", total)] + [evidence(f"lines.{index}.amount", text) for index, text in enumerate(read, 1)]
     return {"name": doc["id"], "doc_number": doc["doc_number"], "kind": doc["kind"], "vendor": doc["vendor"],
             "issued_on": doc["issued_on"], "currency": "USD", "total": number(total), "line_count": len(doc["lines"]),
             "ledger_ref": doc["ledger_ref"], "document_uri": uri, "document_digest": digest, "media_type": "image/png",
@@ -241,12 +249,18 @@ def main() -> None:
             seeded = next((e for e in SEEDED_ERRORS if e["document"] == doc["id"]), None)
             total = seeded["imported"] if seeded else doc["total_text"]
             legacy.append(rows(doc, boxes, uri, digest, "legacy-ocr", "4.2 (synthetic export)",
-                               random.Random(f"{args.seed}/legacy/{doc['id']}"), total))
-    files = {"truth.json": dumps(truth), "legacy-ocr.rows.json": dumps({"rows": legacy})}
+                               random.Random(f"{args.seed}/legacy/{doc['id']}"), total,
+                               seeded.get("lines") if seeded else None))
+    # The ledger books every invoice at its printed total (LAW B's other side).
+    ledger = [{"name": doc["ledger_ref"], "entry_number": doc["ledger_ref"].rsplit("/", 1)[1], "account_code": "2100-AP",
+               "currency": "USD", "amount": number(doc["total_text"]),
+               "posted_on": (date.fromisoformat(doc["issued_on"]) + timedelta(days=2)).isoformat()}
+              for doc in docs if doc["ledger_ref"]]
+    files = {"truth.json": dumps(truth), "legacy-ocr.rows.json": dumps({"rows": legacy}), "ledger.rows.json": dumps({"rows": ledger})}
     for name, text in files.items():
         (out / name).write_text(text)
         digests[name] = hashlib.sha256(text.encode()).hexdigest()
-    manifest = {"seed": args.seed, "documents": len(docs), "legacyRows": len(legacy),
+    manifest = {"seed": args.seed, "documents": len(docs), "legacyRows": len(legacy), "ledgerRows": len(ledger),
                 "kinds": {kind: sum(d["kind"] == kind for d in docs) for kind in ("invoice", "receipt", "expense_report")},
                 "font": {"path": args.font, "sha256": hashlib.sha256(Path(args.font).read_bytes()).hexdigest()},
                 "uriPrefix": prefix, "seededErrors": SEEDED_ERRORS, "sha256": digests}

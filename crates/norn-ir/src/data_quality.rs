@@ -212,6 +212,8 @@ struct FindingDedupeIdentity {
     evidence_digest: Option<String>,
     outcome: DataQualityOutcome,
     provenance: Vec<FindingLineageIdentity>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    links: std::collections::BTreeMap<String, crate::FactRef>,
 }
 
 /// Stable lineage evidence included in a finding's dedupe key.
@@ -261,6 +263,12 @@ pub struct DataQualityFinding {
     pub last_seen: UtcTimestamp,
     /// Current state of the finding.
     pub status: DataQualityFindingStatus,
+    /// LAW-LINK-1: for a law that reads its subject's to-one links, the exact
+    /// version of each target it read, by link id (a link with no target is
+    /// absent), so the evaluation replays exactly. Empty for every other
+    /// finding, and then omitted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub links: std::collections::BTreeMap<String, crate::FactRef>,
 }
 
 impl DataQualityFinding {
@@ -312,9 +320,26 @@ impl DataQualityFinding {
             first_seen,
             last_seen,
             status,
+            links: std::collections::BTreeMap::new(),
         };
         finding.refresh_identity()?;
         Ok(finding)
+    }
+
+    /// LAW-LINK-1: pin the link targets the failing law read, and recompute
+    /// the finding identity (another target version is another finding).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CanonicalJsonError`] if the canonical identity cannot be
+    /// serialized.
+    pub fn with_links(
+        mut self,
+        links: std::collections::BTreeMap<String, crate::FactRef>,
+    ) -> Result<Self, CanonicalJsonError> {
+        self.links = links;
+        self.refresh_identity()?;
+        Ok(self)
     }
 
     /// Add a stable digest of the evidence values and recompute the finding
@@ -370,6 +395,7 @@ impl DataQualityFinding {
             evidence_digest: self.evidence_digest.clone(),
             outcome: self.outcome.clone(),
             provenance,
+            links: self.links.clone(),
         };
         domain_hash_hex(DATA_QUALITY_FINDING_DEDUPE_DOMAIN, &identity)
     }

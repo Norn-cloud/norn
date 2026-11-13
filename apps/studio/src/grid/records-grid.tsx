@@ -3,7 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
-import { CopyId } from "@/components/copy-id"
+import { CopyId, PathText } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -346,7 +346,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
       <SheetContent className="w-[min(32rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
         {row !== null && record !== undefined && <>
           <SheetHeader>
-            <SheetTitle>{nameOf(row)}</SheetTitle>
+            <SheetTitle className="[overflow-wrap:break-word]"><PathText value={nameOf(row)} /></SheetTitle>
             <SheetDescription className="flex items-center gap-2"><span>{concept.title}</span><CopyId value={record.id} /></SheetDescription>
           </SheetHeader>
           <div className="grid gap-4 px-4 pb-6">
