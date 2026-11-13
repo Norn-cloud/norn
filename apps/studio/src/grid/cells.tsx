@@ -1,11 +1,13 @@
+import { Link } from "@tanstack/react-router"
 import { Lock } from "lucide-react"
 import type { CSSProperties } from "react"
+import { FactProvenance } from "@/components/provenance"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
 import { member } from "../lib/exact.ts"
 import { factText } from "../lib/objects.ts"
 import { propertyWithheld, rowWithheld } from "../lib/records-query.ts"
-import type { ObjectRecord } from "../lib/transport.ts"
+import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
 /** One record as a page sent it, with that page's exact number texts. */
 export interface GridRow {
@@ -78,4 +80,33 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
     case "integer": return <span className="tabular-nums">{text}</span>
     default: return <span className="block max-w-80 truncate" title={text}>{text}</span>
   }
+}
+
+/** The way from a fact's card to the record's full lineage. */
+export function LineageLink({ objectType, id }: { readonly objectType: string; readonly id: string }) {
+  return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-sm font-medium underline-offset-4 hover:underline">Open the record's lineage</Link>
+}
+
+/**
+ * A typed cell whose value opens its provenance card: the same renderer, with the card one click
+ * away. Withheld and empty values have no card; a recorded page has no history to read.
+ */
+export function TracedCell({ field, row, live, lineage = null, variant = "glyph" }: {
+  readonly field: Field
+  readonly row: GridRow
+  readonly live: boolean
+  /** The record's lineage, when the page read it: a recorded snapshot's card is drawn from it. */
+  readonly lineage?: SourceLineage | null
+  readonly variant?: "inline" | "glyph"
+}) {
+  const value = row.record.values[field.id]
+  if (fieldWithheld(row, field) || value === null || value === undefined) return <Cell field={field} row={row} />
+  const { objectType, id, version } = row.record
+  const label = field.id.replaceAll("_", " ")
+  return (
+    <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={cellText(field, row)} lineage={lineage} live={live}
+      variant={variant} trace={<LineageLink objectType={objectType} id={id} />}>
+      <Cell field={field} row={row} />
+    </FactProvenance>
+  )
 }

@@ -173,6 +173,10 @@
   --color-node-border: var(--node-border);
   --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Density tiers: scan lists, read key/value rows, the focus inspector. */
+  --spacing-row-scan: 2rem;
+  --spacing-row-read: 1.75rem;
+  --spacing-inspector: 20rem;
   --text-meta: 0.8125rem;
   --text-panel: 0.9375rem;
   --text-section: 1.0625rem;
