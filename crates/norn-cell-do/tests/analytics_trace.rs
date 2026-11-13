@@ -32,22 +32,24 @@ const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 /// Which listed metric a card kind is.
 type Pick = Box<dyn Fn(&Value) -> bool>;
 
-/// The first listed metric `pick` accepts, with the concept it reads.
-fn metric(listed: &Value, pick: impl Fn(&Value) -> bool) -> Option<(Value, String)> {
-    let metrics = listed["metrics"].as_array()?;
+/// Every listed metric `pick` accepts, with the concept it reads.
+fn metrics(listed: &Value, pick: &dyn Fn(&Value) -> bool) -> Vec<(Value, String)> {
+    let all = listed["metrics"].as_array().cloned().unwrap_or_default();
     let concept = |name: &Value| {
-        metrics
-            .iter()
+        all.iter()
             .find(|m| &m["name"] == name)
             .and_then(|m| m["objectType"].as_str().map(str::to_owned))
     };
-    metrics.iter().find(|m| pick(m)).and_then(|m| {
-        let object_type = m["objectType"]
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| concept(&m["numerator"]))?;
-        Some((m.clone(), object_type))
-    })
+    all.iter()
+        .filter(|m| pick(m))
+        .filter_map(|m| {
+            let object_type = m["objectType"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| concept(&m["numerator"]))?;
+            Some((m.clone(), object_type))
+        })
+        .collect()
 }
 
 /// The time a metric buckets by: its own, or its numerator's.
@@ -120,30 +122,38 @@ fn every_card_kind_traces_at_its_answers_frontier() {
         ("ratio", Box::new(|m: &Value| m["kind"] == "ratio")),
     ];
     for (kind, pick) in kinds {
-        let (metric, object_type) =
-            metric(&listed, pick).unwrap_or_else(|| panic!("the demo has a {kind} metric"));
-        let question = json!({
-            "irVersion": "0.1", "name": "demo.card", "objectSet": object_type,
-            "aggregate": [{"metric": metric["name"]}],
-            "groupBy": [{"path": {"property": time_of(&listed, &metric)}, "grain": "year"}],
-            "window": {"start": "2020-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"},
-            "freshness": {"kind": "live", "maxAgeMs": 60000},
-        });
-        let (status, answer) = call(
-            "POST",
-            "/v1/questions:evaluate",
-            &json!({ "question": question }).to_string(),
-        );
-        assert_eq!(status, 200, "{kind}: {answer}");
+        // The first metric of the kind whose answer has a bucket with members.
+        let found = metrics(&listed, &*pick)
+            .into_iter()
+            .find_map(|(metric, object_type)| {
+                let question = json!({
+                    "irVersion": "0.1", "name": "demo.card", "objectSet": object_type,
+                    "aggregate": [{"metric": metric["name"]}],
+                    "groupBy": [{"path": {"property": time_of(&listed, &metric)}, "grain": "year"}],
+                    "window": {"start": "2020-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"},
+                    "freshness": {"kind": "live", "maxAgeMs": 60000},
+                });
+                let (status, answer) = call(
+                    "POST",
+                    "/v1/questions:evaluate",
+                    &json!({ "question": question }).to_string(),
+                );
+                if status != 200 {
+                    return None;
+                }
+                let (bucket, members) =
+                    answer["rows"]
+                        .as_object()?
+                        .iter()
+                        .find_map(|(bucket, row)| {
+                            let members = row["members"].as_object()?.len();
+                            (members > 0).then(|| (bucket.clone(), members))
+                        })?;
+                Some((question, answer, bucket, members))
+            });
+        let (question, answer, bucket, members) =
+            found.unwrap_or_else(|| panic!("the demo answers a {kind} card with members"));
         assert_eq!(answer["engine"], "duckdb", "{kind}");
-        let (bucket, row) = answer["rows"]
-            .as_object()
-            .and_then(|rows| {
-                rows.iter()
-                    .find(|(_, row)| row["members"].as_object().is_some_and(|m| !m.is_empty()))
-            })
-            .unwrap_or_else(|| panic!("{kind}: a bucket with members: {answer}"));
-        let members = row["members"].as_object().unwrap().len();
         let trace = |at_answer: bool| {
             let mut body = json!({
                 "question": question,

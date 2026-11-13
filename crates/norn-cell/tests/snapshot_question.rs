@@ -231,12 +231,12 @@ fn a_stock_known_at_an_earlier_commit_answers_as_it_did_then() {
         given.push((tick, frontier, answer(&store, &plan)));
     }
     for (tick, frontier, then) in given {
+        // A knowledge cutoff is read at its own recorded clock.
+        let at = CLOCK.checked_add(tick).expect("clock");
         let mut context = context();
-        context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
+        context.now_ms = at;
         let cutoff = KnowledgeCutoff {
-            recorded_at: norn_kernel::LogicalTime::from_millis(
-                CLOCK.checked_add(tick).expect("clock"),
-            ),
+            recorded_at: norn_kernel::LogicalTime::from_millis(at),
             frontier,
         };
         let known = store
