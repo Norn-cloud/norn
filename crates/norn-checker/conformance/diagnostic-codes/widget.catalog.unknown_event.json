@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.unknown_event",
+  "message": "a page event from a catalog component does not name one of its declared events: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

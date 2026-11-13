@@ -945,5 +945,6 @@ fn finding(
         span: Some(Span::pointer(pointer)),
         artifact_id: Some(artifact.artifact_id.clone()),
         remediation: Some(norn_ir::DiagnosticRemediation::FixDefinition),
+        witness: None,
     }
 }

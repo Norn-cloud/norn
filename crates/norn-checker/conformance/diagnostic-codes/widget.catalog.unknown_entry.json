@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.unknown_entry",
+  "message": "a page places a catalog component that is not declared: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

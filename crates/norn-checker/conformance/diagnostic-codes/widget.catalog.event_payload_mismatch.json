@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.event_payload_mismatch",
+  "message": "a page event's payload differs from the catalog event it raises: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

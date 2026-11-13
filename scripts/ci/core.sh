@@ -282,6 +282,10 @@ PY
       # them first so its bounded runs only execute (#1171 integrated gate).
       grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
         while read -r build; do $build --no-run; done
+      # The ZEN-only engine package pages load (D105): one evaluator, so it answers every
+      # evaluation of the shared corpus exactly as the checker package does.
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
+      node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       cargo build --locked -p norn-cli
@@ -319,6 +323,7 @@ PY
       fi
       CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
