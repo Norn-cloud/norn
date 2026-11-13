@@ -6,8 +6,9 @@ export const LIFECYCLE_CSS = `
 .norn-life-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
 .norn-life-title { margin: 0; font-size: .9375rem; font-weight: 600; }
 .norn-life-meta { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
-.norn-life-board { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(9.5rem, 1fr); gap: 1rem 2.75rem; align-items: start;
-  padding: 1rem; border-radius: var(--radius-node, .75rem); background: color-mix(in oklab, var(--muted, #f4f4f5) 45%, transparent); overflow-x: auto; }
+.norn-life-board { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 11rem; justify-content: start; gap: 1rem 4rem; align-items: start;
+  padding: 1.25rem 2.5rem 3rem 1.25rem; border-radius: var(--radius-node, .75rem); background: color-mix(in oklab, var(--muted, #f4f4f5) 45%, transparent); overflow-x: auto; }
+.norn-life[dir="rtl"] .norn-life-board { padding: 1.25rem 1.25rem 3rem 2.5rem; }
 .norn-life-col { display: grid; gap: .75rem; align-content: start; position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; }
 .norn-life-state { display: grid; gap: .125rem; padding: .625rem .75rem; border-radius: var(--radius-node, .75rem); background: var(--card, #fff);
   border: 1px solid var(--node-border, var(--border, #e5e5e5)); box-shadow: var(--elevation-node, 0 1px 2px rgb(0 0 0 / .06)); transition: border-color .15s, box-shadow .15s; }

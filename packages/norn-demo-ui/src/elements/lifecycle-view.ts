@@ -193,6 +193,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const role = (state: string) =>
     [lifecycle.initial.includes(state) ? w.start : "", lifecycle.terminal.includes(state) ? w.end : endings.get(state) === "resting" ? w.rests : ""].filter(Boolean).join(" · ")
   const columns = layout(lifecycle)
+  const column = new Map(columns.flatMap((states, index) => states.map((state) => [state, index] as const)))
   root.innerHTML = `
     <section class="norn-life" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${locale}">
       <header class="norn-life-head">
@@ -243,22 +244,45 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     const box = (state: string) => q(`[data-state="${CSS.escape(state)}"]`)?.getBoundingClientRect()
     const active = picked === null ? new Set<string>() : stepState(lifecycle, findings[picked]!, taken).transitions
     const rtl = locale === "ar"
+    // Routed by column: forward edge to edge, within a column an arc along the outer side,
+    // backward a dip below the cards, so no arrow crosses a card.
+    const bottom = Math.max(0, ...lifecycle.states.map((state) => (box(state)?.bottom ?? origin.top) - origin.top))
+    const x = (value: number) => value - origin.left + board.scrollLeft
+    const y = (value: number) => value - origin.top
     const parts: string[] = []
     for (const transition of lifecycle.transitions) {
       const to = box(transition.to)
-      if (!to) continue
+      const toColumn = column.get(transition.to)
+      if (!to || toColumn === undefined) continue
       for (const from of transition.from) {
         const a = box(from)
-        if (!a) continue
-        const forward = rtl ? to.right <= a.left : to.left >= a.right
-        const x1 = (forward ? (rtl ? a.left : a.right) : a.left + a.width / 2) - origin.left + board.scrollLeft
-        const y1 = (forward ? a.top + a.height / 2 : a.bottom) - origin.top
-        const x2 = (forward ? (rtl ? to.right : to.left) : to.left + to.width / 2) - origin.left + board.scrollLeft
-        const y2 = (forward ? to.top + to.height / 2 : to.bottom) - origin.top
-        const bend = forward ? (x2 - x1) / 2 : 36
-        const d = forward ? `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}` : `M${x1} ${y1} C${x1} ${y1 + bend} ${x2} ${y2 + bend} ${x2} ${y2}`
+        const fromColumn = column.get(from)
+        if (!a || fromColumn === undefined) continue
+        let d: string
+        let lx: number
+        let ly: number
+        if (toColumn > fromColumn) {
+          const x1 = x(rtl ? a.left : a.right), y1 = y(a.top + a.height / 2)
+          const x2 = x(rtl ? to.right : to.left), y2 = y(to.top + to.height / 2)
+          const bend = (x2 - x1) / 2
+          d = `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
+          ;[lx, ly] = [(x1 + x2) / 2, (y1 + y2) / 2 - 6]
+        } else if (toColumn === fromColumn) {
+          const side = rtl ? -1 : 1
+          const x1 = x(rtl ? a.left : a.right), y1 = y(a.top + a.height / 2)
+          const x2 = x(rtl ? to.left : to.right), y2 = y(to.top + to.height / 2)
+          const out = Math.max(x1, x2) * (side > 0 ? 1 : 0) + Math.min(x1, x2) * (side > 0 ? 0 : 1) + side * 28
+          d = `M${x1} ${y1} C${out} ${y1} ${out} ${y2} ${x2} ${y2}`
+          ;[lx, ly] = [out - side * 4, (y1 + y2) / 2]
+        } else {
+          const x1 = x(a.left + a.width / 2), y1 = y(a.bottom)
+          const x2 = x(to.left + to.width / 2), y2 = y(to.bottom)
+          const dip = bottom + 22
+          d = `M${x1} ${y1} C${x1} ${dip} ${x2} ${dip} ${x2} ${y2}`
+          ;[lx, ly] = [(x1 + x2) / 2, dip - 4]
+        }
         const on = active.has(transition.id) ? " data-active" : ""
-        parts.push(`<path d="${d}" marker-end="url(#norn-life-head)"${on}/><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" text-anchor="middle"${on}>${escape(label(transition.id))}</text>`)
+        parts.push(`<path d="${d}" marker-end="url(#norn-life-head)"${on}/><text x="${lx}" y="${ly}" text-anchor="middle"${on}>${escape(label(transition.id))}</text>`)
       }
     }
     svg.setAttribute("width", String(board.scrollWidth))
