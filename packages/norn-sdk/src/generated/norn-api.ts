@@ -487,8 +487,9 @@ export interface paths {
          *     page. The host streams the engine's file; the snapshot it is exact at is
          *     the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
          * @description # Errors
-         *     A denied gate (one opaque 403), an unknown type (404), an unknown column
-         *     or format (400), or an unreachable engine.
+         *     A denied gate (one opaque 403), an unknown type (404), an unknown,
+         *     repeated or reserved column or an unknown format (400), or an
+         *     unreachable engine.
          */
         get: operations["export_objects"];
         put?: never;
@@ -13300,7 +13301,10 @@ export interface operations {
                 orgId?: string;
                 /** @description Environment scope. */
                 environmentId?: string;
-                /** @description Comma-separated property ids; each row also carries `id` and `version`. */
+                /**
+                 * @description Comma-separated stored property ids, each once; each row also carries
+                 *     its own `id` and `version`, so no property of those names is exported.
+                 */
                 columns: string;
                 /** @description `parquet` (the default) or `jsonl`. */
                 format?: string;

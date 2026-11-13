@@ -2390,7 +2390,7 @@
           "crate::analytics_routes"
         ],
         "summary": "D102: every row of `object_type` the caller may read, with the named\nproperties plus `id` and `version`, from the tenant's engine, exact at the\ncell's verified head (or a dataset's current load). The caller needs\nPopulation and Values on the type; quarantined rows are left out, as on a\npage. The host streams the engine's file; the snapshot it is exact at is\nthe `Norn-Snapshot` header (`c<commit>` or `l<load>`).",
-        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown column\nor format (400), or an unreachable engine.",
+        "description": "# Errors\nA denied gate (one opaque 403), an unknown type (404), an unknown,\nrepeated or reserved column or an unknown format (400), or an\nunreachable engine.",
         "operationId": "export_objects",
         "parameters": [
           {
@@ -2423,7 +2423,7 @@
           {
             "name": "columns",
             "in": "query",
-            "description": "Comma-separated property ids; each row also carries `id` and `version`.",
+            "description": "Comma-separated stored property ids, each once; each row also carries\nits own `id` and `version`, so no property of those names is exported.",
             "required": true,
             "schema": {
               "type": "string"
