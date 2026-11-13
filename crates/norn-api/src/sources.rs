@@ -190,6 +190,10 @@ struct Run {
     started_ms: u64,
     /// When the host last stepped the run (SYNC-LEASE-1).
     stepped_ms: u64,
+    /// SYNC-YIELD-2: the most rows the next step maps, as the host paces it.
+    step_rows: usize,
+    /// Rows the current step mapped.
+    mapped: usize,
     pull: Option<Pull>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
@@ -207,6 +211,8 @@ struct Run {
 #[derive(Default)]
 struct ConnectionState {
     run: Option<Run>,
+    /// Rows the last step mapped, for the host's pacing (SYNC-YIELD-2).
+    mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
 }
@@ -310,6 +316,8 @@ impl Sources {
             actor: actor.to_owned(),
             started_ms: now_ms,
             stepped_ms: now_ms,
+            step_rows: crate::host::PAGE_ROWS,
+            mapped: 0,
             pull: None,
             auth: Vec::new(),
             held: None,
@@ -322,6 +330,22 @@ impl Sources {
             reasons: BTreeMap::new(),
         });
         Ok(run)
+    }
+
+    /// SYNC-YIELD-2: map at most `rows` (1 to a page) in each step of the run
+    /// of `id` from now on. The runtime's clock stands still inside a step,
+    /// so the host paces from outside: it times each step against the rows it
+    /// mapped ([`Self::mapped`]) and keeps steps near a time budget.
+    pub fn pace(&mut self, id: &str, rows: usize) {
+        if let Some(run) = self.state.get_mut(id).and_then(|s| s.run.as_mut()) {
+            run.step_rows = rows.clamp(1, crate::host::PAGE_ROWS);
+        }
+    }
+
+    /// Rows the last step of `id` mapped (SYNC-YIELD-2).
+    #[must_use]
+    pub fn mapped(&self, id: &str) -> usize {
+        self.state.get(id).map_or(0, |s| s.mapped)
     }
 
     /// SYNC-ONE-1, SYNC-ACTOR-1: claim the first connection whose schedule
@@ -365,6 +389,7 @@ impl Sources {
             ));
         };
         run.stepped_ms = now_ms;
+        run.mapped = 0;
         let outcome = match response {
             None if run.pull.is_some() => drain(host, run),
             None => begin(host, &config, &self.secrets, run, watermarks_known)
@@ -374,6 +399,10 @@ impl Sources {
                 drain(host, run)
             }),
         };
+        let mapped = run.mapped;
+        if let Some(state) = self.state.get_mut(id) {
+            state.mapped = mapped;
+        }
         match outcome {
             Ok(Next::Request(request)) => Step::Request(request),
             Ok(Next::Continue) => Step::Continue,
@@ -615,12 +644,13 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
     let take = run
         .queue
         .iter()
-        .take(crate::host::PAGE_ROWS)
+        .take(run.step_rows.clamp(1, crate::host::PAGE_ROWS))
         .take_while(|(raw, input)| {
             Some(input) == first.as_ref() && seen.insert(raw.provenance.source_id.clone())
         })
         .count();
     let chunk: Vec<_> = run.queue.drain(..take).collect();
+    run.mapped = chunk.len();
     if !chunk.is_empty() {
         let outcomes = host
             .ingest(&chunk)
@@ -839,6 +869,8 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         actor: upload.actor.to_owned(),
         started_ms: upload.started_ms,
         stepped_ms: upload.ended_ms,
+        step_rows: crate::host::PAGE_ROWS,
+        mapped: 0,
         pull: None,
         auth: Vec::new(),
         held: None,

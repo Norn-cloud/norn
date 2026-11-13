@@ -380,20 +380,27 @@ impl Connect {
     }
 
     /// Advance a running sync; the JSON the host reads: `{"request": …}` or `{"done": …}`.
+    /// `rows`: the most rows this and later steps map (SYNC-YIELD-2); the
+    /// answer says how many this step mapped (`mapped`), for the host's pacing.
     pub fn step<E: SqlEngine>(
         &mut self,
         host: Option<&DevHost<E>>,
         id: &str,
         response: Option<(u16, &[u8])>,
-        now_ms: u64,
+        (now_ms, rows): (u64, Option<usize>),
     ) -> String {
         let Some(host) = host else {
             return json!({"done": {"outcome": "failed", "error": ["source.no_cell", "the scope has no cell"]}}).to_string();
         };
-        match self.sources.step(host, id, response, now_ms) {
-            Step::Request(request) => json!({"request": request}).to_string(),
-            Step::Continue => json!({"continue": true}).to_string(),
-            Step::Done(summary) => json!({"done": summary}).to_string(),
+        if let Some(rows) = rows {
+            self.sources.pace(id, rows);
+        }
+        let step = self.sources.step(host, id, response, now_ms);
+        let mapped = self.sources.mapped(id);
+        match step {
+            Step::Request(request) => json!({"request": request, "mapped": mapped}).to_string(),
+            Step::Continue => json!({"continue": true, "mapped": mapped}).to_string(),
+            Step::Done(summary) => json!({"done": summary, "mapped": mapped}).to_string(),
         }
     }
 

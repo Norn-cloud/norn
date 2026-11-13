@@ -946,3 +946,39 @@ fn a_host_page_size_sets_every_feeds_page() {
         other @ (Step::Continue | Step::Done(_)) => panic!("expected a request, got {other:?}"),
     }
 }
+
+/// SYNC-YIELD-2: a host paces a sync's steps; a step maps at most the rows
+/// it was given and says how many it mapped, and the rest follow in later
+/// steps.
+#[test]
+fn a_paced_sync_maps_at_most_its_rows_per_step() {
+    let host = host();
+    let mut sources = sources();
+    let mut pages = recorded("odoo");
+    sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("claimed");
+    sources.pace("odoo.sandbox", 3);
+    let Step::Request(first) = sources.step(&host, "odoo.sandbox", None, EXTRACTED_AT_MS) else {
+        panic!("a first request");
+    };
+    assert_eq!(sources.mapped("odoo.sandbox"), 0);
+    let dataset = profile("odoo").feeds[0].dataset.clone();
+    let (status, body) = pages.remove(&dataset).expect("a recorded page");
+    let rows = body
+        .pointer("/result/records")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    assert!(rows > 3, "{} has {rows} rows", first.url);
+    let step = sources.step(
+        &host,
+        "odoo.sandbox",
+        Some((status, body.to_string().as_bytes())),
+        EXTRACTED_AT_MS,
+    );
+    assert!(matches!(step, Step::Continue), "{step:?}");
+    assert_eq!(sources.mapped("odoo.sandbox"), 3);
+    let step = sources.step(&host, "odoo.sandbox", None, EXTRACTED_AT_MS);
+    assert!(matches!(step, Step::Continue), "{step:?}");
+    assert_eq!(sources.mapped("odoo.sandbox"), 3);
+}
