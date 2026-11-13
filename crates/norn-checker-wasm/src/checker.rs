@@ -25,7 +25,6 @@ use norn_ir::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-
 /// The ABI version [`version_json`] reports. A change to a function's
 /// arguments or to an output document's fields is a new version.
 pub const ABI_VERSION: &str = "norn-checker-abi/1";
@@ -38,7 +37,6 @@ pub const RUNTIME_VALUE_FORMAT: &str = "norn-checker-abi/runtime-value@1";
 
 /// Format tag of the [`check_expression_json`] document.
 pub const EXPRESSION_FORMAT: &str = "norn-checker-abi/expression@1";
-
 
 /// Format tag of the [`function_contract_json`] document.
 pub const FUNCTION_FORMAT: &str = "norn-checker-abi/function@1";

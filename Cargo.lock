@@ -2241,7 +2241,6 @@ version = "0.1.0"
 dependencies = [
  "norn-checker",
  "norn-expr",
- "norn-expr-wasm",
  "norn-ir",
  "norn-projections",
  "serde",
@@ -2313,16 +2312,6 @@ dependencies = [
  "serde",
  "serde_json",
  "zen-expression",
-]
-
-[[package]]
-name = "norn-expr-wasm"
-version = "0.1.0"
-dependencies = [
- "norn-expr",
- "norn-ir",
- "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]
