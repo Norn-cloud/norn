@@ -195,7 +195,7 @@ export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title
   const rows = buckets(declared, { answer: read.answer.document, numbers: read.answer.numbers, at: "" })
   const freshness = FRESHNESS[read.answer.document.freshness]
   const traced: Traced = {
-    provenanceOf: (bucket) => bucketProvenance(declared, read.answer.document, bucket, engineOf(read.answer.document) ?? null),
+    provenanceOf: (bucket) => bucketProvenance(read.answer.document, bucket, [tile.title], engineOf(read.answer.document) ?? null),
     onTrace: (bucket) => { setTracing(bucket.key); setDetails(true) },
   }
   return (
@@ -211,7 +211,7 @@ export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title
             <SheetTitle>{tile.title}</SheetTitle>
             <SheetDescription>Every bucket the cell answered, and the records behind each one.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{details && <AnswerView read={read} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}</div>
+          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}</div>
         </SheetContent>
       </Sheet>
     </div>

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import type { ObjectVersion } from "../src/evidence/review.ts"
 import { buckets } from "../src/lib/answer.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { bucketProvenance, factProvenance, versionShown } from "../src/lib/provenance.ts"
+import { bucketProvenance, factProvenance, metricLabels, versionShown } from "../src/lib/provenance.ts"
 import type { Answer, Metric, ObjectType, Question, SourceLineage } from "../src/lib/transport.ts"
 
 const demo = (path: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo", path), "utf8")
@@ -17,7 +17,7 @@ test("a mapped fact names its source record and fields, the mapping rule and pin
   expect(card.transform).toEqual({ kind: "mapping", artifactId: "erpnext.three.mapping", version: "erpnext.three.mapping@0.1.0", sha256: lineage.mappingPin.sha256, rule: "item.code", upstream: 0 })
   expect(card.receipt).toEqual({ kind: "commit", commit: 43 })
   expect(card.digests).toEqual([{ label: "Bundle", value: lineage.bundleDigest ?? null }, { label: "Document", value: lineage.documentDigest ?? null }])
-  expect(card.asOf).toEqual([{ label: "Recorded by Norn", value: "2026-11-02T12:00:00Z" }, { label: "Written", value: "2026-11-12T10:00:00.000Z" }])
+  expect(card.asOf).toEqual([{ label: "Recorded", value: "2026-11-02T12:00:00Z" }, { label: "Written", value: "2026-11-12T10:00:00.000Z" }])
 })
 
 test("a fact an action wrote names the action and its verified actor, never a source it did not read", () => {
@@ -32,7 +32,7 @@ test("without a history entry the record's own lineage is the card; a withheld d
   expect(card.receipt).toBeNull()
   expect(card.sources[0]?.record).toBe("Item/erpnext/demo/Item/SYN-ERPNEXT-item")
   expect(card.digests[0]).toEqual({ label: "Bundle", value: null })
-  expect(card.asOf).toEqual([{ label: "Recorded by Norn", value: "2026-11-02T12:00:00Z" }])
+  expect(card.asOf).toEqual([{ label: "Recorded", value: "2026-11-02T12:00:00Z" }])
 })
 
 test("a fact the mapping names no field for keeps the record and the mapping, with no fields or times invented", () => {
@@ -59,10 +59,12 @@ test("an answer's number names the systems it read, its metrics, the ledger head
   }
   const [first] = buckets(declared, { answer: answer.document, numbers: answer.numbers, at: "" })
   if (first === undefined) throw new Error("no bucket")
-  const card = bucketProvenance(declared, answer.document, first, "Computed by the cell's exact engine")
+  const card = bucketProvenance(answer.document, first, metricLabels(declared), "Computed by the cell's exact engine")
   expect(card.sources.map(({ system }) => system)).toEqual([...new Set([...Object.keys(answer.document.watermarks), ...Object.keys(answer.document.sourceCursors)])].sort())
-  expect(card.transform).toEqual({ kind: "question", metrics: declared.question.aggregate.map(({ metric }) => declared.metrics.find(({ name }) => name === metric)?.label ?? metric), records: first.members.length, engine: "Computed by the cell's exact engine" })
+  expect(metricLabels(declared)).toEqual(["Yield"])
+  expect(metricLabels({ ...declared, metrics: [] })).toEqual(["demo.yield"])
+  expect(card.transform).toEqual({ kind: "question", metrics: ["Yield"], records: first.members.length, engine: "Computed by the cell's exact engine" })
   expect(card.receipt).toEqual({ kind: "head", seq: answer.document.revision.seq, hash: answer.document.revision.hash })
-  expect(card.asOf[0]).toEqual({ label: "Known as of", value: `${answer.document.knownAsOf} committed change${answer.document.knownAsOf === 1 ? "" : "s"}` })
-  expect(card.asOf[1]).toEqual({ label: "Window ends before", value: answer.document.effectiveAsOf })
+  expect(card.asOf[0]).toEqual({ label: "Known", value: `after ${answer.document.knownAsOf} committed change${answer.document.knownAsOf === 1 ? "" : "s"}` })
+  expect(card.asOf[1]).toEqual({ label: "Window to", value: answer.document.effectiveAsOf })
 })

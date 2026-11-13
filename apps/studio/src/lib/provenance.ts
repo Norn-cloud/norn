@@ -76,30 +76,33 @@ export function factProvenance(fact: string, version: ObjectVersion | null, line
     ? { system: field.source.system, record: field.source.record, fields: field.sourceFields ?? [] }
     : { system: mapped.sourceRecordRef.system, record: mapped.sourceRecordRef.record, fields: [] }
   const asOf: AsOfPart[] = [
-    ...field?.observedAt ? [{ label: "Observed in the source", value: field.observedAt }] : [],
-    ...field ? [{ label: "Recorded by Norn", value: field.recordedAt }] : [],
+    ...field?.observedAt ? [{ label: "Observed", value: field.observedAt }] : [],
+    ...field ? [{ label: "Recorded", value: field.recordedAt }] : [],
     ...written,
   ]
   return { sources: [source], transform, receipt, digests, asOf }
 }
 
+/** The metrics a question aggregates, by their declared labels (the metric's name when the declaration is not at hand). */
+export const metricLabels = ({ question, metrics }: Pick<Declarations, "question" | "metrics">): string[] =>
+  question.aggregate.map(({ metric }) => metrics.find(({ name }) => name === metric)?.label ?? metric)
+
 /** One bucket of an answer: the systems it read, the metrics that computed it, the ledger head it answered at. */
-export function bucketProvenance({ question, metrics }: Pick<Declarations, "question" | "metrics">, answer: Answer, bucket: Pick<Bucket, "members">, engine: string | null): ValueProvenance {
+export function bucketProvenance(answer: Answer, bucket: Pick<Bucket, "members">, labels: readonly string[], engine: string | null): ValueProvenance {
   const systems = [...new Set([...Object.keys(answer.watermarks), ...Object.keys(answer.sourceCursors)])].sort()
   const sources = systems.map((system): SourceRef => {
     const partitions = Object.values(answer.watermarks[system] ?? {})
     return { system, record: null, fields: [], ...partitions.length === 0 ? {} : { complete: partitions.every(({ complete }) => complete) } }
   })
-  const labels = question.aggregate.map(({ metric }) => metrics.find(({ name }) => name === metric)?.label ?? metric)
   return {
     sources,
     transform: { kind: "question", metrics: labels, records: bucket.members.length, engine },
     receipt: { kind: "head", seq: answer.revision.seq, hash: answer.revision.hash },
     digests: [],
     asOf: [
-      { label: "Known as of", value: `${answer.knownAsOf} committed ${answer.knownAsOf === 1 ? "change" : "changes"}` },
-      { label: "Window ends before", value: answer.effectiveAsOf },
-      { label: "Read at", value: instant(answer.nowMs) },
+      { label: "Known", value: `after ${answer.knownAsOf} committed ${answer.knownAsOf === 1 ? "change" : "changes"}` },
+      { label: "Window to", value: answer.effectiveAsOf },
+      { label: "Read", value: instant(answer.nowMs) },
     ],
   }
 }
