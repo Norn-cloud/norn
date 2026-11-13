@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
 import { Chip } from "@/components/chip"
+import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
@@ -65,7 +66,7 @@ export const engineOf = (answer: unknown): string | undefined => {
 /** Refusals that mean the cell committed since this answer: its trace handle no longer names this number. */
 const MOVED = new Set(["core.projection.answer_moved", "core.projection.lineage_incomplete"])
 
-export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void }) {
+export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale, compact = false }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void; readonly compact?: boolean }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
   if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
@@ -78,6 +79,20 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale 
   )
   if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
   const read = data.read
+  // Compact: each record and what it contributes, in dense rows, and the bucket's exact figure under them.
+  if (compact) return (
+    <div className="text-meta tabular-nums">
+      <ul className="divide-y divide-border/70">
+        {read.document.contributions.map((contribution, index) => (
+          <li key={`${contribution.fact.key}@${contribution.fact.version}`} className="flex h-[2.375rem] items-center justify-between gap-3 px-2">
+            <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="min-w-0 truncate font-mono text-xs underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
+            <span className="shrink-0">{amounts(read, index)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-baseline justify-between gap-3 border-t border-border px-2 pt-2.5 pb-1"><span className="text-muted-foreground">{read.document.contributions.length} {read.document.contributions.length === 1 ? "record" : "records"}, added up exactly</span><span className="text-sm font-medium"><Exact value={bucket.value} totals={bucket.totals} /></span></div>
+    </div>
+  )
   return (
     <TableCard><Table>
       <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
@@ -165,13 +180,16 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, title, unit, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
+export function AnswerView({ read, title, unit, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket, total }: {
   readonly read: QuestionAnswer
+  /** A total the cell answered for the whole window (a separate question), shown beside the lead: never added up here. */
+  readonly total?: { readonly label: string; readonly value: string }
   /** What the answer measures, in words, when the page that asked knows it better than the question's metric names. */
   readonly title?: string
   /** The unit every bucket is in, when the question fixes it (a quantity held to one unit or currency). */
   readonly unit?: string | null
-  readonly heading?: "h1" | "h2" | "h3"
+  /** "none": the page around it already names the question (a metric's own section). */
+  readonly heading?: "h1" | "h2" | "h3" | "none"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
   /** The server's refusal of the live read, shown over the recording. */
@@ -203,95 +221,108 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const grain = question.groupBy?.[0]?.grain
   // A long series lists its latest periods; the reader can show them all (the chart above draws every one).
   const listed = grain !== undefined && !every && rows.length > LATEST ? rows.slice(-LATEST) : rows
+  const series = rows.length >= 2 && (grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0)
+  // Selections among the cell's own buckets (no arithmetic on the figures): the period before the lead, and the largest.
+  const before = grain !== undefined && lead.bucket !== undefined ? rows.at(-2) : undefined
+  const counted = rows.filter(({ suppressed }) => !suppressed)
+  const peak = grain !== undefined && counted.length > 1 ? counted.reduce((top, bucket) => Number(bucket.value) > Number(top.value) ? bucket : top) : undefined
+  const scale = peak ? Number(peak.value) : Math.max(0, ...counted.map(({ value }) => Number(value)))
+  const newestFirst = grain !== undefined ? [...listed].reverse() : listed
+  const quiet = <div className="flex flex-wrap items-center gap-1 text-meta text-muted-foreground tabular-nums" aria-label="As of">
+    <span>{[engineOf(answer), `read ${stamp(answer.nowMs)}`].filter(Boolean).join(" · ")}</span>
+    <Popover>
+      <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label="How this number was read"><Info /></Button></PopoverTrigger>
+      <PopoverContent align="start" className="w-80 text-sm">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 tabular-nums">
+          <dt className="flex items-center gap-1.5 text-muted-foreground"><GitCommitHorizontal aria-hidden className="size-3.5" />Known after</dt><dd title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</dd>
+          <dt className="flex items-center gap-1.5 text-muted-foreground"><Clock aria-hidden className="size-3.5" />Read</dt><dd title="The cell's clock when it answered">{stamp(answer.nowMs)}</dd>
+          {engineOf(answer) && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Cpu aria-hidden className="size-3.5" />Engine</dt><dd>{engineOf(answer)}</dd></>}
+          {sources.length > 0 && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Database aria-hidden className="size-3.5" />Sources</dt><dd>{sources.join(", ")}</dd></>}
+        </dl>
+        <p className="pt-3 text-meta text-muted-foreground">{lead.sentence}</p>
+      </PopoverContent>
+    </Popover>
+  </div>
   return (
-    <section className="space-y-4">
-      <div className="space-y-1 px-1">
-        <div className="flex flex-wrap items-center gap-2">
-          {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{named}</h1>
-            : heading === "h3" ? <h3 className="font-medium">{named}</h3>
-            : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
-          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
+    <section className="space-y-5">
+      <div className="space-y-2 px-1">
+        {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
+          : heading === "h3" ? <h3 className="font-medium">{named}</h3>
+          : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
+        {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
+        <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
           {read.answer.origin === "live"
-            ? <Chip tone="teal" dot pulse title="Read now from the cell as your account.">Live</Chip>
+            ? <Chip tone="green" dot pulse title="Read now from the cell as your account.">Live</Chip>
             : <Chip tone="gray" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Chip>}
+          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
         </div>
         {refusal && <RefusedNote refusal={refusal} />}
-        {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
-        <p className="text-meta text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
       </div>
-      <div className="space-y-2 px-1" data-slot="answer-lead">
-        {lead.bucket && (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pt-2">
-            {lead.bucket.suppressed ? <span className="text-figure leading-none font-semibold tracking-[-0.02em] text-muted-foreground">—</span> : (
-              <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-                label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                <span className="block text-figure leading-none font-semibold tracking-[-0.03em] tabular-nums underline decoration-dotted decoration-muted-foreground/30 decoration-1 underline-offset-[10px]">{figure(lead.bucket, unit)}</span>
-              </AnswerProvenance>
-            )}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
+      {/* The hero: the lead number, the figures around it, and the one chart that dominates. */}
+      <div className="rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:p-7" data-slot="answer-lead">
+        {lead.bucket ? (
+          <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-5">
+            <div className="min-w-0 space-y-2">
+              <div className="text-meta text-muted-foreground">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</div>
+              {lead.bucket.suppressed ? <span className="block text-[3.5rem] leading-none font-light tracking-[-0.045em] text-muted-foreground">—</span> : (
+                <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                  label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
+                  <span className="block text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[4rem]">{figure(lead.bucket, unit)}</span>
+                </AnswerProvenance>
+              )}
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-meta text-muted-foreground tabular-nums">
+                <span className="rounded-full border border-border px-2 py-0.5 text-foreground">{lead.bucket.members.length.toLocaleString("en")} {lead.bucket.members.length === 1 ? "record" : "records"}</span>
+                {before && <span>{before.suppressed ? shown(before) : figure(before, unit)} the {grain} before</span>}
+              </div>
+            </div>
+            {(peak || total) && <div className="flex flex-wrap gap-x-10 gap-y-3 sm:text-end">
+              {total && <div><div className="text-meta text-muted-foreground">{total.label}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{total.value}</div></div>}
+              {peak && <div><div className="text-meta text-muted-foreground">Peak {grain}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{figure(peak, unit)}</div><div className="text-xs text-muted-foreground">{peak.label.replace(/^\w+ of /, "")}</div></div>}
+            </div>}
           </div>
-        )}
-        <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>
-        {/* Where the number stands, in one quiet line; the full receipt of the read opens from the info button. */}
-        <div className="flex flex-wrap items-center gap-1 text-meta text-muted-foreground tabular-nums" aria-label="As of">
-          <span>{[engineOf(answer), `read ${stamp(answer.nowMs)}`].filter(Boolean).join(" · ")}</span>
-          <Popover>
-            <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label="How this number was read"><Info /></Button></PopoverTrigger>
-            <PopoverContent align="start" className="w-80 text-sm">
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 tabular-nums">
-                <dt className="flex items-center gap-1.5 text-muted-foreground"><GitCommitHorizontal aria-hidden className="size-3.5" />Known after</dt><dd title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</dd>
-                <dt className="flex items-center gap-1.5 text-muted-foreground"><Clock aria-hidden className="size-3.5" />Read</dt><dd title="The cell's clock when it answered">{stamp(answer.nowMs)}</dd>
-                {engineOf(answer) && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Cpu aria-hidden className="size-3.5" />Engine</dt><dd>{engineOf(answer)}</dd></>}
-                {sources.length > 0 && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Database aria-hidden className="size-3.5" />Sources</dt><dd>{sources.join(", ")}</dd></>}
-              </dl>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </div>
-      {/* A series over time is drawn; a breakdown by values is read in its table. */}
-      {/* A series over time of two or more buckets is drawn; one bucket, or a breakdown by values, is read in its table. */}
-      {rows.length >= 2 && (grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0) ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
-        <Well className="px-2 pt-4 pb-2">
-          {frame ? (
-          <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
-            <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
+        ) : <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>}
+        {series && (frame ? (
+          <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="mt-6 h-64 w-full sm:h-72">
+            <AreaChart data={[...frame.points]} margin={{ left: 0, right: 8, top: 8 }}>
               <defs>
-                <linearGradient id="answer-fill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--color-position)" stopOpacity={0.18} />
-                  <stop offset="100%" stopColor="var(--color-position)" stopOpacity={0} />
-                </linearGradient>
+                <pattern id="answer-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="var(--color-position)" strokeOpacity={0.16} strokeWidth={1.2} /></pattern>
               </defs>
-              <CartesianGrid vertical={false} strokeDasharray="3 4" />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
-              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick.toLocaleString("en")}${frame.unit}`} />
-              <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
+              <CartesianGrid vertical={false} stroke="var(--border)" />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={32} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} />
+              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={52} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 4} tickFormatter={(tick: number) => `${tick.toLocaleString("en")}${frame.unit}`} />
+              <ChartTooltip cursor={{ stroke: "var(--muted-foreground)", strokeOpacity: 0.5 }} content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
                   <span className="text-muted-foreground">{named}</span>
                   <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
-              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.75} fill="url(#answer-fill)" dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.75} fill="url(#answer-hatch)" activeDot={{ r: 4, fill: "var(--action)", stroke: "var(--card)", strokeWidth: 2 }} dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
-          ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
-        </Well>
-      </Panel> : null}
-      <Panel icon={Rows3} label={grain ? (listed.length < rows.length ? `The latest ${listed.length} ${grain}s` : `Every ${grain}`) : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
+        ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>)}
+        <div className="pt-4">{quiet}</div>
+      </div>
+      <div className={cn("grid gap-5", live && lead.bucket && !lead.bucket.suppressed && "lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]")}>
+      <Panel icon={Rows3} label={grain ? (listed.length < rows.length ? `The latest ${listed.length} ${grain}s` : `Every ${grain}`) : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} for its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead>{ratio && <TableHead className="text-right max-sm:hidden">Exactly</TableHead>}<TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
           <TableBody>
-            {listed.map((bucket) => (
+            {newestFirst.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
                 <TableCell>
                   <button type="button" className="rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); setOpen(bucket) }}>
-                    {bucket.label}
+                    {bucket.label.replace(/^\w+ of /, "")}
                   </button>
                 </TableCell>
-                <TableCell className="text-right font-medium tabular-nums">
-                  {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={figure(bucket, unit)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{figure(bucket, unit)}</AnswerProvenance>}
+                <TableCell className="text-right tabular-nums">
+                  <span className="inline-flex items-center justify-end gap-3">
+                    {!bucket.suppressed && scale > 0 && <span aria-hidden className="relative hidden h-1 w-24 overflow-hidden rounded-full bg-border sm:inline-block"><span className={cn("absolute inset-y-0 start-0 rounded-full", bucket === lead.bucket ? "bg-action" : "bg-muted-foreground/70")} style={{ width: `${Math.max(2, Math.min(100, Number(bucket.value) / scale * 100))}%` }} /></span>}
+                    {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={figure(bucket, unit)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{figure(bucket, unit)}</AnswerProvenance>}
+                  </span>
                 </TableCell>
                 {ratio && <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(bucket.value)}`}</TableCell>}
-                <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
                 <TableCell className="w-10 p-1 text-right"><DrillMenu bucket={bucket} question={question} live={live} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
               </TableRow>
             ))}
@@ -303,6 +334,12 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           </div>
         )}</TableCard>}
       </Panel>
+      {live && lead.bucket && !lead.bucket.suppressed && (
+        <Panel icon={Split} label={`Where ${figure(lead.bucket, unit)} comes from`}>
+          <Well className="px-1.5"><LiveRecords question={question.name} lineageRef={answer.lineageRef} bucket={lead.bucket} fetchTrace={fetchTrace} onStale={onStale} compact /></Well>
+        </Panel>
+      )}
+      </div>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
@@ -364,12 +401,13 @@ function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; re
  * A question asked of the cell as soon as it is shown, answered, refused, or why it was not run. The
  * answer is read with `declared`'s metric and type declarations.
  */
-export function AskedAnswer({ question, title, unit, declared, heading = "h3" }: {
+export function AskedAnswer({ question, title, unit, declared, heading = "h3", total }: {
   readonly question: Question
   readonly title: string
   readonly unit?: string | null
   readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
-  readonly heading?: "h2" | "h3"
+  readonly heading?: "h2" | "h3" | "none"
+  readonly total?: { readonly label: string; readonly value: string }
 }) {
   const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
   const result = run.data
@@ -379,6 +417,6 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3" }:
   if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>
   if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const read: QuestionAnswer = { ...declared, question: readDocument<Question>(JSON.stringify(question), "live"), answer: result.read }
-  return <AnswerView read={read} title={title} unit={unit} heading={heading} onStale={() => void run.refetch()}
+  return <AnswerView read={read} title={title} unit={unit} heading={heading} total={total} onStale={() => void run.refetch()}
     fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs })} />
 }
