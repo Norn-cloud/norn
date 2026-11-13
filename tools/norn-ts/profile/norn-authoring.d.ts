@@ -492,6 +492,48 @@ declare module "@norn/authoring" {
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition
 
+    /** A typed relational transform (ViewIR v1, #341); the Rust checker admits every node. */
+    interface TransformDefinition { readonly _tag: "NornTransform" }
+    type TransformOrder = { readonly column: string; readonly direction: "asc" | "desc" }
+    /**
+     * One closed operator. Expressions are ZEN over `input.<column>` (the
+     * node's input row) and are typed by the checker against the plan.
+     */
+    type TransformNode =
+      | { readonly op: "scan"; readonly input: string }
+      | { readonly op: "filter"; readonly input: string; readonly predicate: string }
+      | { readonly op: "project"; readonly input: string; readonly columns: ReadonlyArray<{ readonly name: string; readonly expression: string }> }
+      | {
+          readonly op: "join"; readonly left: string; readonly right: string
+          /** Along a declared link of the left column's type, or on a declared key (or `id`) of the right type. */
+          readonly on: { readonly link: { readonly column: string; readonly link: string } } | { readonly key: { readonly left: ReadonlyArray<string>; readonly right: string } }
+          readonly kind: "inner" | "left"
+          readonly prefix: string
+        }
+      | {
+          readonly op: "aggregate"; readonly input: string
+          readonly groupBy: ReadonlyArray<{ readonly column: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+          readonly measures: ReadonlyArray<{ readonly name: string; readonly fn: "sum" | "count" | "count_distinct" | "min" | "max"; readonly column?: string }>
+        }
+      | {
+          readonly op: "window"; readonly input: string; readonly partitionBy: ReadonlyArray<string>; readonly orderBy: ReadonlyArray<TransformOrder>
+          readonly columns: ReadonlyArray<{ readonly name: string; readonly fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum"; readonly column?: string; readonly offset?: number }>
+        }
+      | { readonly op: "union"; readonly inputs: ReadonlyArray<string>; readonly branch: string }
+      | { readonly op: "dedupe"; readonly input: string; readonly key: ReadonlyArray<string>; readonly orderBy: ReadonlyArray<TransformOrder>; readonly keep: "first" | "last" }
+    /**
+     * A derived dataset (VIEW-TYPE-1 … VIEW-ENGINE-1): `inputs` name the
+     * object types the plan's scans read; the call compiles statically.
+     */
+    function transform<const N extends { readonly [id: string]: TransformNode }>(meta: {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      readonly inputs: { readonly [alias: string]: TypeDefinition<any, any> }
+      readonly nodes: N
+      readonly output: keyof N & string
+    }): TransformDefinition
+
     /** Opaque decision definition; the syntax compiler lowers the call. */
     interface DecisionDefinition<I = unknown, O = unknown> {
       readonly __types?: { readonly input: I; readonly output: O }

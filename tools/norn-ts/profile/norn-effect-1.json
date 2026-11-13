@@ -157,6 +157,7 @@
     { "symbol": "@norn/authoring#Norn.mapping", "probe": "norn.Norn.mapping", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.law", "probe": "norn.Norn.law", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.labels", "probe": "norn.Norn.labels", "row": "ontology", "use": "call", "context": "definition", "note": "A standalone labels catalog: a tenant or locale pack labels definitions another layer owns (LABEL-LOCALE-1)" },
+    { "symbol": "@norn/authoring#Norn.transform", "probe": "norn.Norn.transform", "row": "ontology", "use": "call", "context": "definition", "note": "ViewIR v1: a typed relational transform; the Rust checker admits its plan" },
     { "symbol": "@norn/authoring#Norn.decimal", "probe": "norn.Norn.decimal", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: exact decimal with a declared scale (EntityIR `decimal`); Effect has no exact fixed-scale number" },
     { "symbol": "@norn/authoring#Norn.boundDecimal", "probe": "norn.Norn.boundDecimal", "row": "schema", "use": "call", "context": "definition", "note": "Interface-only exact Decimal group; the implementor must declare identical units and scales" },
     { "symbol": "@norn/authoring#Norn.rate", "probe": "norn.Norn.rate", "row": "schema", "use": "call", "context": "definition", "note": "VAL-RATE: bounded currency-per-unit Decimal declaration; arithmetic activation requires the typed consumer profile" },
