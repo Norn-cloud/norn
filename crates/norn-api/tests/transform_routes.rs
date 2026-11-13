@@ -415,3 +415,49 @@ fn a_reader_who_may_only_count_a_row_sees_it_withheld() {
         V::from(Decimal::parse("13.5").unwrap())
     );
 }
+
+#[test]
+fn installing_over_an_installed_set_readmits_the_whole_set() {
+    use norn_api::kernel_set::{KernelRefusal, admit_kernel_set, admit_over, retained_artifacts};
+    let envelopes = |values: Vec<Value>| -> Vec<norn_ir::ArtifactEnvelope> {
+        values
+            .into_iter()
+            .map(|value| serde_json::from_value(value).unwrap())
+            .collect()
+    };
+    let installed = admit_kernel_set(&envelopes(definitions())).expect("installed");
+    // A new version of an installed artifact replaces it: the set keeps one.
+    let mut transform = definitions().pop().unwrap();
+    transform["version"] = json!("0.2.0");
+    let again = admit_over(
+        &installed.canonical_set,
+        Some(&installed.receipt),
+        &envelopes(vec![transform.clone()]),
+    )
+    .expect("admitted");
+    let versions: Vec<Value> = retained_artifacts(&again.canonical_set)
+        .unwrap()
+        .iter()
+        .filter(|artifact| artifact.artifact_id == TRANSFORM)
+        .map(|artifact| serde_json::to_value(artifact).unwrap()["version"].clone())
+        .collect();
+    assert_eq!(versions, [json!("0.2.0")]);
+    // What the checker refuses in the set is the install's refusal.
+    transform["payload"]["calc"]["nodes"]["by_region"]["measures"][0]["column"] = json!("missing");
+    let refused = admit_over(
+        &installed.canonical_set,
+        Some(&installed.receipt),
+        &envelopes(vec![transform]),
+    );
+    let findings = match refused {
+        Err(KernelRefusal::Refused(findings)) => findings,
+        // Neither is the checker's refusal; the assertion below names it.
+        Err(KernelRefusal::Invalid(_)) | Ok(_) => Vec::new(),
+    };
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.code == "derived.validation.unknown_column"),
+        "{findings:#?}"
+    );
+}
