@@ -21,7 +21,7 @@ test("the connected systems feed one business model", () => {
 
 test("a concept states its facts, relationships and parents as declared", () => {
   const holding = catalog.byName.get("canon.Holding")
-  expect(holding?.parents).toEqual(["core.Resource"])
+  expect(holding?.parents).toEqual(["core.Resource", "canon.StockValuation"])
   expect(holding?.relationships.map(({ id, target, count }) => [id, target, count])).toEqual([
     ["item", "canon.Item", "one"], ["owner", "canon.Party", "at most one"], ["custodian", "canon.Party", "at most one"],
   ])

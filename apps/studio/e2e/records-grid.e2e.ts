@@ -19,6 +19,14 @@ async function shoot(page: Page, name: string) {
 const grid = (page: Page) => page.getByRole("grid", { name: "Holding records" })
 const rows = (page: Page) => grid(page).locator('[role="row"][aria-rowindex]:not([aria-rowindex="1"])')
 const firstCell = (page: Page, column: number) => rows(page).first().locator('[role="gridcell"]').nth(column)
+/** A column's position by its header, so a type that gains a property moves no assertion. */
+async function columnIndex(page: Page, name: string): Promise<number> {
+  await expect(grid(page).getByRole("columnheader", { name, exact: true })).toBeVisible()
+  const headers = (await grid(page).getByRole("columnheader").allInnerTexts()).map((text) => text.trim())
+  const index = headers.indexOf(name)
+  if (index < 0) throw new Error(`No ${name} column among ${headers.join(", ")}`)
+  return index
+}
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the object-route stand-in`) })
 
@@ -153,8 +161,11 @@ test("withheld rows read Withheld everywhere, sort last, and never match a filte
   await expect(withheld.first().getByRole("gridcell")).toHaveCount(2)
   await expect(withheld.first().getByRole("gridcell").first()).toHaveText("demo/holding/0004")
   // A row whose stock cost alone is withheld reads Withheld in that cell only.
+  await page.getByRole("button", { name: "Columns" }).click()
+  await page.getByRole("menuitemcheckbox", { name: "stock cost" }).click()
+  await page.keyboard.press("Escape")
   const costHidden = rows(page).nth(2)
-  await expect(costHidden.getByRole("gridcell").nth(8)).toHaveText("Withheld")
+  await expect(costHidden.getByRole("gridcell").nth(await columnIndex(page, "stock cost"))).toHaveText("Withheld")
   await expect(costHidden).toContainText("111.021")
   await shoot(page, "withheld")
   await withheld.first().click()

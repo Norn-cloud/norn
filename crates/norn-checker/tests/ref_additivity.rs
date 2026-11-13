@@ -12,7 +12,7 @@
 //! over every pair of declared classes (exhaustive over the four non-ratio
 //! classes, which is the whole finite space the refinement rule ranges over).
 //! METRIC-UNIT-PARTITION-1 is checked over every free/grouped/eq/ne choice for
-//! each of a quantity's two unit sources.
+//! each of a quantity's two unit sources, and for an amount's currency source.
 
 use std::collections::BTreeSet;
 
@@ -333,6 +333,100 @@ fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fi
                     .any(|dimension| dimension.path.property.as_str() == source);
                 assert_eq!(grouped, how != "eq", "{source} {how}");
             }
+        }
+    }
+}
+
+/// METRIC-CURRENCY-PARTITION and METRIC-CURRENCY-SINGLE: an amount whose
+/// currency lives in a code property aggregates per currency, as a unit source
+/// does; a single-code currency needs no partition unless it may be null.
+#[test]
+fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
+    for (codes, nullable) in [
+        (&["USD", "EUR"][..], false),
+        (&["USD"][..], false),
+        (&["USD"][..], true),
+    ] {
+        let values: Vec<_> = codes.iter().map(|code| json!({"value": code})).collect();
+        let payment = json!({"entityVersion": "2.0", "objectType": {
+            "name": "demo.Payment", "links": [],
+            "properties": [
+                {"id": "paid_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+                {"id": "amount", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"}, "currencySource": {"property": "currency"}}},
+                {"id": "currency", "type": {"kind": "enum", "values": values}, "constraints": {"nullable": nullable}},
+            ],
+        }});
+        let artifacts = vec![envelope("demo.Payment.entity", &payment)];
+        assert_eq!(errors(&artifacts), BTreeSet::new());
+        let space = derive_metric_space(
+            &artifacts,
+            &BTreeSet::new(),
+            &LawRoot::Entity("demo.Payment".to_owned()),
+        )
+        .expect("derived space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("amount"))
+            .expect("amount sum");
+        let single = codes.len() == 1 && !nullable;
+        let paths: Vec<_> = metric
+            .unit_partition
+            .iter()
+            .map(|path| path.property.as_str())
+            .collect();
+        assert_eq!(paths, if single { vec![] } else { vec!["currency"] });
+        let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
+        for how in ["free", "grouped", "eq", "ne"] {
+            let mut dimensions = vec![json!({"path": {"property": "paid_at"}, "grain": "week"})];
+            let mut filters = Vec::new();
+            match how {
+                "grouped" => dimensions.push(json!({"path": {"property": "currency"}})),
+                "eq" | "ne" => filters.push(
+                    json!({"path": {"property": "currency"}, "operator": how, "value": "USD"}),
+                ),
+                _ => {}
+            }
+            let question: QuestionIR = serde_json::from_value(json!({
+                "irVersion": "0.1", "name": "demo.paid", "objectSet": "demo.Payment",
+                "aggregate": [{"metric": metric.definition.name}], "groupBy": dimensions, "filter": filters,
+                "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-10-26T00:00:00Z"},
+                "freshness": {"kind": "live", "maxAgeMs": 5000},
+            }))
+            .expect("question");
+            // The exact engine admits the sum once the currency is partitioned.
+            let findings = norn_checker::metric::compute::admit(
+                std::slice::from_ref(&metric.definition),
+                &question,
+                &catalog,
+                100,
+            )
+            .err()
+            .unwrap_or_default();
+            let mixed = !single && matches!(how, "free" | "ne");
+            assert_eq!(
+                findings
+                    .iter()
+                    .map(|finding| finding.code.as_str())
+                    .collect::<Vec<_>>(),
+                if mixed {
+                    vec![norn_checker::metric::codes::MIXED_CURRENCY]
+                } else {
+                    vec![]
+                },
+                "{codes:?} nullable {nullable} {how}"
+            );
+            let plan = space.admit(&question, 100).expect("derived question");
+            let grouped = plan
+                .question()
+                .dimensions
+                .iter()
+                .any(|dimension| dimension.path.property.as_str() == "currency");
+            assert_eq!(
+                grouped,
+                how == "grouped" || (!single && how != "eq"),
+                "{codes:?} nullable {nullable} {how}"
+            );
         }
     }
 }

@@ -558,6 +558,14 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         ("canon.Holding", "stock_cost", "observed_at", true),
         // METRIC-GRAIN-LINK-1: a posting has no time of its own; it takes its event's.
         ("canon.Posting", "amount", "occurred_at", false),
+        // A settlement is summed per currency by its optional event's time; one
+        // without an event is counted as unlinked, never bucketed.
+        (
+            "canon.SettlementObservation",
+            "amount",
+            "occurred_at",
+            false,
+        ),
     ]
     .map(|(model, measure, time, snapshot)| {
         (
@@ -578,8 +586,32 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         let expected: &[&str] = match candidate.definition.type_params.expr.as_deref() {
             Some("quantity") => &["unit", "currency"],
             Some("amount") => &["currency"],
+            // A stock's cost is held per its currency source.
+            Some("stock_cost") => &["cost_currency"],
             _ => &[],
         };
         assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
+    // A stock's cost is read as of each week, summed per its currency.
+    let cost = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("stock_cost"))
+        .expect("the stock cost snapshot");
+    let question: norn_ir::QuestionIR = serde_json::from_value(json!({
+        "irVersion": "0.1", "name": "canon.stock_cost_by_week", "objectSet": "canon.Holding",
+        "aggregate": [{"metric": cost.definition.name}],
+        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
+        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+        "freshness": {"kind": "live", "maxAgeMs": 5000},
+    }))
+    .expect("question");
+    let plan = space.admit(&question, 100).expect("the stock cost admits");
+    let grouped: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .map(|dimension| dimension.path.property.as_str())
+        .collect();
+    assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }

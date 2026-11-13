@@ -79,7 +79,8 @@ pub mod codes {
     pub const GRAIN_MISMATCH: &str = "metric.validation.grain_mismatch";
     /// Currency must bind a single-valued currency property.
     pub const INVALID_CURRENCY: &str = "metric.validation.invalid_currency";
-    /// Summing multiple currencies requires an explicit conversion.
+    /// METRIC-UNIT-PARTITION-1: an aggregate of amounts whose currency lives in
+    /// a property neither groups by nor fixes it, and does not convert.
     pub const MIXED_CURRENCY: &str = "metric.validation.mixed_currency";
     /// METRIC-UNIT-PARTITION-1: an aggregate of a quantity whose unit lives in
     /// sibling properties neither groups by nor fixes each of them.
@@ -118,8 +119,17 @@ const MAX_DEPTH: usize = 64;
 struct Signature {
     object_type: String,
     unit: Option<UnitRef>,
-    currency: Option<String>,
+    currency: Option<SignatureCurrency>,
     depth: usize,
+}
+
+/// The currency of a metric's values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SignatureCurrency {
+    /// One code: a conversion's target or a single-code source.
+    Code(String),
+    /// METRIC-UNIT-PARTITION-1: summed per the code stored at this path.
+    Per(DimensionPath),
 }
 
 struct Path<'a> {
@@ -409,20 +419,27 @@ fn is_numeric(property: &EffectiveProperty) -> bool {
     )
 }
 
+/// The registry value type of an ISO 4217 code: a scalar code, so a currency
+/// source can be grouped by and fixed (METRIC-UNIT-PARTITION-1).
+fn is_iso_currency(property: &EffectiveProperty) -> bool {
+    matches!(&property.kind, EffectiveKind::Registry(name) if name.as_str() == "iso4217.currency_code")
+}
+
 fn is_scalar(property: &EffectiveProperty) -> bool {
-    matches!(
-        property.kind,
-        EffectiveKind::Base(
-            PropertyType::Text { .. }
-                | PropertyType::Integer { .. }
-                | PropertyType::Decimal { .. }
-                | PropertyType::Boolean {}
-                | PropertyType::Timestamp { .. }
-                | PropertyType::Date {}
-                | PropertyType::Duration {}
-                | PropertyType::Enum { .. }
+    is_iso_currency(property)
+        || matches!(
+            property.kind,
+            EffectiveKind::Base(
+                PropertyType::Text { .. }
+                    | PropertyType::Integer { .. }
+                    | PropertyType::Decimal { .. }
+                    | PropertyType::Boolean {}
+                    | PropertyType::Timestamp { .. }
+                    | PropertyType::Date {}
+                    | PropertyType::Duration {}
+                    | PropertyType::Enum { .. }
+            )
         )
-    )
 }
 
 fn valid_utc(text: &str) -> bool {
@@ -774,7 +791,7 @@ impl<'a> Checker<'a> {
         aggregate: MeasureAggregate,
         property: Option<&EffectiveProperty>,
         at: &str,
-    ) -> Option<String> {
+    ) -> Option<SignatureCurrency> {
         let source = property.and_then(|property| {
             if let EffectiveKind::Base(PropertyType::Decimal {
                 currency_source, ..
@@ -812,14 +829,14 @@ impl<'a> Checker<'a> {
                     codes::CURRENCY_SOURCE_MISMATCH,
                     &format!("{at}/currency/property"),
                 );
-                drop(self.currency(root, binding, aggregate, &format!("{at}/currency")));
+                drop(self.currency(root, binding, &format!("{at}/currency")));
             }
             // Validate the authoritative source even when a metric tries to rebind it.
             let verified = MetricCurrency {
                 property: source.clone(),
                 conversion: binding.conversion.clone(),
             };
-            self.currency(root, &verified, aggregate, &format!("{at}/currency"))
+            self.currency(root, &verified, &format!("{at}/currency"))
         } else {
             if metric.currency.is_some() {
                 self.reject(codes::CURRENCY_SOURCE_MISMATCH, &format!("{at}/currency"));
@@ -857,17 +874,17 @@ impl<'a> Checker<'a> {
         &mut self,
         root: &str,
         binding: &MetricCurrency,
-        aggregate: MeasureAggregate,
         at: &str,
-    ) -> Option<String> {
+    ) -> Option<SignatureCurrency> {
         let path = self.path(root, &binding.property, &format!("{at}/property"))?;
         if path.partial {
             self.reject(codes::PARTIAL_PATH, &format!("{at}/property"));
         }
         let mut singleton = None;
+        let mut nullable = false;
         for property in &path.properties {
             let valid = match &property.kind {
-                EffectiveKind::Registry(name) => name.as_str() == "iso4217.currency_code",
+                EffectiveKind::Registry(_) => is_iso_currency(property),
                 EffectiveKind::Base(PropertyType::Enum { values }) => {
                     if let [value] = values.as_slice() {
                         singleton = Some(value.value.clone());
@@ -889,11 +906,16 @@ impl<'a> Checker<'a> {
                 )
                 | EffectiveKind::Unresolved => false,
             };
-            if !valid || path.fan_out || property.nullable {
+            if !valid || path.fan_out {
                 self.reject(codes::INVALID_CURRENCY, at);
             }
+            nullable |= property.nullable;
         }
         if let Some(conversion) = &binding.conversion {
+            // A conversion needs every amount's currency.
+            if nullable {
+                self.reject(codes::INVALID_CURRENCY, at);
+            }
             if !currency_code(&conversion.target) {
                 self.reject(
                     codes::INVALID_CONVERSION,
@@ -921,21 +943,14 @@ impl<'a> Checker<'a> {
                     self.reject(codes::PARTIAL_PATH, &format!("{at}/conversion/rate"));
                 }
             }
-            Some(conversion.target.clone())
-        } else if let Some(singleton) = singleton {
-            Some(singleton)
+            Some(SignatureCurrency::Code(conversion.target.clone()))
+        } else if let Some(singleton) = singleton.filter(|_| !nullable) {
+            Some(SignatureCurrency::Code(singleton))
         } else {
-            if aggregate == MeasureAggregate::Sum {
-                self.reject(codes::MIXED_CURRENCY, at);
-            }
-            // Without conversion, mixed-currency min/max/avg are meaningless too.
-            if matches!(
-                aggregate,
-                MeasureAggregate::Min | MeasureAggregate::Max | MeasureAggregate::Avg
-            ) {
-                self.reject(codes::MIXED_CURRENCY, at);
-            }
-            None
+            // METRIC-UNIT-PARTITION-1: without a conversion, amounts in several
+            // currencies (or none) aggregate per currency; questions partition
+            // by it, and amounts without one form their own group.
+            Some(SignatureCurrency::Per(binding.property.clone()))
         }
     }
 
@@ -950,10 +965,23 @@ impl<'a> Checker<'a> {
                     property.kind,
                     EffectiveKind::Base(PropertyType::Text { .. })
                 );
+            let nullable = path.partial || property.nullable;
+            let literal = if is_iso_currency(property) {
+                match &filter.value {
+                    norn_ir::RuntimeValue::String(code) => currency_code(code),
+                    norn_ir::RuntimeValue::Null => nullable,
+                    norn_ir::RuntimeValue::Bool(_)
+                    | norn_ir::RuntimeValue::Number(_)
+                    | norn_ir::RuntimeValue::Array(_)
+                    | norn_ir::RuntimeValue::Object(_) => false,
+                }
+            } else {
+                property
+                    .check_predicate_literal(&filter.value, nullable)
+                    .is_ok()
+            };
             if !is_scalar(property)
-                || property
-                    .check_predicate_literal(&filter.value, path.partial || property.nullable)
-                    .is_err()
+                || !literal
                 || (!matches!(filter.operator, FilterOperator::Eq | FilterOperator::Ne)
                     && (!ordered || filter.value == norn_ir::RuntimeValue::Null))
             {
@@ -1188,19 +1216,21 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// METRIC-UNIT-PARTITION-1: the effective unit source of an aggregated
-    /// measure (none for a count or a measure without one).
-    fn unit_source(
+    /// METRIC-UNIT-PARTITION-1: the paths holding an aggregated measure's unit
+    /// (none for a count), each with the code that refuses mixing it: its unit
+    /// sources, then its currency source when it is summed per currency.
+    fn unit_paths(
         &self,
+        metric: &BoundMetric,
         (root, aggregate, property): (&str, MeasureAggregate, Option<&norn_ir::PropertyId>),
-    ) -> Vec<norn_ir::PropertyId> {
+    ) -> Vec<(DimensionPath, &'static str)> {
         if matches!(
             aggregate,
             MeasureAggregate::Count | MeasureAggregate::CountDistinct
         ) {
             return Vec::new();
         }
-        property
+        let mut paths: Vec<_> = property
             .and_then(|id| {
                 self.catalog
                     .object_type_named(root)
@@ -1216,10 +1246,27 @@ impl<'a> Checker<'a> {
                 }
             })
             .unwrap_or_default()
+            .into_iter()
+            .map(|property| {
+                let path = DimensionPath {
+                    links: Vec::new(),
+                    property,
+                };
+                (path, codes::MIXED_UNIT)
+            })
+            .collect();
+        if let Some(Some(Signature {
+            currency: Some(SignatureCurrency::Per(path)),
+            ..
+        })) = self.signatures.get(metric.name.as_str())
+        {
+            paths.push((path.clone(), codes::MIXED_CURRENCY));
+        }
+        paths
     }
 
-    /// METRIC-UNIT-PARTITION-1: every unit-source property of the measure is
-    /// grouped by, or fixed by an `eq` filter of the question or the metric.
+    /// METRIC-UNIT-PARTITION-1: every unit path of the measure is grouped by,
+    /// or fixed by an `eq` filter of the question or the metric.
     fn unit_partition(
         &mut self,
         question: &QuestionIR,
@@ -1227,22 +1274,27 @@ impl<'a> Checker<'a> {
         measure: (&str, MeasureAggregate, Option<&norn_ir::PropertyId>),
         at: &str,
     ) {
-        let fixed =
-            |id: &norn_ir::PropertyId| {
-                question.dimensions.iter().any(|dimension| {
-                    dimension.path.links.is_empty() && &dimension.path.property == id
-                }) || question
+        let fixed = |path: &DimensionPath| {
+            question
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.path == path)
+                || question
                     .filters
                     .iter()
                     .chain(&metric.default_filters)
                     .any(|filter| {
-                        matches!(filter.operator, FilterOperator::Eq)
-                            && filter.path.links.is_empty()
-                            && &filter.path.property == id
+                        matches!(filter.operator, FilterOperator::Eq) && &filter.path == path
                     })
-            };
-        if self.unit_source(measure).iter().any(|id| !fixed(id)) {
-            self.reject(codes::MIXED_UNIT, &format!("{at}/groupBy"));
+        };
+        let refused: BTreeSet<_> = self
+            .unit_paths(metric, measure)
+            .into_iter()
+            .filter(|(path, _)| !fixed(path))
+            .map(|(_, code)| code)
+            .collect();
+        for code in refused {
+            self.reject(code, &format!("{at}/groupBy"));
         }
     }
 
@@ -1287,10 +1339,13 @@ impl<'a> Checker<'a> {
             property,
         } = &metric.measure
         {
-            let sources = self.unit_source((object_type.as_str(), *aggregate, property.as_ref()));
+            let paths = self.unit_paths(
+                metric,
+                (object_type.as_str(), *aggregate, property.as_ref()),
+            );
             for (index, axis) in rollup.across.iter().enumerate() {
-                if axis.links.is_empty() && sources.contains(&axis.property) {
-                    self.reject(codes::MIXED_UNIT, &format!("{at}/across/{index}"));
+                if let Some((_, code)) = paths.iter().find(|(path, _)| path == axis) {
+                    self.reject(code, &format!("{at}/across/{index}"));
                 }
             }
         }

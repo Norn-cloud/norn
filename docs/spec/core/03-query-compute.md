@@ -156,6 +156,22 @@ grouping with `eq` filters on every source lowers to the exact engine), and
 not a code property, a decimal with a static unit, or a member that drops a
 declared source, refuses).
 
+A decimal's `currencySource` partitions the same way. A metric that converts
+its amounts (`currency.conversion`) or whose source admits a single code needs
+no partition. Otherwise the source path (an ISO 4217 code, or an enum of
+several codes) is a partition path: a question that neither groups by it nor
+fixes it with an `eq` filter refuses `metric.validation.mixed_currency`, a
+reaggregation never rolls up across it, and derived candidates list it in
+`unit_partition`, so a derived question is grouped by currency. An ISO 4217
+registry code is grouped by and `eq`-filtered like a code, with an upper-case
+literal. A nullable source partitions too: amounts without a currency form
+their own group (`eq null` fixes it), and a conversion still requires a
+non-null source (`metric.validation.invalid_currency`). The exact engine sums each partition's stored amounts and still
+refuses a conversion as an unsupported engine shape. Named scenarios:
+**METRIC-CURRENCY-PARTITION** (per currency, grouped or fixed, admits; free or
+`ne` refuses), **METRIC-CURRENCY-SINGLE** (a one-code source and a conversion
+need no partition).
+
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
 Candidates are uncertified; deriving one does not declare a governed KPI or

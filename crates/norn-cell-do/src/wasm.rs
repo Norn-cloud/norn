@@ -83,6 +83,10 @@ pub struct Reply {
     /// with `resume` (an `EngineCall` as JSON); `status` and `body` are then
     /// not the answer.
     pub engine: Option<String>,
+    /// Why the stored cell does not open, or why its definitions installed
+    /// no action policy: for the operator's log only, never part of the reply.
+    #[wasm_bindgen(js_name = policyError)]
+    pub policy_error: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -278,6 +282,7 @@ impl NornCell {
                 then_token,
                 then_request,
                 engine: None,
+                policy_error: None,
             };
         }
         // D102: loads read the cell's own uploads.
@@ -289,6 +294,11 @@ impl NornCell {
             .tenant
             .handle_analytics(self.principals.resolver(), uploads, &request)
             .unwrap_or_else(|| self.tenant.handle(self.principals.resolver(), &request));
+        let policy_error = self
+            .tenant
+            .open_error()
+            .or_else(|| self.tenant.action_policy_error())
+            .map(str::to_owned);
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
             #[cfg(feature = "fixtures")]
@@ -306,6 +316,7 @@ impl NornCell {
             then_token: None,
             then_request: None,
             engine,
+            policy_error,
         }
     }
 
@@ -387,6 +398,7 @@ impl NornCell {
             then_token: None,
             then_request: None,
             engine: None,
+            policy_error: None,
         }
     }
 }

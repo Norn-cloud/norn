@@ -380,6 +380,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "The request was refused: the scope's stored cell cannot be opened.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -18460,7 +18470,7 @@
         "properties": {
           "conversion": {
             "$ref": "#/components/schemas/NornIrCurrencyConversion",
-            "description": "Required when summing a source whose currency is not a singleton enum."
+            "description": "Converts the amounts to one target currency. Without it, amounts whose currency is not a single code aggregate per currency (METRIC-UNIT-PARTITION-1)."
           },
           "property": {
             "$ref": "#/components/schemas/NornIrDimensionPath",
@@ -29893,9 +29903,13 @@
           "timeProperty",
           "numerator",
           "denominator",
-          "unitPartition"
+          "unitPartition",
+          "additivity"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrMetricAdditivity"
+          },
           "denominator": {
             "type": [
               "string",

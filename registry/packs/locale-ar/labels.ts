@@ -1,7 +1,8 @@
 import { Norn } from "@norn/authoring"
 
 // Egyptian business Arabic for the core and canon model the three-systems demo installs: every canon
-// type and the core interfaces it builds on, with every property and enum value of each.
+// type and the core interfaces it builds on, with every property and enum value of each, except
+// ISO 4217 currency codes, which are shown as the code.
 // Not labelled here: `core.Conversion`, `core.Exchange`, `core.Process`, `core.analytics.*` and
 // `norn.ObservedLinkClaim`, which are outside the set this pack is admitted with. The pack declares
 // no `requiredLocales`, so the coverage lint does not list them.
@@ -35,6 +36,7 @@ export const ArabicLabels = Norn.labels({
     "canon.Catalog": { label: { ar: "كتالوج" }, localizedDescription: { ar: "بيانات وصفية للكتالوج، وليست مخزونًا" }, properties: catalogProperties },
     "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
     "canon.Item": { label: { ar: "صنف" }, properties: catalogProperties },
+    "canon.StockValuation": { label: { ar: "مخزون مُقيَّم" }, properties: { stock_cost: { ar: "تكلفة المخزون" }, cost_currency: { ar: "عملة التكلفة" } } },
     "canon.Holding": {
       label: { ar: "رصيد مخزون" }, localizedDescription: { ar: "رصيد مقسَّم حسب المالك والموقع" },
       properties: {
