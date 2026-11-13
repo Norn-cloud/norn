@@ -64,6 +64,7 @@ const WORDS = {
     choose: "Choose an option", decide: "Decide", decideAs: "Decide: {0}", confirmAs: "Yes, {0}", sending: "Sending…",
     "confirm.high": "This is a high-risk decision.", "confirm.action": "This starts an action.",
     "confirm.body": "You're choosing \"{0}\" ({1}). The run goes on with it as soon as the cell records it.",
+    "confirm.bodyNoScope": "You're choosing \"{0}\". The run goes on with it as soon as the cell records it.",
     failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", back: "Back to inbox",
     decidedAs: "Decided: {0} · {1}", byYou: "by you", byOther: "by {0}", replayed: " (already recorded; the cell returned the first receipt)",
     details: "Details", copy: "Copy", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
@@ -78,6 +79,7 @@ const WORDS = {
     choose: "اختر خيارًا", decide: "قرّر", decideAs: "قرّر: {0}", confirmAs: "نعم، {0}", sending: "جارٍ الإرسال…",
     "confirm.high": "هذا قرار عالي المخاطرة.", "confirm.action": "هذا يبدأ إجراءً.",
     "confirm.body": "تختار «{0}» ({1}). يتابع التشغيل به فور تسجيل الخلية له.",
+    "confirm.bodyNoScope": "تختار «{0}». يتابع التشغيل به فور تسجيل الخلية له.",
     failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", back: "العودة إلى الصندوق",
     decidedAs: "تقرّر: {0} · {1}", byYou: "بواسطتك", byOther: "بواسطة {0}", replayed: " (مسجّل من قبل؛ أعادت الخلية الإيصال الأول)",
     details: "التفاصيل", copy: "نسخ", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
@@ -365,7 +367,11 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const footer = q('[data-region="decision-actions"]')
     if (footer) footer.hidden = ![...footer.querySelectorAll<HTMLButtonElement>("button[data-node]")].some((button) => !button.hidden)
     const confirmBody = q('[data-region="confirm-body"]')
-    if (confirmBody) confirmBody.textContent = say("confirm.body", optionLabel(choice), decision.options.find((o) => o.id === choice)?.scope ?? "")
+    if (confirmBody) {
+      // The scope is named only when the options differ in it.
+      const scope = new Set(decision.options.map((o) => o.scope)).size > 1 ? decision.options.find((o) => o.id === choice)?.scope ?? "" : ""
+      confirmBody.textContent = say(scope ? "confirm.body" : "confirm.bodyNoScope", optionLabel(choice), scope)
+    }
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
     q('[data-region="decision-leave"]')?.toggleAttribute("hidden", state !== "leaving")
     const editable = enabled(machine, evaluate, snapshot, "option-choice")
@@ -382,7 +388,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       // A refusal of one option reads under that option, not here.
       const onOption = state === "refused" && snapshot.fields.refusedChoice != null && snapshot.fields.refusedChoice === snapshot.fields.choice
       const message = onOption ? "" : state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
-      const extra = found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
+      const extra = onOption ? [] : found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
       status.textContent = [message, ...extra].filter(Boolean).join(" ")
       status.hidden = status.textContent === ""
       status.dataset.tone = "danger"
