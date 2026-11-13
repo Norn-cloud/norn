@@ -67,6 +67,9 @@ struct Stored {
     result: TransformResult,
 }
 
+/// One joined link's edges: source id → target ids.
+type Edges = BTreeMap<String, Vec<String>>;
+
 /// The identity of a whole input snapshot: every scanned row's id and
 /// version, every joined link edge and every quarantine exclusion.
 fn input_digest(snapshot: &Snapshot) -> Result<String, CellError> {
@@ -83,7 +86,7 @@ fn input_digest(snapshot: &Snapshot) -> Result<String, CellError> {
             )
         })
         .collect();
-    let links: Vec<(&str, &str, &BTreeMap<String, Vec<String>>)> = snapshot
+    let links: Vec<(&str, &str, &Edges)> = snapshot
         .input
         .links
         .iter()
