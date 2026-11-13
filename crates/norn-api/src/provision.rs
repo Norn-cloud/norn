@@ -219,11 +219,16 @@ pub fn not_provisioned() -> Refusal {
     )
 }
 
-/// The refusal for provisioning a cell that already exists from other
-/// definitions, or on a host that provisions cells itself.
+/// The refusal for provisioning on a host that serves an existing cell and
+/// provisions cells itself; the submission is not read.
 #[must_use]
 pub fn already_provisioned() -> Refusal {
-    conflict()
+    Refusal::new(
+        StatusCode::CONFLICT,
+        codes::PROVISION_CONFLICT,
+        "the cell already exists",
+        "this host serves an existing cell; a cell is provisioned once, by its host",
+    )
 }
 
 fn conflict() -> Refusal {
@@ -481,12 +486,15 @@ pub fn provision_cell<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
     base: &TrustedBase,
-    admitted: AdmittedSet,
+    admitted: &AdmittedSet,
     now_ms: u64,
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
-    let input = install_input(&admitted, now_ms);
-    let store = CellStore::provision_definitions(engine, admitted.model, &input, &scope.key())
-        .map_err(|error| {
+    let input = install_input(admitted, now_ms);
+    // Every provisioned cell can serve governed actions: the kernel's own
+    // receipt and owned-row types are part of its model from the start.
+    let model = crate::action_admission::prepare_action_model(&admitted.model)?;
+    let store =
+        CellStore::provision_definitions(engine, model, &input, &scope.key()).map_err(|error| {
             if matches!(error, CellError::IdempotencyConflict(_)) {
                 conflict()
             } else {
