@@ -9,6 +9,10 @@ export function words(name: string): string {
 const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
 export const day = (instant: string | number): string => date.format(new Date(instant))
 
+const clock = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })
+/** An instant to the minute, in UTC, saying so: `13 Nov 2026, 01:03 UTC`. */
+export const stamp = (instant: string | number): string => `${clock.format(new Date(instant))} UTC`
+
 /** The question's window, with its excluded end shown as the last included day. */
 export const period = ({ start, end }: Question["window"]): string =>
   `${day(start)} – ${day(Date.parse(end) - 86_400_000)}`
