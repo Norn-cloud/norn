@@ -16,6 +16,15 @@ export CARGO_TARGET_DIR="$repo_root/target/hax"
 mkdir -p "$output_dir"
 
 cd "$repo_root"
+# cargo-hax streams the crate's id table into hax-engine, which held about
+# 3.9 GB resident on norn-ir beside the frontend; on an 8 GB machine the kernel
+# killed it and cargo-hax reported only "Broken pipe" (#718). Refuse up front.
+required_kib=$((12 * 1024 * 1024))
+available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2> /dev/null || echo 0)
+if (( available_kib < required_kib )); then
+  echo "artifact-governance extraction needs at least 12 GiB available memory (hax-engine alone held ~3.9 GB on norn-ir); this machine has $((available_kib / 1024)) MiB. The formal phase runs on a large machine: on Boat, --type large (16 GB), for any change touching formal-covered crates (#718)." >&2
+  exit 1
+fi
 # Attribute pre-existing drift before invoking an extractor.
 git -C "$repo_root" diff --exit-code HEAD -- Cargo.lock
 cargo-hax --no-custom-target-directory -C --locked -p norn-ir ';' into \
