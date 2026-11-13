@@ -160,6 +160,20 @@ test("behind Traefik, the rate limit keys on X-Real-Ip: other addresses get thei
   expect(other.status).toBe(401)
 })
 
+test("an IPv6 client is one /64: rotating within it is one bucket, another /64 is not locked out", async () => {
+  const env: Env = { ...stage(), STUDIO_CLIENT_IP_HEADER: "x-real-ip" }
+  await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" }, { "x-real-ip": "2001:db8:ffff::1" })
+  // Twelve guesses, each from another address in 2001:db8:1:2::/64.
+  const statuses: number[] = []
+  for (let attempt = 0; attempt < 12; attempt++) {
+    statuses.push((await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { "x-real-ip": `2001:db8:1:2::${(attempt + 1).toString(16)}` })).status)
+  }
+  expect(statuses.slice(0, 10).every((status) => status === 401)).toBe(true)
+  expect(statuses.at(-1)).toBe(429)
+  const neighbour = await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { "x-real-ip": "2001:db8:1:3::1" })
+  expect(neighbour.status).toBe(401)
+})
+
 test("on Cloudflare (the default), X-Real-Ip is client-written and ignored", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })
