@@ -1,0 +1,4 @@
+{
+  "order": 100030,
+  "value": "crates/norn-expr-wasm/scripts/build-pkg.sh"
+}
