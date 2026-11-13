@@ -507,7 +507,10 @@ fn installing_over_an_installed_set_readmits_the_whole_set() {
     };
     let installed = admit_kernel_set(&envelopes(definitions())).expect("installed");
     // A new version of an installed artifact replaces it: the set keeps one.
-    let mut transform = definitions().pop().unwrap();
+    let mut transform = definitions()
+        .into_iter()
+        .find(|artifact| artifact["artifactId"] == TRANSFORM)
+        .unwrap();
     transform["version"] = json!("0.2.0");
     let again = admit_over(
         &installed.canonical_set,
