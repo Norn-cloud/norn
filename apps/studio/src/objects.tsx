@@ -24,7 +24,7 @@ import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings, readHistory, type Evidence, type EvidenceRef } from "./evidence/review.ts"
+import { readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { stamp } from "./lib/format.ts"
@@ -303,6 +303,10 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 /** The record's facts in words, or, in the technical view, the exact document the server sent. */
 function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const card = useCardView()
+  const { catalog } = useCatalog()
+  // Scan provenance (the bytes a record was read from and the extractor) is not what the record
+  // says: the evidence beside each value and the Technical view carry it.
+  const provenance = new Set(concept.parents.includes(SOURCE_DOCUMENT) ? catalog?.byName.get(SOURCE_DOCUMENT)?.fields.map((field) => field.id) ?? [] : [])
   const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
   if (card.view === "technical") {
     return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
@@ -310,7 +314,7 @@ function Facts({ concept, reads, onLineage }: { readonly concept: Concept; reado
   return (
     <Panel icon={Rows3} label="Facts" action={toggle}><Well className="p-1.5">
       <dl className="divide-y divide-border/60 text-sm">
-        {concept.fields.map((field) => (
+        {concept.fields.filter((field) => !provenance.has(field.id)).map((field) => (
           <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">
             <dt className="truncate text-muted-foreground" title={field.id}>{field.label ?? field.id.replaceAll("_", " ")}</dt>
             <dd className={cn("min-w-0 truncate", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>

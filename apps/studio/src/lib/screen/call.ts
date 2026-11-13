@@ -1,4 +1,4 @@
-import type { ActionReceipt, ActionSummary, CallResult, Diagnostic, PendingDecision } from "../actions.ts"
+import type { ActionReceipt, ActionSummary, CallResult, Diagnostic, PendingDecision, RefusalReason } from "../actions.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -32,7 +32,7 @@ export type Phase =
   | { readonly kind: "editing" }
   | { readonly kind: "confirm" }
   | { readonly kind: "sending" }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
+  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason }
   | { readonly kind: "failed"; readonly reason: Unreachable; readonly message: string | null }
   | { readonly kind: "done"; readonly receipt: ActionReceipt; readonly undo: UndoOffer | null }
   /** Sent for approval: nothing committed; the decision waits in the inbox. */
@@ -131,7 +131,7 @@ function answered(result: CallResult): Phase {
   switch (result.kind) {
     case "receipt": return { kind: "done", receipt: result.receipt, undo: undoOf(result.receipt) }
     case "pending": return { kind: "pending", decision: result.decision }
-    case "refused": return { kind: "refused", status: result.status, code: result.code, message: result.message, diagnostics: result.diagnostics, ...result.explanation === undefined ? {} : { explanation: result.explanation } }
+    case "refused": return { kind: "refused", status: result.status, code: result.code, message: result.message, diagnostics: result.diagnostics, ...result.explanation === undefined ? {} : { explanation: result.explanation }, ...result.reason === undefined ? {} : { reason: result.reason } }
     case "no-cell": return { kind: "failed", reason: "no-cell", message: null }
     case "unavailable": return { kind: "failed", reason: "unavailable", message: null }
   }

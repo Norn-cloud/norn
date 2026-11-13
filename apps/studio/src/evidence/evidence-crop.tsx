@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { FileSearch, ScanText } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { FileSearch, PencilLine, ScanText } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { cn } from "@/lib/utils"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
-import { readEvidence, readScan, type Evidence, type EvidenceRef } from "./review.ts"
+import { atScale } from "../lib/objects.ts"
+import { transport, type Artifact } from "@/lib/transport"
+import { readEvidence, readHistory, readScan, type Evidence, type EvidenceRef } from "./review.ts"
 
 /** A fraction of the page as a CSS percentage. */
 const percent = (fraction: string) => `${Number(fraction) * 100}%`
@@ -16,12 +19,53 @@ function pageProblem(error: unknown): string {
   return "The scanned page could not be read."
 }
 
+/** The declared decimal scale of a property of an object type, from the cell's catalog. */
+function scaleOf(artifacts: readonly Artifact[], objectType: string, property: string): number | undefined {
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "entity" || !("objectType" in artifact.payload) || artifact.payload.objectType.name !== objectType) continue
+    const type = (artifact.payload.objectType.properties ?? []).find((candidate) => candidate.id === property)?.type as { readonly kind?: string; readonly scale?: number } | undefined
+    return type?.kind === "decimal" ? type.scale : undefined
+  }
+  return undefined
+}
+
+/**
+ * The governed change to the value this evidence was read for: the newest version of the value's
+ * subject that an action wrote and that changed that property. It shows what the value became, who
+ * changed it (the verified actor), why, and in which commit, whichever action did it (a line's
+ * correction restates its document's total too).
+ */
+function Correction({ evidence, subject }: { readonly evidence: Evidence; readonly subject: EvidenceRef }) {
+  const history = useQuery({ queryKey: ["history", subject.objectType, subject.id], queryFn: () => readHistory(subject.objectType, subject.id), retry: false })
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const versions = [...history.data?.document.versions ?? []].sort((a, b) => b.version - a.version)
+  const property = evidence.subjectProperty
+  const index = versions.findIndex((version, at) => version.writer.kind === "action" && version.values !== null
+    && JSON.stringify(version.values[property]) !== JSON.stringify(versions[at + 1]?.values?.[property]))
+  const correction = versions[index]
+  if (correction === undefined || correction.writer.kind !== "action") return null
+  const value = correction.values?.[property]
+  if (value === undefined || value === null) return null
+  const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, property)
+  const reason = correction.writer.input.correction_reason
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-foreground">
+      <PencilLine aria-hidden className="size-3.5 self-center text-emerald-700 dark:text-emerald-400" />
+      <span>Read <span className="font-mono">“{evidence.text}”</span> → corrected to <span className="font-mono font-medium">{atScale(String(value), scale)}</span></span>
+      <span className="text-muted-foreground">by {correction.writer.actor}{typeof reason === "string" && reason !== "" ? <> · “{reason}”</> : null} ·</span>
+      <Link to="/sources/$concept/$" params={{ concept: subject.objectType, _splat: subject.id }} hash="lineage" className="underline underline-offset-4" title="The correction's receipt and lineage">commit {correction.commit}</Link>
+    </div>
+  )
+}
+
 /**
  * The region of the scanned page an extracted value was read from, beside the
  * text the extractor read there. The page comes from a short-lived read the
- * cell issues after its policy decides; the box is the evidence's own.
+ * cell issues after its policy decides; the box is the evidence's own. A
+ * governed correction that cited this evidence is shown with it.
  */
-export function EvidenceCrop({ evidence, className, actionFor }: { readonly evidence: Evidence; readonly className?: string; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
+export function EvidenceCrop({ evidence, record, className, actionFor }: { readonly evidence: Evidence; readonly record?: EvidenceRef; readonly className?: string; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
+  const subject = evidence.subject ?? record
   // An object-store URI is read only through the cell's short-lived, policy-checked read; a plain
   // web URI the evidence names (a local `norn dev` serving synthetic scans) is shown as it is.
   const direct = /^https?:\/\//.test(evidence.documentUri)
@@ -70,6 +114,7 @@ export function EvidenceCrop({ evidence, className, actionFor }: { readonly evid
         </div>
         <div>{evidence.extractor} {evidence.extractorVersion} · page {evidence.page} · {confidence}</div>
         <div className="flex flex-wrap items-center gap-x-1">Document <CopyId value={evidence.documentDigest} short={12} /> <span className="truncate font-mono">{evidence.documentUri}</span></div>
+        {subject && <Correction evidence={evidence} subject={subject} />}
         {actionFor?.(evidence)}
       </figcaption>
     </figure>
@@ -77,12 +122,12 @@ export function EvidenceCrop({ evidence, className, actionFor }: { readonly evid
 }
 
 /** The evidence objects of one value, each with its crop. */
-export function EvidenceList({ refs, filter, actionFor }: { readonly refs: readonly EvidenceRef[]; readonly filter?: (evidence: Evidence) => boolean; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
+export function EvidenceList({ refs, record, filter, actionFor }: { readonly refs: readonly EvidenceRef[]; readonly record?: EvidenceRef; readonly filter?: (evidence: Evidence) => boolean; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const evidence = useQuery({ queryKey: ["evidence", refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>
   if (evidence.isError) return <p className="text-meta text-muted-foreground">The evidence could not be read.</p>
   const shown = filter ? evidence.data.filter(filter) : evidence.data
   if (shown.length === 0) return <p className="text-meta text-muted-foreground">No evidence was recorded for this value.</p>
-  return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...actionFor ? { actionFor } : {}} />)}</div>
+  return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...record ? { record } : {}} {...actionFor ? { actionFor } : {}} />)}</div>
 }

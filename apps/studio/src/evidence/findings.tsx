@@ -49,7 +49,7 @@ export function Findings({ objectType, id, actionFor }: { readonly objectType: s
             <p className="text-sm">{finding.message}</p>
           </article>
         ))}
-        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} {...actionFor ? { actionFor } : {}} /></div>}
+        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
       </Well>
     </Panel>
   )

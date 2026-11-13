@@ -12,6 +12,11 @@ import { Norn } from "@norn/authoring"
  * not depend on the resolution the document was scanned or rendered at.
  * `confidence_bp` is the extractor's own score in basis points; it is not
  * evidence of correctness, and null means the extractor reported none.
+ *
+ * `subject_property` names the property the value was read for. Its object is
+ * the one the evidence links to, unless `subject_type` and `subject_key` name
+ * another (a row of that document, such as one printed line): a correction
+ * of the value is an action on that object, taking that property.
  */
 export const SourceEvidence = Norn.interfaceType({
   name: "norn.SourceEvidence",
@@ -20,6 +25,8 @@ export const SourceEvidence = Norn.interfaceType({
   description: "Where one extracted value was read: the document (its URI and the SHA-256 of its exact bytes), the page and box, the text span the extractor read, and which extractor at which version read it, with its own confidence.",
   properties: Schema.Struct({
     subject_property: Schema.String,
+    subject_type: Schema.NullOr(Schema.String),
+    subject_key: Schema.NullOr(Schema.String),
     document_uri: Schema.String,
     document_digest: Schema.String,
     media_type: Schema.String,
@@ -32,5 +39,25 @@ export const SourceEvidence = Norn.interfaceType({
     extractor: Schema.String,
     extractor_version: Schema.String,
     confidence_bp: Schema.NullOr(Schema.Int),
+  }),
+})
+
+/**
+ * Where a document came from and how it was read: the bytes (URI and
+ * SHA-256), their media type, and the extractor at its version. This is scan
+ * provenance, not what the document says; a renderer shows it with the
+ * evidence and in technical views, not among the document's facts.
+ */
+export const SourceDocument = Norn.interfaceType({
+  name: "norn.SourceDocument",
+  title: "Scanned source provenance",
+  version: "0.1.0",
+  description: "The document bytes a record was read from (URI, SHA-256 and media type) and the extractor and version that read them.",
+  properties: Schema.Struct({
+    document_uri: Schema.String,
+    document_digest: Schema.String,
+    media_type: Schema.String,
+    extractor: Schema.String,
+    extractor_version: Schema.String,
   }),
 })

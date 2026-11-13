@@ -11,6 +11,8 @@ import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
 /** The core interface every evidence type implements (registry/core/src/evidence.ts). */
 export const SOURCE_EVIDENCE = "norn.SourceEvidence"
+/** The core interface of scan provenance (bytes and extractor): shown with the evidence and in Technical views, not among a record's facts. */
+export const SOURCE_DOCUMENT = "norn.SourceDocument"
 
 export interface EvidenceRef { readonly objectType: string; readonly id: string }
 
@@ -60,7 +62,9 @@ export interface ObjectHistory {
 /** One evidence object's values, as `norn.SourceEvidence` declares them. */
 export interface Evidence {
   readonly ref: EvidenceRef
+  /** The property the value was read for, of `subject` when the evidence names one (a printed line), else of the record it is linked to. */
   readonly subjectProperty: string
+  readonly subject: EvidenceRef | null
   readonly documentUri: string
   readonly documentDigest: string
   readonly mediaType: string
@@ -91,6 +95,7 @@ export async function readEvidence(ref: EvidenceRef): Promise<Evidence> {
   return {
     ref,
     subjectProperty: text("subject_property"),
+    subject: text("subject_type") !== "" && text("subject_key") !== "" ? { objectType: text("subject_type"), id: text("subject_key") } : null,
     documentUri: text("document_uri"),
     documentDigest: text("document_digest"),
     mediaType: text("media_type"),

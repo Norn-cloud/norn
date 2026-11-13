@@ -198,7 +198,9 @@ def evidence(doc: str, name: str, value: Value, uri: str, digest: str, media: st
             "media_type": media, "page": 1, "bbox_x": frac(left - pad, width), "bbox_y": frac(top - pad, height),
             "bbox_w": frac(w + 2 * pad, width), "bbox_h": frac(h + 2 * pad, height), "text": value.word.text if value.word else value.value,
             "extractor": extractor.name, "extractor_version": extractor.version,
-            "confidence_bp": round(value.word.confidence * 100) if value.word else None}
+            "confidence_bp": round(value.word.confidence * 100) if value.word else None,
+            # A printed line's value is evidence for that line (its subject row).
+            "row": f"{doc}~line-{name.split('.')[1]}" if name.startswith("lines.") else None}
 
 
 def row(doc: str, extraction: Extraction, uri: str, digest: str, media: str, extractor: Extractor) -> dict:

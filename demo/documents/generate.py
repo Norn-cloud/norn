@@ -203,7 +203,9 @@ def rows(doc: dict, boxes: dict, uri: str, digest: str, extractor: str, version:
         return {"name": f"{doc['id']}~{field}", "parent": doc["id"], "field": field, "document_uri": uri,
                 "document_digest": digest, "media_type": "image/png", "page": 1,
                 "bbox_x": number(f"{x:.4f}"), "bbox_y": number(f"{y:.4f}"), "bbox_w": number(f"{w:.4f}"), "bbox_h": number(f"{h:.4f}"),
-                "text": text, "extractor": extractor, "extractor_version": version, "confidence_bp": rng.randint(8600, 9800)}
+                "text": text, "extractor": extractor, "extractor_version": version, "confidence_bp": rng.randint(8600, 9800),
+                # A printed line's value is evidence for that line (its subject row).
+                "row": f"{doc['id']}~line-{field.split('.')[1]}" if field.startswith("lines.") else None}
     read = [imported_lines.get(str(index), f"{amount:.2f}") for index, (_, amount) in enumerate(doc["lines"], 1)]
     lines = [{"name": f"{doc['id']}~line-{index}", "parent": doc["id"], "line_no": index, "description": description,
               "amount": number(text)} for index, ((description, _), text) in enumerate(zip(doc["lines"], read), 1)]
