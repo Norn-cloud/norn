@@ -77,7 +77,48 @@ select_shard() {
   exit 2
 }
 upstream=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-upstream.XXXXXX")
-trap 'rm -rf -- "$upstream"' EXIT
+# CI telemetry: when NORN_CI_SPANS names a file, every phase and bundle task appends one JSON
+# line (task, commit, PR, VM, start and end in ns, exit code, sccache hit and miss deltas) that
+# a collector ships off the machine. Recording never changes a phase's result or exit status.
+span_task='' span_start=0 span_counts=''
+sccache_counts() {
+  [[ ${RUSTC_WRAPPER:-} == *sccache* ]] || command -v sccache > /dev/null 2>&1 || return 0
+  sccache --show-stats --stats-format=json 2> /dev/null | python3 -c 'import json, sys
+stats = json.load(sys.stdin)["stats"]
+print(*(sum(stats[key]["counts"].values()) for key in ("cache_hits", "cache_misses")))' 2> /dev/null || true
+}
+span_begin() {
+  [[ -n ${NORN_CI_SPANS:-} ]] || return 0
+  span_task=$1 span_start=$(date +%s%N) span_counts=$(sccache_counts)
+  [[ $span_start =~ ^[0-9]+$ ]] || span_task=''
+}
+span_end() {
+  [[ -n ${NORN_CI_SPANS:-} && -n $span_task ]] || return 0
+  local end hits='' misses='' after phase=${span_task#*/} shard=''
+  [[ $span_task != test/* ]] || { shard=$phase; phase=test; }
+  end=$(date +%s%N)
+  [[ $end =~ ^[0-9]+$ ]] || { span_task=''; return 0; }
+  after=$(sccache_counts)
+  if [[ $span_counts =~ ^[0-9]+\ [0-9]+$ && $after =~ ^[0-9]+\ [0-9]+$ ]]; then
+    read -r hits misses <<<"$after"
+    hits=$((hits - ${span_counts%% *})) misses=$((misses - ${span_counts##* }))
+  fi
+  clean() { tr -cd 'A-Za-z0-9._/:-' <<<"$1"; }
+  printf '{"span":"task %s","ci_source":"core.sh","ci_task":"%s","ci_phase":"%s","ci_shard":"%s","ci_commit":"%s","ci_pr":"%s","ci_vm":"%s","ci_runner":"%s","start_ns":%s,"end_ns":%s,"span_ms":%s,"ci_exit_code":%s,"ok":%s,"cache_hits":%s,"cache_misses":%s}\n' \
+    "$span_task" "$span_task" "$phase" "$shard" "$(git rev-parse HEAD 2> /dev/null || true)" \
+    "$(clean "${NORN_CI_PR:-}")" "$(clean "${NORN_CI_VM:-$(hostname)}")" "$(clean "${NORN_CI_RUNNER:-${RUNNER_ENVIRONMENT:-local}}")" \
+    "$span_start" "$end" "$(((end - span_start) / 1000000))" "$1" "$([[ $1 -eq 0 ]] && echo true || echo false)" \
+    "${hits:-null}" "${misses:-null}" >> "$NORN_CI_SPANS" 2> /dev/null || true
+  span_task=''
+}
+# Runs phase $1 (shard $2) as one span; a failing phase is recorded by the EXIT trap. span_end
+# takes the exit status.
+timed_phase() {
+  span_begin "$([[ $1 == test ]] && echo "test/${2:-all}" || echo "phase/$1")"
+  run_phase "$@"
+  span_end 0
+}
+trap 'status=$?; span_end "$status"; rm -rf -- "$upstream"' EXIT
 export NORN_CHECKER_WASM_PARITY_OUT="$upstream/native-parity"
 # Every phase but `cheap` runs over these generated inputs.
 prepared=''
@@ -545,13 +586,14 @@ PY
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
-        trap 'task_status=$?; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
+        span_begin "$task"
+        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
         if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
       )
     done <<<"$task_lines"
     ;;
-  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do run_phase "$phase"; done ;;
+  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;
-  test) [[ $# -le 2 ]] || run_phase usage; run_phase test "${2:-all}" ;;
-  *) [[ $# -le 1 ]] || run_phase usage; run_phase "$1" ;;
+  test) [[ $# -le 2 ]] || run_phase usage; timed_phase test "${2:-all}" ;;
+  *) [[ $# -le 1 ]] || run_phase usage; timed_phase "$1" ;;
 esac
