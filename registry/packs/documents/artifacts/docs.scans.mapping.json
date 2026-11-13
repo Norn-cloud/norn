@@ -291,15 +291,15 @@
           },
           {
             "property": "subject_property",
-            "value": "startsWith(input.field, 'lines.') ? 'amount' : input.field"
+            "value": "input.row == null ? input.field : 'amount'"
           },
           {
             "property": "subject_type",
-            "value": "startsWith(input.field, 'lines.') ? 'docs.DocumentLine' : null"
+            "value": "input.row == null ? null : 'docs.DocumentLine'"
           },
           {
             "property": "subject_key",
-            "value": "startsWith(input.field, 'lines.') ? input.parent + '~line-' + join(filter(split(input.field, ''), contains('0123456789', #)), '') : null"
+            "value": "input.row"
           },
           {
             "property": "document_uri",

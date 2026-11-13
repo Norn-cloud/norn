@@ -158,6 +158,7 @@ export const Source = Norn.sourceSchema({
     { dataset: "Field Evidence", name: "extractor", ordinal: 12, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Field Evidence", name: "extractor_version", ordinal: 13, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Field Evidence", name: "confidence_bp", ordinal: 14, nativeType: "Integer", typeCandidate: { type: "integer", origin: "declared" }, required: false },
+    { dataset: "Field Evidence", name: "row", ordinal: 15, nativeType: "Reference", typeCandidate: { type: "reference", origin: "declared" }, required: false },
     { dataset: "Journal Entry", name: "name", ordinal: 0, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Journal Entry", name: "entry_number", ordinal: 1, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "Journal Entry", name: "account_code", ordinal: 2, nativeType: "Text", typeCandidate: { type: "string", origin: "declared" }, required: true },
@@ -234,9 +235,9 @@ export const Mapping = Norn.mapping({
       properties: [
         // A printed line's value is evidence for that line's amount; the line is its subject.
         { property: "id", value: "input.name" },
-        { property: "subject_property", value: "startsWith(input.field, 'lines.') ? 'amount' : input.field" },
-        { property: "subject_type", value: "startsWith(input.field, 'lines.') ? 'docs.DocumentLine' : null" },
-        { property: "subject_key", value: "startsWith(input.field, 'lines.') ? input.parent + '~line-' + join(filter(split(input.field, ''), contains('0123456789', #)), '') : null" },
+        { property: "subject_property", value: "input.row == null ? input.field : 'amount'" },
+        { property: "subject_type", value: "input.row == null ? null : 'docs.DocumentLine'" },
+        { property: "subject_key", value: "input.row" },
         { property: "document_uri", value: "input.document_uri" }, { property: "document_digest", value: "input.document_digest" },
         { property: "media_type", value: "input.media_type" }, { property: "page", value: "input.page" },
         { property: "bbox_x", value: "input.bbox_x" }, { property: "bbox_y", value: "input.bbox_y" },
@@ -300,7 +301,7 @@ const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Liter
 const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
-  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount), lines_total: Schema.optionalKey(Amount),
+  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Schema.Finite), total: Schema.optionalKey(Schema.Finite), lines_total: Schema.optionalKey(Schema.Finite),
   correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
 })
 
