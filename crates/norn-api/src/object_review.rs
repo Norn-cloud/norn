@@ -334,6 +334,7 @@ fn action_writer<E: SqlEngine>(
 
 /// One version with its receipt and writer.
 fn version_entry<E: SqlEngine>(
+    (host, actor): (&DevHost<E>, &str),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
@@ -341,17 +342,35 @@ fn version_entry<E: SqlEngine>(
     let receipt = reader
         .receipt_for_fact_version(MAIN_WORLD, &row.object_type, &row.id, version)
         .map_err(Refusal::host)?;
-    let values = reader
+    let catalog = host.marking_catalog(reader)?;
+    // PRIVACY-1: each version's values are projected under that version's
+    // own markings; a marked version names no writer input or source row.
+    let mut marked = false;
+    let values = match reader
         .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version)
         .map_err(Refusal::host)?
-        .map(|record| record.values.into_iter().collect());
-    let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
-    let writer = match reader
-        .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
-        .map_err(Refusal::host)?
     {
-        Some(lineage) => NornVersionWriter::Mapping { lineage },
-        None => action_writer(reader, &receipt)?.unwrap_or(NornVersionWriter::Other),
+        Some(mut record) => {
+            let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
+            marked = markings
+                .as_ref()
+                .is_none_or(|markings| markings.values().any(|ids| !ids.is_empty()));
+            crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
+            Some(record.values.into_iter().collect())
+        }
+        None => None,
+    };
+    let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
+    let writer = if marked {
+        NornVersionWriter::Other
+    } else {
+        match reader
+            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
+            .map_err(Refusal::host)?
+        {
+            Some(lineage) => NornVersionWriter::Mapping { lineage },
+            None => action_writer(reader, &receipt)?.unwrap_or(NornVersionWriter::Other),
+        }
     };
     Ok(NornObjectVersion {
         version,
@@ -388,7 +407,7 @@ pub fn get_object_history<E: SqlEngine>(
     locked(host, access, &mut start, |reader| {
         let versions = (oldest..=row.version)
             .rev()
-            .map(|version| version_entry(reader, &row, version))
+            .map(|version| version_entry((host, &actor), reader, &row, version))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
@@ -522,8 +541,11 @@ pub fn get_object_lineage_at<E: SqlEngine>(
     }
     let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
     locked(host, access, &mut start, |reader| {
+        let catalog = host.marking_catalog(reader)?;
         reader
-            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
+            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |instance| {
+                crate::privacy::discloses_source(reader, &catalog, instance)
+            })
             .map_err(Refusal::host)?
             .ok_or_else(not_found)
     })

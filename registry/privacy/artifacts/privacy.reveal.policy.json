@@ -1,0 +1,52 @@
+{
+  "artifactId": "privacy.reveal.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Who may reveal personal data",
+  "namespace": "privacy",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "privacy.reveal",
+    "rules": [
+      {
+        "actions": [
+          "norn.reveal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "marking": {
+              "anyOf": [
+                "pii.contact",
+                "pii.identity"
+              ]
+            }
+          }
+        ],
+        "resourceType": "norn.Marking",
+        "ruleId": "reveal_personal_data",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/privacy/artifacts/privacy.reveal.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

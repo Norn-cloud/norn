@@ -53,17 +53,25 @@ async function proposeRoute(request: Request, deps: AssistantDeps): Promise<Resp
     target = { id: body.dashboardId, version: doc.version, payload: doc.payload }
   }
   const proposalId = `prop_${newId()}`
-  const request_ = target === undefined ? asked : `${asked}\n\nThe dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify(target.payload)}`
-  const outcome = await propose(cell, model, request_, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: asked })
+  // PRIVACY-GUARD-1: the model never sees personal data. The cell tokenizes the request (markings
+  // first, then a detector pass) and keeps the token map; without its guard nothing is sent.
+  const guarded = await guardPrompt(cell, asked, proposalId)
+  if (guarded === null) return refused(503, "The privacy guard is not available, so nothing was sent to the model.")
+  const safe = guarded.safePrompt
+  const request_ = target === undefined ? safe : `${safe}\n\nThe dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify(target.payload)}`
+  const outcome = await propose(cell, model, request_, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe })
   const { definition, verdict } = outcome
   if (definition === null || verdict === null) {
     await recordSpend(db, scope.userId, null, outcome.answers, now)
     return refused(outcome.failure?.includes("role") ? 403 : 502, outcome.failure ?? "The assistant could not propose a dashboard.")
   }
+  // The reply comes back through the same guard: restored only where this person may see it.
+  const restored = await restoreReply(cell, guarded.guardId, outcome.note, `${proposalId}-note`)
+  const guard = { guardId: guarded.guardId, receiptHash: guarded.receiptHash, safePrompt: safe, tokens: guarded.tokens, reply: restored, model: outcome.answers.at(-1)?.model ?? model.name }
   const proposal = {
     // A new dashboard's id follows its proposed title.
     id: proposalId, request: asked, targetId: target?.id ?? dashboardId(definition.title, newId()), targetVersion: target?.version ?? null, definition,
-    verdict: { ...verdict, note: outcome.note }, state: verdict.admitted ? "pending" as const : "refused" as const,
+    verdict: { ...verdict, note: outcome.note, guard }, state: verdict.admitted ? "pending" as const : "refused" as const,
     model: outcome.answers.at(-1)?.model ?? model.name, createdAtMs: now,
   }
   await insertProposal(db, scope, proposal)
@@ -98,6 +106,30 @@ async function acceptRoute(id: string, deps: AssistantDeps): Promise<Response> {
   }
   if (answer.status === 403) return refused(403, "Your role may not create dashboards here.")
   return refused(502, `The cell did not answer (${answer.status}).`)
+}
+
+/** A guarded prompt as the cell returns it: tokens and receipt, never a value. */
+export interface Guarded {
+  readonly guardId: number
+  readonly receiptHash: string
+  readonly safePrompt: string
+  readonly tokens: readonly { readonly token: string; readonly kind: string; readonly label: string; readonly source: string; readonly revealable: boolean }[]
+}
+export interface RestoredSegment { readonly text: string; readonly token?: string; readonly kind?: string; readonly state?: "restored" | "projected" | "kept" }
+
+/** The cell's guard for one model call, as the person; null when the cell has none (then nothing is sent). */
+export async function guardPrompt(cell: Cell, text: string, key: string): Promise<Guarded | null> {
+  const answer = await cell.post("/v1/guard:prompt", { text, purpose: "dashboard-assistant", idempotencyKey: key })
+  if (answer.kind !== "answer" || answer.status !== 200 || !isRecord(answer.body) || typeof answer.body.safePrompt !== "string" || typeof answer.body.guardId !== "number") return null
+  return answer.body as unknown as Guarded
+}
+
+/** A model reply restored by the cell for the person; the reply as sent when the cell cannot restore it. */
+export async function restoreReply(cell: Cell, guardId: number, text: string, key: string): Promise<readonly RestoredSegment[]> {
+  if (text === "") return []
+  const answer = await cell.post(`/v1/guard/${guardId}:restore`, { text, idempotencyKey: key })
+  const segments = answer.kind === "answer" && answer.status === 200 && isRecord(answer.body) && Array.isArray(answer.body.segments) ? answer.body.segments as RestoredSegment[] : null
+  return segments ?? [{ text }]
 }
 
 /** One `/api/agent/dashboards*` request, resolved to its person and their cell. */

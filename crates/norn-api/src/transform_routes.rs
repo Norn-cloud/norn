@@ -453,6 +453,21 @@ fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
     }
 }
 
+/// Whether any grain column carries lineage markings.
+fn grain_marked(plan: &TransformPlan, grain: &[String]) -> bool {
+    marked_columns(plan)
+        .iter()
+        .any(|(name, markings)| !markings.is_empty() && grain.contains(name))
+}
+
+/// Each output column with its lineage markings.
+fn marked_columns(plan: &TransformPlan) -> Vec<(String, Vec<String>)> {
+    columns(plan.output_schema())
+        .into_iter()
+        .map(|column| (column.name, column.markings))
+        .collect()
+}
+
 fn columns(schema: &NodeSchema) -> Vec<NornTransformColumn> {
     schema
         .columns
@@ -492,6 +507,11 @@ pub fn get_transform_rows<E: SqlEngine>(
     let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
     let commits = result.revision.commits;
+    let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
+    let public = |id: &str| {
+        key.as_ref()
+            .map_or_else(|| id.to_owned(), |key| key.keyed_id(id))
+    };
     let start = match params.after.as_deref() {
         None => 0,
         Some(cursor) => {
@@ -512,23 +532,33 @@ pub fn get_transform_rows<E: SqlEngine>(
             let position = result
                 .rows
                 .iter()
-                .position(|candidate| candidate.id == row)
+                .position(|candidate| public(&candidate.id) == row)
                 .ok_or_else(|| Refusal::invalid("the cursor was not issued for this transform"))?;
             position.saturating_add(1)
         }
     };
     let total = result.rows.len();
-    let page: Vec<NornTransformRow> = result
+    let mut page: Vec<NornTransformRow> = result
         .rows
         .iter()
         .skip(start)
         .take(limit)
         .map(|row| NornTransformRow {
-            row_id: row.id.clone(),
+            row_id: public(&row.id),
             values: row.values.clone(),
             member_count: u64::try_from(row.members.len()).unwrap_or(u64::MAX),
         })
         .collect();
+    // PRIVACY-1: a marked column leaves projected, as its source property does.
+    let marked = marked_columns(&plan);
+    crate::privacy::project_columns(
+        host,
+        &marked,
+        &mut page
+            .iter_mut()
+            .map(|row| &mut row.values)
+            .collect::<Vec<_>>(),
+    )?;
     let end = start.saturating_add(page.len());
     let next_after = (end < total)
         .then(|| page.last().map(|row| format!("{commits}:{}", row.row_id)))
@@ -566,19 +596,26 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     access: &dyn ObjectAccess,
     now: LogicalTime,
 ) -> Result<NornTransformLineage, Refusal> {
-    let (_plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
+    let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
+    let public = |id: &str| {
+        key.as_ref()
+            .map_or_else(|| id.to_owned(), |key| key.keyed_id(id))
+    };
     let found = result
         .rows
         .iter()
-        .find(|candidate| candidate.id == row)
+        .find(|candidate| public(&candidate.id) == row)
         .ok_or_else(row_not_found)?;
+    let mut values = found.values.clone();
+    crate::privacy::project_columns(host, &marked_columns(&plan), &mut [&mut values])?;
     Ok(NornTransformLineage {
         transform: result.transform.clone(),
-        row_id: found.id.clone(),
+        row_id: public(&found.id),
         commits: result.revision.commits,
         materialization: served.materialization.as_ref().map(materialization),
-        values: found.values.clone(),
+        values,
         members: found
             .members
             .iter()

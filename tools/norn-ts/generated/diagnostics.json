@@ -3497,6 +3497,14 @@
       "no_fix": null
     },
     {
+      "code": "model.law.personal_data_never_trains",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model trains on a feature or target that carries personal data that is not pseudonymized",
+      "fix": "Declare the marking's mask as a pseudonym, so the model trains on stable pseudonyms, or drop the field from the model's features and target.",
+      "no_fix": null
+    },
+    {
       "code": "model.validation.duplicate_id",
       "tier": "T2",
       "severity": "error",

@@ -54,6 +54,10 @@ pub mod object_review;
 pub mod object_routes;
 /// Typed object, link and source-lineage reads for the Data Explorer.
 pub mod objects;
+/// PRIVACY-1/2: server-side projection of marked properties and governed reveals.
+pub mod privacy;
+/// PRIVACY-GUARD-1: every model call's prompt is tokenized; replies restore through the PDP.
+pub mod privacy_guard;
 /// The generic sans-IO pull engine for declared HTTP sources (`norn.pull/1`).
 pub mod pull;
 /// Authorized exact question answers and numeric traces.

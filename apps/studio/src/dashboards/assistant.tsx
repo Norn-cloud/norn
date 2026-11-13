@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { dashboardField, type Dashboard } from "@/lib/definitions"
+import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 
 /**
@@ -24,7 +25,7 @@ export interface Proposal {
   readonly targetId: string
   readonly targetVersion: number | null
   readonly definition: Dashboard
-  readonly verdict: { readonly admitted: boolean; readonly findings: readonly { readonly code: string; readonly message: string; readonly pointer: string | null }[]; readonly restatement: string | null; readonly restatementSha256: string | null; readonly note: string }
+  readonly verdict: { readonly admitted: boolean; readonly findings: readonly { readonly code: string; readonly message: string; readonly pointer: string | null }[]; readonly restatement: string | null; readonly restatementSha256: string | null; readonly note: string; readonly guard?: GuardDocument }
   readonly state: ProposalState
   readonly model: string
   readonly installed: { readonly id: string; readonly version: number } | null
@@ -101,7 +102,9 @@ export function ProposalCard({ proposal, preview }: { readonly proposal: Proposa
         </div>
         <Badge variant={state.variant}>{state.label}</Badge>
       </header>
-      {proposal.verdict.note && <p className="text-sm">{proposal.verdict.note}</p>}
+      {proposal.verdict.guard
+        ? <SafePrompt guard={proposal.verdict.guard} />
+        : proposal.verdict.note && <p className="text-sm">{proposal.verdict.note}</p>}
       <Verdict proposal={proposal} />
       {proposal.verdict.admitted && proposal.state !== "declined" && preview(proposal.definition)}
       {accept.isError && <p role="alert" className="text-sm text-destructive">Not accepted. {accept.error.message}</p>}

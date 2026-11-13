@@ -1,0 +1,18 @@
+{
+  "value": "Amira Haddad",
+  "receipt": {
+    "commitSeq": 3,
+    "receiptHash": "1cdf3266bfea7dda8cee1b5e4887a0abb5fe9cde9051347d34b753e7e330683c",
+    "revealedAt": 1793620800000,
+    "actor": "auditor",
+    "objectType": "canon.Party",
+    "id": "demo/party/0001",
+    "property": "display_name",
+    "version": 1,
+    "markings": [
+      "pii.contact"
+    ],
+    "purpose": "KYC review for refund #4471",
+    "replayed": false
+  }
+}

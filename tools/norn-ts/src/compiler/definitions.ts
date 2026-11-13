@@ -704,8 +704,9 @@ class DefinitionCompiler {
     return E.markings({ id: this.string(need("id")), title: this.string(need("title")), version: this.string(need("version")), markings: this.list(need("markings")).map((node) => {
       const d = this.closedRecord(node, ["id", "label", "severity", "category", "mask"], ["id", "label", "severity", "category", "mask"])
       const mask = d.get("mask")!
-      const kind = this.string(this.closedRecord(mask, ["kind", "count"], ["kind"]).get("kind")!)
-      this.closedRecord(mask, kind === "last-n" ? ["kind", "count"] : ["kind"], kind === "last-n" ? ["kind", "count"] : ["kind"])
+      const kind = this.string(this.closedRecord(mask, ["kind", "count", "subject"], ["kind"]).get("kind")!)
+      const fields = kind === "last-n" ? ["kind", "count"] : kind === "pseudonym" ? ["kind", "subject"] : ["kind"]
+      this.closedRecord(mask, fields, fields)
       return this.json(node) as unknown as E.MarkingDecl
     }), at: this.at(call) })
   }

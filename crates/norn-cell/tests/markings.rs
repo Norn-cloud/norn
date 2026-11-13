@@ -4058,3 +4058,149 @@ fn mask_policy_weakening_is_refused_without_changing_retained_history() {
         );
     }
 }
+
+#[test]
+fn pseudonym_and_refuse_join_the_mask_lattice() {
+    // (initial, candidate, admitted)
+    let cases = [
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"last-n","count":4}),
+            false,
+        ),
+        (
+            json!({"kind":"refuse"}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            false,
+        ),
+        (
+            json!({"kind":"redacted"}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            false,
+        ),
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"redacted"}),
+            true,
+        ),
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"refuse"}),
+            true,
+        ),
+        (
+            json!({"kind":"last-n","count":4}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            true,
+        ),
+    ];
+    for (initial, candidate, admitted) in cases {
+        let model = contact_model();
+        let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+        store
+            .install_definitions(
+                model.clone(),
+                install_with_mask(&model, initial.clone(), 1),
+                Some(0),
+                SCOPE,
+            )
+            .expect("initial catalog");
+        let outcome = store.install_definitions(
+            model.clone(),
+            install_with_mask(&model, candidate.clone(), 2),
+            Some(1),
+            SCOPE,
+        );
+        assert_eq!(
+            outcome.is_ok(),
+            admitted,
+            "{initial} -> {candidate}: {outcome:?}"
+        );
+    }
+}
+
+fn install_with_reveal(
+    model: &Model,
+    roles: &[&str],
+    at: u64,
+) -> norn_cell::InstalledDefinitionInput {
+    let mut input = install_input("reveal", at, model);
+    let mut artifacts: JsonValue = serde_json::from_str(&input.canonical_set).expect("artifacts");
+    artifacts.as_array_mut().expect("array").push(json!({
+        "irVersion": "0.1",
+        "artifactId": "marking.reveal.policy",
+        "kind": "policy",
+        "namespace": "marking",
+        "name": "Reveal",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [],
+        "provenance": {"source": "authoring_sdk"},
+        "payload": {
+            "accessVersion": "0.1",
+            "policyId": "marking.reveal",
+            "rules": roles.iter().map(|role| json!({
+                "ruleId": format!("reveal_{role}"),
+                "actions": ["norn.reveal"],
+                "resourceType": "norn.Marking",
+                "scope": {"dimensions": ["org", "environment"]},
+                "allOf": [{"role": {"anyOf": [role]}}, {"marking": {"anyOf": [CONTACT]}}]
+            })).collect::<Vec<_>>()
+        }
+    }));
+    input.canonical_set = String::from_utf8(
+        Value::from_json(artifacts)
+            .expect("runtime")
+            .canonical_json()
+            .expect("canonical"),
+    )
+    .expect("UTF-8");
+    input
+}
+
+#[test]
+fn widening_who_may_reveal_a_declared_marking_is_refused() {
+    let model = contact_model();
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store
+        .install_definitions(
+            model.clone(),
+            install_with_reveal(&model, &["auditor"], 1),
+            Some(0),
+            SCOPE,
+        )
+        .expect("initial reveal policy");
+    let before = store.read().dump().expect("state");
+    let wider = install_with_reveal(&model, &["auditor", "member"], 2);
+    assert!(matches!(
+        store.install_definitions(model.clone(), wider, Some(1), SCOPE),
+        Err(CellError::DefinitionMigrationRefused(reason)) if reason.contains("reveal")
+    ));
+    assert_eq!(before, store.read().dump().expect("unchanged state"));
+    store
+        .install_definitions(
+            model.clone(),
+            install_with_reveal(&model, &[], 2),
+            Some(1),
+            SCOPE,
+        )
+        .expect("narrowing who may reveal is allowed");
+}
+
+#[test]
+fn a_reveal_receipt_names_who_what_when_and_why_but_never_the_value() {
+    let receipt = norn_cell::MarkingReveal {
+        object_type: "marking.Contact".into(),
+        key: "alice".into(),
+        property: "email".into(),
+        version: 1,
+        markings: vec![CONTACT.into()],
+        actor: "auditor".into(),
+        purpose: "refund dispute".into(),
+    };
+    let event = serde_json::to_value(receipt.ledger_event().expect("event")).expect("json");
+    assert_eq!(event["type"], "marking.revealed");
+    assert_eq!(event["purpose"], "refund dispute");
+    assert!(!event.to_string().contains('@'), "{event}");
+}

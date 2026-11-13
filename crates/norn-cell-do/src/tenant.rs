@@ -41,9 +41,10 @@ use norn_ir::MetricDefinition;
 
 use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
-use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, RevealSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::questions::DerivedQuestions;
+use crate::reveal::RevealPolicy;
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
 
@@ -144,6 +145,8 @@ struct Serving<E: SqlEngine> {
     object_types: Vec<String>,
     /// Where the cell's action policy is installed.
     actions: ActionSlot,
+    /// Where the cell's reveal policy is installed (PRIVACY-2).
+    reveal: RevealSlot,
     /// The definitions version the installed action policy was compiled from.
     compiled: Option<u64>,
     /// Why the active definitions installed no action policy, if they failed.
@@ -163,6 +166,7 @@ impl<E: SqlEngine> Serving<E> {
         let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
             .with_caller(Arc::clone(caller));
         let actions = policy.action_slot();
+        let reveal = policy.reveal_slot();
         let object_types = collections(store.model().object_types());
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .map_err(|refusal| SeedError(refusal.code))?
@@ -172,6 +176,7 @@ impl<E: SqlEngine> Serving<E> {
             questions,
             object_types,
             actions,
+            reveal,
             compiled: None,
             policy_error: None,
         })
@@ -214,6 +219,11 @@ impl<E: SqlEngine> Serving<E> {
             // here.
             if let Ok(served) = norn_api::action_admission::prepare_action_model(&model) {
                 self.object_types = collections(served.object_types());
+            }
+            let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())
+                .map_err(|error| error.0)?;
+            if let Ok(mut slot) = self.reveal.write() {
+                *slot = reveal.map(Arc::new);
             }
             ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
         });
@@ -261,6 +271,9 @@ pub struct Tenant<E: SqlEngine> {
     /// Ad-hoc questions over the metrics the cell's active definitions
     /// derive, keyed by the stage's lineage key; none without one.
     derived: Option<DerivedQuestions>,
+    /// PRIVACY-1: the stage's lineage key, which the cell's pseudonym key
+    /// is derived from with its scope; none without one.
+    pseudonym_secret: Option<Vec<u8>>,
     /// D102: the link to the tenant analytics engine, once the host has one.
     engine: Option<crate::olap::Exchange>,
 }
@@ -296,6 +309,7 @@ impl<E: SqlEngine> Tenant<E> {
             state,
             handles: handles(handle_key)?,
             derived,
+            pseudonym_secret: handle_key.map(<[u8]>::to_vec),
             engine: None,
         })
     }
@@ -323,6 +337,7 @@ impl<E: SqlEngine> Tenant<E> {
             state: State::Serving(Box::new(serving)),
             handles: None,
             derived: None,
+            pseudonym_secret: None,
             engine: None,
         })
     }
@@ -337,6 +352,7 @@ impl<E: SqlEngine> Tenant<E> {
     /// weakly keyed handles.
     pub fn with_receipt_handles(mut self, handle_key: Option<&[u8]>) -> Result<Self, SeedError> {
         self.handles = handles(handle_key)?;
+        self.pseudonym_secret = handle_key.map(<[u8]>::to_vec);
         Ok(self)
     }
 
@@ -444,6 +460,11 @@ impl<E: SqlEngine> Tenant<E> {
         }
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
+            if !serving.host.has_pseudonym_key() {
+                serving
+                    .host
+                    .set_pseudonym_secret(self.pseudonym_secret.as_deref());
+            }
         }
         // A caller who is not a verified member of the organization gets
         // exactly what a scope with no cell answers, on every route: a

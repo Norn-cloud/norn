@@ -1,0 +1,46 @@
+{
+  "guardId": 3,
+  "segments": [
+    {
+      "text": "Weekly refunds for "
+    },
+    {
+      "text": "Customer #3A9DJ8JQTE",
+      "token": "[CUSTOMER_1]",
+      "kind": "CUSTOMER",
+      "state": "projected"
+    },
+    {
+      "text": ": the duplicate charge on "
+    },
+    {
+      "text": "[CARD_1]",
+      "token": "[CARD_1]",
+      "kind": "CARD",
+      "state": "kept"
+    },
+    {
+      "text": " shows in the October 24 week. The catalog holds no contact fields, so "
+    },
+    {
+      "text": "[EMAIL_1]",
+      "token": "[EMAIL_1]",
+      "kind": "EMAIL",
+      "state": "kept"
+    },
+    {
+      "text": " and "
+    },
+    {
+      "text": "[PHONE_1]",
+      "token": "[PHONE_1]",
+      "kind": "PHONE",
+      "state": "kept"
+    },
+    {
+      "text": " are not used."
+    }
+  ],
+  "reveals": [],
+  "complete": false
+}

@@ -13,6 +13,8 @@ const weekly = fixture("scrap-yield.k1.answer.json") as { rows: Record<string, {
 const objectType = fixture("scrap-yield.object-type.json")
 const metrics = fixture("scrap-yield.metrics.json")
 const SHOTS = process.env.SHOTS ?? "test-results/shots"
+/** The cell's own guard documents for one assistant prompt (crates/norn-api/tests/privacy.rs writes them). */
+const privacy = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/demo/privacy/${name}`, import.meta.url), "utf8"))
 
 const catalog = {
   objectSet: "demo.Conversion",
@@ -69,12 +71,14 @@ async function stage(page: Page) {
       const definition = refused
         ? { ...proposed, title: "Yield by metal", tiles: [{ ...proposed.tiles[1], title: "Yield by metal", question: question("studio.yield_by_metal", "demo.yield", [{ path: { property: "metal" } }]) }], origin: { ...proposed.origin, request } }
         : { ...proposed, origin: { ...proposed.origin, request } }
+      // PRIVACY-GUARD-1: the Worker sent the model only the cell's safe prompt; the reply came back restored.
+      const guarded = /Amira/.test(request) ? { guard: { ...privacy("guard.prompt.json"), reply: privacy("guard.reply.auditor.json").segments, model: "claude-sonnet-5-5" } } : {}
       const proposal = {
         id: `prop_${proposals.length + 1}`, request, targetId: "studio.dashboard.refinery_overview_e2e", targetVersion: null, definition, model: "claude-sonnet-5-5", installed: null, costMicroUsd: 14_000, createdAtMs: Date.now(),
         state: refused ? "refused" : "pending",
         verdict: refused
           ? { admitted: false, findings: [{ code: "definition.view_invalid", message: "a pie shows the parts of one whole, so its question sums one additive, non-ratio measure over one category without a time grain", pointer: "/tiles/0/view" }], restatement: null, restatementSha256: null, note: "Yield is a ratio, so it cannot be shown as parts of a whole." }
-          : { admitted: true, findings: [], restatement: words.replace("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend." },
+          : { admitted: true, findings: [], restatement: words.replace("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend.", ...guarded },
       }
       proposals.push(proposal)
       return route.fulfill({ json: proposal })
@@ -88,6 +92,8 @@ async function stage(page: Page) {
     } else Object.assign(proposal, { state: "declined" })
     return route.fulfill({ json: proposal })
   })
+  // "Show original" is a restore of the safe prompt by the cell: a logged reveal for each field.
+  await page.route("**/api/host/v1/guard/**", (route: Route) => route.fulfill({ json: privacy("guard.original.auditor.json") }))
   await page.route("**/api/host/v1/definitions**", async (route: Route) => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith(":list")) return route.fulfill({ json: { items: [...saved].filter(([, entry]) => !entry.retired).map(([id, entry]) => ({ id, title: (entry.payload as { title: string }).title, version: entry.version, lifecycle: "active" })), cursor: null } })
@@ -162,4 +168,34 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await expect(refused.getByText(/a pie shows the parts of one whole/)).toBeVisible()
   await expect(refused.getByRole("button", { name: "Accept and save" })).toHaveCount(0)
   await page.screenshot({ path: `${SHOTS}/3-refused.png`, fullPage: true })
+})
+
+test("the assistant's model reads a safe prompt: typed placeholder chips, the guard's path, a restored reply, and Show original as a logged reveal", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await stage(page)
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto("/dashboards")
+  const ask = page.getByRole("textbox", { name: "Ask for a dashboard" })
+  await ask.fill("Show weekly refunds for Amira Haddad: she was charged twice on card 4539 1488 0343 6467. Reach her at amira.haddad@fastmail.com or +20 100 555 0132.")
+  await page.getByRole("button", { name: "Propose" }).click()
+  const safe = page.locator("[data-safe-prompt]")
+  await expect(safe).toBeVisible()
+  const prompt = safe.locator("[data-prompt]")
+  for (const token of ["[CUSTOMER_1]", "[CARD_1]", "[EMAIL_1]", "[PHONE_1]"]) await expect(prompt.locator(`[data-token="${token}"]`)).toBeVisible()
+  await expect(prompt).not.toContainText("Amira")
+  await expect(prompt).not.toContainText("4539")
+  await expect(safe.getByText("Privacy guard")).toBeVisible()
+  await expect(safe.locator("[data-reply-state]")).toHaveText("Restored")
+  await expect(safe.locator("[data-reply]")).toContainText("Amira Haddad")
+  await safe.scrollIntoViewIfNeeded()
+  await safe.screenshot({ path: `${SHOTS}/privacy-guard-safe-prompt.png` })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await page.waitForTimeout(400)
+  await safe.screenshot({ path: `${SHOTS}/privacy-guard-safe-prompt-dark.png` })
+  await page.emulateMedia({ colorScheme: "light" })
+  await safe.locator("[data-show-original]").click()
+  await expect(prompt).toContainText("Amira Haddad")
+  await expect(prompt).toContainText("4539 1488 0343 6467")
+  await page.waitForTimeout(300)
+  await safe.screenshot({ path: `${SHOTS}/privacy-guard-original.png` })
 })

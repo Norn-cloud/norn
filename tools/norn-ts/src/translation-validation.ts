@@ -153,9 +153,12 @@ function sourceMeaning(source: ts.SourceFile, context: TranslationContext): Valu
     if (kind === "last-n") {
       record(mask, ["kind", "count"])
       requireFragment(typeof mask.count === "number" && mask.count > 0 && mask.count <= 4_294_967_295, "last-n count must be a positive u32")
+    } else if (kind === "pseudonym") {
+      record(mask, ["kind", "subject"])
+      requireFragment(typeof mask.subject === "string" && mask.subject.trim() !== "", "pseudonym subject must be a non-blank label")
     } else {
       record(mask, ["kind"])
-      requireFragment(kind === "redacted" || kind === "null", "unsupported mask kind")
+      requireFragment(kind === "redacted" || kind === "null" || kind === "refuse", "unsupported mask kind")
     }
   }
   // This is the independent denotation of the declared fragment, not a call

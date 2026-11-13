@@ -42,6 +42,7 @@ pub mod policy;
 pub mod principal;
 pub mod questions;
 pub mod recorded;
+pub mod reveal;
 mod runs;
 pub mod seed;
 pub mod server;

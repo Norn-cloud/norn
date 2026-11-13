@@ -1748,6 +1748,10 @@
     "fix": "Include the input object type in the artifact set or the installed base, or name a declared one."
   },
   {
+    "code": "model.law.personal_data_never_trains",
+    "fix": "Declare the marking's mask as a pseudonym, so the model trains on stable pseudonyms, or drop the field from the model's features and target."
+  },
+  {
     "code": "model.validation.duplicate_id",
     "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },
