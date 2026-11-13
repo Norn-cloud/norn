@@ -15,7 +15,7 @@ test("view: every declared state with the cell's count; a state no record is in 
   await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
   await expect(card(view, "rejected").locator("[data-count]")).toHaveText("0")
   await expect(view.getByText("54 records")).toBeVisible()
-  await expect(view.locator(".norn-life-arrows path")).toHaveCount(7)
+  await expect(view.locator(".norn-life-arrows > path")).toHaveCount(7)
 })
 
 test("validate: past the scan bound counts are lower bounds and unseen rows are said; a refusal shows no counts", async ({ page }) => {
@@ -37,7 +37,7 @@ test("stepper: a counterexample is walked step by step; taken transitions and th
   const view = await specimen(page, "lifecycle-view/stepper")
   await expect(view.getByText("Step 3 of 4")).toBeVisible()
   await expect(card(view, "rejected")).toHaveAttribute("data-current", "")
-  await expect(view.locator(".norn-life-arrows path[data-active]")).toHaveCount(2)
+  await expect(view.locator(".norn-life-arrows > path[data-active]")).toHaveCount(2)
   await view.getByRole("button", { name: "Next step" }).click()
   await expect(view.getByText("Step 4 of 4")).toBeVisible()
   await expect(card(view, "draft")).toHaveAttribute("data-current", "")
