@@ -195,11 +195,13 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
 
 /// A member's service key may ingest recorded rows under the admitted
 /// mappings (a source writer), but holds no right to change definitions or
-/// to use the uploads that install them.
+/// to use the uploads that install them; a viewer may not ingest at all.
 #[test]
 fn a_member_service_key_loads_but_cannot_install_definitions() {
-    const PRINCIPALS: &[(&str, &[&str])] = &[("loader@demo", &["member"])];
+    const PRINCIPALS: &[(&str, &[&str])] =
+        &[("loader@demo", &["member"]), ("reader@demo", &["viewer"])];
     const LOADER: Option<&str> = Some("Bearer fixture:loader@demo");
+    const READER: Option<&str> = Some("Bearer fixture:reader@demo");
     let scope = seed::demo_scope();
     let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
     let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
@@ -213,6 +215,10 @@ fn a_member_service_key_loads_but_cannot_install_definitions() {
     ))
     .unwrap();
     let body = json!({ "profile": export["profile"], "snapshot": export["snapshot"] }).to_string();
+    // A viewer reads but is no source writer: answered as outside, and
+    // nothing lands (the member's load below still lands every row).
+    let (status, refused) = load(&mut connect, &host, &principals, READER, &body);
+    assert!(matches!(status, 403 | 404), "{status} {refused}");
     let (status, loaded) = load(&mut connect, &host, &principals, LOADER, &body);
     assert_eq!(status, 200, "{loaded}");
     assert_eq!(
