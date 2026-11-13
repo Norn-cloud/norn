@@ -414,11 +414,13 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// The exclusions of `candidates` as known at `cutoff`: each subject's
     /// version then, and its findings committed by the frontier, exactly as
-    /// the exact engine reads them at a cutoff.
+    /// the exact engine reads them at a cutoff. Subjects deleted under
+    /// another model are read too: the mirror keeps no deletions, and the
+    /// exact engine refuses where such a deletion is the version known then.
     ///
     /// # Errors
-    /// A version committed under another model, an exhausted budget, or a
-    /// store error.
+    /// A version (or deletion) committed under another model, an exhausted
+    /// budget, or a store error.
     pub(crate) fn exclusions_known_at(
         &self,
         world: &str,
@@ -431,6 +433,15 @@ impl<E: SqlEngine> CellStore<E> {
         let (_, frontier_receipt) =
             historical::frame(&reader, cutoff, cutoff.recorded_at.as_millis(), &mut budget)?;
         let mut history = reader.history_read_seeded(frontier_receipt);
+        let mut candidates = candidates;
+        candidates.extend(historical::foreign_model_deletions(
+            &reader,
+            world,
+            grain,
+            cutoff.frontier,
+            self.model().model_hash(),
+            &budget,
+        )?);
         let mut exclusions = BTreeMap::new();
         for key in candidates {
             let record = match historical::historical_record(

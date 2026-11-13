@@ -1961,4 +1961,72 @@ mod known_at {
             }
         }
     }
+
+    /// The mirror keeps no deletions. Where the version known at a cutoff is
+    /// a deletion committed under another model, the exact engine refuses;
+    /// the engine must refuse with the same code, never answer without the row.
+    #[test]
+    fn a_deletion_under_another_model_refuses_as_the_exact_engine_refuses() {
+        let (_dir, engine) = engine();
+        let (mut store, plan, context) = by_metal(true, 100);
+        let mut cutoffs = Vec::new();
+        let writes = [
+            row("G1", 1000, Some(300), TIMES[0], METALS[0]),
+            norn_cell::FactWriteRow::Delete {
+                object_type: super::TYPE.into(),
+                key: "G1".into(),
+            },
+        ];
+        for (tick, write) in (1u64..).zip(writes) {
+            let at = CLOCK.checked_add(tick).expect("clock");
+            store
+                .commit(&CommitBatch {
+                    world: WORLD.into(),
+                    scope: "synthetic".into(),
+                    logical_time: at,
+                    writes: vec![write],
+                    ..CommitBatch::default()
+                })
+                .expect("committed");
+            cutoffs.push(KnowledgeCutoff {
+                recorded_at: norn_kernel::LogicalTime::from_millis(at),
+                frontier: store.verified_head().expect("head").commits,
+            });
+        }
+        // Another model: the same type beside a new one, so the question's
+        // columns are unchanged and only the model differs.
+        let object = store.model().object_types().next().expect("type").clone();
+        let other: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "demo.Other", "properties": [{ "id": "code", "type": { "kind": "text" } }]
+        }))
+        .expect("other type");
+        let model = norn_cell::Model::from_definitions(&[object, other], &[]).expect("model");
+        let before = store.model().model_hash().to_owned();
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: "[]".into(),
+                    registry: Vec::new(),
+                    receipt_sha256: "a".repeat(64),
+                    admission_receipt: None,
+                    readmission: None,
+                    installed_at: CLOCK.checked_add(10).expect("clock"),
+                    diff: serde_json::json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                    layout: None,
+                },
+                None,
+                "synthetic",
+            )
+            .expect("installed");
+        assert_ne!(store.model().model_hash(), before);
+        for cutoff in cutoffs {
+            let mut context = context.clone();
+            context.now_ms = cutoff.recorded_at.as_millis();
+            let want = exact(&store, &plan, context.clone(), cutoff).map(|_| ());
+            let got = on_engine(&store, &engine, &plan, &context, cutoff).map(|_| ());
+            assert_eq!(want, Err("core.compute.unsupported_engine".to_owned()), "{cutoff:?}");
+            assert_eq!(got, want, "{cutoff:?}");
+        }
+    }
 }

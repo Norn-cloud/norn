@@ -83,6 +83,38 @@ pub(crate) fn historical_record<E: SqlEngine>(
         }
     }
 }
+/// The subjects of `kind` with a deletion committed under a model other than
+/// `model` by `frontier`. The mirror keeps no deletions, so another engine's
+/// answer at a cutoff reads these through [`historical_record`], which refuses
+/// where the version known at the cutoff is one of them, as the exact engine
+/// refuses it (ASOF-KNOWLEDGE-1).
+///
+/// # Errors
+/// More such subjects than the question budget allows, or a store error.
+pub(crate) fn foreign_model_deletions<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    kind: &str,
+    frontier: u64,
+    model: &str,
+    budget: &DecodeBudget,
+) -> Result<std::collections::BTreeSet<String>, CellError> {
+    let root = reader.root_type(kind)?;
+    let cap = budget.remaining_rows();
+    let limit = i64::try_from(cap.saturating_add(1))
+        .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+    let head = i64::try_from(frontier).map_err(|_n| refused("core.compute.bound_exceeded"))?;
+    let rows = reader.conn.query(
+        "SELECT DISTINCT id FROM _norn_fact_values WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
+         AND coalesce(json_type(snapshot, '$.values'), 'null') = 'null' \
+         AND json_extract(snapshot, '$.modelHash') <> ?4 ORDER BY id LIMIT ?5",
+        params![world, root, head, model, limit],
+    )?;
+    if rows.len() > cap {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
+    rows.into_iter().map(|row| SqlRow(row).get::<String>(0)).collect()
+}
 pub(super) fn history_ids<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     world: &str,
