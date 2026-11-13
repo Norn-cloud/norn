@@ -2472,6 +2472,10 @@
     "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome."
   },
   {
+    "code": "widget.machine.completion_unknown",
+    "fix": "Add an unguarded way on (a person's cancel, a deadline), or accept that the guards decide whether the page can settle."
+  },
+  {
     "code": "widget.machine.component_guard_outside_catalog",
     "fix": "Write the guard as a ZEN expression; only a catalog entry's machine may name a component guard."
   },

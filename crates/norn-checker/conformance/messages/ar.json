@@ -2474,6 +2474,10 @@
       "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
       "review": "needs_review"
     },
+    "widget.machine.completion_unknown": {
+      "message": "لا يمكن الوصول إلى حالة خاملة أو نهائية من حالة في ترسيمة الصفحة إلا عبر انتقالات مشروطة: {$detail}",
+      "review": "needs_review"
+    },
     "widget.machine.component_guard_outside_catalog": {
       "message": "انتقال في ترسيمة صفحة يترك شرطه لشيفرة مكوّن: {$detail}",
       "review": "needs_review"

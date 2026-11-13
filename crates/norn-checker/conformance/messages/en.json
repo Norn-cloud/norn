@@ -1856,6 +1856,9 @@
     "widget.machine.cancel_outside_pending": {
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
     },
+    "widget.machine.completion_unknown": {
+      "message": "an idle or terminal state is reachable from a page machine state only through guarded transitions: {$detail}"
+    },
     "widget.machine.component_guard_outside_catalog": {
       "message": "a page machine transition leaves its guard to component code: {$detail}"
     },

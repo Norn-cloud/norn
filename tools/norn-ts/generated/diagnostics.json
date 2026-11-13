@@ -4945,6 +4945,14 @@
       "no_fix": null
     },
     {
+      "code": "widget.machine.completion_unknown",
+      "tier": "T2",
+      "severity": "info",
+      "message": "an idle or terminal state is reachable from a page machine state only through guarded transitions: {detail}",
+      "fix": "Add an unguarded way on (a person's cancel, a deadline), or accept that the guards decide whether the page can settle.",
+      "no_fix": null
+    },
+    {
       "code": "widget.machine.component_guard_outside_catalog",
       "tier": "T2",
       "severity": "error",
