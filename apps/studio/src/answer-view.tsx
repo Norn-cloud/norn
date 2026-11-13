@@ -21,7 +21,7 @@ import type { Question, QuestionAnswer } from "./lib/transport.ts"
 import { readDocument } from "./lib/exact.ts"
 import { cellRead } from "./lib/live-transport.ts"
 import { evaluateQuestion, traceQuestion } from "./lib/evaluate.ts"
-import { breakOuts, headlineOf, type CatalogProperty, type Drill } from "./lib/answer-anatomy.ts"
+import { breakOuts, figure, headlineOf, type CatalogProperty, type Drill } from "./lib/answer-anatomy.ts"
 import { CopyId } from "@/components/copy-id"
 import { AnswerProvenance } from "@/components/provenance"
 import { systemName } from "./lib/catalog.ts"
@@ -144,10 +144,12 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, title, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
+export function AnswerView({ read, title, unit, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
   readonly read: QuestionAnswer
   /** What the answer measures, in words, when the page that asked knows it better than the question's metric names. */
   readonly title?: string
+  /** The unit every bucket is in, when the question fixes it (a quantity held to one unit or currency). */
+  readonly unit?: string | null
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
@@ -167,7 +169,7 @@ export function AnswerView({ read, title, heading = "h2", link = false, refusal,
   const [open, setOpen] = useState<Bucket | undefined>(() => rows.find(({ key }) => key === openBucket))
   const named = title ?? headline(question)
   const provenanceOf = (bucket: Bucket) => bucketProvenance(answer, bucket, title === undefined ? metricLabels(declared) : [title], engineOf(answer) ?? null)
-  const lead = headlineOf(named, question, rows)
+  const lead = headlineOf(named, question, rows, answer.nowMs, unit)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
@@ -195,11 +197,11 @@ export function AnswerView({ read, title, heading = "h2", link = false, refusal,
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             {lead.bucket.suppressed ? <span className="text-figure leading-none font-semibold tracking-[-0.02em] text-muted-foreground">—</span> : (
               <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-                label={lead.bucket.label} value={shown(lead.bucket)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                <span className="block text-figure leading-none font-semibold tracking-[-0.02em] tabular-nums underline decoration-dotted decoration-muted-foreground/40 underline-offset-8">{shown(lead.bucket)}</span>
+                label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
+                <span className="block text-figure leading-none font-semibold tracking-[-0.02em] tabular-nums underline decoration-dotted decoration-muted-foreground/40 underline-offset-8">{figure(lead.bucket, unit)}</span>
               </AnswerProvenance>
             )}
-            <span className="text-meta text-muted-foreground tabular-nums">{lead.bucket.label}{lead.bucket.totals.length > 1 ? ` · ${fraction(lead.bucket.totals)} = ${lead.bucket.value} exactly` : ""}</span>
+            <span className="text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${fraction(lead.bucket.totals)} = ${lead.bucket.value} exactly` : ""}</span>
           </div>
         )}
         <p className="max-w-[72ch] text-panel text-pretty">{lead.sentence}</p>
@@ -211,17 +213,17 @@ export function AnswerView({ read, title, heading = "h2", link = false, refusal,
           {sources.length > 0 && <span className="rounded-md bg-muted px-1.5 py-0.5">Sources: {sources.join(", ")}</span>}
         </div>
       </div>
-      <Panel icon={ChartLine} label={headline(question)} action={frame ? `${period(question.window)} · scale ${frame.scale[0]}${frame.unit}–${frame.scale[1]}${frame.unit}` : period(question.window)}>
+      <Panel icon={ChartLine} label={named} action={period(question.window)}>
         <Well className="px-2 pt-4 pb-1">
           {frame ? (
-          <ChartContainer config={{ position: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
+          <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
             <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
               <CartesianGrid vertical={false} strokeDasharray="2 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
-              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick}${frame.unit}`} />
+              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick.toLocaleString("en")}${frame.unit}`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
-                  <span className="text-muted-foreground">{headline(question)}</span>
+                  <span className="text-muted-foreground">{named}</span>
                   <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
@@ -243,7 +245,7 @@ export function AnswerView({ read, title, heading = "h2", link = false, refusal,
                   </button>
                 </TableCell>
                 <TableCell className="text-right font-medium tabular-nums">
-                  {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={shown(bucket)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{shown(bucket)}</AnswerProvenance>}
+                  {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={figure(bucket, unit)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{figure(bucket, unit)}</AnswerProvenance>}
                 </TableCell>
                 <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${fraction(bucket.totals)} = ${bucket.value}`}</TableCell>
                 <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
@@ -261,7 +263,7 @@ export function AnswerView({ read, title, heading = "h2", link = false, refusal,
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>
               <SheetDescription>A question derived from this answer, answered by the cell.</SheetDescription>
             </SheetHeader>
-            <div className="px-4 pb-6"><DrillAnswer drill={drill} title={`${named} by ${drill.property.replaceAll("_", " ")}`} parent={read} /></div>
+            <div className="px-4 pb-6"><AskedAnswer question={drill.question} title={`${named} by ${drill.property.replaceAll("_", " ")}`} unit={unit} declared={read} /></div>
           </>}
         </SheetContent>
       </Sheet>
@@ -307,15 +309,25 @@ function DrillMenu({ bucket, question, live, onRecords, onDrill }: {
   )
 }
 
-/** A drill's answer: the derived question as the cell answers it, refuses it, or why it is not run. */
-function DrillAnswer({ drill, title, parent }: { readonly drill: Drill; readonly title: string; readonly parent: QuestionAnswer }) {
-  const run = useQuery({ queryKey: ["drill", JSON.stringify(drill.question)], queryFn: () => evaluateQuestion(drill.question), retry: false })
+/**
+ * A question asked of the cell as soon as it is shown, answered, refused, or why it was not run. The
+ * answer is read with `declared`'s metric and type declarations.
+ */
+export function AskedAnswer({ question, title, unit, declared, heading = "h3" }: {
+  readonly question: Question
+  readonly title: string
+  readonly unit?: string | null
+  readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
+  readonly heading?: "h2" | "h3"
+}) {
+  const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
   const result = run.data
   if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
   if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
   if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>
   if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
-  const read: QuestionAnswer = { ...parent, question: readDocument<Question>(JSON.stringify(drill.question), "live"), answer: result.read }
-  return <AnswerView read={read} title={title} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(drill.question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs })} />
+  const read: QuestionAnswer = { ...declared, question: readDocument<Question>(JSON.stringify(question), "live"), answer: result.read }
+  return <AnswerView read={read} title={title} unit={unit} heading={heading} onStale={() => void run.refetch()}
+    fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs })} />
 }

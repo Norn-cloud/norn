@@ -20,7 +20,14 @@ export interface Field {
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
-  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined; readonly scale?: number } | undefined
+  readonly decimal: {
+    readonly unit: string | undefined
+    readonly perUnit: string | undefined
+    readonly currencyFrom: string | undefined
+    readonly scale?: number
+    /** The properties whose value names this value's unit, in order (the use-site `unitSource`): the first one set is its unit. */
+    readonly unitFrom?: readonly string[]
+  } | undefined
   /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
   readonly scalar: Scalar
 }
@@ -176,7 +183,10 @@ function scalarOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef
 function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>): Field["decimal"] {
   if (type.kind === "ref") {
     const def = types.get(type.name)
-    return def ? decimalOf(def.type, types) : undefined
+    const resolved = def ? decimalOf(def.type, types) : undefined
+    const from = (type as { unitSource?: unknown }).unitSource
+    const unitFrom = Array.isArray(from) && from.every((item) => typeof item === "string") ? from as readonly string[] : undefined
+    return resolved && unitFrom ? { ...resolved, unitFrom } : resolved
   }
   if (type.kind !== "decimal") return undefined
   const scale = (type as { scale?: unknown }).scale

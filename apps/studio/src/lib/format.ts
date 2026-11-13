@@ -10,6 +10,28 @@ const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", 
 export const day = (instant: string | number): string => date.format(new Date(instant))
 
 const clock = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })
+/**
+ * An exact number's text with its whole part grouped in thousands: `7905 g` → `7,905 g`,
+ * `-1234567.891` → `-1,234,567.891`. Only the leading number is touched; nothing is rounded,
+ * and text that does not start with a plain decimal is returned as it is.
+ */
+export function groupDigits(text: string): string {
+  const match = /^(-?)(\d+)(\.\d+)?(.*)$/s.exec(text)
+  if (match === null) return text
+  const [, sign = "", whole = "", fraction = "", rest = ""] = match
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction}${rest}`
+}
+
+/**
+ * A stored date or instant in words: `2026-11-01` → `1 Nov 2026`; `2026-11-01T09:30:00Z` →
+ * `1 Nov 2026, 09:30 UTC`. Text that is not one is returned as it is.
+ */
+export function readableTime(text: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return Number.isNaN(Date.parse(`${text}T00:00:00Z`)) ? text : day(`${text}T00:00:00Z`)
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(text) || Number.isNaN(Date.parse(text))) return text
+  return stamp(text)
+}
+
 /** An instant to the minute, in UTC, saying so: `13 Nov 2026, 01:03 UTC`. */
 export const stamp = (instant: string | number): string => `${clock.format(new Date(instant))} UTC`
 

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { breakOuts, headlineOf } from "../src/lib/answer-anatomy.ts"
+import { breakOuts, figure, headlineOf, openPeriod, unitGroups } from "../src/lib/answer-anatomy.ts"
+import { groupDigits, readableTime } from "../src/lib/format.ts"
 import type { Bucket } from "../src/lib/answer.ts"
 import type { Question } from "../src/lib/transport.ts"
 
@@ -16,20 +17,57 @@ const question = (groupBy?: Question["groupBy"]) => ({
 
 const weekly = question([{ path: { property: "due_at" }, grain: "week" }])
 
+const later = Date.UTC(2026, 11, 1)
+
 test("a time series leads with its latest bucket and names the one before, side by side, with no arithmetic", () => {
-  const rows = [bucket("Week of 26 Oct 2026", "15", 1, "2026-10-26"), bucket("Week of 2 Nov 2026", "20", 2, "2026-11-02")]
-  const lead = headlineOf("Total quantity", weekly, rows)
-  expect(lead.bucket?.value).toBe("20")
-  expect(lead.sentence).toBe("Total quantity for the week of 2 Nov 2026 is 20, from 2 records. The week of 26 Oct 2026: 15.")
+  const rows = [bucket("Week of 26 Oct 2026", "15", 1, "2026-10-26"), bucket("Week of 2 Nov 2026", "7905", 2, "2026-11-02")]
+  const lead = headlineOf("Total quantity", weekly, rows, later, "g")
+  expect(lead.bucket?.value).toBe("7905")
+  expect(lead.label).toBe("Week of 2 Nov 2026")
+  expect(lead.sentence).toBe("Total quantity for the week of 2 Nov 2026 is 7,905 g, from 2 records. The week of 26 Oct 2026: 15 g.")
+})
+
+test("a period still open at the cell's clock reads as so far", () => {
+  const rows = [bucket("Week of 9 Nov 2026", "6", 6, "2026-11-09")]
+  const during = Date.UTC(2026, 10, 12)
+  expect(openPeriod({ bucket: "2026-11-09" }, "week", during)).toBe(true)
+  expect(openPeriod({ bucket: "2026-11-09" }, "week", Date.UTC(2026, 10, 16))).toBe(false)
+  expect(openPeriod({ bucket: "2026-11-09" }, undefined, during)).toBe(false)
+  const lead = headlineOf("Total quantity", weekly, rows, during, "g")
+  expect(lead.label).toBe("Week of 9 Nov 2026, so far")
+  expect(lead.sentence).toBe("Total quantity for the week of 9 Nov 2026, so far is 6 g, from 6 records.")
+})
+
+test("a figure groups an amount's digits and names its unit; a ratio stays its percentage", () => {
+  expect(figure({ value: "7905", totals: ["7905"] }, "g")).toBe("7,905 g")
+  expect(figure({ value: "1240.00", totals: ["1240.00"] }, "USD")).toBe("1,240.00 USD")
+  expect(figure({ value: "0.979685", totals: ["240.148", "245.13"] }, "g")).toBe("97.97%")
+  expect(figure({ value: "12", totals: ["12"] })).toBe("12")
+  expect(groupDigits("-1234567.891 kg")).toBe("-1,234,567.891 kg")
+  expect(groupDigits("unavailable")).toBe("unavailable")
+  expect(readableTime("2026-11-01")).toBe("1 Nov 2026")
+  expect(readableTime("2026-11-01T09:30:00Z")).toBe("1 Nov 2026, 09:30 UTC")
+  expect(readableTime("SO-1001")).toBe("SO-1001")
+})
+
+test("unit groups are the combinations the cell returned, labelled by their first set source, most records first", () => {
+  const rows = [bucket("x", "1240.00", 2, [null, "USD"]), bucket("y", "7905", 6, ["g", null]), bucket("z", "3", 1, [null, null])]
+  const groups = unitGroups(["unit", "currency"], rows)
+  expect(groups.map(({ unit, values }) => ({ unit, values }))).toEqual([
+    { unit: "g", values: { unit: "g", currency: null } },
+    { unit: "USD", values: { unit: null, currency: "USD" } },
+    { unit: null, values: { unit: null, currency: null } },
+  ])
+  expect(unitGroups(["currency"], [bucket("USD", "5", 1, "USD")])[0]?.unit).toBe("USD")
 })
 
 test("one bucket is the answer; a breakdown by values leads with no single number; a suppressed bucket says so", () => {
-  expect(headlineOf("Total quantity", question(), [bucket("All", "35", 1)]).sentence).toBe("Total quantity is 35, from 1 record.")
-  const byUnit = headlineOf("Total quantity", question([{ path: { property: "currency" } }]), [bucket("USD", "1"), bucket("EGP", "2")])
-  expect(byUnit).toEqual({ bucket: undefined, sentence: "Total quantity by currency, in 2 groups." })
+  expect(headlineOf("Total quantity", question(), [bucket("All", "35", 1)], later).sentence).toBe("Total quantity is 35, from 1 record.")
+  const byUnit = headlineOf("Total quantity", question([{ path: { property: "currency" } }]), [bucket("USD", "1"), bucket("EGP", "2")], later)
+  expect(byUnit).toEqual({ bucket: undefined, label: "", sentence: "Total quantity by currency, in 2 groups." })
   const hidden = bucket("Week of 2 Nov 2026", "Suppressed: fewer than 3 records", 2, "2026-11-02", { suppressed: true, totals: [] })
-  expect(headlineOf("Total quantity", weekly, [hidden]).sentence).toBe("Total quantity for the week of 2 Nov 2026 is suppressed: fewer than 3 records.")
-  expect(headlineOf("Total quantity", weekly, []).bucket).toBeUndefined()
+  expect(headlineOf("Total quantity", weekly, [hidden], later).sentence).toBe("Total quantity for the week of 2 Nov 2026 is suppressed: fewer than 3 records.")
+  expect(headlineOf("Total quantity", weekly, [], later).bucket).toBeUndefined()
 })
 
 const properties = [
