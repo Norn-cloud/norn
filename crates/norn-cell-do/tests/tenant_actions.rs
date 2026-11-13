@@ -632,7 +632,10 @@ fn a_policy_compile_failure_is_reported_to_the_operator() {
     install_flow(&mut cell);
     assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "o"), denied);
     let moved = cell.tenant.action_policy_version();
-    assert!(moved.is_some() && moved != settled, "{settled:?} -> {moved:?}");
+    assert!(
+        moved.is_some() && moved != settled,
+        "{settled:?} -> {moved:?}"
+    );
     assert_eq!(cell.tenant.action_policy_compiles(), compiles + 1);
     assert!(
         cell.tenant

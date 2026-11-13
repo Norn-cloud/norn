@@ -212,7 +212,7 @@ impl<E: SqlEngine> Serving<E> {
             self.object_types = collections(served.object_types());
             // The policy itself is the version's: a policy that does not
             // compile fails the same way on every retry.
-            self.policy_compiles += 1;
+            self.policy_compiles = self.policy_compiles.saturating_add(1);
             Ok(ActionPolicy::compile(&model, &artifacts, self.host.scope())
                 .map_err(|error| error.0))
         });
