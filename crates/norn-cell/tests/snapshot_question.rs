@@ -13,8 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_cell::compute::QueryContext;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, Model};
 use norn_checker::metric::derive::derive_metric_space;
 use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
 use proptest::prelude::*;
@@ -149,9 +149,16 @@ fn answer(
 ) -> BTreeMap<String, (String, u64)> {
     let mut context = context();
     context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
-    store
-        .evaluate_question(plan, context, |_| Ok(true))
-        .expect("cell answer")
+    weekly(
+        store
+            .evaluate_question(plan, context, |_| Ok(true))
+            .expect("cell answer"),
+    )
+}
+
+/// Week key → (total, nulls) of one answer.
+fn weekly(result: QueryResult) -> BTreeMap<String, (String, u64)> {
+    result
         .rows
         .into_values()
         .map(|row| {
@@ -207,6 +214,35 @@ fn a_stock_carries_its_last_valid_time_value_forward_and_sums_across_subjects() 
         .map(|(week, total)| (week.to_owned(), (total.to_string(), 1)))
         .collect();
         assert_eq!(answer(&store, &plan), expected, "north only: {north_only}");
+    }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the stock as it was known
+/// at each earlier commit, asked later, answers as it did then (a version
+/// committed since is not yet known), so a trace at the answer's frontier
+/// reads the members that answer named.
+#[test]
+fn a_stock_known_at_an_earlier_commit_answers_as_it_did_then() {
+    let (mut store, plan) = question(false);
+    let mut given = Vec::new();
+    for (tick, (key, quantity, at, location)) in (1u64..).zip(HISTORY) {
+        commit(&mut store, tick, key, quantity, at, location);
+        let frontier = store.verified_head().expect("head").commits;
+        given.push((tick, frontier, answer(&store, &plan)));
+    }
+    for (tick, frontier, then) in given {
+        let mut context = context();
+        context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
+        let cutoff = KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(
+                CLOCK.checked_add(tick).expect("clock"),
+            ),
+            frontier,
+        };
+        let known = store
+            .evaluate_question_known_at(&plan, context, cutoff, |_| Ok(true))
+            .expect("known at the cutoff");
+        assert_eq!(weekly(known.result), then, "as known at commit {frontier}");
     }
 }
 
