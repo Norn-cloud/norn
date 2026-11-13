@@ -87,8 +87,9 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   expect(html).toContain("Facts recorded")
 })
 
-test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
-  const html = await page("canon.Item", "demo/item/gold")
+test("the overview lists who points at the record; the one-sentence summary of what it is shows in the technical view only", async () => {
+  expect(await page("canon.Item", "demo/item/gold")).not.toContain("Gold scrap is an item record")
+  const html = await page("canon.Item", "demo/item/gold", "technical")
   // main's recorded snapshot stores two holdings of the gold item; the empty case is summaryOf's test below.
   expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. 2 stored links connect it to other records.")
   expect(html).toContain("Holding records (item)")
@@ -114,7 +115,7 @@ test("stored links show on the overview in both directions; a link that is not s
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-2"')
   expect(html).not.toContain("demo/holding/other")
   expect(html).not.toContain("demo/holding/elsewhere")
-  expect(html).toContain("2 stored links connect it to other records.")
+  expect(await page("canon.Item", "demo/item/gold", "technical", links)).toContain("2 stored links connect it to other records.")
 })
 
 test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {

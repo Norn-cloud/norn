@@ -1,13 +1,17 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Norn Studio theme: monochrome. Near-black or soft-grey canvas, hairline separators,
+ * Norn Studio theme, design v2: neutral ramps and type roles follow Polar's open-source Orbit tokens
+ * (polarsource/polar, clients/packages/orbit, Apache-2.0), set in Geist; one accent, the knot's violet
+ * (--action, --ring). Two-tier density: soft rounded chrome (panels, sheets, KPI cards) around crisp,
+ * dense data (13px tabular rows, hairlines, radius 8). Earlier notes, monochrome. Near-black or soft-grey canvas, hairline separators,
  * plain numerals; type does the hierarchy. Colour is reserved for the Norn knot logo,
  * for meaning (destructive, warning, success, all muted) and for the one primary
  * add/create action (--action). Links are foreground, underlined. Chrome is rounded
@@ -15,22 +19,22 @@
  */
 :root {
   --radius: 0.75rem;
-  --canvas: #f7f7f7;
+  --canvas: #ffffff;
   --background: #ffffff;
-  --foreground: #0a0a0a;
-  --card: #ffffff;
-  --card-foreground: #0a0a0a;
+  --foreground: #000000;
+  --card: oklch(0.985 0.002 247.839);
+  --card-foreground: #000000;
   --popover: #ffffff;
   --popover-foreground: #0a0a0a;
-  --primary: #0a0a0a;
+  --primary: #000000;
   --primary-foreground: #ffffff;
-  --secondary: #f4f4f4;
+  --secondary: oklch(0.967 0.003 264.542);
   --secondary-foreground: #0a0a0a;
-  --muted: #f4f4f4;
-  --muted-foreground: #646464;
-  --accent: #efefef;
+  --muted: oklch(0.967 0.003 264.542);
+  --muted-foreground: oklch(0.551 0.027 264.364);
+  --accent: oklch(0.967 0.003 264.542);
   --accent-foreground: #0a0a0a;
-  --surface-subtle: #fafafa;
+  --surface-subtle: oklch(0.985 0.002 247.839);
   /* Muted semantic colours, each AA as text on white and on the canvas. */
   --destructive: #b83228;
   --destructive-foreground: #ffffff;
@@ -38,13 +42,13 @@
   --destructive-text: #b83228;
   --success: #2a7048;
   --warning: #8f5a0c;
-  --border: #ebebeb;
-  --input: #e6e6e6;
-  --ring: #737373;
+  --border: oklch(0.928 0.006 264.531);
+  --input: oklch(0.928 0.006 264.531);
+  --ring: #5b52f0;
   /* Links read as foreground; the underline (or arrow) marks them. */
   --link: var(--foreground);
   /* The one restrained colour: the primary add/create action, as a solid round button. */
-  --action: #2f5fe3;
+  --action: #5b52f0;
   --action-foreground: #ffffff;
   /* Detail colour, never a surface: one hue per kind of artefact for its icons and chips; each ≥ 4.5:1 on white and on the canvas. */
   --kind-source: #0f766e;
@@ -56,20 +60,20 @@
   --kind-guarantee: #166534;
   --kind-policy: #c2410c;
   /* Chart series: categorical, told apart by hue and by order in the legend. */
-  --chart-1: #4338ca;
+  --chart-1: #000000;
   --chart-2: #0f766e;
   --chart-3: #b45309;
   --chart-4: #a21caf;
-  --chart-5: #64748b;
-  --sidebar: var(--canvas);
+  --chart-5: oklch(0.707 0.022 261.325);
+  --sidebar: #ffffff;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #ececec;
+  --sidebar-accent: oklch(0.967 0.003 264.542);
   --sidebar-accent-foreground: #0a0a0a;
-  --sidebar-border: #ebebeb;
+  --sidebar-border: oklch(0.928 0.006 264.531);
   --sidebar-ring: #737373;
-  --elevation-1: 0 1px 2px 0 rgb(10 10 10 / 0.06), 0 1px 3px -1px rgb(10 10 10 / 0.05);
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 32px -18px rgb(0 0 0 / 0.18);
   /*
    * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
    * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
@@ -78,7 +82,7 @@
   --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
   --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
   --elevation-float: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px -8px rgb(15 23 42 / 0.16);
-  --node-border: rgb(15 23 42 / 0.09);
+  --node-border: rgb(0 0 0 / 0.06);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
   --node-radius: 14px;
   --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
@@ -112,33 +116,33 @@
 }
 
 .dark {
-  --canvas: #0a0a0a;
-  --background: #111111;
-  --foreground: #fafafa;
-  --card: #161616;
+  --canvas: hsl(0 0% 3.5%);
+  --background: hsl(0 0% 3.5%);
+  --foreground: #ffffff;
+  --card: hsl(0 0% 9.5%);
   --card-foreground: #fafafa;
-  --popover: #1a1a1a;
+  --popover: hsl(0 0% 9.5%);
   --popover-foreground: #fafafa;
-  --primary: #fafafa;
+  --primary: #ffffff;
   --primary-foreground: #0a0a0a;
-  --secondary: #1a1a1a;
+  --secondary: hsl(0 0% 13%);
   --secondary-foreground: #fafafa;
-  --muted: #1a1a1a;
-  --muted-foreground: #8a8a8a;
-  --accent: #1f1f1f;
+  --muted: hsl(0 0% 13%);
+  --muted-foreground: hsl(0 0% 62%);
+  --accent: hsl(0 0% 13%);
   --accent-foreground: #fafafa;
-  --surface-subtle: #141414;
+  --surface-subtle: hsl(0 0% 6.5%);
   --destructive: #e5675e;
   --destructive-foreground: #0a0a0a;
   /* Destructive as small text: 5.5:1 on the card. */
   --destructive-text: #e5675e;
   --success: #52b788;
   --warning: #d4a24c;
-  --border: rgb(255 255 255 / 0.08);
-  --input: rgb(255 255 255 / 0.12);
-  --ring: #8a8a8a;
+  --border: hsl(0 0% 13%);
+  --input: hsl(0 0% 16%);
+  --ring: #7c74ff;
   --link: var(--foreground);
-  --action: #3b6cf0;
+  --action: #7c74ff;
   --action-foreground: #ffffff;
   /* The same kinds, lightened: each ≥ 5.9:1 on the dark card. */
   --kind-source: #2dd4bf;
@@ -149,24 +153,24 @@
   --kind-workflow: #c4b5fd;
   --kind-guarantee: #4ade80;
   --kind-policy: #fdba74;
-  --chart-1: #a5b4fc;
+  --chart-1: #ffffff;
   --chart-2: #2dd4bf;
   --chart-3: #fbbf24;
   --chart-4: #f0abfc;
-  --chart-5: #94a3b8;
-  --sidebar: var(--canvas);
+  --chart-5: hsl(0 0% 46%);
+  --sidebar: hsl(0 0% 3.5%);
   --sidebar-foreground: #fafafa;
   --sidebar-primary: #fafafa;
   --sidebar-primary-foreground: #0a0a0a;
-  --sidebar-accent: #1c1c1c;
+  --sidebar-accent: hsl(0 0% 13%);
   --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: rgb(255 255 255 / 0.08);
+  --sidebar-border: hsl(0 0% 13%);
   --sidebar-ring: #8a8a8a;
-  --elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -1px rgb(0 0 0 / 0.35);
+  --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 20px 50px -24px rgb(0 0 0 / 0.8);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
   --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
-  --node-border: rgb(255 255 255 / 0.09);
+  --node-border: rgb(255 255 255 / 0.06);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
   --canvas-surface: #151517;
@@ -271,8 +275,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --font-heading: var(--font-sans);
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --radius-2xl: calc(var(--radius) + 12px);
