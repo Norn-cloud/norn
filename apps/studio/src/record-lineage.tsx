@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Box, Database, FileText, GitBranch, List, Rows3, type LucideIcon } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -41,31 +41,52 @@ const NODE_TYPES = { card: NodeCard }
 /** An edge's label: the one fact it feeds by name, or how many; the list view names them all. */
 const facts = (names: readonly string[]) => names.length === 0 ? "" : names.length === 1 ? (names[0] ?? "").replaceAll("_", " ") : `${names.length} facts`
 
-/** Sources on the left, the record on the right: each hop one column, its nodes in the order the lineage names them. */
+/**
+ * Sources on the left, the record on the right: each hop one column, its nodes in the order the
+ * lineage names them. Every card has the same known size, so the first view is fitted from the
+ * container's width, never from cards not yet measured.
+ */
 function Graph({ graph }: { readonly graph: LineageGraph }) {
-  const { nodes, edges } = useMemo(() => {
+  const frame = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState<{ readonly width: number; readonly height: number } | null>(null)
+  useEffect(() => {
+    const element = frame.current
+    if (element === null) return
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight })
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  const { nodes, edges, bounds } = useMemo(() => {
     const deepest = Math.max(0, ...graph.nodes.map(({ hop }) => hop))
     const rows = new Map<number, number>()
     const nodes: Card[] = graph.nodes.map((node) => {
       const row = rows.get(node.hop) ?? 0
       rows.set(node.hop, row + 1)
-      // A known size lets the first fit include every card before the cards are measured.
       return { id: node.id, type: "card", position: { x: (deepest - node.hop) * (WIDTH + GAP_X), y: row * ROW }, width: WIDTH, height: HEIGHT, data: { node } }
     })
     const edges: Edge[] = graph.edges.map(({ from, to, facts: names }) => ({
       id: `${from}→${to}`, source: from, target: to, type: "smoothstep", label: facts(names), labelStyle: { fontSize: 11 }, markerEnd: { type: MarkerType.ArrowClosed },
     }))
-    return { nodes, edges }
+    const tallest = Math.max(1, ...rows.values())
+    return { nodes, edges, bounds: { width: (deepest + 1) * WIDTH + deepest * GAP_X, height: (tallest - 1) * ROW + HEIGHT } }
   }, [graph])
+  const viewport = size && (() => {
+    const pad = 32
+    const zoom = Math.min(1, (size.width - 2 * pad) / bounds.width, (size.height - 2 * pad) / bounds.height)
+    return { x: (size.width - bounds.width * zoom) / 2, y: (size.height - bounds.height * zoom) / 2, zoom }
+  })()
   return (
-    <div className="h-80 overflow-hidden rounded-md border border-border/70 bg-surface-subtle">
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} colorMode="system" minZoom={0.2}
-        // Fit once the cards are drawn and measured; a fit before that leaves the record off the edge.
-        onInit={(flow) => { requestAnimationFrame(() => void flow.fitView({ maxZoom: 1, padding: 0.15 })) }}
-        nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
-        <Background />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+    <div ref={frame} className="h-80 overflow-hidden rounded-md border border-border/70 bg-surface-subtle">
+      {viewport && (
+        <ReactFlow key={`${size?.width}x${size?.height}`} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} defaultViewport={viewport} colorMode="system" minZoom={0.2}
+          nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
+          <Background />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      )}
     </div>
   )
 }
