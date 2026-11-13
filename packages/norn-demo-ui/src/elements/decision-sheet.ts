@@ -42,7 +42,11 @@ export interface SheetDocument {
 export interface SheetOptions {
   readonly document: SheetDocument
   readonly decision: SheetDecision
-  readonly evaluate: Evaluate
+  /**
+   * The ZEN engine the checker type-checked the machine's guards and assignments with. A promise
+   * is fine: the sheet paints its first state at once and takes input once the engine is here.
+   */
+  readonly evaluate: Evaluate | Promise<Evaluate>
   readonly transport: Transport
   readonly locale?: Locale
   /** The cell's clock now (for the countdown); the host keeps it current with `setNow`. */
@@ -252,7 +256,14 @@ function problems(body: unknown): readonly Problem[] {
  * Every control's presence and enabled state comes from the machine via `enabled`.
  */
 export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Driver {
-  const { document, decision, evaluate } = options
+  const { document, decision } = options
+  // The engine evaluates guards and assignments only; until it arrives the sheet shows its first
+  // state read-only and raises nothing, so no event is ever decided without it.
+  let engine: Evaluate | null = typeof options.evaluate === "function" ? options.evaluate : null
+  const evaluate: Evaluate = (expression, input) => {
+    if (engine === null) throw new Error("the expression engine is not loaded yet")
+    return engine(expression, input)
+  }
   const locale = options.locale ?? "en"
   const w = WORDS[locale]
   const page = document.payload.ux.pages[0]
@@ -343,7 +354,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const state = snapshot.stateId
     const role = machine.states.find((candidate) => candidate.stateId === state)?.role
     const settled = role === "terminal"
+    const ready = engine !== null
     q(".norn-sheet")?.setAttribute("data-state", state)
+    q(".norn-sheet")?.setAttribute("data-engine", ready ? "ready" : "loading")
     // A terminal machine shows only its outcome; otherwise the form stays, with what it offers now.
     q('[data-region="form"]')?.toggleAttribute("hidden", settled)
     q('[data-host="back"]')?.toggleAttribute("hidden", !settled)
@@ -352,7 +365,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const choice = snapshot.fields.choice
     for (const element of root.querySelectorAll<HTMLButtonElement>("button[data-node]")) {
       const node = element.dataset.node ?? ""
-      const on = enabled(machine, evaluate, snapshot, node)
+      const on = ready && enabled(machine, evaluate, snapshot, node)
       // Decide stays in view while a choice is still to be made, so the form says what it waits for.
       element.hidden = !on && !(node === "decide-button" && (state === "choosing" || state === "sending" || state === "refused"))
       element.disabled = !on
@@ -362,7 +375,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const confirmButton = q<HTMLButtonElement>('[data-node="confirm-button"]')
     if (confirmButton) confirmButton.textContent = say("confirmAs", optionLabel(choice).toLowerCase())
     const hint = q('[data-region="hint"]')
-    if (hint) hint.textContent = choice || !enabled(machine, evaluate, snapshot, "option-choice") ? "" : w.choose
+    if (hint) hint.textContent = choice || !ready || !enabled(machine, evaluate, snapshot, "option-choice") ? "" : w.choose
     // The footer shows only while it offers something.
     const footer = q('[data-region="decision-actions"]')
     if (footer) footer.hidden = ![...footer.querySelectorAll<HTMLButtonElement>("button[data-node]")].some((button) => !button.hidden)
@@ -374,11 +387,13 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     }
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
     q('[data-region="decision-leave"]')?.toggleAttribute("hidden", state !== "leaving")
-    const editable = enabled(machine, evaluate, snapshot, "option-choice")
-    // Choices and the note show while they can change, and while a call is in flight (read-only).
-    for (const region of ["decision-choices", "decision-note"]) q(`[data-region="${region}"]`)?.toggleAttribute("hidden", !editable && state !== "sending")
+    const editable = ready && enabled(machine, evaluate, snapshot, "option-choice")
+    // Choices and the note show while they can change, while a call is in flight, and while the
+    // engine loads (read-only, so the sheet does not jump when it arrives).
+    for (const region of ["decision-choices", "decision-note"]) q(`[data-region="${region}"]`)?.toggleAttribute("hidden", !editable && state !== "sending" && ready)
     q("textarea")?.toggleAttribute("disabled", !editable)
     q('[data-node="option-choice"]')?.toggleAttribute("aria-disabled", !editable)
+    q('[data-node="option-choice"]')?.toggleAttribute("disabled", !ready)
     // The server's words for a refusal: the top-level message and unpointed diagnostics at the top,
     // pointed diagnostics at their field.
     const found = state === "refused" ? problems(lastBody) : []
@@ -438,8 +453,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     },
   })
 
-  /** Raise the first of the node's events the current state takes. */
+  /** Raise the first of the node's events the current state takes; nothing before the engine. */
   const raise = (nodeId: string, payload?: Fields) => {
+    if (engine === null) return false
     for (const event of eventsOf(machine, nodeId)) {
       if (driver.dispatch({ kind: "user", eventId: event.eventId, ...(payload ? { payload } : {}) }).fired) return true
     }
@@ -495,6 +511,15 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     paint(driver.snapshot())
   }
   paint(driver.snapshot())
+  if (engine === null) {
+    void Promise.resolve(options.evaluate).then(
+      (loaded) => {
+        engine = loaded
+        paint(driver.snapshot())
+      },
+      () => q(".norn-sheet")?.setAttribute("data-engine", "unavailable"),
+    )
+  }
   return driver
 }
 
@@ -503,6 +528,8 @@ export interface NornDecisionSheet extends HTMLElement {
   options: SheetOptions
   /** The machine's current snapshot, for hosts and tests. */
   readonly snapshot: Snapshot | null
+  /** The expression engine has arrived, so the sheet takes input. */
+  readonly ready: boolean
   /** Raise the first event of `nodeId` the current state takes (a host's Escape raises `close-button`). */
   request(nodeId: string): boolean
   /**
@@ -538,6 +565,9 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
     }
     get snapshot(): Snapshot | null {
       return this.#driver?.snapshot() ?? null
+    }
+    get ready(): boolean {
+      return this.querySelector(".norn-sheet")?.getAttribute("data-engine") === "ready"
     }
     request(nodeId: string): boolean {
       return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false

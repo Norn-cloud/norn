@@ -28,7 +28,39 @@ async function inbox(page: Page, options: Parameters<typeof decisionCell>[1] = {
 
 const list = (page: Page) => page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button")
 const sheet = (page: Page) => page.getByRole("dialog")
-const open = async (page: Page, text: string) => { await list(page).filter({ hasText: text }).click(); await expect(sheet(page)).toBeVisible() }
+// The sheet draws its first state at once and takes input once its expression engine is here.
+const open = async (page: Page, text: string) => {
+  await list(page).filter({ hasText: text }).click()
+  await expect(sheet(page)).toBeVisible()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+}
+
+test("open: on a cold page the sheet shows its first state at once, without waiting for the expression engine", async ({ page }) => {
+  await inbox(page)
+  await expect(list(page).first()).toBeVisible()
+  // Timed in the page: from the click to the sheet's first state, and to the engine taking input.
+  await page.evaluate(() => {
+    const marks: Record<string, number> = {}
+    ;(window as unknown as { marks: typeof marks }).marks = marks
+    document.addEventListener("click", () => { marks.click ??= performance.now() }, { capture: true })
+    new MutationObserver(() => {
+      const sheet = document.querySelector("norn-decision-sheet .norn-sheet")
+      if (sheet?.hasAttribute("data-state")) marks.state ??= performance.now()
+      if (sheet?.getAttribute("data-engine") === "ready") marks.ready ??= performance.now()
+    }).observe(document.body, { subtree: true, childList: true, attributes: true })
+  })
+  await list(page).filter({ hasText: "Recount it?" }).click()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-state", "choosing", { timeout: 1_000 })
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+  const marks = await page.evaluate(() => (window as unknown as { marks: Record<string, number> }).marks)
+  const firstState = Math.round(marks.state! - marks.click!)
+  const ready = Math.round(marks.ready! - marks.click!)
+  // performance.now() counts from navigation, so `marks.ready` is also when the engine arrived in the page.
+  console.log(`sheet timing: click → first state ${firstState} ms; click → engine ready ${ready} ms; engine ready ${Math.round(marks.ready!)} ms after navigation`)
+  test.info().annotations.push({ type: "timing", description: `first state ${firstState} ms; engine ready ${ready} ms` })
+  // The bound that keeps the sheet from waiting on the engine again: its first state never waits for a compile.
+  expect(firstState).toBeLessThan(1_000)
+})
 
 test("view: the inbox lists what waits on you, soonest deadline first, with the nav's count, risk, suggestion and countdown", async ({ page }) => {
   await inbox(page)
