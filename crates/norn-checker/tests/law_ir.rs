@@ -784,7 +784,7 @@ fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
         .map(|d| d.code.as_str().to_owned())
         .collect()
 }
-fn diagnostics(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<norn_ir::Diagnostic> {
+fn diagnostics(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
     let pool: Vec<ArtifactEnvelope> = values
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("envelope"))
@@ -880,10 +880,10 @@ fn law_link_reads_admit_one_to_one_hop_only() {
         law["payload"]["response"]["expression"] = json!(expression);
         diagnostics(vec![law], &base)
     };
-    let refused = |found: &[norn_ir::Diagnostic], code: &str| {
+    let refused = |found: &[norn_checker::Diagnostic], code: &str| {
         found.iter().any(|found| found.code.as_str() == code)
     };
-    let says = |found: &[norn_ir::Diagnostic], words: &[&str]| {
+    let says = |found: &[norn_checker::Diagnostic], words: &[&str]| {
         found.iter().any(|found| {
             found.code.as_str() == codes::UNKNOWN_BINDING
                 && words.iter().all(|word| found.message.contains(word))
