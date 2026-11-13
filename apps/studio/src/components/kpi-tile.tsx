@@ -1,16 +1,14 @@
 import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
-import { Panel, Well } from "@/components/panel"
 
-/** One figure: a panel whose well holds a large tabular number and a muted line under it. */
-export function KpiTile({ icon, label, value, sub }: { icon?: LucideIcon; label: ReactNode; value: ReactNode; sub?: ReactNode }) {
+/** One figure (design system v1, after Midday and Polar): a small muted label, a large tabular number, a muted line under it. */
+export function KpiTile({ icon: Icon, label, value, sub }: { icon?: LucideIcon; label: ReactNode; value: ReactNode; sub?: ReactNode }) {
   return (
-    <Panel icon={icon} label={label} className="flex h-full flex-col">
-      <Well className="flex-1 px-4 py-4">
-        <div className="text-figure leading-none font-normal tracking-[-0.02em] tabular-nums">{value}</div>
-        {sub !== undefined && <div className="pt-2 text-meta text-muted-foreground tabular-nums">{sub}</div>}
-      </Well>
-    </Panel>
+    <section data-slot="kpi" className="flex h-full min-w-0 flex-col rounded-xl border border-border bg-card px-4 py-3.5">
+      <h2 className="flex items-center gap-1.5 text-meta font-medium text-muted-foreground">{Icon && <Icon aria-hidden className="size-3.5 shrink-0" />}<span className="min-w-0 truncate">{label}</span></h2>
+      <div className="pt-2.5 text-[2rem] leading-none font-semibold tracking-[-0.03em] tabular-nums">{value}</div>
+      {sub !== undefined && <div className="pt-2 text-meta text-muted-foreground tabular-nums">{sub}</div>}
+    </section>
   )
 }
 
