@@ -512,7 +512,8 @@ impl Page<'_> {
         usable.then_some(assumed)
     }
 
-    /// Option to complete over the product: one finding per page state, for its first pair.
+    /// Option to complete over the product: one finding per page state, naming every object
+    /// state it is stuck (or Unknown) with, each with its shortest run.
     fn completion(
         &self,
         ui: &Net,
@@ -521,7 +522,7 @@ impl Page<'_> {
         findings: &mut Vec<Finding>,
     ) {
         let verdict = soundness::analyse(product.net());
-        let mut reported = BTreeSet::new();
+        let mut grouped: BTreeMap<(&'static str, usize), BTreeMap<usize, usize>> = BTreeMap::new();
         for (state, found) in verdict.states.iter().enumerate() {
             let Some((ui_state, backend_state)) = product.pairs.get(state).copied() else {
                 continue;
@@ -533,36 +534,56 @@ impl Page<'_> {
             } else {
                 continue;
             };
-            if !reported.insert((code, ui_state)) {
-                continue;
-            }
-            let run = soundness::witness(product.net(), state).unwrap_or_default();
-            let object = backend
-                .machine
-                .states
-                .get(backend_state)
-                .copied()
-                .unwrap_or_default();
-            let message = if code == STUCK {
-                format!(
-                    "page state `{}` with the object `{object}`: no ending of both is reachable{}",
-                    self.ui_state(ui_state),
-                    self.run(ui, backend, product, &run)
-                )
+            grouped
+                .entry((code, ui_state))
+                .or_default()
+                .entry(backend_state)
+                .or_insert(state);
+        }
+        for ((code, ui_state), pairs) in grouped {
+            let cases: Vec<String> = pairs
+                .iter()
+                .map(|(backend_state, state)| {
+                    let object = backend
+                        .machine
+                        .states
+                        .get(*backend_state)
+                        .copied()
+                        .unwrap_or_default();
+                    let run = soundness::witness(product.net(), *state).unwrap_or_default();
+                    format!(
+                        "with the object `{object}` (shortest run: {})",
+                        self.steps(ui, backend, product, &run).join(", ")
+                    )
+                })
+                .collect();
+            let what = if code == STUCK {
+                "no ending of both is reachable"
             } else {
-                format!(
-                    "page state `{}` with the object `{object}`: an ending of both is reachable only through guarded transitions{}",
-                    self.ui_state(ui_state),
-                    self.run(ui, backend, product, &run)
-                )
+                "an ending of both is reachable only through guarded transitions"
             };
+            let message = format!(
+                "page state `{}`: {what} {}",
+                self.ui_state(ui_state),
+                cases.join(", or ")
+            );
             Self::push(findings, code, self.state_pointer(ui_state), message);
         }
     }
 
     /// A product run as the steps of each side.
     fn run(&self, ui: &Net, backend: &Backend<'_>, product: &Product, run: &[usize]) -> String {
-        let steps: Vec<String> = run
+        let steps = self.steps(ui, backend, product, run);
+        if steps.is_empty() {
+            String::new()
+        } else {
+            format!("; shortest run: {}", steps.join(", "))
+        }
+    }
+
+    /// The steps of a product run, each as the page's and the object's transitions it took.
+    fn steps(&self, ui: &Net, backend: &Backend<'_>, product: &Product, run: &[usize]) -> Vec<String> {
+        run
             .iter()
             .filter_map(|edge| product.net().edges.get(*edge))
             .filter_map(|edge| product.origins.get(edge.label))
@@ -583,11 +604,6 @@ impl Page<'_> {
                     (None, None) => String::new(),
                 }
             })
-            .collect();
-        if steps.is_empty() {
-            String::new()
-        } else {
-            format!("; shortest run: {}", steps.join(", "))
-        }
+            .collect()
     }
 }

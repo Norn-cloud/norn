@@ -201,10 +201,15 @@ fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck(
         pointer.contains("/payload/ux/pages/0/machine/states/2"),
         "{pointer}"
     );
-    // The first stuck pair: a rejected order can only be revised back to that draft.
+    // The planted case is `done` over a draft that only the page could submit; a rejected order
+    // is stuck with it, since it can only be revised back to that draft. Exactly these two, each
+    // with its own shortest run.
+    assert_eq!(stuck.len(), 1, "{found:#?}");
     assert_eq!(
         message,
-        "page state `done` with the object `rejected`: no ending of both is reachable; shortest run: page submit, page on-accepted with object submit, object reject"
+        "page state `done`: no ending of both is reachable \
+         with the object `draft` (shortest run: page submit, page on-accepted with object submit, object reject, object revise), \
+         or with the object `rejected` (shortest run: page submit, page on-accepted with object submit, object reject)"
     );
 }
 
