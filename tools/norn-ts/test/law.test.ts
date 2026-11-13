@@ -45,9 +45,7 @@ test("TS, builder, LawIR and structured statement goldens are byte identical", (
   if (checker) {
     const entities = JSON.parse(readFileSync(join(ROOT, "entities.json"), "utf8")) as unknown[]
     const checked = checker.checkArtifactSet([...entities, ...compiled.artifacts])
-    // LIFE-SOUND-1: `post` is guarded, so option to complete from `draft` is Unknown, never a pass.
-    expect(checked.diagnostics.diagnostics.map((d: { code: string; severity: string }) => [d.code, d.severity])).toEqual([["lifecycle.soundness.completion_unknown", "info"]])
-    expect(checked.admitted).toBe(true)
+    expect(checked.diagnostics.diagnostics).toEqual([]); expect(checked.admitted).toBe(true)
   }
 }, 30_000)
 

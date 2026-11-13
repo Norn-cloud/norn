@@ -1228,6 +1228,10 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "lifecycle.soundness.cancellation_dead_end",
+    "fix": "Add an unguarded path from each listed state to a completed, compensated or resting ending, or drop the exception and keep the deadline strict."
+  },
+  {
     "code": "lifecycle.soundness.compensation_not_closed",
     "fix": "Route every path from the dispatching transition to that ending through its compensating transition."
   },

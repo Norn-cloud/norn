@@ -21,7 +21,7 @@
 //! What this establishes is structural and conditional on the declared edges; it adds no
 //! runtime authority and changes no commit.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use norn_ir::{Lifecycle, LifecycleOutcome, TransitionMode, TransitionTrigger};
 
@@ -62,6 +62,9 @@ pub mod codes {
     pub const LAW_BLOCKED_EXIT: &str = "lifecycle.soundness.law_blocked_exit";
     /// A governing law refuses a fact transition (graph layer).
     pub const FACT_REFUSED: &str = "lifecycle.soundness.fact_refused";
+    /// A defeasible `within` deadline could be cancelled by its exception in a state from
+    /// which no declared good or compensated ending is reachable (LIFE-SOUND-9).
+    pub const CANCELLATION_DEAD_END: &str = "lifecycle.soundness.cancellation_dead_end";
 }
 
 /// One finding: a code, a message and the member path under the lifecycle.
@@ -337,7 +340,17 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
         return out;
     }
     let net = net(machine);
+    // D84: a chart that declares no LIFE-SOUND member keeps its admission output except for
+    // refuted findings; Unknown and a missing ending are reported once the chart opts in.
+    let opted_in = !machine.endings.is_empty()
+        || !machine.events.is_empty()
+        || machine.transitions.iter().any(|edge| {
+            edge.trigger.is_some() || edge.mode.is_some() || edge.compensated_by.is_some()
+        });
     if net.endings.iter().all(Option::is_none) {
+        if !opted_in {
+            return out;
+        }
         out.push(Finding {
             info: true,
             ..finding(
@@ -372,6 +385,7 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
                     &[],
                 ));
             }
+            Completion::Unknown if !opted_in => {}
             Completion::Unknown => out.push(Finding {
                 info: true,
                 ..finding(
@@ -575,6 +589,186 @@ fn check_compensation(machine: &Machine<'_>, out: &mut Vec<Finding>) {
     }
 }
 
+/// Why a defeasible `within` deadline is refused (LIFE-SOUND-9; ruling on #1313).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancellationRefusal {
+    /// The trigger is not a transition of the lifecycle.
+    UnknownTrigger,
+    /// Some cancelling state cannot be shown to reach a declared good or compensated ending.
+    DeadEnd(CancellationDeadEnd),
+}
+
+/// The cancelling states that fail, and the smallest blocking set found for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancellationDeadEnd {
+    /// Every failing cancelling state, in presentation order.
+    pub states: Vec<String>,
+    /// Failing states from which no good or compensated ending is reachable at all.
+    pub unreachable: Vec<String>,
+    /// For the other failing states: the guarded transitions on a path to a good ending
+    /// that crosses the fewest guards, per state, unioned. The proof holds once these
+    /// guards are shown to hold there (or are removed).
+    pub blocking: Vec<String>,
+}
+
+impl CancellationDeadEnd {
+    /// One-line explanation for the refusal diagnostic.
+    #[must_use]
+    pub fn message(&self) -> String {
+        let mut parts = vec![format!(
+            "an exception can cancel the deadline in {:?}, from which no declared good or compensated ending is proved reachable",
+            self.states
+        )];
+        if !self.unreachable.is_empty() {
+            parts.push(format!(
+                "{:?} reach no good or compensated ending at all",
+                self.unreachable
+            ));
+        }
+        if !self.blocking.is_empty() {
+            parts.push(format!("smallest blocking set: guarded {:?}", self.blocking));
+        }
+        parts.join("; ")
+    }
+}
+
+fn good_outcome(outcome: Option<LifecycleOutcome>) -> bool {
+    matches!(
+        outcome,
+        Some(LifecycleOutcome::Completed | LifecycleOutcome::Compensated | LifecycleOutcome::Resting)
+    )
+}
+
+/// LIFE-SOUND-9: a defeasible `within` deadline triggered by `trigger` may be admitted only if,
+/// in every live state where its exception could cancel the open activation (every non-terminal
+/// state reachable from the trigger's target, guards treated as satisfiable), a declared good or compensated
+/// ending (`completed`, `compensated`, `resting`) is reachable along unguarded edges. An
+/// unclassified terminal is not a declared ending. The relaxation is gated by this proof, never
+/// a default.
+///
+/// # Errors
+/// [`CancellationRefusal`]: an unknown trigger, or the failing states with the smallest
+/// blocking set.
+pub fn cancellation_gate(
+    lifecycle: &Lifecycle,
+    states: &[String],
+    trigger: &str,
+) -> Result<(), CancellationRefusal> {
+    let names: Vec<&str> = states.iter().map(String::as_str).collect();
+    let machine = Machine::declared(lifecycle, names);
+    let opening = machine
+        .transitions
+        .iter()
+        .find(|edge| edge.id.as_str() == trigger)
+        .ok_or(CancellationRefusal::UnknownTrigger)?;
+    let start = index(&machine, opening.to).ok_or(CancellationRefusal::UnknownTrigger)?;
+    let mut graph = net(&machine);
+    graph.endings = machine
+        .states
+        .iter()
+        .map(|state| {
+            ending(&machine, state)
+                .filter(|(_, outcome)| good_outcome(*outcome))
+                .map(|(ending, _)| ending)
+        })
+        .collect();
+    let verdict = soundness::analyse(&graph);
+    let mut open = vec![false; graph.states];
+    let mut queue = VecDeque::from([start]);
+    if let Some(slot) = open.get_mut(start) {
+        *slot = true;
+    }
+    while let Some(state) = queue.pop_front() {
+        for edge in graph.edges.iter().filter(|edge| edge.from == state) {
+            if let Some(slot) = open.get_mut(edge.to)
+                && !*slot
+            {
+                *slot = true;
+                queue.push_back(edge.to);
+            }
+        }
+    }
+    let mut failure = CancellationDeadEnd {
+        states: Vec::new(),
+        unreachable: Vec::new(),
+        blocking: Vec::new(),
+    };
+    let mut blocking = BTreeSet::new();
+    for (state, outcome) in verdict.states.iter().enumerate() {
+        let name = machine.states.get(state).copied().unwrap_or_default();
+        // A terminal state has already ended; cancelling there opens no new dead end.
+        if !open.get(state).copied().unwrap_or(false)
+            || outcome.completion == Completion::Must
+            || machine.terminal.contains(name)
+        {
+            continue;
+        }
+        failure.states.push(name.to_owned());
+        match fewest_guards(&graph, state) {
+            Some(labels) => {
+                blocking.extend(
+                    labels
+                        .into_iter()
+                        .filter_map(|label| machine.transitions.get(label))
+                        .map(|edge| edge.id.as_str().to_owned()),
+                );
+            }
+            None => failure.unreachable.push(name.to_owned()),
+        }
+    }
+    if failure.states.is_empty() {
+        return Ok(());
+    }
+    failure.blocking = blocking.into_iter().collect();
+    Err(CancellationRefusal::DeadEnd(failure))
+}
+
+/// The labels of the may edges on a path from `from` to an ending crossing the fewest may
+/// edges (0-1 BFS), or `None` when no ending is reachable.
+fn fewest_guards(net: &Net, from: usize) -> Option<Vec<usize>> {
+    let mut cost = vec![usize::MAX; net.states];
+    let mut parent: Vec<Option<usize>> = vec![None; net.states];
+    let mut queue = VecDeque::from([from]);
+    *cost.get_mut(from)? = 0;
+    while let Some(state) = queue.pop_front() {
+        let here = cost.get(state).copied()?;
+        if net.endings.get(state).copied().flatten().is_some() {
+            let mut labels = Vec::new();
+            let mut current = state;
+            while let Some(edge) = parent.get(current).copied().flatten() {
+                let edge = net.edges.get(edge)?;
+                if edge.modality == Modality::May {
+                    labels.push(edge.label);
+                }
+                current = edge.from;
+            }
+            labels.reverse();
+            return Some(labels);
+        }
+        for (position, edge) in net.edges.iter().enumerate() {
+            if edge.from != state {
+                continue;
+            }
+            let step = usize::from(edge.modality == Modality::May);
+            let next = here.saturating_add(step);
+            if let Some(known) = cost.get_mut(edge.to)
+                && next < *known
+            {
+                *known = next;
+                if let Some(slot) = parent.get_mut(edge.to) {
+                    *slot = Some(position);
+                }
+                if step == 0 {
+                    queue.push_front(edge.to);
+                } else {
+                    queue.push_back(edge.to);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -673,7 +867,7 @@ mod tests {
         let mut chart = order(&json!({}));
         chart["transitions"][1]["guards"] = json!(["self.total == 0"]);
         chart["transitions"][0]["guards"] = json!(["self.total > 0"]);
-        let findings = check_machine(&Machine::declared(&lifecycle(chart), ORDER.to_vec()));
+        let findings = check_machine(&Machine::declared(&lifecycle(chart.clone()), ORDER.to_vec()));
         assert_eq!(
             findings
                 .iter()
@@ -681,6 +875,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(codes::COMPLETION_UNKNOWN, true)]
         );
+        // Without any LIFE-SOUND member the Unknown is left to the bounded graph.
+        let mut legacy = chart;
+        legacy["endings"] = json!([]);
+        if let Some(ship) = legacy["transitions"][2].as_object_mut() {
+            ship.remove("mode");
+        }
+        assert!(check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())).is_empty());
     }
 
     #[test]
@@ -817,6 +1018,66 @@ mod tests {
     }
 
     #[test]
+    fn a_cancellable_deadline_is_admitted_only_where_every_cancelling_state_still_ends_well() {
+        // confirm opens the deadline; shipped is completed, refunded compensated.
+        let chart = || {
+            json!({
+                "property": "status", "initial": ["draft"],
+                "terminal": ["shipped", "cancelled", "refunded"],
+                "endings": [
+                    {"state": "shipped", "outcome": "completed"},
+                    {"state": "cancelled", "outcome": "cancelled"},
+                    {"state": "refunded", "outcome": "compensated"}
+                ],
+                "transitions": [
+                    {"id": "confirm", "from": ["draft"], "to": "confirmed"},
+                    {"id": "ship", "from": ["confirmed"], "to": "shipped"},
+                    {"id": "escalate", "from": ["confirmed"], "to": "review"},
+                    {"id": "refund", "from": ["review"], "to": "refunded"}
+                ]
+            })
+        };
+        let states: Vec<String> = ["draft", "confirmed", "review", "shipped", "cancelled", "refunded"]
+            .map(str::to_owned)
+            .to_vec();
+        assert_eq!(cancellation_gate(&lifecycle(chart()), &states, "confirm"), Ok(()));
+        assert_eq!(
+            cancellation_gate(&lifecycle(chart()), &states, "post"),
+            Err(CancellationRefusal::UnknownTrigger)
+        );
+        // review can now only be cancelled: a cancelled ending is not good or compensated.
+        let mut dead = chart();
+        dead["transitions"][3] = json!({"id": "drop", "from": ["review"], "to": "cancelled"});
+        let Err(CancellationRefusal::DeadEnd(failure)) =
+            cancellation_gate(&lifecycle(dead), &states, "confirm")
+        else {
+            panic!("review reaches only a cancelled ending");
+        };
+        assert_eq!(failure.states, ["review"]);
+        assert_eq!(failure.unreachable, ["review"]);
+        assert!(failure.blocking.is_empty());
+        // a guarded refund leaves review Unknown: the guard is the smallest blocking set.
+        let mut guarded = chart();
+        guarded["transitions"][3]["guards"] = json!(["self.paid"]);
+        let Err(CancellationRefusal::DeadEnd(failure)) =
+            cancellation_gate(&lifecycle(guarded), &states, "confirm")
+        else {
+            panic!("review ends well only through a guard");
+        };
+        assert_eq!(failure.states, ["review"]);
+        assert!(failure.unreachable.is_empty());
+        assert_eq!(failure.blocking, ["refund"]);
+        assert!(failure.message().contains("smallest blocking set"));
+        // An unclassified terminal is not a declared good ending.
+        let mut undeclared = chart();
+        undeclared["endings"] = json!([]);
+        assert!(matches!(
+            cancellation_gate(&lifecycle(undeclared), &states, "confirm"),
+            Err(CancellationRefusal::DeadEnd(_))
+        ));
+    }
+
+    #[test]
     fn declaration_shape_is_checked() {
         let chart = order(&json!({
             "endings": [
@@ -863,10 +1124,20 @@ mod tests {
             ]
         }));
         let states = ["active", "building"];
-        let found = check_machine(&Machine::declared(&chart, states.to_vec()));
+        // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
+        assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
+        let mut opted = chart.clone();
+        opted.events = vec![norn_ir::LifecycleEvent {
+            id: "audit".into(),
+            ignored_in: vec![norn_ir::LifecycleIgnore {
+                states: vec!["active".into(), "building".into()],
+                reason: "read only".into(),
+            }],
+        }];
+        let found = check_machine(&Machine::declared(&opted, states.to_vec()));
         assert_eq!(found.len(), 1);
         assert!(found[0].info && found[0].code == codes::NO_ENDING);
-        let mut resting = chart;
+        let mut resting = opted;
         resting.endings = vec![norn_ir::LifecycleEnding {
             state: "active".into(),
             outcome: LifecycleOutcome::Resting,

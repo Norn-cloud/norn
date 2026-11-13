@@ -1230,6 +1230,10 @@
       "message": "توقّف التحقق من الدفتر عند حد عدد التشخيصات أو حجمها بالبايت",
       "review": "needs_review"
     },
+    "lifecycle.soundness.cancellation_dead_end": {
+      "message": "قد يُلغي استثناءٌ مهلةً في حالة لا يثبت منها الوصول إلى نهاية جيدة أو مُعوَّضة معلنة: {$detail}",
+      "review": "needs_review"
+    },
     "lifecycle.soundness.compensation_not_closed": {
       "message": "يمكن أن ينتهي تشغيل دورة الحياة ملغًى أو مُعوَّضًا أو مُخلًّا به دون تعويض أثر أُرسل: {$detail}",
       "review": "needs_review"

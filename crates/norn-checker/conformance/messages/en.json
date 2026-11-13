@@ -923,6 +923,9 @@
     "ledger.validation.too_many_diagnostics": {
       "message": "ledger validation stopped at its diagnostic count or byte limit"
     },
+    "lifecycle.soundness.cancellation_dead_end": {
+      "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {$detail}"
+    },
     "lifecycle.soundness.compensation_not_closed": {
       "message": "a lifecycle run can end cancelled, compensated or breached without compensating a dispatched effect: {$detail}"
     },

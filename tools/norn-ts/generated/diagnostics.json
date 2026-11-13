@@ -2457,6 +2457,14 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "lifecycle.soundness.cancellation_dead_end",
+      "tier": "T2",
+      "severity": "error",
+      "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {detail}",
+      "fix": "Add an unguarded path from each listed state to a completed, compensated or resting ending, or drop the exception and keep the deadline strict.",
+      "no_fix": null
+    },
+    {
       "code": "lifecycle.soundness.compensation_not_closed",
       "tier": "T2",
       "severity": "error",

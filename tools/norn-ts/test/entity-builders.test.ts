@@ -66,8 +66,7 @@ describe("Norn.type / action / access goldens", () => {
     expect(canonicalJson(compile().artifacts)).toBe(json)
     if (checker) {
       const admitted = checker.checkArtifactSet(result.artifacts)
-      // LIFE-SOUND-1: Contact's lifecycle declares no ending, so option to complete is vacuous.
-      expect(admitted.diagnostics.diagnostics.map((d: { code: string; severity: string }) => [d.code, d.severity])).toEqual([["lifecycle.soundness.no_ending", "info"]])
+      expect(admitted.diagnostics.diagnostics).toEqual([])
       expect(admitted.admitted).toBe(true)
     }
   }, 30_000)
