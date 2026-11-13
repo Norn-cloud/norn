@@ -1,11 +1,14 @@
+import { Link } from "@tanstack/react-router"
 import { Lock } from "lucide-react"
 import type { CSSProperties } from "react"
+import { FactProvenance } from "@/components/provenance"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
 import { member } from "../lib/exact.ts"
-import { factText } from "../lib/objects.ts"
+import { displayOf, factText } from "../lib/objects.ts"
+import { useView, type View } from "../lib/view.tsx"
 import { propertyWithheld, rowWithheld } from "../lib/records-query.ts"
-import type { ObjectRecord } from "../lib/transport.ts"
+import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
 /** One record as a page sent it, with that page's exact number texts. */
 export interface GridRow {
@@ -26,13 +29,14 @@ export const fieldWithheld = (row: GridRow, field: Field): boolean => isWithheld
 /** The canvas tints (D65, `--tint-*`), one per declared enum value by its position, so a value keeps its colour everywhere. */
 const TINTS = ["--tint-state", "--tint-tool", "--tint-route", "--tint-outcome", "--tint-agent", "--tint-ask", "--tint-wait", "--tint-law"] as const
 
-export function EnumChip({ field, value }: { readonly field: Field; readonly value: string }) {
+/** A choice as a chip in its value's colour; `label` is what the reader reads (its declared label in Business, the stored value in Technical). */
+export function EnumChip({ field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
   const index = field.scalar.kind === "enum" ? field.scalar.values.indexOf(value) : -1
   const tint = TINTS[(index < 0 ? 0 : index) % TINTS.length] ?? TINTS[0]
   return (
     <span title={value} style={{ "--tint": `var(${tint})` } as CSSProperties}
       className="inline-block max-w-full truncate rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-xs leading-tight text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
-      {value}
+      {label}
     </span>
   )
 }
@@ -60,22 +64,65 @@ export function cellText(field: Field, row: GridRow): string {
   }
 }
 
-/** A typed cell. Dates and timestamps are shown as sent, with their offset; amounts keep their exact digits and unit. */
+/** What a cell reads as in `view`: Business groups numbers and names dates and choices in words; Technical is {@link cellText}. */
+export function cellDisplay(field: Field, row: GridRow, view: View): string {
+  const exact = cellText(field, row)
+  const value = row.record.values[field.id]
+  return view === "technical" || fieldWithheld(row, field) || value === null || value === undefined ? exact : displayOf(field, value, exact)
+}
+
+/**
+ * A typed cell, one renderer per value kind. Amounts keep their exact digits and their unit; in the
+ * Business view digits are grouped, dates and times read in words (UTC, said so) and a choice by
+ * its label. The exact text is always the title.
+ */
 export function Cell({ field, row }: { readonly field: Field; readonly row: GridRow }) {
+  const { view } = useView()
   if (fieldWithheld(row, field)) return <WithheldMark />
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground" aria-label="No value">—</span>
-  const text = cellText(field, row)
+  const exact = cellText(field, row)
+  const text = cellDisplay(field, row, view)
   switch (field.scalar.kind) {
-    case "enum": return <EnumChip field={field} value={text} />
+    case "enum": return <EnumChip field={field} value={exact} label={text} />
     case "boolean": return <span>{text}</span>
     case "date":
-    case "timestamp":
-    case "duration": return <time className="font-mono text-xs tabular-nums" dateTime={field.scalar.kind === "duration" ? undefined : text}>{text}</time>
+    case "timestamp": return <time className={cn("tabular-nums", view === "technical" && "font-mono text-xs")} dateTime={exact} title={exact}>{text}</time>
+    case "duration": return <time className="font-mono text-xs tabular-nums">{text}</time>
     case "record":
     case "json-ext": return <code className="block max-w-64 truncate text-xs" title={text}>{text}</code>
     case "decimal":
-    case "integer": return <span className="tabular-nums">{text}</span>
+    case "integer": return <span className="tabular-nums" title={exact}>{text}</span>
     default: return <span className="block max-w-80 truncate" title={text}>{text}</span>
   }
+}
+
+/** The way from a fact's card to the record's full lineage. */
+export function LineageLink({ objectType, id }: { readonly objectType: string; readonly id: string }) {
+  return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-sm font-medium underline-offset-4 hover:underline">Open the record's lineage</Link>
+}
+
+/**
+ * A typed cell whose value opens its provenance card: the same renderer, with the card one click
+ * away. Withheld and empty values have no card; a recorded page has no history to read.
+ */
+export function TracedCell({ field, row, live, lineage = null, variant = "glyph" }: {
+  readonly field: Field
+  readonly row: GridRow
+  readonly live: boolean
+  /** The record's lineage, when the page read it: a recorded snapshot's card is drawn from it. */
+  readonly lineage?: SourceLineage | null
+  readonly variant?: "inline" | "glyph"
+}) {
+  const { view } = useView()
+  const value = row.record.values[field.id]
+  if (fieldWithheld(row, field) || value === null || value === undefined) return <Cell field={field} row={row} />
+  const { objectType, id, version } = row.record
+  const label = field.id.replaceAll("_", " ")
+  return (
+    <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={cellDisplay(field, row, view)} lineage={lineage} live={live}
+      variant={variant} trace={<LineageLink objectType={objectType} id={id} />}>
+      <Cell field={field} row={row} />
+    </FactProvenance>
+  )
 }

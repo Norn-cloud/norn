@@ -9,6 +9,8 @@ export const SUPPRESSED = "Suppressed: fewer than 3 records"
 
 export interface Bucket {
   readonly key: string
+  /** The bucket as the server wrote it: a period's start, a property's value, or `null` for one bucket. */
+  readonly bucket?: unknown
   readonly label: string
   /** The server's exact value, or `SUPPRESSED`. */
   readonly value: string
@@ -56,6 +58,7 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
     const suppressed = (row as { suppressed?: unknown }).suppressed === true
     return {
       key,
+      bucket: row.bucket,
       label: bucketLabel(row.bucket, question),
       value: suppressed ? SUPPRESSED : text(`${path}/value`),
       suppressed,

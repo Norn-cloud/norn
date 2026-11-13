@@ -16,7 +16,9 @@ import { chartEmpty, chartFrame, pieSlices, type ChartFrame } from "@/lib/chart"
 import type { Tile } from "@/lib/definitions"
 import { evaluateQuestion, traceQuestion, type Evaluation } from "@/lib/evaluate"
 import { FRESHNESS } from "@/lib/format"
-import { AnswerView, RefusedNote } from "../answer-view.tsx"
+import { AnswerProvenance } from "@/components/provenance"
+import { bucketProvenance, type ValueProvenance } from "@/lib/provenance"
+import { AnswerView, RefusedNote, engineOf } from "../answer-view.tsx"
 import { fieldOf, type QuestionCatalog } from "../builder.tsx"
 import { answerRead, notRun } from "../run.tsx"
 
@@ -78,7 +80,19 @@ function Series({ chart, frame, name }: { readonly chart: "line" | "bar" | "area
   )
 }
 
-function Rows({ rows }: { readonly rows: readonly Bucket[] }) {
+/** How a tile's numbers open their card: each bucket's provenance, and the way to its records. */
+export interface Traced {
+  readonly provenanceOf: (bucket: Bucket) => ValueProvenance
+  readonly onTrace: (bucket: Bucket) => void
+}
+
+/** A bucket's exact number, opening its card when the tile can trace it. */
+function Figure({ bucket, traced }: { readonly bucket: Bucket; readonly traced: Traced | undefined }) {
+  if (traced === undefined || bucket.suppressed) return <>{shown(bucket)}</>
+  return <AnswerProvenance label={bucket.label} value={shown(bucket)} provenance={traced.provenanceOf(bucket)} records={bucket.members.length} onTrace={() => traced.onTrace(bucket)}>{shown(bucket)}</AnswerProvenance>
+}
+
+function Rows({ rows, traced }: { readonly rows: readonly Bucket[]; readonly traced?: Traced }) {
   return (
     <TableCard><Table>
       <TableHeader><TableRow><TableHead>Bucket</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
@@ -86,7 +100,7 @@ function Rows({ rows }: { readonly rows: readonly Bucket[] }) {
         {rows.map((bucket) => (
           <TableRow key={bucket.key}>
             <TableCell>{bucket.label}</TableCell>
-            <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
+            <TableCell className="text-right font-medium tabular-nums"><Figure bucket={bucket} traced={traced} /></TableCell>
             <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
           </TableRow>
         ))}
@@ -96,17 +110,17 @@ function Rows({ rows }: { readonly rows: readonly Bucket[] }) {
 }
 
 /** One answer drawn as the tile's declared view. Every label is the server's text; positions only place marks. */
-export function DrawnAnswer({ view, rows, name }: { readonly view: View; readonly rows: readonly Bucket[]; readonly name: string }) {
+export function DrawnAnswer({ view, rows, name, traced }: { readonly view: View; readonly rows: readonly Bucket[]; readonly name: string; readonly traced?: Traced }) {
   // No buckets is said in words, whatever the view: never an empty table, number or chart.
   if (rows.length === 0) return <EmptyState icon={viewIcon(view)}>{chartEmpty(rows)}</EmptyState>
-  if (view.kind === "table") return <Rows rows={rows} />
+  if (view.kind === "table") return <Rows rows={rows} traced={traced} />
   if (view.kind === "number") {
     const [only] = rows
     // The cell admits a number only for a question without a group-by: one bucket.
-    if (only === undefined || rows.length > 1) return <Rows rows={rows} />
+    if (only === undefined || rows.length > 1) return <Rows rows={rows} traced={traced} />
     return (
       <div className="px-4 py-5" data-view="number">
-        <div className="text-figure leading-none font-normal tracking-[-0.02em] tabular-nums">{shown(only)}</div>
+        <div className="text-figure leading-none font-normal tracking-[-0.02em] tabular-nums"><Figure bucket={only} traced={traced} /></div>
         <div className="pt-2 text-meta text-muted-foreground tabular-nums">{only.suppressed ? "" : only.totals.length > 1 ? `${fraction(only.totals)} = ${only.value} exactly · ` : ""}{only.members.length} {only.members.length === 1 ? "record" : "records"}</div>
       </div>
     )
@@ -170,19 +184,26 @@ export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title
   const { question } = tile
   const run = useQuery({ queryKey: ["tile-answer", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
   const [details, setDetails] = useState(false)
+  // The bucket whose records open with the details: a number asked for its trace.
+  const [tracing, setTracing] = useState<string>()
   const result = run.data
   if (run.isPending) return <Well className="p-3"><Skeleton className="h-40 w-full rounded-md" /></Well>
   if (run.isError || result === undefined) return <Well><p role="alert" className="px-2 py-6 text-center text-meta text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p></Well>
   if (result.kind !== "answer") return <Well><NoAnswer result={result} /></Well>
   const read = answerRead(question, catalog, result)
-  const rows = buckets(declarations(read), { answer: read.answer.document, numbers: read.answer.numbers, at: "" })
+  const declared = declarations(read)
+  const rows = buckets(declared, { answer: read.answer.document, numbers: read.answer.numbers, at: "" })
   const freshness = FRESHNESS[read.answer.document.freshness]
+  const traced: Traced = {
+    provenanceOf: (bucket) => bucketProvenance(read.answer.document, bucket, [tile.title], engineOf(read.answer.document) ?? null),
+    onTrace: (bucket) => { setTracing(bucket.key); setDetails(true) },
+  }
   return (
     <div className="space-y-1.5">
-      <Well className="px-2 pt-3 pb-1"><DrawnAnswer view={tile.view} rows={rows} name={tile.title} /></Well>
+      <Well className="px-2 pt-3 pb-1"><DrawnAnswer view={tile.view} rows={rows} name={tile.title} traced={traced} /></Well>
       <div className="flex items-center gap-2 px-1">
         <Badge variant={read.answer.document.freshness === "exact" || read.answer.document.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
-        <Button type="button" variant="ghost" size="sm" className="ms-auto" onClick={() => setDetails(true)}><Maximize2 />Details</Button>
+        <Button type="button" variant="ghost" size="sm" className="ms-auto" onClick={() => { setTracing(undefined); setDetails(true) }}><Maximize2 />Details</Button>
       </div>
       <Sheet open={details} onOpenChange={setDetails}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
@@ -190,7 +211,7 @@ export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title
             <SheetTitle>{tile.title}</SheetTitle>
             <SheetDescription>Every bucket the cell answered, and the records behind each one.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{details && <AnswerView read={read} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}</div>
+          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}</div>
         </SheetContent>
       </Sheet>
     </div>

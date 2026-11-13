@@ -21,6 +21,16 @@
       "implements": [
         "docs.SourceDocument"
       ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "id": "ledger_entry",
+          "target": "docs.LedgerEntry"
+        }
+      ],
       "name": "docs.ScannedDocument",
       "properties": [
         {

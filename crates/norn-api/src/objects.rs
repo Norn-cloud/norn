@@ -245,6 +245,52 @@ pub struct NornObjectLinkPage {
     /// The cursor for the next page, when one exists.
     #[schema(required = true, nullable = true)]
     pub next: Option<String>,
+    /// HOST-READ-4b: the visible links per link type and direction, counted by
+    /// the server. Sent on a first page only (no cursor).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counts: Option<NornLinkCounts>,
+}
+
+/// Which end of a link the requested object is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NornLinkDirection {
+    /// The requested object is the link's source.
+    Out,
+    /// The requested object is the link's target.
+    In,
+}
+
+/// The visible links of one declared link type in one direction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NornLinkCount {
+    /// The link's declaring (source) type.
+    pub source_type: String,
+    /// The link id.
+    pub link: String,
+    /// The declared target type.
+    pub target_type: String,
+    /// Which end of the link the requested object is.
+    pub direction: NornLinkDirection,
+    /// How many visible links of this type touch the object in this direction;
+    /// a lower bound when the counts are not complete.
+    pub count: u64,
+}
+
+/// The server's counts of the visible links touching an object, by link type
+/// and direction. Links to rows the caller cannot see are not counted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NornLinkCounts {
+    /// One entry per link type and direction with at least one visible link,
+    /// in (direction, source type, link, target type) order.
+    pub groups: Vec<NornLinkCount>,
+    /// True when every visible link was counted; false when the count stopped
+    /// at `bound` visible links, and each count is then a lower bound.
+    pub complete: bool,
+    /// The most visible links the server counts for one read.
+    pub bound: u64,
 }
 
 /// The exact admitted mapping declaration that produced an object version.

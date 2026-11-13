@@ -4,6 +4,39 @@
  "profile": "synthetic-scans/1",
  "snapshot": [
   {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 30.50,
+    "currency": "USD",
+    "entry_number": "JE-0041",
+    "name": "demo/ledger/JE-0041",
+    "posted_on": "2026-03-12"
+   }
+  },
+  {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 72.00,
+    "currency": "USD",
+    "entry_number": "JE-0042",
+    "name": "demo/ledger/JE-0042",
+    "posted_on": "2026-03-14"
+   }
+  },
+  {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 72.00,
+    "currency": "USD",
+    "entry_number": "JE-0043",
+    "name": "demo/ledger/JE-0043",
+    "posted_on": "2026-03-16"
+   }
+  },
+  {
    "dataset": "Scanned Document",
    "record": {
     "currency": "USD",
@@ -201,6 +234,70 @@
     "name": "SCAN-INV-0042",
     "total": 720,
     "vendor": "Northgate Packaging"
+   }
+  },
+  {
+   "dataset": "Scanned Document",
+   "record": {
+    "currency": "USD",
+    "doc_number": "INV-0043",
+    "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+    "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0043.png",
+    "evidence": [
+     {
+      "bbox_h": 0.0350,
+      "bbox_w": 0.2200,
+      "bbox_x": 0.6200,
+      "bbox_y": 0.7100,
+      "confidence_bp": 9000,
+      "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0043.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "total",
+      "media_type": "image/png",
+      "name": "SCAN-INV-0043~total",
+      "page": 1,
+      "parent": "SCAN-INV-0043",
+      "text": "720"
+     },
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4000,
+      "confidence_bp": 9100,
+      "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+      "document_uri": "s3://norn-alpha-documents/synthetic/scans/20261115/SCAN-INV-0043.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "lines.1.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-0043~lines.1.amount",
+      "page": 1,
+      "parent": "SCAN-INV-0043",
+      "text": "720"
+     }
+    ],
+    "extractor": "legacy-ocr",
+    "extractor_version": "4.2 (synthetic export)",
+    "issued_on": "2026-03-16",
+    "kind": "invoice",
+    "ledger_ref": "demo/ledger/JE-0043",
+    "line_count": 1,
+    "lines": [
+     {
+      "amount": 720,
+      "description": "Freight",
+      "line_no": 1,
+      "name": "SCAN-INV-0043~line-1",
+      "parent": "SCAN-INV-0043"
+     }
+    ],
+    "media_type": "image/png",
+    "name": "SCAN-INV-0043",
+    "total": 720,
+    "vendor": "Meridian Freight"
    }
   },
   {

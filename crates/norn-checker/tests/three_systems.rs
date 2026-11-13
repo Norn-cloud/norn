@@ -592,4 +592,26 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         };
         assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
+    // A stock's cost is read as of each week, summed per its currency.
+    let cost = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("stock_cost"))
+        .expect("the stock cost snapshot");
+    let question: norn_ir::QuestionIR = serde_json::from_value(json!({
+        "irVersion": "0.1", "name": "canon.stock_cost_by_week", "objectSet": "canon.Holding",
+        "aggregate": [{"metric": cost.definition.name}],
+        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
+        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+        "freshness": {"kind": "live", "maxAgeMs": 5000},
+    }))
+    .expect("question");
+    let plan = space.admit(&question, 100).expect("the stock cost admits");
+    let grouped: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .map(|dimension| dimension.path.property.as_str())
+        .collect();
+    assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }
