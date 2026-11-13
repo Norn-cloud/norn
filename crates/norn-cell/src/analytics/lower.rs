@@ -13,6 +13,9 @@ use super::{
 };
 use crate::CellError;
 
+/// The mirror's row format (2: each version names its model).
+const MIRROR_FORMAT: u32 = 2;
+
 const fn refused() -> CellError {
     CellError::ComputeRefused(UNSUPPORTED_ENGINE)
 }
@@ -99,7 +102,8 @@ pub fn table_schema(
             })
         })
         .collect();
-    let pin = crate::codec::hash_json(&(name, &columns))?;
+    // The mirror's row format is part of the pin: a new format resyncs.
+    let pin = crate::codec::hash_json(&(name, &columns, MIRROR_FORMAT))?;
     Ok(TableSchema {
         name: name.to_owned(),
         columns,

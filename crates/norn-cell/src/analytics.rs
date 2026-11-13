@@ -202,6 +202,10 @@ pub struct MirrorRow {
     pub scope: String,
     /// Values aligned with the table's columns; `None` is a tombstone.
     pub values: Option<Vec<Value>>,
+    /// The model the version was committed under: an answer at a knowledge
+    /// cutoff reads only versions of the model in force (ASOF-KNOWLEDGE-1).
+    #[serde(default)]
+    pub model: String,
     /// A value failed its property's check: a question reading this row refuses.
     pub bad: bool,
 }
@@ -287,6 +291,10 @@ pub enum Source {
         /// Identities the cell excludes (open findings).
         #[serde(default)]
         excluded: Vec<String>,
+        /// At a knowledge cutoff, the model in force: a version committed
+        /// under another refuses, as the exact engine refuses it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// A loaded dataset at one load.
     Dataset {

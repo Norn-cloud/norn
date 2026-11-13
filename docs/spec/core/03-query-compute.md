@@ -298,6 +298,18 @@ property tests run both at the same frontier.
   operand's filters hold; a row with more than one edge refuses; and an
   answer at a frontier an edge changed after refuses as stale (named
   scenarios in `linked_time`).
+- **ASOF-KNOWLEDGE-1 (engine):** a question asked as known at a cutoff is
+  answered from the mirror at the cutoff's frontier, read at the cutoff's
+  own clock, in the exact engine's historical envelope: findings exclude as
+  they stood then, disputed members are counted as known then, and a
+  version committed under another model refuses as the exact engine refuses
+  it. The mirror keeps no deletions, so the cell reads every subject deleted
+  under another model as known at the cutoff before the engine runs: where
+  that deletion is the version known then, the answer refuses with the exact
+  engine's code; the engine never answers without the row. A loaded dataset
+  has no history and refuses (named scenarios
+  `answers_known_at_every_earlier_commit_match_the_exact_engine`,
+  `a_deletion_under_another_model_refuses_as_the_exact_engine_refuses`).
 - **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
   identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
   then `,<coefficient>` per operand (empty when absent), then `;`.

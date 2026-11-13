@@ -149,6 +149,10 @@ pub mod codes {
     /// A link joins to a map whose object type the link's target does not
     /// admit.
     pub const LINK_TARGET_MISMATCH: &str = "mapping.model.link_target_mismatch";
+    /// A map declares links, but the cell-owned claim type that records
+    /// every mapped link (`norn.ObservedLinkClaim`) is not an object type
+    /// of the set or the base: every linked row would refuse at mapping time.
+    pub const LINK_CLAIM_TYPE_MISSING: &str = "mapping.model.link_claim_type_missing";
     /// A rule does not type-check against its source and target.
     pub const EXPRESSION_TYPE: &str = "mapping.model.expression_type";
     /// A mapped property's type has no action-input encoding.
@@ -766,6 +770,27 @@ pub fn check_mapping(
     }
     for (index, map) in mapping.maps.iter().enumerate() {
         check_map(mapping, map, index, source, model, &mut out);
+    }
+    // OBS-LINK-CONVERGE-1: the cell records each mapped link as an observed
+    // link claim, so a mapping that declares links is admitted only with the
+    // claim type resolvable from the set or the base. Without it, admission
+    // would pass and every linked row would quarantine at mapping time.
+    let claim_type = norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE;
+    if model.entity_artifact(claim_type).is_none()
+        && let Some((index, map)) = mapping
+            .maps
+            .iter()
+            .enumerate()
+            .find(|(_, map)| !map.links.is_empty())
+    {
+        out.push(error(
+            codes::LINK_CLAIM_TYPE_MISSING,
+            format!(
+                "map {:?} declares links, but {claim_type} is not an object type of the set or the base",
+                map.id
+            ),
+            Span::from_segments(["maps", index.to_string().as_str(), "links"]),
+        ));
     }
     let mut binding_keys = BTreeSet::new();
     for (index, binding) in mapping.identity_bindings.iter().enumerate() {

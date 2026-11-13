@@ -197,6 +197,7 @@ impl<E: SqlEngine> CellStore<E> {
                     commit_seq,
                     scope: snapshot.scope,
                     values,
+                    model: snapshot.model_hash,
                     bad,
                 });
             }
