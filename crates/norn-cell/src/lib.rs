@@ -94,8 +94,7 @@ pub use store::{
     CellStore, CommitBatch, CommitOutcome, CommitPoint, Consumption, DefinitionInstallRecord,
     DefinitionReadmission, EffectRow, FactWriteRow, GuardedError, InstalledDefinitionInput,
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
-    MarkingReveal,
-    OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
+    MarkingReveal, OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
 
 /// Whether `function_id@version` is a compiled-in built-in

@@ -42,9 +42,9 @@ use norn_ir::MetricDefinition;
 use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
 use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, RevealSlot};
-use crate::reveal::RevealPolicy;
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::questions::DerivedQuestions;
+use crate::reveal::RevealPolicy;
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
 

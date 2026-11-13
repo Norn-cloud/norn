@@ -472,6 +472,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}/{id}/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * PRIVACY-2: reveal one marked property of one readable object to `actor`.
+         *     The row gate (Population and Values) applies first, so an unreadable
+         *     object refuses like an absent one. The PDP then decides `norn.reveal` for
+         *     every effective marking of the property; the receipt is committed before
+         *     the value is returned, so no value leaves without one.
+         * @description # Errors
+         *     A denied gate (403), an absent, invisible or quarantined object (404), a
+         *     property that is not marked or not present (404 `object.not_found`), a
+         *     denied reveal (403), an invalid body (400), or a host failure.
+         */
+        post: operations["reveal_object_property"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}:export": {
         parameters: {
             query?: never;
@@ -6496,7 +6523,7 @@ export interface components {
          */
         NornIrMarkingSeverity: "low" | "moderate" | "high" | "critical";
         /** @description The projection applied when a principal lacks `reveal` for a marking. */
-        NornIrMaskPolicy: components["schemas"]["NornIrMaskPolicyOneOf0"] | components["schemas"]["NornIrMaskPolicyOneOf1"] | components["schemas"]["NornIrMaskPolicyOneOf2"];
+        NornIrMaskPolicy: components["schemas"]["NornIrMaskPolicyOneOf0"] | components["schemas"]["NornIrMaskPolicyOneOf1"] | components["schemas"]["NornIrMaskPolicyOneOf2"] | components["schemas"]["NornIrMaskPolicyOneOf3"] | components["schemas"]["NornIrMaskPolicyOneOf4"];
         /** @description Replace the value with a redaction marker. */
         NornIrMaskPolicyOneOf0: {
             /** @enum {string} */
@@ -6516,6 +6543,26 @@ export interface components {
         NornIrMaskPolicyOneOf2: {
             /** @enum {string} */
             kind: "null";
+        };
+        /**
+         * @description Replace the value with a stable pseudonym such as `Customer #K3V9MQ7T2A`.
+         *     It is a keyed hash of the cell's secret, `subject` and the value, so
+         *     equal values keep equal pseudonyms (joins and counts still hold) and
+         *     it cannot be reversed without the cell.
+         */
+        NornIrMaskPolicyOneOf3: {
+            /** @enum {string} */
+            kind: "pseudonym";
+            /**
+             * @description What the value identifies (for example `Customer`); fields that
+             *     share a subject share pseudonyms.
+             */
+            subject: string;
+        };
+        /** @description Leave the property out of the document altogether. */
+        NornIrMaskPolicyOneOf4: {
+            /** @enum {string} */
+            kind: "refuse";
         };
         /** @description One measure of an aggregate. */
         NornIrMeasure: {
@@ -11201,6 +11248,26 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /**
+         * @description How a marked property was projected for this caller.
+         * @enum {string}
+         */
+        NornMaskMode: "pseudonym" | "redacted" | "null" | "last-n" | "refuse";
+        /**
+         * @description One marked property of a document: how it was projected and whether the
+         *     caller may reveal it (`POST /v1/objects/{type}/{id}:reveal`).
+         */
+        NornMaskedProperty: {
+            /** @description The property's effective markings. */
+            markings: string[];
+            /** @description The projection applied. */
+            mode: components["schemas"]["NornMaskMode"];
+            /**
+             * @description The caller's policy allows `norn.reveal` for every one of them. The
+             *     document still never carries the value.
+             */
+            revealable: boolean;
+        };
         /** @description VIEW-MAT-1: the stored result a read was served from. */
         NornMaterialization: {
             /**
@@ -11462,6 +11529,13 @@ export interface components {
         NornObjectRecord: {
             /** @description The object's identity. */
             id: string;
+            /**
+             * @description PRIVACY-1: how each marked property was projected for this caller.
+             *     Omitted when no property is marked.
+             */
+            masked?: {
+                [key: string]: components["schemas"]["NornMaskedProperty"];
+            };
             /** @description The concrete object type. */
             objectType: string;
             /** @description The tenant scope. */
@@ -11612,6 +11686,13 @@ export interface components {
         NornQueriedRecord: {
             /** @description The object's identity. */
             id: string;
+            /**
+             * @description PRIVACY-1: how each marked property was projected for this caller.
+             *     Omitted when no property is marked.
+             */
+            masked?: {
+                [key: string]: components["schemas"]["NornMaskedProperty"];
+            };
             /** @description The concrete object type. */
             objectType: string;
             /** @description The tenant scope. */
@@ -11628,9 +11709,9 @@ export interface components {
             /** @description The caller holds Population but not Values on this row. */
             withheld: boolean;
             /**
-             * @description Properties withheld by policy on a readable row. Always present; empty
-             *     until field-level policy exists, and never derived from which values a
-             *     row has.
+             * @description Properties withheld by policy on a readable row (a marking that
+             *     refuses them, or an unavailable marking snapshot). Always present, and
+             *     never derived from which values a row has.
              */
             withheldProperties: string[];
         };
@@ -11813,6 +11894,59 @@ export interface components {
              *     only `POST /v1/transforms/{transform}:refresh` does.
              */
             policy: string;
+        };
+        /** @description The receipt a reveal wrote to the ledger. */
+        NornRevealReceipt: {
+            /** @description Who it was revealed to. */
+            actor: string;
+            /**
+             * Format: int64
+             * @description The ledger position of the receipt.
+             */
+            commitSeq: number;
+            /** @description The object id. */
+            id: string;
+            /** @description The markings the reveal was decided for. */
+            markings: string[];
+            /** @description The object type. */
+            objectType: string;
+            /** @description The property revealed. */
+            property: string;
+            /** @description The purpose given; empty when none. */
+            purpose: string;
+            /** @description The receipt's hash. */
+            receiptHash: string;
+            /** @description The receipt replayed an earlier reveal under the same key. */
+            replayed: boolean;
+            /**
+             * Format: int64
+             * @description When the value was revealed (the commit's logical time, ms).
+             */
+            revealedAt: number;
+            /**
+             * Format: int64
+             * @description The fact version revealed.
+             */
+            version: number;
+        };
+        /** @description `POST /v1/objects/{type}/{id}:reveal` request body. */
+        NornRevealRequest: {
+            /**
+             * @description The caller's key for this reveal: a retry with the same key replays
+             *     the first receipt.
+             */
+            idempotencyKey: string;
+            /** @description The marked property to reveal. */
+            property: string;
+            /** @description Why the caller needs the value; kept in the receipt. */
+            purpose?: string | null;
+        };
+        /** @description A revealed value and its receipt. */
+        NornRevealed: {
+            /** @description The ledger receipt of this reveal. */
+            receipt: components["schemas"]["NornRevealReceipt"];
+            /** @description The stored value. */
+            value: Record<string, never>;
         };
         /**
          * @description A sort direction.
@@ -13962,6 +14096,85 @@ export interface operations {
             };
             /** @description The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    reveal_object_property: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The object type (concept) name; percent-escapes are decoded. */
+                type: string;
+                /** @description The object identity; percent-escapes are decoded. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NornRevealRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored value of the marked property and the ledger receipt of this reveal: who, what, when and why. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornRevealed"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): a malformed body, key or purpose. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, or the caller's policy does not allow `norn.reveal` for every marking on the property. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.not_found`): the object is absent, quarantined or not readable, or the property is not marked; these are not told apart. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the object changed during the reveal (`object.snapshot_moved`, retryable) or the key was used for another reveal (`reveal.idempotency_conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

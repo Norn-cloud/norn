@@ -170,9 +170,7 @@ impl<E: SqlEngine> DevHost<E> {
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
     ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
-        let version = reader
-            .active_definitions_version()
-            .map_err(Refusal::host)?;
+        let version = reader.active_definitions_version().map_err(Refusal::host)?;
         let mut cached = self.markings.lock().map_err(Refusal::host)?;
         if let Some((at, catalog)) = cached.as_ref()
             && *at == version

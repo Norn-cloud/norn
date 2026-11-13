@@ -13,7 +13,6 @@
 //! (#733).
 
 use crate::{
-    privacy,
     authz::{
         ReadCapability::{self, Population, Values},
         ReadRequest, read_denied,
@@ -24,6 +23,7 @@ use crate::{
         NornAppliedQuery, NornObjectPage, NornObjectQueryPage, NornObjectRecord, NornQueriedRecord,
         NornQueryTotal,
     },
+    privacy,
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -303,7 +303,8 @@ pub fn get_object_page<E: SqlEngine>(
             } else {
                 let projected =
                     privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
-                page.records.push(NornObjectRecord::projected(row, projected));
+                page.records
+                    .push(NornObjectRecord::projected(row, projected));
             }
             if page.records.len() == limit {
                 return Ok(page);
@@ -532,13 +533,8 @@ pub(crate) fn scan_listed<E: SqlEngine>(
                 scan.quarantined = scan.quarantined.saturating_add(1);
             } else {
                 if listed.readable {
-                    listed.projected = privacy::project(
-                        host,
-                        actor,
-                        &catalog,
-                        markings.as_ref(),
-                        &mut listed.row,
-                    );
+                    listed.projected =
+                        privacy::project(host, actor, &catalog, markings.as_ref(), &mut listed.row);
                 }
                 scan.listed.push(listed);
             }

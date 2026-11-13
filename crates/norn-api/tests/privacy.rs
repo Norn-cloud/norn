@@ -118,7 +118,11 @@ fn customer(key: &str, name: &str, email: &str) -> FactWriteRow {
 }
 
 /// A cell at `org` whose `pii.contact` marking projects as `mask`.
-fn host(org: &str, mask: &Json, secret: Option<&[u8]>) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+fn host(
+    org: &str,
+    mask: &Json,
+    secret: Option<&[u8]>,
+) -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
@@ -185,7 +189,12 @@ fn email(host: &DevHost<NativeEngine>, org: &str, actor: &str, id: &str) -> (V, 
     let record = get_queried_object(host, &scope(org), Some(actor), TYPE, id, &Mapping).unwrap();
     let document = serde_json::to_value(&record).unwrap();
     (
-        record.values.unwrap().get("email").cloned().unwrap_or(V::Null),
+        record
+            .values
+            .unwrap()
+            .get("email")
+            .cloned()
+            .unwrap_or(V::Null),
         document,
     )
 }
@@ -199,8 +208,14 @@ fn a_viewer_reads_stable_pseudonyms_that_keep_joins_and_counts() {
     assert!(!text.contains("ada"), "the value never leaves: {text}");
     assert_eq!(document["masked"]["email"]["mode"], "pseudonym");
     assert_eq!(document["masked"]["email"]["revealable"], false);
-    assert_eq!(document["masked"]["email"]["markings"], json!(["pii.contact"]));
-    assert_eq!(document["values"]["name"], "Ada", "unmarked values are untouched");
+    assert_eq!(
+        document["masked"]["email"]["markings"],
+        json!(["pii.contact"])
+    );
+    assert_eq!(
+        document["values"]["name"], "Ada",
+        "unmarked values are untouched"
+    );
     // Stable across reads, equal for equal values, distinct for others.
     assert_eq!(email(&cell, "org_a", "viewer", "c1").0, first);
     assert_eq!(email(&cell, "org_a", "viewer", "c2").0, first);
@@ -220,15 +235,24 @@ fn a_viewer_reads_stable_pseudonyms_that_keep_joins_and_counts() {
         )
         .unwrap()
     };
-    let joined = query(Some(json!({"all": [{"property": "email", "op": "eq", "value": text}]})));
+    let joined = query(Some(
+        json!({"all": [{"property": "email", "op": "eq", "value": text}]}),
+    ));
     assert_eq!(joined.total.unwrap().count, 2);
-    let raw = query(Some(json!({"all": [{"property": "email", "op": "eq", "value": "ada@example.com"}]})));
+    let raw = query(Some(
+        json!({"all": [{"property": "email", "op": "eq", "value": "ada@example.com"}]}),
+    ));
     assert_eq!(raw.total.unwrap().count, 0, "the stored value is no oracle");
     let all = query(None);
     let distinct: BTreeSet<String> = all
         .records
         .iter()
-        .map(|record| record.values.as_ref().unwrap()["email"].as_str().unwrap().to_owned())
+        .map(|record| {
+            record.values.as_ref().unwrap()["email"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
         .collect();
     assert_eq!(distinct.len(), 2);
     // Another cell keys its pseudonyms differently.
@@ -241,7 +265,11 @@ fn an_auditor_reveals_with_a_receipt_and_a_viewer_is_refused() {
     let (cell, _dir) = host("org_a", &pseudonym(), Some(&SECRET));
     let (projected, document) = email(&cell, "org_a", "auditor", "c1");
     assert_eq!(document["masked"]["email"]["revealable"], true);
-    assert_ne!(projected, V::from("ada@example.com"), "revealable is not revealed");
+    assert_ne!(
+        projected,
+        V::from("ada@example.com"),
+        "revealable is not revealed"
+    );
     let request = NornRevealRequest {
         property: "email".into(),
         purpose: Some("refund dispute #12".into()),
@@ -259,37 +287,76 @@ fn an_auditor_reveals_with_a_receipt_and_a_viewer_is_refused() {
     assert_eq!(revealed.value, V::from("ada@example.com"));
     let receipt = &revealed.receipt;
     assert_eq!(
-        (receipt.actor.as_str(), receipt.property.as_str(), receipt.purpose.as_str()),
+        (
+            receipt.actor.as_str(),
+            receipt.property.as_str(),
+            receipt.purpose.as_str()
+        ),
         ("auditor", "email", "refund dispute #12")
     );
     assert_eq!(receipt.markings, vec!["pii.contact".to_owned()]);
     assert!(!receipt.replayed);
     // A retry replays the same receipt; the key cannot be reused for another reveal.
-    let again = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c1"), &request, &Mapping)
-        .unwrap();
+    let again = reveal(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        (TYPE, "c1"),
+        &request,
+        &Mapping,
+    )
+    .unwrap();
     assert!(again.receipt.replayed);
     assert_eq!(again.receipt.commit_seq, receipt.commit_seq);
-    let other = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c3"), &request, &Mapping)
-        .unwrap_err();
+    let other = reveal(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        (TYPE, "c3"),
+        &request,
+        &Mapping,
+    )
+    .unwrap_err();
     assert_eq!(other.code, "reveal.idempotency_conflict");
     // A viewer may not reveal; an unmarked property is not revealable at all.
-    let denied = reveal(&cell, &scope("org_a"), Some("viewer"), (TYPE, "c1"), &request, &Mapping)
-        .unwrap_err();
+    let denied = reveal(
+        &cell,
+        &scope("org_a"),
+        Some("viewer"),
+        (TYPE, "c1"),
+        &request,
+        &Mapping,
+    )
+    .unwrap_err();
     assert_eq!(denied.status, http::StatusCode::FORBIDDEN);
     let unmarked = NornRevealRequest {
         property: "name".into(),
         ..request
     };
-    let absent = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c1"), &unmarked, &Mapping)
-        .unwrap_err();
+    let absent = reveal(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        (TYPE, "c1"),
+        &unmarked,
+        &Mapping,
+    )
+    .unwrap_err();
     assert_eq!(absent.status, http::StatusCode::NOT_FOUND);
 }
 
 #[test]
 fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     let (refused, _a) = host("org_a", &json!({"kind": "refuse"}), Some(&SECRET));
-    let record =
-        get_queried_object(&refused, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    let record = get_queried_object(
+        &refused,
+        &scope("org_a"),
+        Some("viewer"),
+        TYPE,
+        "c1",
+        &Mapping,
+    )
+    .unwrap();
     assert_eq!(record.withheld_properties, vec!["email".to_owned()]);
     assert!(!record.values.unwrap().contains_key("email"));
     assert_eq!(record.masked["email"].mode, NornMaskMode::Refuse);
@@ -297,7 +364,11 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     let (redacted, _b) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
     assert_eq!(email(&redacted, "org_a", "viewer", "c1").0, V::from("•••"));
 
-    let (last, _c) = host("org_a", &json!({"kind": "last-n", "count": 4}), Some(&SECRET));
+    let (last, _c) = host(
+        "org_a",
+        &json!({"kind": "last-n", "count": 4}),
+        Some(&SECRET),
+    );
     assert_eq!(email(&last, "org_a", "viewer", "c1").0, V::from("•••.com"));
 
     let (unkeyed, _d) = host("org_a", &pseudonym(), None);

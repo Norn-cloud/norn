@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
-use norn_ir::{MaskPolicy, MarkingIr, RuntimeValue};
+use norn_ir::{MarkingIr, MaskPolicy, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
@@ -156,10 +156,11 @@ pub type MarkingCatalog = Arc<BTreeMap<String, MarkingIr>>;
 pub(crate) fn catalog_of<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
 ) -> Result<(Option<u64>, MarkingCatalog), Refusal> {
-    let version = reader
-        .active_definitions_version()
-        .map_err(Refusal::host)?;
-    let Some(set) = reader.installed_definitions(version).map_err(Refusal::host)? else {
+    let version = reader.active_definitions_version().map_err(Refusal::host)?;
+    let Some(set) = reader
+        .installed_definitions(version)
+        .map_err(Refusal::host)?
+    else {
         return Ok((version, Arc::default()));
     };
     let artifacts =

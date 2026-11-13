@@ -4063,18 +4063,47 @@ fn mask_policy_weakening_is_refused_without_changing_retained_history() {
 fn pseudonym_and_refuse_join_the_mask_lattice() {
     // (initial, candidate, admitted)
     let cases = [
-        (json!({"kind":"pseudonym","subject":"Customer"}), json!({"kind":"last-n","count":4}), false),
-        (json!({"kind":"refuse"}), json!({"kind":"pseudonym","subject":"Customer"}), false),
-        (json!({"kind":"redacted"}), json!({"kind":"pseudonym","subject":"Customer"}), false),
-        (json!({"kind":"pseudonym","subject":"Customer"}), json!({"kind":"redacted"}), true),
-        (json!({"kind":"pseudonym","subject":"Customer"}), json!({"kind":"refuse"}), true),
-        (json!({"kind":"last-n","count":4}), json!({"kind":"pseudonym","subject":"Customer"}), true),
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"last-n","count":4}),
+            false,
+        ),
+        (
+            json!({"kind":"refuse"}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            false,
+        ),
+        (
+            json!({"kind":"redacted"}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            false,
+        ),
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"redacted"}),
+            true,
+        ),
+        (
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            json!({"kind":"refuse"}),
+            true,
+        ),
+        (
+            json!({"kind":"last-n","count":4}),
+            json!({"kind":"pseudonym","subject":"Customer"}),
+            true,
+        ),
     ];
     for (initial, candidate, admitted) in cases {
         let model = contact_model();
         let mut store = CellStore::open_in_memory(model.clone()).expect("store");
         store
-            .install_definitions(model.clone(), install_with_mask(&model, initial.clone(), 1), Some(0), SCOPE)
+            .install_definitions(
+                model.clone(),
+                install_with_mask(&model, initial.clone(), 1),
+                Some(0),
+                SCOPE,
+            )
             .expect("initial catalog");
         let outcome = store.install_definitions(
             model.clone(),
@@ -4090,7 +4119,11 @@ fn pseudonym_and_refuse_join_the_mask_lattice() {
     }
 }
 
-fn install_with_reveal(model: &Model, roles: &[&str], at: u64) -> norn_cell::InstalledDefinitionInput {
+fn install_with_reveal(
+    model: &Model,
+    roles: &[&str],
+    at: u64,
+) -> norn_cell::InstalledDefinitionInput {
     let mut input = install_input("reveal", at, model);
     let mut artifacts: JsonValue = serde_json::from_str(&input.canonical_set).expect("artifacts");
     artifacts.as_array_mut().expect("array").push(json!({
@@ -4131,7 +4164,12 @@ fn widening_who_may_reveal_a_declared_marking_is_refused() {
     let model = contact_model();
     let mut store = CellStore::open_in_memory(model.clone()).expect("store");
     store
-        .install_definitions(model.clone(), install_with_reveal(&model, &["auditor"], 1), Some(0), SCOPE)
+        .install_definitions(
+            model.clone(),
+            install_with_reveal(&model, &["auditor"], 1),
+            Some(0),
+            SCOPE,
+        )
         .expect("initial reveal policy");
     let before = store.read().dump().expect("state");
     let wider = install_with_reveal(&model, &["auditor", "member"], 2);
@@ -4141,7 +4179,12 @@ fn widening_who_may_reveal_a_declared_marking_is_refused() {
     ));
     assert_eq!(before, store.read().dump().expect("unchanged state"));
     store
-        .install_definitions(model.clone(), install_with_reveal(&model, &[], 2), Some(1), SCOPE)
+        .install_definitions(
+            model.clone(),
+            install_with_reveal(&model, &[], 2),
+            Some(1),
+            SCOPE,
+        )
         .expect("narrowing who may reveal is allowed");
 }
 

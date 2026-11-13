@@ -81,6 +81,7 @@ mod markings;
 pub mod metric;
 pub mod metric_interchange;
 mod model;
+mod model_privacy;
 #[allow(
     missing_docs,
     clippy::pedantic,

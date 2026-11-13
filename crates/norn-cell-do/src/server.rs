@@ -971,7 +971,10 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     if segments.next().is_some()
         || id.is_some_and(str::is_empty)
         || leaf.is_some_and(|leaf| {
-            !matches!(leaf, "links" | "lineage" | "findings" | "history" | "reveal")
+            !matches!(
+                leaf,
+                "links" | "lineage" | "findings" | "history" | "reveal"
+            )
         })
     {
         return None;
