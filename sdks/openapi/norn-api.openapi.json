@@ -22492,146 +22492,6 @@
           "The page cancelled the call."
         ]
       },
-      "NornIrWidgetCatalogEntry": {
-        "type": "object",
-        "description": "One catalog component (UI-CATALOG-1): custom UI in any framework, joined\nto Norn only through these typed contracts. A renderer is an\nimplementation of the catalog.",
-        "required": [
-          "entryId",
-          "label",
-          "trust"
-        ],
-        "properties": {
-          "behaviors": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrWidgetBehavior"
-            },
-            "description": "Accessibility behaviours the component implements."
-          },
-          "density": {
-            "type": "string",
-            "description": "Density tier the component is drawn at.",
-            "enum": [
-              "scan",
-              "read",
-              "focus"
-            ],
-            "x-enumDescriptions": [
-              "Lists and grids: 32 px rows, 13 px tabular figures.",
-              "Record pages: 28 px key-value rows.",
-              "Canvases and editors with a 320 px inspector."
-            ]
-          },
-          "entryId": {
-            "type": "string",
-            "description": "Stable entry id."
-          },
-          "events": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrWidgetCatalogEvent"
-            },
-            "description": "Declared output events: the only things the component can say."
-          },
-          "framework": {
-            "type": "string",
-            "description": "The framework the implementation is written in (informational, for\nrenderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ..."
-          },
-          "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
-            "description": "Human-readable name."
-          },
-          "machine": {
-            "$ref": "#/components/schemas/NornIrWidgetMachine",
-            "description": "The component's own interaction machine; an opaque island has none."
-          },
-          "props": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrWidgetMachineField"
-            },
-            "description": "Typed props: the only data the component receives."
-          },
-          "renders": {
-            "type": "string",
-            "description": "The field type this component renders everywhere it appears (one\nrenderer per field type: grid, record, inspector and tooltips alike).",
-            "enum": [
-              "text",
-              "integer",
-              "number",
-              "boolean",
-              "date",
-              "timestamp",
-              "duration",
-              "json"
-            ],
-            "x-enumDescriptions": [
-              "Text.",
-              "Signed integer.",
-              "Exact decimal or general numeric value.",
-              "Boolean.",
-              "Calendar date.",
-              "Timestamp with an explicit zone.",
-              "Elapsed duration.",
-              "Opaque JSON value; it cannot be inspected by ZEN."
-            ]
-          },
-          "trust": {
-            "type": "string",
-            "description": "Trust ladder position.",
-            "enum": [
-              "native",
-              "contract_checked",
-              "opaque_island"
-            ],
-            "x-enumDescriptions": [
-              "Drawn by a Norn renderer from the ontology.",
-              "Custom code whose declared machine the runtime enforces: an event or\nstate the contract does not declare is refused and logged.",
-              "Rich content (canvas, map, 3-D, video) whose pixels and internal render\nstate are opaque; only its typed inputs and declared output events take\npart in the checked machine."
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrWidgetCatalogEvent": {
-        "type": "object",
-        "description": "One declared output event of a catalog component.",
-        "required": [
-          "eventId"
-        ],
-        "properties": {
-          "eventId": {
-            "type": "string",
-            "description": "Event name, unique within the entry."
-          },
-          "payload": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrWidgetMachineField"
-            },
-            "description": "Typed payload members."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrWidgetCatalogRef": {
-        "type": "object",
-        "description": "A catalog component named by a page: an entry of this contract's\ncatalog, or of a pinned widget artifact's.",
-        "required": [
-          "entryId"
-        ],
-        "properties": {
-          "entryId": {
-            "type": "string",
-            "description": "The entry id."
-          },
-          "widget": {
-            "$ref": "#/components/schemas/NornIrArtifactRef",
-            "description": "The widget artifact whose catalog holds the entry; omitted, this one."
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrWidgetComponent": {
         "oneOf": [
           {
@@ -22663,12 +22523,6 @@
           },
           {
             "$ref": "#/components/schemas/NornIrWidgetComponentOneOf9"
-          },
-          {
-            "$ref": "#/components/schemas/NornIrWidgetComponentOneOf10"
-          },
-          {
-            "$ref": "#/components/schemas/NornIrWidgetComponentOneOf11"
           }
         ],
         "description": "Supported page components."
@@ -22732,54 +22586,6 @@
               "At most one row may be selected; that row is the current record.",
               "A bounded set of rows may be selected."
             ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrWidgetComponentOneOf10": {
-        "type": "object",
-        "description": "A control whose only effect is to raise the page machine's `user`\nevents that name this node (UI-MACHINE-1). A `choice` or `text`\ncontrol sends its value as the event payload member `value`.",
-        "required": [
-          "kind",
-          "label",
-          "input"
-        ],
-        "properties": {
-          "input": {
-            "$ref": "#/components/schemas/NornIrWidgetControlInput"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "control"
-            ]
-          },
-          "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrWidgetComponentOneOf11": {
-        "type": "object",
-        "description": "An exact page of a pinned widget artifact composed as a baseline.",
-        "required": [
-          "kind",
-          "widget",
-          "pageId"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "composition"
-            ]
-          },
-          "pageId": {
-            "type": "string"
-          },
-          "widget": {
-            "$ref": "#/components/schemas/NornIrArtifactRef"
           }
         },
         "additionalProperties": false
@@ -22979,32 +22785,27 @@
       },
       "NornIrWidgetComponentOneOf9": {
         "type": "object",
-        "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.",
+        "description": "An exact page of a pinned widget artifact composed as a baseline.",
         "required": [
           "kind",
-          "entry"
+          "widget",
+          "pageId"
         ],
         "properties": {
-          "entry": {
-            "$ref": "#/components/schemas/NornIrWidgetCatalogRef"
-          },
           "kind": {
             "type": "string",
             "enum": [
-              "catalog"
+              "composition"
             ]
           },
-          "props": {
-            "$ref": "#/components/schemas/NornIrWidgetComponentOneOf9PropertyProps"
+          "pageId": {
+            "type": "string"
+          },
+          "widget": {
+            "$ref": "#/components/schemas/NornIrArtifactRef"
           }
         },
         "additionalProperties": false
-      },
-      "NornIrWidgetComponentOneOf9PropertyProps": {
-        "type": "object",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrZenExpression"
-        }
       },
       "NornIrWidgetConfirmationStrength": {
         "type": "string",
@@ -23077,20 +22878,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrWidgetControlInput": {
-        "type": "string",
-        "description": "What a person does with a [`WidgetComponent::Control`].",
-        "enum": [
-          "trigger",
-          "choice",
-          "text"
-        ],
-        "x-enumDescriptions": [
-          "Presses it.",
-          "Picks one of the values the page's data offers.",
-          "Types text."
-        ]
       },
       "NornIrWidgetDataBinding": {
         "type": "object",
@@ -23288,20 +23075,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrWidgetDensity": {
-        "type": "string",
-        "description": "Density tiers (scan lists, read records, focus canvases), as named tokens.",
-        "enum": [
-          "scan",
-          "read",
-          "focus"
-        ],
-        "x-enumDescriptions": [
-          "Lists and grids: 32 px rows, 13 px tabular figures.",
-          "Record pages: 28 px key-value rows.",
-          "Canvases and editors with a 320 px inspector."
-        ]
       },
       "NornIrWidgetDismissalMethod": {
         "type": "string",
@@ -24277,15 +24050,12 @@
       },
       "NornIrWidgetMachineEventSourceOneOf1": {
         "type": "object",
-        "description": "A person used the control at `node_id` in this page's tree. For a\ncatalog component node, `emits` names the entry event it raises.",
+        "description": "A person used the control at `node_id` in this page's tree.",
         "required": [
           "kind",
           "nodeId"
         ],
         "properties": {
-          "emits": {
-            "type": "string"
-          },
           "kind": {
             "type": "string",
             "enum": [
@@ -24482,10 +24252,6 @@
         "properties": {
           "assign": {
             "$ref": "#/components/schemas/NornIrWidgetMachineTransitionPropertyAssign"
-          },
-          "componentGuard": {
-            "type": "string",
-            "description": "A guard the catalog component's own code decides (a Foldkit `when` or\n`otherwise` edge), named for reviewers. The checker treats the\ntransition as possibly disabled (May); the host accepts it only with\nthe target the component reports. Catalog entry machines only."
           },
           "effects": {
             "type": "array",
@@ -25370,20 +25136,6 @@
           "Done; the page has nothing left to do. No transition leaves it."
         ]
       },
-      "NornIrWidgetTrust": {
-        "type": "string",
-        "description": "Where a catalog component stands on the trust ladder (UI-CATALOG-1).",
-        "enum": [
-          "native",
-          "contract_checked",
-          "opaque_island"
-        ],
-        "x-enumDescriptions": [
-          "Drawn by a Norn renderer from the ontology.",
-          "Custom code whose declared machine the runtime enforces: an event or\nstate the contract does not declare is refused and logged.",
-          "Rich content (canvas, map, 3-D, video) whose pixels and internal render\nstate are opaque; only its typed inputs and declared output events take\npart in the checked machine."
-        ]
-      },
       "NornIrWidgetUx": {
         "type": "object",
         "description": "The typed UX contract nested in a legacy `widget` payload.",
@@ -25416,13 +25168,6 @@
           "app": {
             "$ref": "#/components/schemas/NornIrWidgetApp",
             "description": "Optional application shell that composes pages and navigation."
-          },
-          "catalog": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrWidgetCatalogEntry"
-            },
-            "description": "Catalog components this contract declares (UI-CATALOG-1): custom UI written in any\nframework, each with a typed props contract, declared events and its machine."
           },
           "dataBindings": {
             "type": "array",
@@ -25593,8 +25338,7 @@
               "dashboard",
               "run",
               "decision_inbox",
-              "lineage",
-              "lifecycle"
+              "lineage"
             ],
             "x-enumDescriptions": [
               "Many objects of one type.",
@@ -25604,8 +25348,7 @@
               "A dashboard definition's tiles.",
               "One run of a flow, step by step.",
               "Decisions waiting on the viewer.",
-              "Where one object's values came from.",
-              "An object type's lifecycle as a statechart, with the server's live\nper-state counts and the checker's counterexamples to step through."
+              "Where one object's values came from."
             ]
           },
           "subject": {
@@ -25626,8 +25369,7 @@
           "dashboard",
           "run",
           "decision_inbox",
-          "lineage",
-          "lifecycle"
+          "lineage"
         ],
         "x-enumDescriptions": [
           "Many objects of one type.",
@@ -25637,8 +25379,7 @@
           "A dashboard definition's tiles.",
           "One run of a flow, step by step.",
           "Decisions waiting on the viewer.",
-          "Where one object's values came from.",
-          "An object type's lifecycle as a statechart, with the server's live\nper-state counts and the checker's counterexamples to step through."
+          "Where one object's values came from."
         ]
       },
       "NornIrWidgetViewState": {
