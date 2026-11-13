@@ -59,7 +59,9 @@ function Graph({ graph }: { readonly graph: LineageGraph }) {
   }, [graph])
   return (
     <div className="h-80 overflow-hidden rounded-md border border-border/70 bg-surface-subtle">
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ maxZoom: 1 }} colorMode="system" minZoom={0.2}
+      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} colorMode="system" minZoom={0.2}
+        // Fit once the cards are drawn and measured; a fit before that leaves the record off the edge.
+        onInit={(flow) => { requestAnimationFrame(() => void flow.fitView({ maxZoom: 1, padding: 0.15 })) }}
         nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
         <Background />
         <Controls showInteractive={false} />
