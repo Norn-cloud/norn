@@ -1969,6 +1969,12 @@ impl EffectiveCatalog {
         Some(target_types)
     }
 
+    /// The artifact that declares the object type named `object_type`.
+    #[must_use]
+    pub fn artifact_of(&self, object_type: &str) -> Option<&str> {
+        self.by_name.get(object_type).map(String::as_str)
+    }
+
     /// The effective forward links of an object type, including inherited
     /// and extension links. `None` means the type is unavailable.
     #[must_use]

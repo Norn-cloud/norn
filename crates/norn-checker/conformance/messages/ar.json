@@ -590,6 +590,10 @@
       "message": "العرض العلائقي يعلن مخطط مخرجاته بنفسه، بينما يستنتجه ViewIR v1",
       "review": "needs_review"
     },
+    "derived.validation.sql_unsupported": {
+      "message": "تحويل SQL يستخدم بناءً لا يقابله معامل تحويل مُنمَّط؛ فيُرفض ولا يُنفَّذ أبدًا كـ SQL",
+      "review": "needs_review"
+    },
     "derived.validation.type_mismatch": {
       "message": "تعبير أو عمود في العرض العلائقي ليس من النوع الذي يحتاجه المعامل",
       "review": "needs_review"
