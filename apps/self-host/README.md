@@ -36,11 +36,15 @@ NORN_PASSWORD='…' norn workspace create --studio https://norn.example.com \
 
 Only the workspace's owner may do this; running it again changes nothing.
 
-To choose the owner yourself, set these before the first start:
+To choose the owner yourself, put these in `apps/self-host/.env` (git ignores it) before the
+first start, so every later `docker compose` command sees the same values:
 
 ```sh
-NORN_OWNER_EMAIL=you@example.com NORN_OWNER_PASSWORD='a long passphrase' docker compose up
+NORN_OWNER_EMAIL=you@example.com
+NORN_OWNER_PASSWORD='a long passphrase'
 ```
+
+They are read once, on the first start. Afterwards the owner changes their password in Studio.
 
 ## On a server with a domain
 
@@ -137,6 +141,7 @@ Moving an install between stores means copying the bucket's objects while Norn i
 
 ```sh
 git pull && docker compose up --build -d
+# on a domain: git pull && docker compose -f compose.yaml -f compose.domain.yaml up --build -d
 ```
 
 Each start redeploys the cell Worker and Studio from the image and applies Studio's pending

@@ -93,7 +93,10 @@ NORN_PUBLIC_URL=$NORN_PUBLIC_URL bun /opt/norn/setup.ts || { kill -TERM "$NODE";
 kill -TERM "$NODE"; wait "$NODE" || true
 
 serve 0.0.0.0:8080
-until curl -fs -o /dev/null http://127.0.0.1:8080/; do sleep 1; done
+until curl -fs -o /dev/null http://127.0.0.1:8080/; do
+  kill -0 "$NODE" 2>/dev/null || { echo "celld exited before serving" >&2; wait "$NODE"; exit 1; }
+  sleep 1
+done
 echo "Norn is ready at ${NORN_PUBLIC_URL}"
 trap 'kill -TERM "$NODE" 2>/dev/null; wait "$NODE"' TERM INT
 wait "$NODE"

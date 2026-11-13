@@ -3,3 +3,9 @@ target
 **/node_modules
 **/dist
 apps/studio/src/checker
+# Local secrets never enter the image (CodeRabbit, #1336).
+**/.env
+**/.env.*
+**/.dev.vars
+**/.dev.vars.*
+**/.alchemy

@@ -46,7 +46,14 @@ async function served(): Promise<void> {
   }
 }
 
+/** Written once setup has succeeded; later starts skip setup (the owner may change their password in Studio). */
+const doneFile = "/data/secrets/setup-complete"
+
 async function main(): Promise<void> {
+  if (existsSync(doneFile)) {
+    console.log(`Already set up; sign in as the owner (${email}).`)
+    return
+  }
   await served()
   const password = ownerPassword()
   const signUp = await call("/api/auth/sign-up/email", { body: { email, password, name: "Owner" } })
@@ -59,6 +66,7 @@ async function main(): Promise<void> {
     env: { ...process.env, NORN_OWNER_PASSWORD: password }, encoding: "utf8",
   })
   if (created.status !== 0) throw new Error(`norn workspace create failed: ${created.stderr || created.stdout}`)
+  writeFileSync(doneFile, `${new Date().toISOString()}\n`, { mode: 0o600 })
   console.log([
     "",
     `Set up: the owner and their workspace's cell exist.`,
