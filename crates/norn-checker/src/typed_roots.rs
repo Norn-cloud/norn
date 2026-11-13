@@ -2433,6 +2433,16 @@ fn check_marking_catalog(
                 artifact_id,
             ));
         }
+        if let norn_ir::MaskPolicy::Pseudonym { subject } = &marking.mask
+            && (subject.trim().is_empty() || subject.chars().any(char::is_control))
+        {
+            diagnostics.push(invalid_diagnostic(
+                ENTITY_CODE,
+                "pseudonym mask subject must be a non-blank label",
+                format!("{path}.mask.subject"),
+                artifact_id,
+            ));
+        }
         if matches!(marking.mask, norn_ir::MaskPolicy::LastN { count: 0 }) {
             diagnostics.push(invalid_diagnostic(
                 ENTITY_CODE,

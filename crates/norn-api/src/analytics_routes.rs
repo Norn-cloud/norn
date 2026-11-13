@@ -409,6 +409,11 @@ pub fn export_objects<E: SqlEngine>(
         .collect();
     let guard = host.cell()?;
     let store = guard.store();
+    // PRIVACY-1: an export carries stored values, so a cell that declares
+    // markings exports nothing; a marked value leaves only through a reveal.
+    if !host.marking_catalog(&store.read())?.is_empty() {
+        return Err(crate::authz::read_denied());
+    }
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let mut named = std::collections::BTreeSet::new();
     for column in &columns {
@@ -690,6 +695,11 @@ fn dataset_not_found() -> Refusal {
 pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Result<bool, Refusal> {
     let guard = host.cell()?;
     let has_type = guard.store().model().has_type(object_type);
+    // PRIVACY-1: the engine mirror holds stored values, so a cell that
+    // declares markings reads its records natively, where they are projected.
+    if has_type && !host.marking_catalog(&guard.store().read())?.is_empty() {
+        return Ok(false);
+    }
     Ok(has_type
         && guard
             .store()
@@ -897,6 +907,7 @@ fn queried(
         withheld: read.is_none(),
         values: read,
         withheld_properties: Vec::new(),
+        masked: BTreeMap::new(),
     })
 }
 

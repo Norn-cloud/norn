@@ -429,7 +429,10 @@ export interface MarkingDecl {
   readonly label: string
   readonly severity: "low" | "moderate" | "high" | "critical"
   readonly category: string
-  readonly mask: { readonly kind: "redacted" | "null" } | { readonly kind: "last-n"; readonly count: number }
+  readonly mask:
+    | { readonly kind: "redacted" | "null" | "refuse" }
+    | { readonly kind: "last-n"; readonly count: number }
+    | { readonly kind: "pseudonym"; readonly subject: string }
 }
 export interface MarkingsDef {
   readonly _tag: "Markings"

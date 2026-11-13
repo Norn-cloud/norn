@@ -23,6 +23,11 @@ pub struct DevHost<E: SqlEngine> {
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
     /// it maps source rows under the observation profile.
     cell: Mutex<Option<ActionCell<E>>>,
+    /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
+    /// one a pseudonym projection redacts.
+    pseudonyms: Option<crate::privacy::PseudonymKey>,
+    /// The marking catalog of the active definitions, by definitions version.
+    markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
 }
 
 /// The locked cell, present whenever a guard exists.
@@ -124,6 +129,8 @@ impl<E: SqlEngine> DevHost<E> {
             authorizer: Box::new(DenyAll),
             definitions: RwLock::new(()),
             cell: Mutex::new(Some(cell)),
+            pseudonyms: None,
+            markings: Mutex::new(None),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -131,6 +138,39 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn with_authorizer(mut self, authorizer: impl Authorizer + 'static) -> Self {
         self.authorizer = Box::new(authorizer);
         self
+    }
+    /// Key this cell's pseudonyms with `secret` (the host's lineage key);
+    /// a secret shorter than 32 bytes keys none, and pseudonyms redact.
+    #[must_use]
+    pub fn with_pseudonym_secret(mut self, secret: Option<&[u8]>) -> Self {
+        self.pseudonyms =
+            secret.and_then(|secret| crate::privacy::PseudonymKey::derive(secret, &self.scope));
+        self
+    }
+    pub(crate) const fn pseudonym_key(&self) -> Option<&crate::privacy::PseudonymKey> {
+        self.pseudonyms.as_ref()
+    }
+    /// PRIVACY-2: the trusted policy's `norn.reveal` decision.
+    pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
+        self.authorizer.reveal(actor, marking_id)
+    }
+    /// The marking catalog of the active definitions `reader` sees.
+    pub(crate) fn marking_catalog(
+        &self,
+        reader: &norn_cell::StoreReader<'_, E>,
+    ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
+        let version = reader
+            .active_definitions_version()
+            .map_err(Refusal::host)?;
+        let mut cached = self.markings.lock().map_err(Refusal::host)?;
+        if let Some((at, catalog)) = cached.as_ref()
+            && *at == version
+        {
+            return Ok(std::sync::Arc::clone(catalog));
+        }
+        let (at, catalog) = crate::privacy::catalog_of(reader)?;
+        *cached = Some((at, std::sync::Arc::clone(&catalog)));
+        Ok(catalog)
     }
     /// Physical scope, never taken from client claims.
     #[must_use]

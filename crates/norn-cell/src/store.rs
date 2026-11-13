@@ -101,14 +101,9 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
     let old = catalog(previous)?;
     let new = catalog(candidate)?;
     for (id, marking) in old {
-        let weakens = match new.get(&id).map(|marking| &marking.mask) {
-            None => true,
-            Some(norn_ir::MaskPolicy::LastN { count }) => match marking.mask {
-                norn_ir::MaskPolicy::LastN { count: old_count } => *count > old_count,
-                norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {} => true,
-            },
-            Some(norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {}) => false,
-        };
+        let weakens = new
+            .get(&id)
+            .is_none_or(|candidate| marking.mask.weakened_by(&candidate.mask));
         if weakens {
             return Err(CellError::DefinitionMigrationRefused(format!(
                 "install removes or weakens mask policy for `{}`; declassify the exact fact versions instead",
@@ -1504,6 +1499,51 @@ impl MarkingDeclassification {
             markings: &self.markings,
             actor: &self.actor,
             reason: &self.reason,
+        })
+        .map_err(CellError::Encoding)
+    }
+}
+
+/// The receipt of one reveal: who saw which marked property of which exact
+/// fact version, when (the commit's logical time) and why. The API commits it
+/// only after the PDP allowed `norn.reveal` for every marking on the property,
+/// and before it returns the value; the receipt never carries the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkingReveal {
+    /// The concrete object type.
+    pub object_type: String,
+    /// The object's opaque store id.
+    pub key: String,
+    /// The property revealed.
+    pub property: String,
+    /// The exact fact version whose value was revealed.
+    pub version: u64,
+    /// The markings the reveal was decided for.
+    pub markings: Vec<String>,
+    /// The authenticated actor the value was revealed to.
+    pub actor: String,
+    /// The purpose the actor gave; empty when none.
+    pub purpose: String,
+}
+
+impl MarkingReveal {
+    /// The canonical `marking.revealed` ledger event.
+    ///
+    /// # Errors
+    /// Returns a cell encoding error if the event cannot be represented.
+    pub fn ledger_event(&self) -> Result<Value, CellError> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Event<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            #[serde(flatten)]
+            reveal: &'a MarkingReveal,
+        }
+        norn_ir::runtime::encode(&Event {
+            kind: "marking.revealed",
+            reveal: self,
         })
         .map_err(CellError::Encoding)
     }

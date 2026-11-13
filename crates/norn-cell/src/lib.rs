@@ -94,6 +94,7 @@ pub use store::{
     CellStore, CommitBatch, CommitOutcome, CommitPoint, Consumption, DefinitionInstallRecord,
     DefinitionReadmission, EffectRow, FactWriteRow, GuardedError, InstalledDefinitionInput,
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
+    MarkingReveal,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
 

@@ -54,7 +54,7 @@ use crate::store::StoreOptions;
 use crate::store::{
     CellStore, CommitBatch, CommitOutcome, Consumption, EffectRow, FactWriteRow, GuardedError,
     InstalledDefinitionInput, InstalledDefinitionSet, LinkChange, MAIN_WORLD,
-    MarkingDeclassification, OutboxCommand, TimerEntry,
+    MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
 };
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -287,6 +287,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             idempotency_key: Some(idempotency_key.to_owned()),
             events: vec![change.ledger_event()?],
             marking_declassifications: vec![change],
+            ..CommitBatch::default()
+        })
+    }
+
+    /// Append the receipt of one reveal to the ledger, at this host's clock.
+    /// An exact retry under the same key replays the first receipt; a key
+    /// reused for another reveal is a conflict.
+    ///
+    /// # Errors
+    /// An idempotency conflict, serialization or storage failure.
+    pub fn record_reveal(
+        &mut self,
+        idempotency_key: &str,
+        reveal: &MarkingReveal,
+    ) -> Result<CommitOutcome, CellError> {
+        let logical_time = self
+            .store
+            .read()
+            .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
+            .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
+        self.store.commit(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: self.scope.clone(),
+            logical_time,
+            idempotency_key: Some(idempotency_key.to_owned()),
+            events: vec![reveal.ledger_event()?],
             ..CommitBatch::default()
         })
     }

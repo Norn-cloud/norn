@@ -142,6 +142,13 @@ pub trait Authorizer: Send + Sync {
         Ok(())
     }
 
+    /// PRIVACY-2: whether the PDP allows `actor` `norn.reveal` on the marking
+    /// `marking_id` in this cell. Absent policy denies; a document then shows
+    /// the marking's projection and never offers a reveal.
+    fn reveal(&self, _actor: &str, _marking_id: &str) -> bool {
+        false
+    }
+
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
     /// Action/read grants do not imply this decision; absent policy denies.
     fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {

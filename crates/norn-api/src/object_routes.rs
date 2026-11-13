@@ -13,6 +13,7 @@
 //! (#733).
 
 use crate::{
+    privacy,
     authz::{
         ReadCapability::{self, Population, Values},
         ReadRequest, read_denied,
@@ -91,6 +92,16 @@ pub(crate) fn mapped(
         return Err(read_denied());
     }
     Ok(request)
+}
+
+/// Whether the caller holds both Population and Values on this exact row.
+pub(crate) fn row_readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    row: &ObjectRecord,
+) -> bool {
+    row_visible(host, access, actor, row)
 }
 
 fn row_visible<E: SqlEngine>(
@@ -233,6 +244,7 @@ pub fn get_object_page<E: SqlEngine>(
         Ok(())
     };
     let mut cursor = after.map(str::to_owned);
+    let mut marked_catalog = None;
     loop {
         let mut batch = Vec::new();
         within(&mut |reader| {
@@ -250,6 +262,7 @@ pub fn get_object_page<E: SqlEngine>(
             .map(|row| (row_visible(host, access, &actor, &row), row))
             .collect();
         let mut quarantined = Vec::with_capacity(visible.len());
+        let mut marked = Vec::with_capacity(visible.len());
         within(&mut |reader| {
             quarantined = visible
                 .iter()
@@ -262,9 +275,24 @@ pub fn get_object_page<E: SqlEngine>(
                 })
                 .collect::<Result<Vec<bool>, _>>()
                 .map_err(Refusal::host)?;
+            let catalog = host.marking_catalog(reader)?;
+            marked = visible
+                .iter()
+                .map(|(seen, row)| {
+                    if *seen {
+                        privacy::row_markings(reader, &catalog, row)
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            marked_catalog = Some(catalog);
             Ok(())
         })?;
-        for ((seen, row), quarantined) in visible.into_iter().zip(quarantined) {
+        let catalog = marked_catalog.take().unwrap_or_default();
+        for (((seen, mut row), quarantined), markings) in
+            visible.into_iter().zip(quarantined).zip(marked)
+        {
             cursor = Some(row.id.clone());
             if !seen {
                 continue;
@@ -273,7 +301,9 @@ pub fn get_object_page<E: SqlEngine>(
             if quarantined {
                 page.quarantine_count = page.quarantine_count.saturating_add(1);
             } else {
-                page.records.push(row.into());
+                let projected =
+                    privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
+                page.records.push(NornObjectRecord::projected(row, projected));
             }
             if page.records.len() == limit {
                 return Ok(page);
@@ -337,7 +367,11 @@ pub fn get_object<E: SqlEngine>(
     {
         return Err(not_found());
     }
-    Ok(row.into())
+    let catalog = host.marking_catalog(&reader)?;
+    let markings = privacy::row_markings(&reader, &catalog, &row)?;
+    let mut row = row;
+    let projected = privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
+    Ok(NornObjectRecord::projected(row, projected))
 }
 
 /// Visible rows one grid query reads at most. A sort or filter needs every
@@ -350,6 +384,8 @@ pub const MAX_QUERY_SCAN: usize = 10_000;
 pub(crate) struct Listed {
     pub(crate) row: ObjectRecord,
     pub(crate) readable: bool,
+    /// How the row's marked properties were projected (readable rows only).
+    pub(crate) projected: privacy::Projected,
 }
 
 /// The rows one snapshot holds after `after`, up to the visible bound, with what the
@@ -463,10 +499,12 @@ pub(crate) fn scan_listed<E: SqlEngine>(
             .map(|row| Listed {
                 readable: permitted(host, access, actor, &row, Values),
                 row,
+                projected: privacy::Projected::default(),
             })
             .collect();
-        let held = locked(host, access, &mut start, |reader| {
-            seen.iter()
+        let (held, catalog, marked) = locked(host, access, &mut start, |reader| {
+            let held = seen
+                .iter()
                 .map(|listed| {
                     if listed.readable {
                         reader.observation_is_quarantined(MAIN_WORLD, &listed.row)
@@ -475,12 +513,33 @@ pub(crate) fn scan_listed<E: SqlEngine>(
                     }
                 })
                 .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)
+                .map_err(Refusal::host)?;
+            let catalog = host.marking_catalog(reader)?;
+            let marked = seen
+                .iter()
+                .map(|listed| {
+                    if listed.readable {
+                        privacy::row_markings(reader, &catalog, &listed.row)
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((held, catalog, marked))
         })?;
-        for (listed, quarantined) in seen.into_iter().zip(held) {
+        for ((mut listed, quarantined), markings) in seen.into_iter().zip(held).zip(marked) {
             if quarantined {
                 scan.quarantined = scan.quarantined.saturating_add(1);
             } else {
+                if listed.readable {
+                    listed.projected = privacy::project(
+                        host,
+                        actor,
+                        &catalog,
+                        markings.as_ref(),
+                        &mut listed.row,
+                    );
+                }
                 scan.listed.push(listed);
             }
         }
@@ -518,7 +577,8 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
         version: listed.readable.then_some(listed.row.version),
         values: listed.readable.then(|| listed.row.values.clone()),
         withheld: !listed.readable,
-        withheld_properties: Vec::new(),
+        withheld_properties: listed.projected.withheld.clone(),
+        masked: listed.projected.masked.clone(),
     }
 }
 
@@ -719,17 +779,32 @@ pub fn get_queried_object<E: SqlEngine>(
     // The closing section always runs, so a commit during authorization is
     // detected for a withheld record too; only the quarantine lookup needs
     // Values.
-    let quarantined = locked(host, access, &mut start, |reader| {
+    let (quarantined, catalog, markings) = locked(host, access, &mut start, |reader| {
         if readable {
-            reader
-                .observation_is_quarantined(MAIN_WORLD, &row)
-                .map_err(Refusal::host)
+            let catalog = host.marking_catalog(reader)?;
+            Ok((
+                reader
+                    .observation_is_quarantined(MAIN_WORLD, &row)
+                    .map_err(Refusal::host)?,
+                privacy::row_markings(reader, &catalog, &row)?,
+                Some(catalog),
+            ))
+            .map(|(held, markings, catalog)| (held, catalog, markings))
         } else {
-            Ok(false)
+            Ok((false, None, None))
         }
     })?;
     if quarantined {
         return Err(not_found());
     }
-    Ok(queried(&Listed { row, readable }))
+    let mut row = row;
+    let projected = match &catalog {
+        Some(catalog) => privacy::project(host, &actor, catalog, markings.as_ref(), &mut row),
+        None => privacy::Projected::default(),
+    };
+    Ok(queried(&Listed {
+        row,
+        readable,
+        projected,
+    }))
 }

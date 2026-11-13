@@ -572,8 +572,11 @@ pub fn get_object_lineage<E: SqlEngine>(
         let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
             &norn_ir::ResourceLimitProfile::norn_limits_v1(),
         ));
+        let catalog = host.marking_catalog(reader)?;
         reader
-            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
+            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |instance| {
+                crate::privacy::discloses_source(reader, &catalog, instance)
+            })
             .map_err(Refusal::host)?
             .ok_or_else(not_found)
     })
