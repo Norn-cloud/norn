@@ -9,7 +9,7 @@ import * as live from "../../../apps/norn-cell-do/subscribe.mjs"
 
 class FakeSocket {
   attachment: unknown
-  readonly sent: { type: string; id?: string; status?: number; body?: unknown; code?: string }[] = []
+  readonly sent: Record<string, unknown>[] = []
   closed: number | null = null
   constructor(attachment: unknown) {
     this.attachment = structuredClone(attachment)
