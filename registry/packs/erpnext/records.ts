@@ -84,6 +84,7 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "Delivery Note Item", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Payment Entry", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "Warehouse Lot Balance", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]},
     {id: "delivery_posting_state", dataset: "Delivery Note Item", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "GL Entry", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: [{value: "USD"}]},
@@ -106,7 +107,7 @@ export const Mapping = Norn.mapping({
   id: "erpnext.three.mapping",
   title: "erpnext synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "f43dfdc9ef9876c6f41ab87843e0bec01e793dd1628dd3ac89bd46c0a86d98b4"},
+  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "f8b855f08629bde4b75c78d60558fbf1411ef2ed17932b4e694e11deffa9dc3f"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [

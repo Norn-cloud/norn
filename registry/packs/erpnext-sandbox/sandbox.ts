@@ -242,7 +242,8 @@ export const SandboxSource = Norn.sourceSchema({
       field: "valuation_method",
       origin: "declared",
       values: [{value: "moving_average"}]
-    }
+    },
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},
@@ -256,7 +257,7 @@ export const SandboxMapping = Norn.mapping({
   id: "erpnext.sandbox.mapping",
   title: "ERPNext sandbox observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "90cf3626ae746b1411899cbfbb52e59f489c7119f0d03ec820bbda3bd1e57e98"},
+  source: {schemaId: "erpnext.sandbox.source", version: "0.1.0", sha256: "9195cca6057f44fcc1249f2b2e0aaa939ae2cdb6729cb8db018ae435d8a2e16b"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
   maps: [

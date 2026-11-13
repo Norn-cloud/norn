@@ -222,8 +222,11 @@ export class Cell {
     let maxFetchMs = 0;
     let fetches = 0;
     let steps = 0;
-    // SYNC-YIELD-2: keep each step near STEP_BUDGET_MS by pacing its rows from the last step's time per row.
+    // SYNC-YIELD-2: keep each step near the step budget by pacing its rows from the last step's time per row.
+    const budgetMs = stepBudgetMs(this.env);
     let rows = FIRST_STEP_ROWS;
+    // The slowest steps, by kind: begin (the first), page (it mapped rows), fetch (it took a response, mapped none), end (it finished).
+    const slow = [];
     const timed = async (response) => {
       const before = Date.now();
       const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before, rows));
@@ -233,7 +236,11 @@ export class Cell {
       cellMs += spent;
       maxCellMs = Math.max(maxCellMs, spent);
       steps += 1;
-      if (next.mapped > 0) rows = Math.max(1, Math.min(MAX_STEP_ROWS, Math.floor((STEP_BUDGET_MS * next.mapped) / Math.max(1, spent))));
+      const kind = steps === 1 ? "begin" : next.done ? "end" : next.mapped > 0 ? "page" : "fetch";
+      slow.push({ kind, ms: spent, mapped: next.mapped ?? 0 });
+      slow.sort((a, b) => b.ms - a.ms);
+      slow.length = Math.min(slow.length, 3);
+      if (next.mapped > 0) rows = Math.max(1, Math.min(MAX_STEP_ROWS, Math.floor((budgetMs * next.mapped) / Math.max(1, spent))));
       return next;
     };
     let step = await timed(undefined);
@@ -253,7 +260,7 @@ export class Cell {
     // Counts and times only: what a run cost, never what it read or carried.
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
-    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs }));
+    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {
@@ -262,8 +269,13 @@ export class Cell {
   }
 }
 
-// SYNC-YIELD-2: a sync step aims to hold the cell about this long; rows per step follow from the last step's time per row.
+// SYNC-YIELD-2: a sync step aims to hold the cell about this long (NORN_SYNC_STEP_MS, 250 ms to 30 s); rows per step follow from the last step's time per row.
 const STEP_BUDGET_MS = 1500;
+/** The server's step budget: a longer step pays a page commit's fixed cost over more rows, a shorter one keeps the cell responsive. */
+function stepBudgetMs(env) {
+  const configured = Number(env.NORN_SYNC_STEP_MS);
+  return Number.isFinite(configured) && configured > 0 ? Math.min(30_000, Math.max(250, configured)) : STEP_BUDGET_MS;
+}
 const FIRST_STEP_ROWS = 8;
 const MAX_STEP_ROWS = 500;
 // A source page or an uploaded object, read once and bounded (bytes).

@@ -164,7 +164,9 @@ fixes it with an `eq` filter refuses `metric.validation.mixed_currency`, a
 reaggregation never rolls up across it, and derived candidates list it in
 `unit_partition`, so a derived question is grouped by currency. An ISO 4217
 registry code is grouped by and `eq`-filtered like a code, with an upper-case
-literal. The exact engine sums each partition's stored amounts and still
+literal. A nullable source partitions too: amounts without a currency form
+their own group (`eq null` fixes it), and a conversion still requires a
+non-null source (`metric.validation.invalid_currency`). The exact engine sums each partition's stored amounts and still
 refuses a conversion as an unsupported engine shape. Named scenarios:
 **METRIC-CURRENCY-PARTITION** (per currency, grouped or fixed, admits; free or
 `ne` refuses), **METRIC-CURRENCY-SINGLE** (a one-code source and a conversion

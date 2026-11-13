@@ -36,6 +36,7 @@ export const ArabicLabels = Norn.labels({
     "canon.Catalog": { label: { ar: "كتالوج" }, localizedDescription: { ar: "بيانات وصفية للكتالوج، وليست مخزونًا" }, properties: catalogProperties },
     "canon.Settlement": { label: { ar: "تسوية" }, localizedDescription: { ar: "دليل تسوية مُبلَّغ عنه" }, properties: { amount, currency, kind: { ar: "النوع" } }, values: { kind: settlementKind } },
     "canon.Item": { label: { ar: "صنف" }, properties: catalogProperties },
+    "canon.StockValuation": { label: { ar: "مخزون مُقيَّم" }, properties: { stock_cost: { ar: "تكلفة المخزون" }, cost_currency: { ar: "عملة التكلفة" } } },
     "canon.Holding": {
       label: { ar: "رصيد مخزون" }, localizedDescription: { ar: "رصيد مقسَّم حسب المالك والموقع" },
       properties: {

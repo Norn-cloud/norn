@@ -881,6 +881,7 @@ impl<'a> Checker<'a> {
             self.reject(codes::PARTIAL_PATH, &format!("{at}/property"));
         }
         let mut singleton = None;
+        let mut nullable = false;
         for property in &path.properties {
             let valid = match &property.kind {
                 EffectiveKind::Registry(_) => is_iso_currency(property),
@@ -905,11 +906,16 @@ impl<'a> Checker<'a> {
                 )
                 | EffectiveKind::Unresolved => false,
             };
-            if !valid || path.fan_out || property.nullable {
+            if !valid || path.fan_out {
                 self.reject(codes::INVALID_CURRENCY, at);
             }
+            nullable |= property.nullable;
         }
         if let Some(conversion) = &binding.conversion {
+            // A conversion needs every amount's currency.
+            if nullable {
+                self.reject(codes::INVALID_CURRENCY, at);
+            }
             if !currency_code(&conversion.target) {
                 self.reject(
                     codes::INVALID_CONVERSION,
@@ -938,11 +944,12 @@ impl<'a> Checker<'a> {
                 }
             }
             Some(SignatureCurrency::Code(conversion.target.clone()))
-        } else if let Some(singleton) = singleton {
+        } else if let Some(singleton) = singleton.filter(|_| !nullable) {
             Some(SignatureCurrency::Code(singleton))
         } else {
             // METRIC-UNIT-PARTITION-1: without a conversion, amounts in several
-            // currencies aggregate per currency; questions partition by it.
+            // currencies (or none) aggregate per currency; questions partition
+            // by it, and amounts without one form their own group.
             Some(SignatureCurrency::Per(binding.property.clone()))
         }
     }

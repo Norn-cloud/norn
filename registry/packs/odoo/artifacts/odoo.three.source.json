@@ -71,6 +71,17 @@
         ]
       },
       {
+        "dataset": "stock.quant",
+        "field": "cost_currency",
+        "id": "holding_cost_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      },
+      {
         "dataset": "stock.move",
         "field": "posting_state",
         "id": "delivery_posting_state",
