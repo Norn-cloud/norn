@@ -538,25 +538,34 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     /// `question.bucket_bound_exceeded` (413); never a truncated answer.
     fn max_buckets(&self) -> usize;
     /// Admit `question`, already authorized, against this runtime's metrics
-    /// with at most `max_rows` rows read. By default the checker's
-    /// [`admit`] over [`Self::definitions`] and [`Self::catalog`]; a runtime
-    /// whose metrics come from a derived metric space admits through that
-    /// space, so its admission rules apply to every question.
+    /// with at most `max_rows` rows read. A runtime whose metrics come from a
+    /// derived metric space admits through that space, so its rules (such as
+    /// grouping by a unit source the question leaves free) apply to every
+    /// question; one over declared metrics only uses [`admit_declared`]. It
+    /// has no default, so a wrapper (such as the engine's) forwards it.
     /// # Errors
     /// The checker's findings, with pointers into the question.
     fn admit(
         &self,
         question: &QuestionIR,
         max_rows: u32,
-    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
-        admit(self.definitions(), question, self.catalog(), max_rows)
-    }
+    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>>;
     /// The property paths a question over `metric` must group by or fix
     /// with an `eq` filter (its unit sources, such as `unit` and `currency`),
-    /// dotted from the measured object; none by default.
-    fn unit_partition(&self, _metric: &str) -> Vec<String> {
-        Vec::new()
-    }
+    /// dotted from the measured object. No default, for the same reason.
+    fn unit_partition(&self, metric: &str) -> Vec<String>;
+}
+
+/// The checker's [`admit`] over a runtime's declared metrics and catalog: the
+/// admission of a runtime with no derived metric space.
+/// # Errors
+/// The checker's findings, with pointers into the question.
+pub fn admit_declared<E: SqlEngine>(
+    runtime: &dyn AdHocQuestions<E>,
+    question: &QuestionIR,
+    max_rows: u32,
+) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
+    admit(runtime.definitions(), question, runtime.catalog(), max_rows)
 }
 
 /// `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.
@@ -852,6 +861,17 @@ pub struct NornMetricSummary {
     /// `eq` filter (`eq null` included): its unit sources, such as `unit` and
     /// `currency`. Empty when its values share one unit.
     pub unit_partition: Vec<String>,
+    /// How its values aggregate: `additive` sums over every axis, time
+    /// included; `semi_additive` sums across the others and takes its
+    /// `aggregate` (`first`, `last`, `min` or `max`) along `over` (`time`), as a
+    /// stock's end-of-period value does; `non_additive` is recomputed for each
+    /// bucket.
+    #[schema(schema_with = metric_additivity_schema)]
+    pub additivity: norn_ir::metric::MetricAdditivity,
+}
+
+fn metric_additivity_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornIrMetricAdditivity")
 }
 
 /// The metrics ad-hoc questions may name, among those the caller may read.
@@ -906,6 +926,7 @@ pub fn list_metrics<E: SqlEngine>(
                 numerator: definition.type_params.numerator.clone(),
                 denominator: definition.type_params.denominator.clone(),
                 unit_partition: runtime.unit_partition(&definition.name),
+                additivity: definition.norn.additivity.clone(),
             }
         })
         .collect();

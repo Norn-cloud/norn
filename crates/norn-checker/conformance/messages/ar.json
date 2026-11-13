@@ -1599,7 +1599,7 @@
       "review": "needs_review"
     },
     "metric.validation.mixed_currency": {
-      "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
+      "message": "تُجمَّع المبالغ بعدة عملات لكل عملة فقط: جمّع حسب خاصية العملة، أو ثبّتها بمرشح eq، أو حوّلها صراحةً.",
       "review": "needs_review"
     },
     "metric.validation.mixed_unit": {
@@ -2468,6 +2468,10 @@
     },
     "widget.machine.cancel_outside_pending": {
       "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.control_without_event": {
+      "message": "عنصر تحكم في الصفحة لا يطلق أي حدث من ترسيمة الصفحة: {$detail}",
       "review": "needs_review"
     },
     "widget.machine.duplicate_id": {

@@ -6,6 +6,7 @@ export type Checker = (artifacts: readonly unknown[]) => CheckResult
 interface CheckerModule {
   readonly default: (input?: unknown) => Promise<unknown>
   readonly checkArtifactSet: (artifactsJson: string, contextJson: string) => string
+  readonly evaluateExpression: (expression: string, inputJson: string, profile?: string) => string
 }
 
 // src/checker/ holds the checker ABI package (crates/norn-checker-wasm,
@@ -21,4 +22,17 @@ export async function loadChecker(packages: Record<string, () => Promise<Checker
   const module = await load()
   await module.default()
   return (artifacts) => JSON.parse(module.checkArtifactSet(JSON.stringify(artifacts), "null")) as CheckResult
+}
+
+/**
+ * The checker's ZEN engine, for page machines (UI-MACHINE-1): the guards and assignments the
+ * checker type-checked at admission evaluate in the same engine here. Rejects when the package is
+ * absent, so a page never runs a machine with a different evaluator.
+ */
+export async function loadEngine(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Pick<CheckerModule, "evaluateExpression">> {
+  const load = Object.values(packages)[0]
+  if (!load) throw new Error("The checker is not part of this build")
+  const module = await load()
+  await module.default()
+  return module
 }

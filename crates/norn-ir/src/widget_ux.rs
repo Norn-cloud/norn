@@ -729,6 +729,20 @@ pub struct WidgetNode {
     pub children: Vec<WidgetNode>,
 }
 
+/// What a person does with a [`WidgetComponent::Control`].
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetControlInput {
+    /// Presses it.
+    Trigger,
+    /// Picks one of the values the page's data offers.
+    Choice,
+    /// Types text.
+    Text,
+}
+
 /// Supported page components.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -799,6 +813,13 @@ pub enum WidgetComponent {
     Action { placement_id: String },
     /// A navigation item.
     Navigation { item_id: String },
+    /// A control whose only effect is to raise the page machine's `user`
+    /// events that name this node (UI-MACHINE-1). A `choice` or `text`
+    /// control sends its value as the event payload member `value`.
+    Control {
+        label: LocaleText,
+        input: WidgetControlInput,
+    },
     /// An exact page of a pinned widget artifact composed as a baseline.
     Composition {
         widget: ArtifactRef,

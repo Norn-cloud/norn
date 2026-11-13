@@ -3196,7 +3196,7 @@
       "code": "metric.validation.mixed_currency",
       "tier": "T3",
       "severity": "error",
-      "message": "Summing multiple currencies requires an explicit conversion.",
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
@@ -4934,6 +4934,14 @@
       "severity": "error",
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {detail}",
       "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.control_without_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page control raises no event of the page machine: {detail}",
+      "fix": "Declare a user event that names the control, or remove the control.",
       "no_fix": null
     },
     {

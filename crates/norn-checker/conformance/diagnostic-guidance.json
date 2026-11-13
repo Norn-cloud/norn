@@ -2468,6 +2468,10 @@
     "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome."
   },
   {
+    "code": "widget.machine.control_without_event",
+    "fix": "Declare a user event that names the control, or remove the control."
+  },
+  {
     "code": "widget.machine.duplicate_id",
     "fix": "Give every field, event, state and transition of the page machine its own id."
   },

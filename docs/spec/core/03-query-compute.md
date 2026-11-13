@@ -156,6 +156,20 @@ grouping with `eq` filters on every source lowers to the exact engine), and
 not a code property, a decimal with a static unit, or a member that drops a
 declared source, refuses).
 
+A decimal's `currencySource` partitions the same way. A metric that converts
+its amounts (`currency.conversion`) or whose source admits a single code needs
+no partition. Otherwise the source path (an ISO 4217 code, or an enum of
+several codes) is a partition path: a question that neither groups by it nor
+fixes it with an `eq` filter refuses `metric.validation.mixed_currency`, a
+reaggregation never rolls up across it, and derived candidates list it in
+`unit_partition`, so a derived question is grouped by currency. An ISO 4217
+registry code is grouped by and `eq`-filtered like a code, with an upper-case
+literal. The exact engine sums each partition's stored amounts and still
+refuses a conversion as an unsupported engine shape. Named scenarios:
+**METRIC-CURRENCY-PARTITION** (per currency, grouped or fixed, admits; free or
+`ne` refuses), **METRIC-CURRENCY-SINGLE** (a one-code source and a conversion
+need no partition).
+
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
 Candidates are uncertified; deriving one does not declare a governed KPI or
@@ -277,7 +291,10 @@ property tests run both at the same frontier.
   cell recorded. Every row is typed exactly by its column: no value is
   rounded, and a timestamp is admitted exactly when the cell reads it as one,
   with the cell's own ordering key. A row that cannot be typed, or misses a
-  required value, is quarantined with its first reason (`bulk.*`).
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
 - **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
   sha256)`; every row is numbered from its file, so each number traces to
   `(uri, sha256, row)`, and an answer over the dataset is exact at its load.

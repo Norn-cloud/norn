@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.control_without_event",
+  "message": "a page control raises no event of the page machine: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

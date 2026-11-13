@@ -43,10 +43,11 @@ pub struct MetricCandidate {
     pub time_grains: [TimeGrain; 5],
     /// Conservation evidence, when the law supplies term additivity.
     pub conservation: Vec<ConservationSource>,
-    /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit.
-    /// [`MetricSpace::admit`] groups by each one a question neither groups by
-    /// nor fixes with an `eq` filter (`eq null` included); a question admitted
-    /// any other way that leaves one free refuses `mixed_unit`.
+    /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit or
+    /// currency. [`MetricSpace::admit`] groups by each one a question neither
+    /// groups by nor fixes with an `eq` filter (`eq null` included); a question
+    /// admitted any other way that leaves one free refuses `mixed_unit` or
+    /// `mixed_currency`.
     pub unit_partition: Vec<DimensionPath>,
 }
 
@@ -675,15 +676,27 @@ fn linked_times(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec
     times
 }
 
-/// The direct unit-source paths of `measures`, deduplicated in declaration order.
+/// The unit-source paths of `measures`, then their currency sources, deduplicated
+/// in declaration order. A direct currency source with a single code needs no
+/// partition; a linked one is grouped by (one group), as the checker cannot
+/// prove it single here.
 fn unit_partition(object: &EffectiveObjectType, measures: &[&PropertyId]) -> Vec<DimensionPath> {
     let mut paths: Vec<DimensionPath> = Vec::new();
     for id in measures {
-        if let Some(EffectiveKind::Base(PropertyType::Decimal { unit_source, .. })) =
-            object.property(id.as_str()).map(|property| &property.kind)
+        if let Some(EffectiveKind::Base(PropertyType::Decimal {
+            unit_source,
+            currency_source,
+            ..
+        })) = object.property(id.as_str()).map(|property| &property.kind)
         {
-            for source in unit_source {
-                let path = direct(source);
+            let single = |path: &DimensionPath| {
+                path.links.is_empty()
+                    && object.property(path.property.as_str()).is_some_and(|code| {
+                        matches!(&code.kind, EffectiveKind::Base(PropertyType::Enum { values }) if values.len() == 1)
+                    })
+            };
+            let currency = currency_source.iter().filter(|path| !single(path)).cloned();
+            for path in unit_source.iter().map(direct).chain(currency) {
                 if !paths.contains(&path) {
                     paths.push(path);
                 }

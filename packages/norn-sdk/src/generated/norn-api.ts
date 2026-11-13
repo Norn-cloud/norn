@@ -101,7 +101,9 @@ export interface paths {
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
          *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Only an admin or owner may load.
+         *     traces to `(uri, sha256, row)`. Decided like any upload load
+         *     (`SyncSource("upload")`); the load is reported as a run of the type's
+         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
          * @description # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
          *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
@@ -485,8 +487,9 @@ export interface paths {
          *     page. The host streams the engine's file; the snapshot it is exact at is
          *     the `Norn-Snapshot` header (`c<commit>` or `l<load>`).
          * @description # Errors
-         *     A denied gate (one opaque 403), an unknown type (404), an unknown column
-         *     or format (400), or an unreachable engine.
+         *     A denied gate (one opaque 403), an unknown type (404), an unknown,
+         *     repeated or reserved column or an unknown format (400), or an
+         *     unreachable engine.
          */
         get: operations["export_objects"];
         put?: never;
@@ -1878,6 +1881,8 @@ export interface components {
              * @description File size in bytes.
              */
             bytes: number;
+            /** @description The `upload` connection the load is reported under (SYNC-REPORT-1). */
+            connectionId: string;
             /** @description The load identity; answers over the dataset name it. */
             load: string;
             /**
@@ -6444,7 +6449,7 @@ export interface components {
         };
         /** @description Currency binding; the amount itself remains an ontology decimal property. */
         NornIrMetricCurrency: {
-            /** @description Required when summing a source whose currency is not a singleton enum. */
+            /** @description Converts the amounts to one target currency. Without it, amounts whose currency is not a single code aggregate per currency (METRIC-UNIT-PARTITION-1). */
             conversion?: components["schemas"]["NornIrCurrencyConversion"];
             /** @description ISO 4217 registry property or a closed currency-code enum. */
             property: components["schemas"]["NornIrDimensionPath"];
@@ -9517,7 +9522,7 @@ export interface components {
          */
         NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
         /** @description Supported page components. */
-        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"];
+        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"] | components["schemas"]["NornIrWidgetComponentOneOf10"];
         /** @description A named section or tab with explicit field inclusion and order. */
         NornIrWidgetComponentOneOf0: {
             /** @enum {string} */
@@ -9536,6 +9541,13 @@ export interface components {
              * @enum {string}
              */
             selection: "none" | "single" | "multiple";
+        };
+        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        NornIrWidgetComponentOneOf10: {
+            /** @enum {string} */
+            kind: "composition";
+            pageId: string;
+            widget: components["schemas"]["NornIrArtifactRef"];
         };
         /** @description One object detail view. */
         NornIrWidgetComponentOneOf2: {
@@ -9602,12 +9614,16 @@ export interface components {
             /** @enum {string} */
             kind: "navigation";
         };
-        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        /**
+         * @description A control whose only effect is to raise the page machine's `user`
+         *     events that name this node (UI-MACHINE-1). A `choice` or `text`
+         *     control sends its value as the event payload member `value`.
+         */
         NornIrWidgetComponentOneOf9: {
+            input: components["schemas"]["NornIrWidgetControlInput"];
             /** @enum {string} */
-            kind: "composition";
-            pageId: string;
-            widget: components["schemas"]["NornIrArtifactRef"];
+            kind: "control";
+            label: components["schemas"]["NornIrLocaleText"];
         };
         /**
          * @description Confirmation interaction.
@@ -9636,6 +9652,11 @@ export interface components {
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
         };
+        /**
+         * @description What a person does with a [`WidgetComponent::Control`].
+         * @enum {string}
+         */
+        NornIrWidgetControlInput: "trigger" | "choice" | "text";
         /** @description One exact object binding and its bounded query. */
         NornIrWidgetDataBinding: {
             /** @description Stable binding id. */
@@ -10696,6 +10717,7 @@ export interface components {
         };
         /** @description One metric an ad-hoc question may name. */
         NornMetricSummary: {
+            additivity: components["schemas"]["NornIrMetricAdditivity"];
             /** @description The denominator metric, for a ratio. */
             denominator: string | null;
             /** @description The aggregated expression (a property), for a simple metric. */
@@ -11987,6 +12009,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the scope's stored cell cannot be opened. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13305,7 +13336,10 @@ export interface operations {
                 orgId?: string;
                 /** @description Environment scope. */
                 environmentId?: string;
-                /** @description Comma-separated property ids; each row also carries `id` and `version`. */
+                /**
+                 * @description Comma-separated stored property ids, each once; each row also carries
+                 *     its own `id` and `version`, so no property of those names is exported.
+                 */
                 columns: string;
                 /** @description `parquet` (the default) or `jsonl`. */
                 format?: string;

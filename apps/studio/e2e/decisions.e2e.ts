@@ -147,7 +147,7 @@ test("reopen: leaving with a choice asks first; an outage retries with the same 
   await open(page, "Recount it?")
   await sheet(page).getByLabel("Recount").check()
   await page.keyboard.press("Escape")
-  await expect(page.getByRole("dialog", { name: "Leave without deciding?" })).toBeVisible()
+  await expect(sheet(page).getByRole("alertdialog", { name: "Leave without deciding?" })).toBeVisible()
   await page.getByRole("button", { name: "Keep deciding" }).click()
   await expect(sheet(page).getByLabel("Recount")).toBeChecked()
   cell.failNext()
