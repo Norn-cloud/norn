@@ -33,6 +33,7 @@ test("production, weak secrets, email and half an assistant refuse before anythi
   expect(() => celldStudio({ ...BASE, BETTER_AUTH_URL: "https://demo.norn.cloud/x" })).toThrow("https origin")
   expect(() => celldStudio({ ...BASE, BETTER_AUTH_SECRET: "short" })).toThrow("32 characters")
   expect(() => celldStudio({ ...BASE, EMAIL_FROM: "a@b.c" })).toThrow("Email Service")
+  expect(() => celldStudio({ ...BASE, STUDIO_CLIENT_IP_HEADER: "x-forwarded-for" })).toThrow("STUDIO_CLIENT_IP_HEADER")
   expect(() => celldStudio({ ...BASE, AI_GATEWAY_URL: "https://gw" })).toThrow("together")
   expect(() => celldStudio({ ...BASE, NORN_HOST_SERVICE: "Norn_Cell" })).toThrow("script name")
 })
@@ -82,4 +83,9 @@ test("a write that fails leaves no secret-bearing file behind", async () => {
   // The next deploy can create it.
   writeSecretConfig(path, { vars: {} })
   expect(existsSync(path)).toBe(true)
+})
+
+test("a stage behind Traefik names the header its edge sets", () => {
+  expect(celldConfig(celldStudio({ ...BASE, STUDIO_CLIENT_IP_HEADER: "x-real-ip" })).vars).toMatchObject({ STUDIO_CLIENT_IP_HEADER: "x-real-ip" })
+  expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("STUDIO_CLIENT_IP_HEADER")
 })
