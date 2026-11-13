@@ -9,7 +9,10 @@ import { join } from "node:path"
 
 const [base, root] = process.argv.slice(2)
 const SCOPE = "orgId=org_demo&environmentId=analytics"
-const ADMIN = "Bearer fixture:viewer@demo"
+// The fixture principal that may write definitions: `admin@demo` where the cell declares one,
+// else `viewer@demo` (which holds admin in the first fixture table). The cell decides; the check
+// takes the first principal whose plain GET of the list the cell answers.
+const CANDIDATES = ["Bearer fixture:admin@demo", "Bearer fixture:viewer@demo"]
 const LIST = `/v1/definitions:list?kind=dashboard&${SCOPE}`
 
 function question() {
@@ -48,6 +51,14 @@ function open(authorization) {
 
 const assert = (ok, message) => { if (!ok) throw new Error(message) }
 
+let ADMIN = null
+let plainList = null
+for (const candidate of CANDIDATES) {
+  const response = await fetch(`${base}${LIST}`, { headers: { authorization: candidate } })
+  if (response.status === 200) { ADMIN = candidate; plainList = await response.text(); break }
+}
+assert(ADMIN !== null, "no fixture principal may list definitions on this cell")
+
 // Refusals: no token, no socket; a non-upgrade request to the live route is a 426.
 const anonymous = open(undefined)
 assert(await anonymous.opened.then(() => false, () => true), "an anonymous live socket opened")
@@ -62,6 +73,8 @@ assert(refused.type === "refused" && refused.code === "live.not_subscribable", J
 live.ws.send(JSON.stringify({ type: "subscribe", id: "defs", path: LIST }))
 const first = await live.next((m) => m.id === "defs")
 assert(first.type === "snapshot" && first.status === 200, JSON.stringify(first).slice(0, 300))
+// The socket says exactly what the GET says, for the same principal.
+assert(JSON.stringify(first.body) === JSON.stringify(JSON.parse(plainList)), "the first live answer differs from the GET")
 
 const id = `studio.dashboard.live${Date.now()}`
 const started = performance.now()
