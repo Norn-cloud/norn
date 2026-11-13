@@ -16,11 +16,13 @@ use norn_api::object_routes::ObjectAccess;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_api::transform_routes::{
-    TransformRowsParams, get_transform_plan, get_transform_row_lineage, get_transform_rows,
+    NornRefresh, TransformRowsParams, get_transform_plan, get_transform_row_lineage,
+    get_transform_rows, refresh_transform,
 };
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, ObjectRecord};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
+use norn_kernel::LogicalTime;
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
@@ -28,7 +30,10 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const TRANSFORM: &str = "shop.revenue_by_region";
+/// The same plan, materialized with a manual refresh (VIEW-MAT-1).
+const STORED: &str = "shop.revenue_stored";
 const CLOCK: u64 = 1_792_972_800_000;
+const NOW: LogicalTime = LogicalTime::from_millis(CLOCK);
 
 fn physical() -> CellScope {
     CellScope {
@@ -134,7 +139,7 @@ fn definitions() -> Vec<Value> {
     let [order, customer] = types();
     let pin = |id: &str| json!({"artifactId": id, "kind": "entity", "version": "0.1.0", "required": true});
     let input = |id: &str, alias: &str| json!({"artifactId": id, "kind": "entity", "version": "0.1.0", "alias": alias});
-    vec![
+    let mut documents = vec![
         artifact(
             "shop.Order",
             "entity",
@@ -170,7 +175,15 @@ fn definitions() -> Vec<Value> {
                 "outputSchema": {}, "maintenance": "recompute_on_read"
             }),
         ),
-    ]
+    ];
+    let mut stored = documents.last().expect("transform").clone();
+    stored["artifactId"] = json!(STORED);
+    stored["name"] = json!(STORED);
+    stored["payload"]["viewId"] = json!(STORED);
+    stored["payload"]["maintenance"] = json!("materialized");
+    stored["payload"]["refresh"] = json!({"policy": "manual"});
+    documents.push(stored);
+    documents
 }
 
 fn put(object_type: &str, key: &str, values: &[(&str, V)]) -> FactWriteRow {
@@ -271,6 +284,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         TRANSFORM,
         &params(None, None),
         &Mapping,
+        NOW,
     )
     .expect("rows");
     assert!(page.complete);
@@ -301,6 +315,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         TRANSFORM,
         &params(Some("1"), None),
         &Mapping,
+        NOW,
     )
     .expect("first page");
     let cursor = first.next_after.expect("more rows");
@@ -311,6 +326,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         TRANSFORM,
         &params(Some("2"), Some(&cursor)),
         &Mapping,
+        NOW,
     )
     .expect("second page");
     assert_eq!(second.rows.len(), 2);
@@ -322,6 +338,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         TRANSFORM,
         &params(None, Some("0:nope")),
         &Mapping,
+        NOW,
     )
     .expect_err("a cursor from another snapshot");
     assert_eq!(forged.code, "transform.snapshot_moved");
@@ -333,6 +350,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         TRANSFORM,
         &page.rows[0].row_id,
         &Mapping,
+        NOW,
     )
     .expect("lineage");
     let members: Vec<(&str, &str)> = lineage
@@ -364,6 +382,7 @@ fn every_gate_is_one_opaque_refusal_before_evaluation() {
             TRANSFORM,
             &params(None, None),
             &Mapping,
+            NOW,
         )
         .expect_err("denied")
     };
@@ -386,6 +405,7 @@ fn every_gate_is_one_opaque_refusal_before_evaluation() {
         "shop.absent",
         &params(None, None),
         &Mapping,
+        NOW,
     )
     .expect_err("undeclared");
     assert_eq!(
@@ -404,6 +424,7 @@ fn a_reader_who_may_only_count_a_row_sees_it_withheld() {
         TRANSFORM,
         &params(None, None),
         &Mapping,
+        NOW,
     )
     .expect("rows");
     assert!(!page.complete);
@@ -414,4 +435,101 @@ fn a_reader_who_may_only_count_a_row_sees_it_withheld() {
         page.rows[1].values["revenue"],
         V::from(Decimal::parse("13.5").unwrap())
     );
+}
+
+#[test]
+fn sql_compiles_against_the_installed_definitions_and_never_runs() {
+    use norn_api::transform_routes::{CompileTransformRequest, compile_transform};
+    let (host, _directory) = host();
+    let compile = |sql: &str| {
+        compile_transform(
+            &host,
+            &scope(),
+            Some("full"),
+            &CompileTransformRequest {
+                id: "shop.by_region".into(),
+                title: "By region".into(),
+                version: "0.1.0".into(),
+                sql: sql.into(),
+            },
+        )
+        .expect("compiled")
+    };
+    let admitted = compile(
+        "SELECT c.region AS region, SUM(o.amount) AS revenue \
+         FROM \"shop.Order\" o LEFT JOIN \"shop.Customer\" c ON o.customer = c.id GROUP BY c.region",
+    );
+    assert!(admitted.admitted, "{:?}", admitted.diagnostics);
+    let plan = admitted.plan.expect("plan");
+    assert!(plan.nodes.iter().any(|node| node.op == "join"));
+    assert_eq!(
+        plan.nodes.last().map(|node| node.op.as_str()),
+        Some("aggregate")
+    );
+    let refused = compile("SELECT o.amount AS amount FROM \"shop.Order\" o ORDER BY o.amount");
+    assert!(!refused.admitted);
+    assert_eq!(
+        refused.diagnostics[0].code,
+        "derived.validation.sql_unsupported"
+    );
+    assert!(refused.artifact.is_none());
+}
+
+#[test]
+fn refresh_needs_every_input_row_and_labels_the_rows() {
+    let (host, _directory) = host();
+    let rows = |actor: &str, transform: &str| {
+        get_transform_rows(
+            &host,
+            &scope(),
+            Some(actor),
+            transform,
+            &params(None, None),
+            &Mapping,
+            NOW,
+        )
+    };
+    // A manual transform stores nothing until refreshed: its rows are live.
+    assert_eq!(rows("full", STORED).expect("rows").materialization, None);
+    // A reader who may only count an input row cannot refresh, and is told
+    // so with the same opaque refusal as any denied gate.
+    let partial = refresh_transform(&host, &scope(), Some("pop"), STORED, &Mapping, NOW)
+        .expect_err("a partial reader");
+    let denied = rows("noview", TRANSFORM).expect_err("a denied gate");
+    assert_eq!(
+        serde_json::to_string(&partial).unwrap(),
+        serde_json::to_string(&denied).unwrap()
+    );
+    let state =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refreshed");
+    assert!(!state.stale);
+    assert_eq!(state.refreshed_at_ms, CLOCK);
+    let page = rows("full", STORED).expect("rows");
+    assert_eq!(page.materialization.as_ref(), Some(&state));
+    assert_eq!(page.commits, state.frontier);
+    let live = rows("full", TRANSFORM).expect("rows");
+    assert_eq!(page.rows, live.rows);
+    // The partial reader's rows are evaluated live, unlabelled.
+    let partial_page = rows("pop", STORED).expect("rows");
+    assert_eq!(partial_page.materialization, None);
+    assert!(!partial_page.complete);
+    // The plan names the policy; a transform evaluated on every read does
+    // not refresh.
+    let plan = get_transform_plan(&host, &scope(), Some("full"), STORED, &Mapping).expect("plan");
+    assert_eq!(
+        plan.refresh,
+        Some(NornRefresh {
+            policy: "manual".into(),
+            max_age_ms: None
+        })
+    );
+    assert_eq!(
+        get_transform_plan(&host, &scope(), Some("full"), TRANSFORM, &Mapping)
+            .expect("plan")
+            .refresh,
+        None
+    );
+    let not = refresh_transform(&host, &scope(), Some("full"), TRANSFORM, &Mapping, NOW)
+        .expect_err("not materialized");
+    assert_eq!((not.status, not.code.as_str()), (400, "request.invalid"));
 }

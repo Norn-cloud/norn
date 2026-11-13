@@ -24,6 +24,7 @@ import * as OP from "../builder/ontology-pack.ts"
 import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
+import * as T from "../builder/transform.ts"
 import * as LB from "../builder/labels.ts"
 import * as MD from "../builder/model.ts"
 import * as R from "../builder/rule.ts"
@@ -82,7 +83,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
 }
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef | T.TransformDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -118,12 +119,13 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const TRANSFORM = "@norn/authoring#Norn.transform"
 const LABELS = "@norn/authoring#Norn.labels"
 const MODEL = "@norn/authoring#Norn.model"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
 const DASHBOARD = "@norn/authoring#Norn.dashboard"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -224,6 +226,7 @@ export function compileDefinitionFiles(
         : def._tag === "Connector" ? C.lowerConnector(def, envelopeOptions)
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
+        : def._tag === "Transform" ? T.lowerTransform(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
@@ -368,6 +371,7 @@ class DefinitionCompiler {
           : id === CONNECTOR ? this.connector(init)
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
+          : id === TRANSFORM ? this.transform(init)
           : id === LABELS ? this.labels(init)
           : id === MODEL ? this.model(init)
           : this.decision(init)
@@ -1273,6 +1277,25 @@ class DefinitionCompiler {
       }
     })()
     return { id: this.string(m.get("id")!), output: this.string(m.get("output")!), rule: parsed }
+  }
+
+  /**
+   * `Norn.transform({ id, title, version, inputs: { alias: Type }, nodes, output })`
+   * (ViewIR v1): inputs resolve to their pinned entity artifacts; `nodes` is
+   * literal data whose ZEN strings the Rust checker types against the plan.
+   */
+  private transform(call: ts.CallExpression): T.TransformDef {
+    const members = this.meta(call, ["id", "title", "version", "inputs", "nodes", "output"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const id = this.string(need("id"))
+    if (!T.TRANSFORM_ID.test(id)) throw new CompileError("NORN-FLOW-LITERAL", `transform id ${JSON.stringify(id)} must be a dotted lower-case id (shop.revenue_by_region)`, need("id"))
+    const inputs = [...this.record(need("inputs"))].map(([alias, node]) => {
+      if (!/^[a-z_][a-z0-9_]*$/.test(alias)) throw new CompileError("NORN-FLOW-LITERAL", `input alias ${JSON.stringify(alias)} must be a lower-case identifier`, node.parent)
+      const type = this.typeRef(node, OBJECT_TYPES, "a Norn.type definition")
+      return { alias, artifactId: `${type.name}.entity`, version: type.version }
+    })
+    if (inputs.length === 0) throw new CompileError("NORN-FLOW-LITERAL", "a transform reads at least one input", need("inputs"))
+    return T.transform({ id, title: this.string(need("title")), version: this.string(need("version")), inputs, nodes: this.json(need("nodes")), output: this.string(need("output")) })
   }
 
   private law(call: ts.CallExpression): L.LawDef {

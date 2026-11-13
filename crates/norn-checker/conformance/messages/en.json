@@ -443,6 +443,9 @@
     "derived.validation.output_schema_mismatch": {
       "message": "a relational view declares its own output schema; ViewIR v1 infers it"
     },
+    "derived.validation.sql_unsupported": {
+      "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL"
+    },
     "derived.validation.type_mismatch": {
       "message": "a relational view's expression or column does not have the type its operator needs"
     },

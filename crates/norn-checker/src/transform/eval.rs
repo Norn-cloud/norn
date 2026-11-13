@@ -68,6 +68,8 @@ pub struct TransformOutput {
     pub grain: Vec<String>,
     /// The rows.
     pub rows: Vec<OutputRow>,
+    /// Rows each node produced, by node id: the plan's volume.
+    pub node_rows: BTreeMap<String, u64>,
 }
 
 /// Why an evaluation refused. Nothing partial is ever returned.
@@ -189,16 +191,18 @@ pub fn evaluate(
     input: &TransformInput,
 ) -> Result<TransformOutput, EvalError> {
     let mut results: BTreeMap<&str, Vec<Row>> = BTreeMap::new();
+    let mut node_rows = BTreeMap::new();
     for id in &plan.order {
         let node = plan
             .nodes
             .get(id)
             .ok_or_else(|| EvalError::Input(format!("node {id:?} is not admitted")))?;
         let rows = run(plan, input, &results, &node.step)?;
+        node_rows.insert(id.clone(), u64::try_from(rows.len()).unwrap_or(u64::MAX));
         results.insert(id.as_str(), rows);
     }
     let rows = results.remove(plan.output.as_str()).unwrap_or_default();
-    finish(plan, rows)
+    finish(plan, rows, node_rows)
 }
 
 fn rows_of<'r>(results: &'r BTreeMap<&str, Vec<Row>>, id: &str) -> Result<&'r [Row], EvalError> {
@@ -284,8 +288,40 @@ fn run(
     }
 }
 
+/// Order rows another engine produced exactly as [`evaluate`] orders its own
+/// (VIEW-ENGINE-1): by grain, nulls last; two rows with one identity refuse.
+/// `node_rows` is the rows each node produced, by node id.
+///
+/// # Errors
+/// A value that is not an exact runtime value, or a repeated identity.
+pub fn order_output(
+    plan: &TransformPlan,
+    rows: Vec<(BTreeMap<String, RuntimeValue>, BTreeSet<MemberRef>)>,
+    node_rows: BTreeMap<String, u64>,
+) -> Result<TransformOutput, EvalError> {
+    let rows = rows
+        .into_iter()
+        .map(|(values, members)| {
+            let values = values
+                .iter()
+                .map(|(name, value)| {
+                    Value::try_from(value)
+                        .map(|value| (name.clone(), value))
+                        .map_err(|error| EvalError::Input(error.to_string()))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(Row { values, members })
+        })
+        .collect::<Result<_, EvalError>>()?;
+    finish(plan, rows, node_rows)
+}
+
 /// VIEW-GRAIN-1: order the output by grain (nulls last); no two rows share one.
-fn finish(plan: &TransformPlan, rows: Vec<Row>) -> Result<TransformOutput, EvalError> {
+fn finish(
+    plan: &TransformPlan,
+    rows: Vec<Row>,
+    node_rows: BTreeMap<String, u64>,
+) -> Result<TransformOutput, EvalError> {
     let schema = plan.output_schema();
     let types: Vec<&Type> = schema
         .grain
@@ -341,6 +377,7 @@ fn finish(plan: &TransformPlan, rows: Vec<Row>) -> Result<TransformOutput, EvalE
         columns,
         grain: schema.grain.clone(),
         rows,
+        node_rows,
     })
 }
 

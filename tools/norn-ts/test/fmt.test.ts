@@ -21,22 +21,31 @@ test("fmt_idempotent", () => {
 test("fmt_preserves_semantics", () => {
   const root = mkdtempSync(join(tmpdir(), "norn-fmt-parity-"))
   let compiled = 0
+  let unchanged = 0
   try {
     for (const part of ["fixtures", "corpus", "profile", "src"]) cpSync(join(TOOL_ROOT, part), join(root, part), { recursive: true })
     for (const file of [...sources(join(root, "corpus/accept")), ...sources(join(root, "fixtures"))]) {
+      const source = readFileSync(file, "utf8")
+      const formatted = formatSource(file, source)
+      // A file fmt leaves byte-identical compiles to the same artifacts by
+      // determinism; only a file fmt changes can change meaning, so only those
+      // are compiled before and after (each compile costs seconds).
+      if (formatted === source) {
+        unchanged++
+        continue
+      }
       const compile = () => compilePack(root, { scope: { orgId: "org_demo", environmentId: "dev" }, modules: [file], root })
       const before = compile()
       if (!before.ok) continue // Rejection fixtures have no canonical artifact set.
-      const source = readFileSync(file, "utf8")
       try {
-        writeFileSync(file, formatSource(file, source))
+        writeFileSync(file, formatted)
         const after = compile()
         expect(after.ok, file).toBe(true)
         if (after.ok) expect(after.artifacts.map(value => JSON.stringify(toJson(value))).sort(), file).toEqual(before.artifacts.map(value => JSON.stringify(toJson(value))).sort())
         compiled++
       } finally { writeFileSync(file, source) }
     }
-    expect(compiled).toBeGreaterThan(20)
+    expect(compiled + unchanged).toBeGreaterThan(20)
   } finally { rmSync(root, { recursive: true }) }
 }, 600000)
 
