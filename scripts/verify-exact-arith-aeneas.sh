@@ -122,7 +122,13 @@ generated() {
   done
 }
 
+# The proof files `import Mathlib`, all of it, while `lake build Aeneas` builds only the Mathlib
+# modules Aeneas needs: on a fresh machine the top-level Mathlib.olean never existed (#10). Fetch
+# Mathlib's prebuilt files for the revision the pinned Aeneas manifest locks (a no-op once
+# present), and require the module the proofs import.
+(cd "$lean_root" && lake exe cache get)
 (cd "$lean_root" && lake build Aeneas)
+test -f "$lean_root/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean"
 # The written semantics never import the extraction.
 for module in CoreModels DecimalReference LedgerReference RoundingReference RoundingMath \
   RationalReference ScaledReference; do
