@@ -285,28 +285,31 @@ function DrillMenu({ bucket, question, live, onRecords, onDrill }: {
   readonly onRecords: () => void
   readonly onDrill: (drill: Drill) => void
 }) {
-  const [open, setOpen] = useState(false)
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readQuestionCatalog, enabled: live && open, retry: false, staleTime: 60_000 })
-  const properties = catalog.data?.document.objectTypes.find(({ name }) => name === question.objectSet)?.properties ?? []
-  const drills = bucket.suppressed ? [] : breakOuts(question, bucket, properties)
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Drill into ${bucket.label}`} onClick={(event) => event.stopPropagation()}><Ellipsis /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56 rounded-node border-node-border shadow-float" onClick={(event) => event.stopPropagation()}>
         <DropdownMenuLabel>{bucket.label}</DropdownMenuLabel>
         <DropdownMenuItem onSelect={onRecords}><Rows3 />See the {bucket.members.length} {bucket.members.length === 1 ? "record" : "records"}</DropdownMenuItem>
-        {live && <>
-          <DropdownMenuSeparator />
-          {catalog.isPending && <DropdownMenuItem disabled>Reading what the cell can break this out by…</DropdownMenuItem>}
-          {catalog.isError && <DropdownMenuItem disabled>{catalog.error.message}</DropdownMenuItem>}
-          {catalog.isSuccess && drills.length === 0 && <DropdownMenuItem disabled>The cell names nothing to break this out by</DropdownMenuItem>}
-          {drills.map((drill) => <DropdownMenuItem key={drill.property} onSelect={() => onDrill(drill)}><Split />{drill.label}</DropdownMenuItem>)}
-        </>}
+        {live && <><DropdownMenuSeparator /><DrillItems bucket={bucket} question={question} onDrill={onDrill} /></>}
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+/** The questions derived from one bucket, read from the cell's catalog only once its menu opens. */
+function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; readonly question: Question; readonly onDrill: (drill: Drill) => void }) {
+  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readQuestionCatalog, retry: false, staleTime: 60_000 })
+  const properties = catalog.data?.document.objectTypes.find(({ name }) => name === question.objectSet)?.properties ?? []
+  const drills = bucket.suppressed ? [] : breakOuts(question, bucket, properties)
+  return <>
+    {catalog.isPending && <DropdownMenuItem disabled>Reading what the cell can break this out by…</DropdownMenuItem>}
+    {catalog.isError && <DropdownMenuItem disabled>{catalog.error.message}</DropdownMenuItem>}
+    {catalog.isSuccess && drills.length === 0 && <DropdownMenuItem disabled>The cell names nothing to break this out by</DropdownMenuItem>}
+    {drills.map((drill) => <DropdownMenuItem key={drill.property} onSelect={() => onDrill(drill)}><Split />{drill.label}</DropdownMenuItem>)}
+  </>
 }
 
 /**
