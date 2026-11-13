@@ -13,7 +13,6 @@ use norn_ir::{PropertyId, RuntimeValue, SourceClaim};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, SqlRow, params};
-use crate::reactive::DecodeBudget;
 use crate::read::{StoreReader, to_i64, to_u64};
 use crate::source_provenance::InstanceSourceProvenance;
 use crate::system::FACT_VALUES;
@@ -21,7 +20,7 @@ use crate::{CellError, ObjectRecord};
 
 /// One derived disagreement and the two versions it reads, so the caller can
 /// disclose it only where it may read both.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceDisagreement {
     /// The warning, open or resolved at the read's frontier.
     pub finding: DataQualityFinding,
