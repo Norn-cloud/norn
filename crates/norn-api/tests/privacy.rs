@@ -382,8 +382,17 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
 /// this server writes them for a Party-shaped cell: a viewer's grid page, an
 /// auditor's, and an auditor's reveal with its receipt. `NORN_BLESS=1`
 /// rewrites them; review the diff.
-#[test]
-fn retained_privacy_documents_are_the_servers_own() {
+const PARTY_ROWS: [(&str, &str, &str); 6] = [
+        ("demo/party/0001", "Amira Haddad", "person"),
+        ("demo/party/0002", "Nile Gold Traders", "organization"),
+        ("demo/party/0003", "Amira Haddad", "person"),
+        ("demo/party/0004", "Karim Mansour", "person"),
+        ("demo/party/0005", "Delta Refinery", "organization"),
+        ("demo/party/0006", "Salma Farouk", "person"),
+    ];
+
+/// The Party-shaped cell the retained documents are read from.
+fn party_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
@@ -403,14 +412,7 @@ fn retained_privacy_documents_are_the_servers_own() {
         org_id: "org_demo".into(),
         environment_id: "analytics".into(),
     };
-    let rows = [
-        ("demo/party/0001", "Amira Haddad", "person"),
-        ("demo/party/0002", "Nile Gold Traders", "organization"),
-        ("demo/party/0003", "Amira Haddad", "person"),
-        ("demo/party/0004", "Karim Mansour", "person"),
-        ("demo/party/0005", "Delta Refinery", "organization"),
-        ("demo/party/0006", "Salma Farouk", "person"),
-    ];
+    let rows = PARTY_ROWS;
     {
         let mut store =
             CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
@@ -456,6 +458,30 @@ fn retained_privacy_documents_are_the_servers_own() {
         .unwrap()
         .with_authorizer(Policy)
         .with_pseudonym_secret(Some(&SECRET));
+    (cell, directory)
+}
+
+fn retained(name: &str, document: &dyn erased::Doc) {
+    let root =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
+    let mut text = document.text();
+    text.push('\n');
+    let file = root.join(name);
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&file, &text).unwrap();
+    }
+    let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
+    assert!(
+        kept == text,
+        "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1"
+    );
+}
+
+#[test]
+fn retained_privacy_documents_are_the_servers_own() {
+    let (cell, _dir) = party_cell();
+    let rows = PARTY_ROWS;
     let scope = ScopeQuery {
         org_id: Some("org_demo".into()),
         environment_id: Some("analytics".into()),
@@ -496,22 +522,18 @@ fn retained_privacy_documents_are_the_servers_own() {
     )
     .unwrap();
     assert_eq!(revealed.value, V::from("Amira Haddad"));
-    let root =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
-    let retained = |name: &str, document: &dyn erased::Doc| {
-        let mut text = document.text();
-        text.push('\n');
-        let file = root.join(name);
-        if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-            std::fs::create_dir_all(&root).unwrap();
-            std::fs::write(&file, &text).unwrap();
-        }
-        let kept =
-            std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
-        assert!(
-            kept == text,
-            "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1"
-        );
+    retained("canon.Party.viewer.page.json", &viewer);
+    retained("canon.Party.auditor.page.json", &auditor);
+    retained("canon.Party.reveal.json", &revealed);
+}
+
+/// The guard's documents for the dashboard assistant's walk, as retained.
+#[test]
+fn retained_guard_documents_are_the_servers_own() {
+    let (cell, _dir) = party_cell();
+    let scope = ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("analytics".into()),
     };
     // PRIVACY-GUARD-1: the dashboard assistant's prompt, guarded, and the
     // model's reply restored for its author (who may reveal) and for a viewer.
@@ -559,9 +581,6 @@ fn retained_privacy_documents_are_the_servers_own() {
     retained("guard.reply.auditor.json", &reply_auditor);
     retained("guard.reply.viewer.json", &reply_viewer);
     retained("guard.original.auditor.json", &original);
-    retained("canon.Party.viewer.page.json", &viewer);
-    retained("canon.Party.auditor.page.json", &auditor);
-    retained("canon.Party.reveal.json", &revealed);
 }
 
 mod erased {
