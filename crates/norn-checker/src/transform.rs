@@ -519,7 +519,7 @@ impl<'a> Context<'a> {
             )]);
         };
         let mut out = Vec::new();
-        let materialization = materialization(root, &mut out);
+        let materialization = materialization(&root, &mut out);
         if root
             .temporal_scope
             .as_ref()
