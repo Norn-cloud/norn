@@ -995,7 +995,13 @@ impl Builder<'_, '_> {
                 return None;
             }
         };
-        match norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits) {
+        // Admission runs the compile evaluation runs (VAL-EXACT-1): money
+        // compared with a bare number, or a per-row currency in arithmetic,
+        // refuses here rather than at every read.
+        let checked =
+            norn_expr::check_expression_with(&expression, &env, expected, &self.context.limits)
+                .and_then(|checked| expression.check_admitted(&env, expected).map(|()| checked));
+        match checked {
             Ok(checked) => {
                 let inferred = checked.into_inferred();
                 Some((

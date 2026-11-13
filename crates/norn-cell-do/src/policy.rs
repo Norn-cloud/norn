@@ -12,7 +12,10 @@
 //! [`Operation::ReadDefinitions`], granted to any principal the table grants
 //! (every granted role holds Population). Definition writes (admit, install,
 //! retire) are [`Operation::WriteDefinitions`], granted only to the table's
-//! declared writer roles.
+//! declared writer roles. Creating a cell is [`Operation::ProvisionCell`],
+//! granted only to the table's declared provisioner roles: a scope with no
+//! cell has no definitions, so this one authority is the host's
+//! ([`Provisioners`] decides it before a cell exists, [`ReadPolicy`] after).
 
 use std::sync::{Arc, Mutex};
 
@@ -52,9 +55,23 @@ pub struct GrantTable {
     /// Norn roles that may write retained definitions (admit, install,
     /// retire); a writer must also hold a read grant.
     pub definition_writers: &'static [&'static str],
+    /// Norn roles that may provision the cell of their own organization's
+    /// scope; a provisioner must also hold a read grant.
+    pub provisioners: &'static [&'static str],
 }
 
 impl GrantTable {
+    /// Whether `roles` include a declared provisioner that also holds a
+    /// read grant.
+    #[must_use]
+    pub fn provisions(&self, roles: &[String]) -> bool {
+        !self.capabilities(roles).is_empty()
+            && self
+                .provisioners
+                .iter()
+                .any(|provisioner| roles.iter().any(|held| held == provisioner))
+    }
+
     /// The capabilities `roles` hold together; undeclared roles add nothing.
     #[must_use]
     pub fn capabilities(&self, roles: &[String]) -> Vec<ReadCapability> {
@@ -88,9 +105,11 @@ impl GrantTable {
 /// The demo cells' table over `studio-roles/1` Norn roles: a viewer sees which
 /// members exist, a member also their values, an admin or owner also sources.
 /// Admins and owners write retained definitions (dashboards, agents); `/2`
-/// added that grant to `/1`'s read mapping, unchanged.
+/// added that grant to `/1`'s read mapping, unchanged. `/3` adds the
+/// provisioner grant: an owner alone creates the cell of its organization's
+/// scope. Reads and definition writes are as in `/2`.
 pub const DEMO_GRANTS: GrantTable = GrantTable {
-    version: "norn-cell-do-grants/2",
+    version: "norn-cell-do-grants/3",
     entries: &[
         ("viewer", &[ReadCapability::Population]),
         (
@@ -115,6 +134,7 @@ pub const DEMO_GRANTS: GrantTable = GrantTable {
         ),
     ],
     definition_writers: &["admin", "owner"],
+    provisioners: &["owner"],
 };
 
 /// The principal a resolver verified for the current request.
@@ -217,6 +237,14 @@ impl ReadPolicy {
         })
     }
 
+    /// Read the request's verified principal from `slot` instead of this
+    /// policy's own: a cell whose resolver existed before its policy.
+    #[must_use]
+    pub fn with_caller(mut self, slot: Arc<CallerSlot>) -> Self {
+        self.caller = slot;
+        self
+    }
+
     /// The slot this policy reads the request's verified principal from; the
     /// cell's [`crate::principal::PrincipalResolver`] records into it.
     #[must_use]
@@ -253,6 +281,45 @@ impl ReadPolicy {
     }
 }
 
+/// Whether the request's verified principal is `actor` and holds a declared
+/// provisioner role.
+fn provisioner(table: &GrantTable, caller: &CallerSlot, actor: &str) -> bool {
+    caller
+        .current()
+        .filter(|caller| caller.subject_id == actor)
+        .is_some_and(|caller| table.provisions(&caller.roles))
+}
+
+/// The server policy of a scope with no cell: the declared provisioners may
+/// create it, and nothing else is granted to anyone.
+pub struct Provisioners {
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
+}
+
+impl Provisioners {
+    /// The provisioner grant of `table`, read against the principal the
+    /// resolver records in `caller`.
+    #[must_use]
+    pub const fn new(table: &'static GrantTable, caller: Arc<CallerSlot>) -> Self {
+        Self { table, caller }
+    }
+}
+
+impl Authorizer for Provisioners {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        let granted = matches!(request.operation, Operation::ProvisionCell)
+            && request
+                .actor
+                .is_some_and(|actor| provisioner(self.table, &self.caller, actor));
+        if granted {
+            Ok(())
+        } else {
+            DenyAll.authorize(request)
+        }
+    }
+}
+
 impl Authorizer for ReadPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         let granted = match request.operation {
@@ -265,6 +332,9 @@ impl Authorizer for ReadPolicy {
                     .filter(|caller| caller.subject_id == actor)
                     .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
             }),
+            Operation::ProvisionCell => request
+                .actor
+                .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
             Operation::CallAction(_) => false,
         };
         if granted {
