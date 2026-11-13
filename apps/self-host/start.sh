@@ -8,6 +8,13 @@ set -eu
 : "${CELLD_BUCKET:?set CELLD_BUCKET (compose.yaml does)}"
 export CELLD_BUCKET
 STAGE=self
+# The client address Studio's sign-in limit counts comes from a header only the edge can set:
+# x-real-ip from Caddy, or cf-connecting-ip from Cloudflare's tunnel with nothing else published.
+CLIENT_IP_HEADER=${NORN_CLIENT_IP_HEADER:-x-real-ip}
+case "$CLIENT_IP_HEADER/${NORN_CADDY:-1}/${NORN_CLOUDFLARE_TUNNEL:-0}" in
+  x-real-ip/1/0 | cf-connecting-ip/0/1) ;;
+  *) echo "refused: NORN_CLIENT_IP_HEADER=$CLIENT_IP_HEADER needs its own edge alone (x-real-ip: NORN_CADDY=1 NORN_CLOUDFLARE_TUNNEL=0; cf-connecting-ip: NORN_CADDY=0 NORN_CLOUDFLARE_TUNNEL=1)" >&2; exit 1 ;;
+esac
 DB="norn-studio-auth-${STAGE}"
 SECRETS=/data/secrets
 umask 077
@@ -58,7 +65,7 @@ STUDIO=/opt/norn/studio
 rm -f "$STUDIO/wrangler.json"
 STUDIO_STAGE=$STAGE STUDIO_BUILD=$(cat /opt/norn/commit) BETTER_AUTH_URL=$NORN_PUBLIC_URL \
   BETTER_AUTH_SECRET=$AUTH_SECRET NORN_HOST_SERVICE=norn-cell STUDIO_DEFAULT_ENVIRONMENT_ID=prod \
-  STUDIO_CLIENT_IP_HEADER=x-real-ip \
+  STUDIO_CLIENT_IP_HEADER=$CLIENT_IP_HEADER \
   bun "$STUDIO/celld-config.ts" "$STUDIO"
 celld deploy "$STUDIO"
 rm -f "$STUDIO/wrangler.json"

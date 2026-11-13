@@ -60,6 +60,26 @@ Caddy answers on ports 80 and 443 and obtains and renews the certificate itself.
 | `norn` | [celld](https://github.com/denoland/celld) v0.6.3 (pinned by digest), serving Studio and the tenant cell Worker. Each workspace's data lives in its own cell. |
 | `s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), the bucket celld keeps everything in, reachable only on the compose network. Replace it with your own storage (below). |
 | `proxy` | [Caddy](https://caddyserver.com), the only published port. It sets the client address Studio's sign-in rate limit counts. |
+| `tunnel` | Off by default. [cloudflared](https://github.com/cloudflare/cloudflared), in place of Caddy when Cloudflare fronts the install (below). |
+
+## Behind Cloudflare
+
+If Cloudflare fronts your domain, a Cloudflare Tunnel can replace Caddy: the server then publishes
+no port at all, and Cloudflare reaches Studio through the tunnel. In the Cloudflare dashboard
+(Zero Trust → Networks → Tunnels), create a tunnel, add a public hostname for your domain with
+service `http://norn:8080`, and copy the tunnel's token. Then, in `apps/self-host/.env`:
+
+```sh
+NORN_PUBLIC_URL=https://norn.example.com
+NORN_CADDY=0
+NORN_CLOUDFLARE_TUNNEL=1
+NORN_CLOUDFLARE_TUNNEL_TOKEN=<tunnel token>
+NORN_CLIENT_IP_HEADER=cf-connecting-ip
+```
+
+Studio's sign-in limit counts each client by the header its edge sets: `x-real-ip` from Caddy, or
+`cf-connecting-ip` from Cloudflare. A client could write either header itself if it reached Studio
+another way, so Norn refuses to start with a header whose edge is not the only way in.
 
 ## Use your own storage
 
@@ -132,6 +152,8 @@ database migrations; your data stays.
 | `NORN_OWNER_EMAIL` | `owner@norn.localhost` | The first account, the install's owner. |
 | `NORN_OWNER_PASSWORD` | generated | Its password, at least 12 characters. |
 | `NORN_COMMIT` | from `.git` | The commit the image is built from, when the build has no `.git`. |
+| `NORN_CADDY`, `NORN_CLOUDFLARE_TUNNEL`, `NORN_CLOUDFLARE_TUNNEL_TOKEN`, `NORN_CLIENT_IP_HEADER` | Caddy | Which edge serves Studio (see "Behind Cloudflare"). |
+| `NORN_BUNDLED_STORE`, `NORN_S3_*` | bundled SeaweedFS | Where the bucket lives (see "Use your own storage"). |
 
 ## Limits
 

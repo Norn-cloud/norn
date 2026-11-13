@@ -2,7 +2,8 @@
 #   norn   celld serving the tenant cell Worker and Studio
 #   s3     the bundled fleet bucket (SeaweedFS); NORN_BUNDLED_STORE=0 and the NORN_S3_* settings
 #          replace it with any S3-compatible store (README: "Use your own storage")
-#   proxy  Caddy, the only published port
+#   proxy  Caddy, the only published port (default)
+#   tunnel cloudflared, in place of Caddy when Cloudflare fronts the install (README: "Behind Cloudflare")
 name: norn
 
 services:
@@ -16,6 +17,11 @@ services:
       NORN_PUBLIC_URL: ${NORN_PUBLIC_URL:-http://localhost:8080}
       NORN_OWNER_EMAIL: ${NORN_OWNER_EMAIL:-owner@norn.localhost}
       NORN_OWNER_PASSWORD: ${NORN_OWNER_PASSWORD:-}
+      # Which edge sets the client address Studio's sign-in limit counts: Caddy (x-real-ip) or
+      # Cloudflare's tunnel (cf-connecting-ip). start.sh refuses a mismatch.
+      NORN_CLIENT_IP_HEADER: ${NORN_CLIENT_IP_HEADER:-x-real-ip}
+      NORN_CADDY: ${NORN_CADDY:-1}
+      NORN_CLOUDFLARE_TUNNEL: ${NORN_CLOUDFLARE_TUNNEL:-0}
       # The fleet bucket. The defaults are the bundled store, which has no accounts and is
       # reachable only on the internal network.
       CELLD_BUCKET: s3://${NORN_S3_BUCKET:-norn}
@@ -47,6 +53,9 @@ services:
 
   proxy:
     image: caddy:2.10.2
+    # 0 behind Cloudflare: the tunnel is then the only way in, and nothing is published.
+    deploy:
+      replicas: ${NORN_CADDY:-1}
     environment:
       NORN_SITE: ${NORN_SITE:-:8080}
     ports:
@@ -54,6 +63,18 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+    networks: [edge]
+    depends_on: [norn]
+    restart: unless-stopped
+
+  tunnel:
+    # 2025.11.1, pinned by its index digest.
+    image: cloudflare/cloudflared:2025.11.1@sha256:89ee50efb1e9cb2ae30281a8a404fed95eb8f02f0a972617526f8c5b417acae2
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${NORN_CLOUDFLARE_TUNNEL_TOKEN:-}
+    deploy:
+      replicas: ${NORN_CLOUDFLARE_TUNNEL:-0}
     networks: [edge]
     depends_on: [norn]
     restart: unless-stopped
