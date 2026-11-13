@@ -1,5 +1,5 @@
 import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, Sparkles, UserRound, type LucideIcon } from "lucide-react"
-import { Fragment, useState } from "react"
+import { Fragment, useState, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 import { cellCall } from "@/lib/cell-read"
 
@@ -26,12 +26,20 @@ const ICONS: Readonly<Record<string, LucideIcon>> = {
 }
 export const iconOf = (kind: string | undefined): LucideIcon => (kind === undefined ? Hash : ICONS[kind] ?? Hash)
 
+/** Each data type's muted tint (the canvas tints, D65), as in the enum chips; the icon tells the type apart too. */
+const TINTS: Readonly<Record<string, string>> = {
+  CUSTOMER: "--tint-tool", NAME: "--tint-tool", PERSON: "--tint-tool", EMAIL: "--tint-agent", PHONE: "--tint-ask", CARD: "--tint-outcome", ADDRESS: "--tint-route", ACCOUNT: "--tint-wait",
+}
+export const tintOf = (kind: string | undefined): CSSProperties => ({ "--tint": `var(${(kind !== undefined && TINTS[kind]) || "--tint-state"})` } as CSSProperties)
+/** A tinted chip surface: the type's colour at low strength, its text darkened for contrast. */
+export const TINTED = "bg-[color-mix(in_oklab,var(--tint)_12%,transparent)] text-[color-mix(in_oklab,var(--tint)_78%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_24%,transparent)] ring-inset"
+
 /** A placeholder token as a chip: monospace, with its type's icon. Told apart by icon, never by colour. */
 export function TokenChip({ token, kind }: { readonly token: string; readonly kind?: string }) {
   const Icon = iconOf(kind)
   return (
-    <span data-token={token} className="mx-0.5 inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-px align-baseline font-mono text-[0.78em] font-medium text-foreground shadow-[0_1px_0_var(--border)]">
-      <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden />{token}
+    <span data-token={token} style={tintOf(kind)} className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-px align-baseline font-mono text-[0.78em] font-medium", TINTED)}>
+      <Icon className="size-3 shrink-0" aria-hidden />{token}
     </span>
   )
 }
@@ -59,9 +67,9 @@ export function Segments({ segments }: { readonly segments: readonly RestoredSeg
     if (segment.state === "kept" || segment.state === undefined) return <TokenChip key={index} token={segment.token} kind={segment.kind} />
     const Icon = iconOf(segment.kind)
     return (
-      <span key={index} data-restored={segment.state} title={segment.state === "restored" ? `${segment.token}, restored for you` : `${segment.token}: the pseudonym you may see`}
-        className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md bg-muted px-1 align-baseline", segment.state === "restored" ? "font-semibold text-foreground" : "font-mono text-[0.85em] text-muted-foreground")}>
-        <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden />{segment.text}
+      <span key={index} data-restored={segment.state} style={tintOf(segment.kind)} title={segment.state === "restored" ? `${segment.token}, restored for you` : `${segment.token}: the pseudonym you may see`}
+        className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1 align-baseline", TINTED, segment.state === "restored" ? "font-medium" : "font-mono text-[0.85em]")}>
+        <Icon className="size-3 shrink-0" aria-hidden />{segment.text}
       </span>
     )
   })
@@ -122,9 +130,9 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
           {legend.map((token) => {
             const Icon = iconOf(token.kind)
             return (
-              <li key={token.token} className="grid gap-0.5 text-sm">
-                <span className="inline-flex items-center gap-1.5 font-medium"><Icon className="size-3.5 text-muted-foreground" aria-hidden />{token.label}</span>
-                <span className="ps-5 font-mono text-xs text-muted-foreground">{token.token}</span>
+              <li key={token.token} className="grid gap-0.5 text-sm" style={tintOf(token.kind)}>
+                <span className="inline-flex items-center gap-1.5 font-medium"><Icon className="size-3.5 text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))]" aria-hidden />{token.label}</span>
+                <span className="ps-5 font-mono text-xs text-[color-mix(in_oklab,var(--tint)_78%,var(--foreground))]">{token.token}</span>
               </li>
             )
           })}

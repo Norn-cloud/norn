@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { CopyId } from "./copy-id.tsx"
+import { TINTED, tintOf } from "./safe-prompt.tsx"
 import { maskHint, revealProperty, type Masked, type RevealReceipt } from "../lib/privacy.ts"
 
 /** The projection as text: what the server sent in the value's place. */
@@ -44,8 +45,8 @@ export function MaskedValue({ objectType, id, property, masked, projected, class
 
   const Icon = masked.mode === "pseudonym" ? Fingerprint : masked.mode === "refuse" ? EyeOff : ShieldCheck
   const chip = (
-    <span title={maskHint(masked)} data-masked={masked.mode}
-      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground ring-1 ring-border ring-inset">
+    <span title={maskHint(masked)} data-masked={masked.mode} style={tintOf(masked.mode === "pseudonym" ? "CUSTOMER" : undefined)}
+      className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs", TINTED)}>
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className={cn("truncate font-mono", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{shown(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
