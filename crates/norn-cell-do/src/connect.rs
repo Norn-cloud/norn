@@ -467,6 +467,11 @@ impl Connect {
                     "source.sync_running",
                     "a sync of this connection is running",
                 )),
+                Err(ClaimError::Busy(other)) => Routed::reply(refused(
+                    409,
+                    "source.cell_busy",
+                    &format!("{other} is syncing; one sync runs per cell at a time"),
+                )),
                 Err(ClaimError::Unknown) => {
                     Routed::reply(refused(404, "source.unknown", "no such connection"))
                 }
