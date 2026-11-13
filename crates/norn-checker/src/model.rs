@@ -293,13 +293,10 @@ fn unsupported_output(property_type: &PropertyType) -> Option<String> {
         PropertyType::Decimal {
             currency_source,
             per_unit,
-            unit_source,
             ..
-        } => (currency_source.is_some() || per_unit.is_some() || !unit_source.is_empty()).then(
-            || {
-                "a decimal output carries a static unit or none, never a currencySource, perUnit or unitSource".into()
-            },
-        ),
+        } => (currency_source.is_some() || per_unit.is_some()).then(|| {
+            "a decimal output carries a static unit or none, never a currencySource or perUnit".into()
+        }),
         PropertyType::DecimalBinding { .. }
         | PropertyType::Timestamp { .. }
         | PropertyType::Date {}
@@ -887,7 +884,6 @@ fn column_mismatch(output: &PropertyType, column: &PropertyType) -> Option<Strin
                 unit,
                 currency_source,
                 per_unit,
-                unit_source,
                 ..
             } = column
             else {
@@ -897,8 +893,8 @@ fn column_mismatch(output: &PropertyType, column: &PropertyType) -> Option<Strin
                 Some("has another decimal scale than the output".into())
             } else if unit != wanted_unit {
                 Some("has another unit than the output".into())
-            } else if currency_source.is_some() || per_unit.is_some() || !unit_source.is_empty() {
-                Some("carries a currencySource, perUnit or unitSource the output does not".into())
+            } else if currency_source.is_some() || per_unit.is_some() {
+                Some("carries a currencySource or perUnit the output does not".into())
             } else {
                 None
             }
