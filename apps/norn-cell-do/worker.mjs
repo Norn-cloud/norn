@@ -159,6 +159,12 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    // The operator sees why a cell serves no action; a caller only ever sees the opaque denial.
+    const policyError = reply.policyError ?? null;
+    if (policyError !== this.policyError) {
+      if (policyError !== null) console.error(`action policy not installed: ${policyError}`);
+      this.policyError = policyError;
+    }
     if (request.method !== "GET" && reply.status < 400) this.publish();
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }

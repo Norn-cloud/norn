@@ -9,7 +9,8 @@ The Workers/Durable Objects host: one Norn tenant cell per Durable Object
   handler and authorization decide every answer; an expired token closes the
   socket (4401) and the client reconnects with a fresh one.
 - `worker.mjs`: the router picks the cell's object by its `CellScope` key
-  (every well-formed scope has its own object); the `Cell` object holds one
+  (each scope in a declared environment, and each seeded demo scope, has its
+  own object); the `Cell` object holds one
   Rust `NornCell` over its own DO SQLite storage.
 - The Rust side is `crates/norn-cell-do`: provisioning, principal resolution,
   authorization and every route live there and run natively in its tests.
