@@ -118,6 +118,135 @@ exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a r
 guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
 **RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
 
+### RUN-ROUTES-1 — starting and reading runs
+
+`POST /v1/runs` with `{flow, runId}` starts a run of an installed, active flow,
+named by its definition id; the flow's rule is `<flow>.flow.rule`. Scope and
+authority are decided together and refuse with one opaque 403: the host
+authorizer decides `StartRun(flow)` (in the DO cell, the declared starters of
+`norn-cell-do-run-grants/1` that also hold the Values grant). A run holds no grants
+of its own. `runId` is 1-128 bytes of `[A-Za-z0-9._:-]`. The flow's `decide` rule
+evaluates its start turn (`{kind: "start", runId}` over an absent run,
+FLOW-TURN-1), and the cell commits the run object, its first commands and its
+ledger row in one commit (RUN-LEDGER-1). An exact retry returns the existing run
+with 200; the same id under another flow refuses `run.exists`; an unknown or
+retired flow refuses `run.flow_not_found`; a refused turn returns
+`run.start_refused`, `run.flow_inadmissible` or the kernel's code, without its
+detail. `GET /v1/runs/{id}` reads a run. A run passes the ordinary `values` read gate
+on its object type; an unreadable run is `run.not_found`, exactly like an absent one. A run document carries
+`terminal` (its state is a terminal state of its lifecycle) and its step
+timeline, folded from the run object's committed versions: a lifecycle state
+that waits on a step opens it, the next state closes it, and `completed` or
+`failed_<tag>` ends the run. A step the cell does not move itself waits on a
+`decision`, an `executor` or a `timer`; that is a state, not an error. An install
+that changes the model tells the host's authorizer under the definitions write
+epoch (`Authorizer::model_changed`), so the DO cell's read rules cover a flow's
+Run type before any request sees it. `GET /v1/definitions:list?kind=flow`
+carries, per flow, `canStart`: whether the caller may start it now, decided by
+exactly the gate `POST /v1/runs` applies (an active flow and `StartRun`), so a
+client offers only the starts the cell allows and the cell still decides at the
+call. Named scenarios (`crates/norn-cell-do/tests/runs.rs`): **RUN-START-ONCE**,
+**RUN-START-REFUSE**, **RUN-READ-GATED**, **RUN-CAN-START**.
+
+### DECISIONS-1 — deciding what a run waits on
+
+A flow lowers "ask a person" to a perform of `norn.decision@1`; the cell parks the
+command (PARKED-1) and the run waits in `awaiting_perform_<step>`. The parked
+command is the open decision: its request (question, risk, options, agent pick,
+decider roles and law, expiry) is the step's input, its id is opaque
+(`dec_`, bound to the command's generation), it was asked at its dispatching
+commit's logical time, and it expires at most seven days later. `GET
+/v1/decisions?state=pending` lists the open, unexpired decisions the caller may
+decide, soonest deadline first, ties to the oldest request; `limit=0` returns only
+the count. Whether a caller may decide is the host operation `Decide` over the
+request's declared roles and law (in the DO cell, a verified role named by the
+request); a decision that names a law the host cannot evaluate refuses
+`decision.law_not_satisfied`. `POST /v1/decisions/{id}:decide` with `{choice,
+note?, idempotencyKey}` refuses, in order: `decision.not_found` (also for a caller
+who may not decide it, so existence is not disclosed), `decision.resolved` (with
+who and when, and the choice only for a reader of the run), `decision.expired`,
+`decision.law_not_satisfied`, `decision.unknown_choice` (`/choice`),
+`decision.note_too_long` (`/note`), `request.invalid`, and
+`decision.idempotency_conflict`. An accepted answer is checked against the flow's
+result turn before anything is recorded; the cell then records `{choice, note?}` as
+the parked command's result and commits the run's result turn (FLOW-DRIVER-1) with
+the decision's resolution in one commit (DECISION-LEDGER-1). The same key and body
+replays the original commit. A decider adds a condition and grants nothing: the
+result turn runs as the cell, and the run's later steps act under the run
+starter's authority, never the decider's. The receipt is disclosed under D53 by the
+cell's question runtime; a cell without one decides nothing. A run document names
+the open decision it waits on (`decision: {id, expiresAtMs}`) when the caller may
+decide it. Named scenarios (`crates/norn-cell-do/tests/decisions.rs`):
+**DECIDE-ONCE**, **DECIDE-REFUSE**, **DECIDE-EXPIRED**.
+
+### ACTION-STEP-1 — a run's action steps act as its starter
+
+A flow step that calls a governed action is a perform of the built-in
+`norn.action@1` with `{action, input}`. Like a decision, the cell parks it
+(PARKED-1), and the cell executes it itself through the ordinary governed action
+path. The host records the verified principal who started the run (subject, actor
+kind and the roles of its declared role table) in the run's start event. After a
+start or a decision, the host runs the run's pending action steps, making that
+starter the verified caller for each one call and restoring the request's own
+caller on every path. A run therefore acts under its starter's authority for its
+whole life: a decider's approval is a condition and lends the run none of the
+decider's rights, so a starter without a right cannot obtain it by routing the
+action after someone else's decision. The step's output is the action's target
+`{objectType, objectId, version}`. A denial, or a run with no recorded starter or
+one the host cannot act as, is the typed failure `Denied`; any other refusal is
+`Refused` with its code; a host failure leaves the step pending for the next
+drive, whose per-attempt idempotency key replays the call. The roles are those
+verified at start, so a role revoked later still holds for the run until it ends;
+a waiting run is bounded by its decisions' seven-day expiry. Named scenarios
+(`crates/norn-cell-do/tests/action_steps.rs`): **STEP-AS-STARTER**,
+**STEP-NO-LAUNDERING**.
+
+### APPROVAL-1 — approval-gated action calls
+
+An `approval` retained definition (`{action, decider: {roles, law?}, question,
+risk, expiresInMs?}`) makes every call of one admitted action wait for a person.
+At most one active approval gates an action; its decider roles are roles of the
+cell's declared role table; installing or revising one changes who may complete
+an action, so it is installed only by signing the server's restatement (D59), as
+a flow is. While it is active, the shared action dispatch (every surface: HTTP,
+MCP's loopback, a flow's action step) runs the kernel's action pipeline for the
+call against a host that serves every read and stops at the commit point. A call
+the kernel would refuse is refused exactly as it would be ungated (the same
+opaque denial for permission and visibility) and parks nothing. A call that
+reaches the commit point parks: one `norn.decision@1` command carrying the
+admitted call (action, input, idempotency key) and the requester's verified
+principal, committed alone, answered `202 {outcome: "pending", decision: {id,
+expiresAtMs}}`; a host with no verified principal for the caller denies it. The
+decision's identity binds the action, the input, the key and the requester, so
+the same call parks once and an approval approves exactly the call it was asked
+about. `GET /v1/decisions` lists it with its `call` to holders of a decider role,
+never to its requester, who cannot decide it either (#618). Deciding records the
+resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
+record the dispatch consults: an approved call commits through the same dispatch
+under the requester's own authority, with everything (including the laws the
+cell checks at commit) decided again there; the approver's decide commits it by
+calling it as the requester, and reports `call: {committed, code?}`; the
+requester's retry replays it. A rejected call's retry refuses
+`approval.rejected` (409), an expired one's `approval.expired` (410); neither
+ever commits. A flow step's call parks the same way; the step waits, and the
+decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs`):
+**APPROVAL-NO-RIGHT-NO-PARK**, **APPROVAL-COMMITS-AS-REQUESTER**,
+**APPROVAL-BINDS-INPUT**, **APPROVAL-REJECTED**, **APPROVAL-EXPIRED**,
+**APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**.
+
+### DECISION-LEDGER-1 — resolved decisions
+
+The commit that consumes a parked decision's result carries one
+`norn.decision.resolved` ledger event (decision id, command and generation, run,
+step, resolution `decided | expired | withdrawn`, and for a decision the choice,
+note, deciding principal, idempotency key and request digest). The store records
+it in `_norn_decision` in that commit's transaction. A resolution refuses
+(`decision.resolution_invalid`) unless its commit consumes exactly that command's
+result, and a second resolution of the same decision refuses `decision.resolved`;
+nothing commits either way. The ledger derives only from committed batches, so
+export replay rebuilds it; it is a read index for replays and "who was first", not
+authority, and the typed commit reader skips the event as bookkeeping.
+
 ### PARKED-1 — parked perform commands
 
 A perform of a built-in that a person resolves (`norn.decision@1`,

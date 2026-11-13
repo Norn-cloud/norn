@@ -339,7 +339,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
-        | ArtifactPayload::Labels(_) => {}
+        | ArtifactPayload::Labels(_)
+        | ArtifactPayload::Model(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -419,6 +420,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
         ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
         ArtifactKind::Labels => "labels.validation.invalid_payload",
+        ArtifactKind::Model => "model.validation.invalid_payload",
     }
 }
 
@@ -1842,9 +1844,10 @@ pub(crate) fn validate_closed_schema(
                 type_members,
                 schema,
                 path,
+                depth,
                 diagnostics,
                 artifact_id,
-                code,
+                profile,
             ),
             ClosedSchemaUnions::Nullable => validate_nullable_schema(
                 type_members,
@@ -2071,19 +2074,21 @@ fn validate_nullable_schema(
     );
 }
 
-/// Admit only the two standard JSON Schema type arrays used by generated
-/// `MappingIR` action inputs: the full `RuntimeValue` JSON domain, or a nullable
-/// primitive scalar. A union is a leaf and accepts no sibling keywords.
+/// Admit only the two standard JSON Schema type arrays of ActionIR inputs: the
+/// full `RuntimeValue` JSON domain (generated `MappingIR` inputs), which accepts
+/// no sibling keyword, or a nullable primitive scalar, which is validated as its
+/// non-null scalar leaf and so may carry what that leaf may: a string `enum`, a
+/// decimal `nornType`, and display labels. Null is admitted besides the enum.
 fn validate_action_type_union(
     members: &[JsonValue],
     schema: &BTreeMap<String, JsonValue>,
     path: &str,
+    depth: usize,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-    code: &str,
+    profile: ClosedSchemaProfile,
 ) {
-    reject_unknown_object_fields(schema, &["type"], path, diagnostics, artifact_id, code);
-
+    let code = profile.code;
     let names: Option<Vec<&str>> = members.iter().map(JsonValue::as_string).collect();
     let Some(names) = names else {
         diagnostics.push(invalid_diagnostic(
@@ -2098,14 +2103,29 @@ fn validate_action_type_union(
     let json_domain: BTreeSet<&str> = ["null", "boolean", "number", "string", "array", "object"]
         .into_iter()
         .collect();
-    let nullable_scalar = names.len() == 2
-        && unique.len() == 2
-        && unique.contains("null")
-        && unique
-            .iter()
-            .any(|name| matches!(*name, "string" | "integer" | "number" | "boolean"));
-    let json_value = names.len() == json_domain.len() && unique == json_domain;
-    if !nullable_scalar && !json_value {
+    let scalar = (names.len() == 2 && unique.len() == 2 && unique.contains("null"))
+        .then(|| {
+            unique
+                .iter()
+                .copied()
+                .find(|name| matches!(*name, "string" | "integer" | "number" | "boolean"))
+        })
+        .flatten();
+    if let Some(scalar) = scalar {
+        let mut inner = schema.clone();
+        inner.insert("type".to_owned(), JsonValue::String(scalar.to_owned()));
+        validate_closed_schema(
+            Some(&JsonValue::Object(inner)),
+            path,
+            depth,
+            diagnostics,
+            artifact_id,
+            profile,
+        );
+        return;
+    }
+    reject_unknown_object_fields(schema, &["type"], path, diagnostics, artifact_id, code);
+    if !(names.len() == json_domain.len() && unique == json_domain) {
         diagnostics.push(invalid_diagnostic(
             code,
             "ActionIR type array must be a nullable scalar or the complete JSON value domain",
@@ -5699,6 +5719,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
@@ -6696,6 +6717,51 @@ pub(crate) fn invalid_diagnostic(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An `ActionIR` input's nullable scalar leaf carries what its scalar leaf
+    /// carries (a string `enum`, a decimal `nornType`, display labels) beside
+    /// null; anything else beside a type array stays refused.
+    #[test]
+    fn nullable_action_input_leaves_carry_their_scalar_keywords() {
+        let check = |leaf: serde_json::Value| {
+            let input = json!({
+                "type": "object", "required": ["value"], "additionalProperties": false,
+                "properties": { "value": leaf },
+            });
+            let tree = norn_ir::json_tree_from_value(input).expect("schema tree");
+            let mut diagnostics = Vec::new();
+            validate_closed_action_schema(
+                Some(&tree),
+                "$.inputSchema",
+                0,
+                true,
+                &mut diagnostics,
+                Some("app.x.action"),
+            );
+            diagnostics
+                .into_iter()
+                .map(|d| d.message)
+                .collect::<Vec<_>>()
+        };
+        for admitted in [
+            json!({ "type": ["string", "null"], "enum": ["pass", "fail"], "title": "Status" }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 18 } }),
+            json!({ "type": ["integer", "null"], "description": "count" }),
+            json!({ "type": ["string", "null"] }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"] }),
+        ] {
+            assert_eq!(check(admitted.clone()), Vec::<String>::new(), "{admitted}");
+        }
+        for refused in [
+            json!({ "type": ["string", "null"], "minimum": 0 }),
+            json!({ "type": ["number", "null"], "enum": ["a"] }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 19 } }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"], "title": "x" }),
+            json!({ "type": ["string", "integer"] }),
+        ] {
+            assert!(!check(refused.clone()).is_empty(), "{refused}");
+        }
+    }
 
     fn provenance() -> ArtifactProvenance {
         ArtifactProvenance {

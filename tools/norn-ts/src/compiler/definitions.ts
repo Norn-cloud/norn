@@ -25,6 +25,7 @@ import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as LB from "../builder/labels.ts"
+import * as MD from "../builder/model.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
 import * as Q from "../builder/question.ts"
@@ -80,7 +81,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
 }
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -117,14 +118,16 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const LABELS = "@norn/authoring#Norn.labels"
+const MODEL = "@norn/authoring#Norn.model"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
 const ACTIONS: ReadonlySet<string> = new Set([ACTION])
 const DECISIONS: ReadonlySet<string> = new Set([DECISION])
+const TRUST_LEVELS: ReadonlySet<string> = new Set(["native", "proven", "contract_checked", "opaque"])
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
 const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.boundDecimal", "@norn/authoring#Norn.rate", "@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
@@ -224,6 +227,7 @@ export function compileDefinitionFiles(
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
         : def._tag === "Markings" ? E.lowerMarkings(def, envelopeOptions)
         : def._tag === "Labels" ? LB.lowerCatalog(def, envelopeOptions)
+        : def._tag === "Model" ? MD.lowerModel(def, envelopeOptions)
         : E.lowerEntity(def, envelopeOptions)
       if (built.ok) {
         artifacts.push(built.artifact)
@@ -353,6 +357,7 @@ class DefinitionCompiler {
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
           : id === LABELS ? this.labels(init)
+          : id === MODEL ? this.model(init)
           : this.decision(init)
         this.expansion.assert(def)
         out.push(def)
@@ -768,11 +773,12 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
-      const closed = this.schemas.closed(this.schemas.read(node))
+      // An absent member is a nullable plain scalar (Schema.NullOr), as ActionIR admits.
+      const closed = this.schemas.closed(this.schemas.read(node), "scalar")
       if (closed.type !== "object") throw new CompileError("NORN-FLOW-SCHEMA-PROJECTION", `action ${key} is a Schema.Struct`, node)
       return closed
     }
@@ -828,8 +834,23 @@ class DefinitionCompiler {
       ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
+      ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       at: this.at(call),
     })
+  }
+
+  /** ActionIR `access`: a Norn.access reference, or `{ artifactId, version? }`. */
+  private accessRef(input: ts.Expression): NonNullable<A.ActionDef["access"]> {
+    const e = this.deref(input)
+    if (ts.isCallExpression(e)) {
+      const { call, members } = this.referenced(input, new Set([ACCESS]), "a Norn.access definition (or { artifactId, version? })")
+      return { artifactId: `${this.string(this.member(members, "id", call))}.policy`, version: this.string(this.member(members, "version", call)) }
+    }
+    const m = this.closedRecord(input, ["artifactId", "version"], ["artifactId"])
+    const artifactId = this.string(m.get("artifactId")!)
+    if (!artifactId.endsWith(".policy")) throw new CompileError("NORN-FLOW-LITERAL", "access names a policy artifact: <policy id>.policy", m.get("artifactId")!)
+    const version = m.get("version")
+    return { artifactId, ...(version ? { version: this.string(version) } : {}) }
   }
 
   private zenAt(input: ts.Expression, artifactId: string, pointer: string, root = "input"): string {
@@ -1145,6 +1166,62 @@ class DefinitionCompiler {
       })) } : {}),
       ...(actions ? { actions: Object.fromEntries([...this.record(actions)].map(([actionId, node]) => [actionId, this.localized(this.closedRecord(node, ["label", "localizedDescription", "needsReview"], []))])) } : {}),
     })
+  }
+
+  /**
+   * `Norn.model` (#1171 M1): a typed model with opaque internals. Outputs are
+   * an Effect Schema struct lowered like properties (`Schema.NullOr` is a
+   * nullable column); the Rust checker resolves the input and its features,
+   * and the predictions type (a referenced `Norn.type` or a qualified name)
+   * against the outputs.
+   */
+  private model(call: ts.CallExpression): MD.ModelDef {
+    const members = this.meta(call, ["id", "title", "version", "input", "features", "target", "outputs", "trust", "contracts", "predictions", "method"])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const trust = this.string(need("trust"))
+    if (!TRUST_LEVELS.has(trust)) throw new CompileError("NORN-FLOW-LITERAL", "trust is native, proven, contract_checked or opaque", need("trust"))
+    const method = this.closedRecord(need("method"), ["label", "version"], ["label"])
+    const methodVersion = method.get("version"), target = members.get("target"), contracts = members.get("contracts")
+    const predictions = members.get("predictions")
+    return MD.model({
+      id: this.string(need("id")),
+      title: this.string(need("title")),
+      version: this.string(need("version")),
+      input: this.typeName(need("input"), OBJECT_TYPES),
+      features: this.strings(need("features")),
+      ...(target ? { target: this.string(target) } : {}),
+      outputs: this.schemas.properties(this.schemas.read(need("outputs"))).map((p) => ({ id: p.id, type: p.projection.type, nullable: p.projection.nullable })),
+      trust: trust as MD.TrustLevel,
+      ...(contracts ? { contracts: this.list(contracts).map((node) => this.modelContract(node)) } : {}),
+      ...(predictions ? { predictions: this.typeName(predictions, OBJECT_TYPES) } : {}),
+      method: { label: this.string(method.get("label")!), ...(methodVersion ? { version: this.string(methodVersion) } : {}) },
+      at: this.at(call),
+    })
+  }
+
+  private modelContract(node: ts.Expression): MD.ModelContract {
+    const m = this.closedRecord(node, ["id", "output", "rule"], ["id", "output", "rule"])
+    const rule = this.closedRecord(m.get("rule")!, ["kind", "min", "max", "values"], ["kind"])
+    const kind = this.string(rule.get("kind")!)
+    const only = (allowed: ReadonlyArray<string>): void => {
+      for (const [key, value] of rule) if (key !== "kind" && !allowed.includes(key)) throw new CompileError("NORN-FLOW-LITERAL", `a ${kind} rule has no member ${key}`, value)
+    }
+    const bound = (key: string): { readonly [key: string]: string } => {
+      const value = rule.get(key)
+      if (!value) return {}
+      const text = this.string(value)
+      if (!DECIMAL_TEXT.test(text.startsWith("-") ? text.slice(1) : text)) throw new CompileError("NORN-FLOW-LITERAL", `range ${key} is exact decimal text ("0.5")`, value)
+      return { [key]: text }
+    }
+    const parsed = ((): MD.ContractRule => {
+      switch (kind) {
+        case "range": only(["min", "max"]); return { kind, ...bound("min"), ...bound("max") }
+        case "notNull": case "finite": only([]); return { kind }
+        case "oneOf": only(["values"]); return { kind, values: this.strings(this.member(rule, "values", m.get("rule")!)) }
+        default: throw new CompileError("NORN-FLOW-LITERAL", "a contract rule is range, notNull, finite or oneOf", rule.get("kind")!)
+      }
+    })()
+    return { id: this.string(m.get("id")!), output: this.string(m.get("output")!), rule: parsed }
   }
 
   private law(call: ts.CallExpression): L.LawDef {

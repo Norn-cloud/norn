@@ -20,6 +20,7 @@ pub mod analytics;
 pub mod dev;
 pub mod policy;
 pub mod principal;
+mod runs;
 pub mod seed;
 pub mod server;
 #[cfg(target_arch = "wasm32")]
