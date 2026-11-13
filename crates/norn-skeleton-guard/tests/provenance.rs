@@ -611,6 +611,70 @@ fn trusted_policy_gates_every_file_of_the_guard_crate() {
     );
 }
 
+/// The trusted binary's build closure is the gated crate directory (D95): the root manifest
+/// and lockfile are ordinary files, so a candidate that swaps a guard dependency in the root
+/// `Cargo.lock` needs no `/approve-gates`, and cannot change the binary. The guard's own
+/// lockfile and the Cargo configuration it builds under are gates.
+#[test]
+fn the_trusted_build_closure_is_the_gated_guard_directory() {
+    let mut base = policy_fixture();
+    base.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+    base.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+    base.add("Cargo.lock", b"version = 4\n", "code");
+    base.add(
+        "crates/norn-skeleton-guard/Cargo.lock",
+        b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+        "code",
+    );
+    base.save();
+    index_fixture(&base);
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    let changed = |path: &str, data: &[u8]| {
+        let mut candidate = policy_fixture();
+        candidate.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+        candidate.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+        candidate.add("Cargo.lock", b"version = 4\n", "code");
+        candidate.add(
+            "crates/norn-skeleton-guard/Cargo.lock",
+            b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+            "code",
+        );
+        let record = candidate
+            .records
+            .iter()
+            .position(|record| record["path"] == path)
+            .expect("fixture record");
+        candidate.write(path, data);
+        candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+        candidate.save();
+        index_fixture(&candidate);
+        norn_skeleton_guard::ci::run(candidate.root(), base.root())
+    };
+    // Root manifest and lockfile: a substituted guard dependency is not a gate change.
+    let substituted = b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.0\"\nsource = \"git+https://example.invalid/syn\"\n";
+    assert_eq!(changed("Cargo.lock", substituted), Vec::<String>::new());
+    assert_eq!(
+        changed("Cargo.toml", b"[workspace]\nmembers = [\"crates/x\"]\n"),
+        Vec::<String>::new()
+    );
+    // The guard's own lockfile and the Cargo configuration are gates.
+    for (path, data) in [
+        ("crates/norn-skeleton-guard/Cargo.lock", &substituted[..]),
+        (
+            ".cargo/config.toml",
+            b"[patch.crates-io]\nsyn = { path = \"x\" }\n",
+        ),
+    ] {
+        let errors = changed(path, data);
+        assert!(
+            errors.iter().any(|error| error.contains(&format!(
+                "{path}: gate contract differs from the trusted base"
+            ))),
+            "{path}: {errors:?}"
+        );
+    }
+}
+
 /// What the trusted build reads besides the guard crate is a gate (#1258 round 4): `.cargo/`
 /// (Cargo config applies whatever `--manifest-path` says) and the toolchain files, which
 /// must stay absent while the base has none. A gate file's mode is part of its contract.
