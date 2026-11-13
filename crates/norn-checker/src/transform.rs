@@ -398,6 +398,7 @@ fn finding(code: &str, message: impl Into<String>, pointer: impl Into<String>) -
         span: Some(Span::pointer(pointer)),
         artifact_id: None,
         remediation: Some(DiagnosticRemediation::FixDefinition),
+        witness: None,
     }
 }
 
