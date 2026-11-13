@@ -1779,7 +1779,7 @@
           {
             "code": "metric.validation.mixed_currency",
             "severity": "error",
-            "message": "sum of \"revenue_value\" mixes currencies: group by its currency \"currency\"",
+            "message": "sum of o.amount mixes currencies: group by its currency o.currency",
             "span": {
               "pointer": "/payload/calc/nodes/grouped_2/measures/0"
             }
