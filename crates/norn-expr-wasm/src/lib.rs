@@ -326,4 +326,3 @@ fn evaluation_error_json(profile: &str, error: ExprError, units_used: u64) -> St
     })
     .to_string()
 }
-
