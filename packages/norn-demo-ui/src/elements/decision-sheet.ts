@@ -170,7 +170,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
           <span class="norn-option-label">${escape(option.label)}${option.id === decision.agentPick ? ` <span class="norn-chip" data-tone="agent" title="${escape(w.suggestedTitle)}">${escape(w.suggested)}</span>` : ""}</span>
           ${scopes.size > 1 ? `<span class="norn-meta">${escape(option.scope)}</span>` : ""}
           <span class="norn-meta">${escape("action" in option.effect ? w.starts : w.records)}</span>
-          <span class="norn-problem" role="alert" data-refusal hidden></span>
+          <span class="norn-note" role="status" data-refusal hidden></span>
         </span>
       </label>`,
     )
@@ -386,7 +386,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const status = q('[data-region="status"]')
     if (status) {
       // A refusal of one option reads under that option, not here.
-      const onOption = state === "refused" && snapshot.fields.refusedChoice != null && snapshot.fields.refusedChoice === snapshot.fields.choice
+      const onOption = state === "refused" && snapshot.fields.refusedChoice != null
       const message = onOption ? "" : state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
       const extra = onOption ? [] : found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
       status.textContent = [message, ...extra].filter(Boolean).join(" ")
@@ -412,6 +412,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
         why.hidden = !refused
       }
     }
+    // The radio group shows the machine's choice: a refusal that clears it unchecks the option.
+    const radios = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
+    if (radios && (radios.value ?? "") !== (snapshot.fields.choice ?? "")) radios.value = snapshot.fields.choice ?? ""
     const textarea = q<HTMLTextAreaElement>("textarea")
     if (textarea) {
       if (found.some((p) => p.pointer === "/note")) textarea.setAttribute("aria-invalid", "true")

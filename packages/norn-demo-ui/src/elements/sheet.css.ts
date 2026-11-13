@@ -67,6 +67,7 @@ ui-alert-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .3
 .norn-form { display: grid; gap: 1.25rem; }
 .norn-link { font-size: .875rem; color: inherit; text-underline-offset: 4px; }
 .norn-link:hover, .norn-outcome-card .norn-link { text-decoration: underline; }
+.norn-note { font-size: .8125rem; color: var(--muted-foreground, #555); border-inline-start: 2px solid var(--node-border, var(--border, #d4d4d8)); padding-inline-start: .5rem; }
 .norn-problem { margin: 0; font-size: .8125rem; color: var(--destructive, #b91c1c); }
 .norn-field textarea[aria-invalid="true"] { border-color: var(--destructive, #dc2626); }
 [data-region="countdown"][data-urgent] { color: var(--destructive, #b91c1c); font-weight: 500; }
