@@ -124,13 +124,33 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
-SCCACHE_START = """set -uo pipefail
-# Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
-# cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+# The keys of the shared Boat cache (R2) reach only the sccache start step. The writable key is a
+# secret of the `ci-cache-writer` environment, which only main pushes and merge groups enter.
+SCCACHE_SECRETS = {name: "${{ secrets.%s }}" % name for name in
+                   ("NORN_SCCACHE_BUCKET", "NORN_SCCACHE_ENDPOINT", "NORN_SCCACHE_KEY_ID", "NORN_SCCACHE_SECRET")}
+CACHE_WRITER_ENVIRONMENT = ("${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || "
+                            "github.event_name == 'merge_group') && 'ci-cache-writer' || '' }}")
+SCCACHE_START = r"""set -uo pipefail
+# Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
+# egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
+# when the project bucket's secrets are present, reads a shared R2 cache behind it. Only
+# main pushes and merge groups (reviewed code) write there; every other event gets the
+# read-only key and READ_ONLY mode. The keys reach only this step and the server it starts.
 gha=false
 [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
 export SCCACHE_GHA_ENABLED=$gha
 echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
+  mode=READ_ONLY
+  case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+    push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*) mode=READ_WRITE ;;
+  esac
+  export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
+    SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
+    SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
+    AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}"
+  echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
+fi
 # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
 # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
 # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
@@ -598,6 +618,18 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
+    # The shared cache keys appear only as the sccache start steps' environment of core and test;
+    # no other job enters the cache-writer environment.
+    for name, job in jobs.items():
+        require(name in {"core", "test"} or "environment" not in job,
+                f"{name}: only core and test may name the cache-writer environment")
+        for step in job.get("steps", []):
+            expected = SCCACHE_SECRETS if (name in {"core", "test"}
+                                           and step.get("name") == "Start sccache or compile without it") else {}
+            require({key: value for key, value in (step.get("env") or {}).items() if "NORN_SCCACHE_" in str(value)} == expected,
+                    f"{name}: shared cache keys may reach only the sccache start step")
+    require(source.count("secrets.NORN_SCCACHE_") == 2 * len(SCCACHE_SECRETS),
+            "shared cache keys may appear only in the two sccache start steps")
     require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
     check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
@@ -676,7 +708,7 @@ echo "$plan"''',
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0", "disable_annotations": True}},
         # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
-        {"name": "Start sccache or compile without it", "run": SCCACHE_START},
+        {"name": "Start sccache or compile without it", "env": SCCACHE_SECRETS, "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
@@ -749,6 +781,8 @@ df -h /
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
         require(job.get("env", {}) == job_env[name],
                 f"{name}: environment must bind the gate plan")
+        require(job.get("environment") == (None if name == "plan" else CACHE_WRITER_ENVIRONMENT),
+                f"{name}: only main pushes and merge groups may enter the cache-writer environment")
         job_steps = job.get("steps", [])
         preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
         if name == "test":

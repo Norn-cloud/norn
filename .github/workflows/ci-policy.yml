@@ -31,6 +31,9 @@ jobs:
     # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branches:
+    # main and gh-readonly-queue/main/*); every other run sees only the read-only repository key.
+    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -107,14 +110,33 @@ jobs:
           version: v0.19.0
           disable_annotations: true
       - name: Start sccache or compile without it
+        env:
+          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
+          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
+          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
+          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
         run: |
           set -uo pipefail
-          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
-          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
+          # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only
+          # main pushes and merge groups (reviewed code) write there; every other event gets the
+          # read-only key and READ_ONLY mode. The keys reach only this step and the server it starts.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
+            mode=READ_ONLY
+            case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+              push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*) mode=READ_WRITE ;;
+            esac
+            export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
+              SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
+              SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
+              AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}"
+            echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
+          fi
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
@@ -182,6 +204,9 @@ jobs:
     name: bundle (${{ matrix.bundle.id }})
     needs: [core, plan]
     if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
+    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branches:
+    # main and gh-readonly-queue/main/*); every other run sees only the read-only repository key.
+    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -258,14 +283,33 @@ jobs:
           version: v0.19.0
           disable_annotations: true
       - name: Start sccache or compile without it
+        env:
+          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
+          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
+          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
+          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
         run: |
           set -uo pipefail
-          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
-          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
+          # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only
+          # main pushes and merge groups (reviewed code) write there; every other event gets the
+          # read-only key and READ_ONLY mode. The keys reach only this step and the server it starts.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
+            mode=READ_ONLY
+            case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+              push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*) mode=READ_WRITE ;;
+            esac
+            export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
+              SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
+              SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
+              AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}"
+            echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
+          fi
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit

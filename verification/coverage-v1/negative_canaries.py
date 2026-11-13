@@ -1066,6 +1066,66 @@ def workflow_sccache_canaries(source: str) -> None:
                         raise AssertionError(f"{name}: sccache wrapper drift {server}/{compiler}: "
                                              f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
 
+        # The shared Boat cache (R2): reviewed code writes, everything else reads. Run the start
+        # step with the bucket's keys present for each event and record what the server gets.
+        for runner, event, ref, mode in (
+                ("github-hosted", "push", "refs/heads/main", None),
+                ("github-hosted", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-a", None),
+                ("self-hosted", "push", "refs/heads/main", "READ_WRITE"),
+                ("self-hosted", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-a", "READ_WRITE"),
+                ("self-hosted", "pull_request", "refs/pull/1/merge", "READ_ONLY"),
+                ("self-hosted", "pull_request", "refs/heads/main", "READ_ONLY"),
+                ("self-hosted", "push", "refs/heads/other", "READ_ONLY"),
+                ("self-hosted", "push", "refs/heads/main-x", "READ_ONLY"),
+                ("self-hosted", "merge_group", "refs/heads/gh-readonly-queue/other/pr-1-a", "READ_ONLY"),
+                ("self-hosted", "workflow_dispatch", "refs/heads/main", "READ_ONLY"),
+                ("self-hosted", "pull_request", "refs/heads/gh-readonly-queue/main/pr-1-a", "READ_ONLY")):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                (root / "tmp").mkdir()
+                seen = root / "server.env"
+                sccache = root / "bin" / "sccache"
+                sccache.write_text("#!/bin/sh\nenv | grep -E '^(SCCACHE_|AWS_)' | sort > \"$SEEN\"\nexit 0\n")
+                sccache.chmod(0o755)
+                github_env = root / "env"
+                github_env.write_text("")
+                keys = {"NORN_SCCACHE_BUCKET": "bucket", "NORN_SCCACHE_ENDPOINT": "https://r2.invalid",
+                        "NORN_SCCACHE_KEY_ID": "key-id", "NORN_SCCACHE_SECRET": "key-secret"}
+                result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30,
+                                        env={"PATH": f"{root / 'bin'}:{os.environ.get('PATH', '')}",
+                                             "RUNNER_TEMP": str(root / "tmp"), "RUNNER_ENVIRONMENT": runner,
+                                             "GITHUB_ENV": str(github_env), "GITHUB_EVENT_NAME": event,
+                                             "GITHUB_REF": ref, "SEEN": str(seen), **keys})
+                server = dict(line.split("=", 1) for line in seen.read_text().splitlines() if line)
+                exported = github_env.read_text()
+                got = server.get("SCCACHE_S3_RW_MODE") if server.get("SCCACHE_MULTILEVEL_CHAIN") == "disk,s3" else None
+                if result.returncode != 0 or got != mode:
+                    raise AssertionError(f"{name}: shared cache mode drift {runner}/{event}/{ref}: {got} != {mode}")
+                if mode and (server.get("SCCACHE_BUCKET") != "bucket" or server.get("SCCACHE_REGION") != "auto"
+                             or server.get("AWS_ACCESS_KEY_ID") != "key-id"):
+                    raise AssertionError(f"{name}: shared cache server environment drift: {server}")
+                if mode is None and any(key.startswith("AWS_") for key in server):
+                    raise AssertionError(f"{name}: hosted runner received the shared cache keys")
+                # The keys never outlive the step: nothing but the GHA switch and the wrapper is exported.
+                if "key-" in exported or "SCCACHE_S3" in exported or "AWS_" in exported:
+                    raise AssertionError(f"{name}: shared cache keys exported to later steps: {exported!r}")
+        # Without the bucket's secrets (forks, or before the bucket exists) Boat keeps its local cache.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            (root / "tmp").mkdir()
+            seen = root / "server.env"
+            (root / "bin" / "sccache").write_text("#!/bin/sh\nenv | grep -E '^(SCCACHE_|AWS_)' | sort > \"$SEEN\"\nexit 0\n")
+            (root / "bin" / "sccache").chmod(0o755)
+            (root / "env").write_text("")
+            subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30, check=True,
+                           env={"PATH": f"{root / 'bin'}:{os.environ.get('PATH', '')}", "RUNNER_TEMP": str(root / "tmp"),
+                                "RUNNER_ENVIRONMENT": "self-hosted", "GITHUB_ENV": str(root / "env"),
+                                "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main", "SEEN": str(seen)})
+            if "SCCACHE_MULTILEVEL_CHAIN" in seen.read_text():
+                raise AssertionError(f"{name}: shared cache enabled without the bucket's keys")
+
 
 def bundle_prune_drift(function: str) -> str | None:
     """Run a `prune_target` definition against every CARGO_TARGET_DIR case; describe any drift.
@@ -1468,6 +1528,27 @@ def workflow_context_canaries(source: str) -> None:
                     ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
                         "disable_annotations", False)),
+                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer")),
+                    ("cache writer for pull requests", lambda job: job.__setitem__("environment",
+                        job["environment"].replace("github.event_name == 'merge_group'",
+                                                   "github.event_name == 'merge_group' || github.event_name == 'pull_request'"))),
+                    ("cache keys in the job environment", lambda job: job["env"].update(
+                        {"AWS_ACCESS_KEY_ID": "${{ secrets.NORN_SCCACHE_KEY_ID }}"})),
+                    ("cache keys exported to later steps", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('if sccache --start-server; then', 'echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"\nif sccache --start-server; then'))),
+                    ("pull requests write the shared cache", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("mode=READ_ONLY", "mode=READ_WRITE"))),
+                    ("shared cache on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('if [ "$gha" = false ] && [ -n', 'if [ -n'))),
+                    ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
+                        if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
+                        {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
