@@ -3,10 +3,12 @@
 // a stand-in cell and assert the page shows the state the machine says it is in, so every
 // transition of every page is exercised: the "verb matrix", derived instead of hand-written.
 //
-// Guards are assumed satisfiable here (as the checker's reachability does); a walk whose guard
-// needs a particular payload gets it from the suite's `payloadFor`.
+// The walk explores concrete snapshots with `update` and the checker's engine, so guards are
+// honoured: a guarded transition is reached only through the field values that open it. Payloads
+// come from the suite (`payloadFor`), one or more candidates per transition.
 
-import type { Machine, MachineEvent, MachineTransition, Msg } from "./machine.ts"
+import type { Evaluate, Fields, Machine, MachineEvent, MachineTransition, Msg, Snapshot } from "./machine.ts"
+import { init, update } from "./machine.ts"
 
 export interface WalkStep {
   readonly transition: MachineTransition
@@ -19,10 +21,10 @@ export interface Walk {
   readonly steps: readonly WalkStep[]
 }
 
-export type PayloadFor = (transition: MachineTransition, event: MachineEvent) => Readonly<Record<string, unknown>> | undefined
+/** Candidate payloads for firing `transition` on `event`; none means an empty payload. */
+export type PayloadFor = (transition: MachineTransition, event: MachineEvent, snapshot: Snapshot) => readonly Fields[] | undefined
 
-function messageFor(event: MachineEvent, transition: MachineTransition, entry: number, payloadFor?: PayloadFor): Msg {
-  const payload = payloadFor?.(transition, event)
+function messageFor(event: MachineEvent, entry: number, payload: Fields | undefined): Msg {
   const withPayload = payload ? { payload } : {}
   switch (event.source.kind) {
     case "page_opened":
@@ -44,36 +46,47 @@ function messageFor(event: MachineEvent, transition: MachineTransition, entry: n
   }
 }
 
-/** One walk per transition reachable from the initial state, in declaration order. */
-export function walks(machine: Machine, payloadFor?: PayloadFor): Walk[] {
+/**
+ * One walk per transition the exploration reaches within `maxDepth` steps, in declaration order.
+ * A transition with no walk is reported by its absence; suites assert the count.
+ */
+export function walks(machine: Machine, evaluate: Evaluate, payloadFor?: PayloadFor, maxDepth = 16): Walk[] {
   const eventOf = new Map(machine.events.map((event) => [event.eventId, event]))
-  // Breadth-first over states, recording the transitions that first reach each state.
-  const pathTo = new Map<string, MachineTransition[]>([[machine.initialStateId, []]])
-  const queue = [machine.initialStateId]
-  while (queue.length > 0) {
-    const state = queue.shift() as string
-    const path = pathTo.get(state) ?? []
-    for (const transition of machine.transitions) {
-      if (transition.from !== state || pathTo.has(transition.target)) continue
-      pathTo.set(transition.target, [...path, transition])
-      queue.push(transition.target)
+  const found = new Map<string, WalkStep[]>()
+  const key = (snapshot: Snapshot) => `${snapshot.stateId}\u0000${JSON.stringify(snapshot.fields)}`
+  const seen = new Set<string>()
+  const opened = init(machine).snapshot
+  let frontier: { snapshot: Snapshot; steps: WalkStep[] }[] = [{ snapshot: opened, steps: [] }]
+  seen.add(key(opened))
+  for (let depth = 0; depth < maxDepth && frontier.length > 0 && found.size < machine.transitions.length; depth += 1) {
+    const next: typeof frontier = []
+    for (const { snapshot, steps } of frontier) {
+      for (const transition of machine.transitions) {
+        if (transition.from !== snapshot.stateId) continue
+        const event = eventOf.get(transition.on)
+        if (!event) throw new Error(`transition ${transition.transitionId} names undeclared event ${transition.on}`)
+        for (const payload of payloadFor?.(transition, event, snapshot) ?? [undefined]) {
+          const msg = messageFor(event, snapshot.entry, payload)
+          let step
+          try {
+            step = update(machine, evaluate, snapshot, msg)
+          } catch {
+            continue
+          }
+          if (step.fired?.transitionId !== transition.transitionId) continue
+          const path = [...steps, { transition, msg }]
+          if (!found.has(transition.transitionId)) found.set(transition.transitionId, path)
+          if (!seen.has(key(step.snapshot))) {
+            seen.add(key(step.snapshot))
+            next.push({ snapshot: step.snapshot, steps: path })
+          }
+        }
+      }
     }
+    frontier = next
   }
-  const result: Walk[] = []
-  for (const transition of machine.transitions) {
-    const prefix = pathTo.get(transition.from)
-    if (!prefix) continue
-    const steps: WalkStep[] = []
-    let entry = 0
-    let state = machine.initialStateId
-    for (const step of [...prefix, transition]) {
-      const event = eventOf.get(step.on)
-      if (!event) throw new Error(`transition ${step.transitionId} names undeclared event ${step.on}`)
-      steps.push({ transition: step, msg: messageFor(event, step, entry, payloadFor) })
-      if (step.target !== state || event.source.kind === "outcome") entry += 1
-      state = step.target
-    }
-    result.push({ transitionId: transition.transitionId, steps })
-  }
-  return result
+  return machine.transitions.flatMap((transition) => {
+    const steps = found.get(transition.transitionId)
+    return steps ? [{ transitionId: transition.transitionId, steps }] : []
+  })
 }

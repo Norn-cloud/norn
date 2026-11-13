@@ -735,6 +735,28 @@
           ]
         },
         {
+          "description": "A control whose only effect is to raise the page machine's `user`\nevents that name this node (UI-MACHINE-1). A `choice` or `text`\ncontrol sends its value as the event payload member `value`.",
+          "type": "object",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/WidgetControlInput"
+            },
+            "kind": {
+              "type": "string",
+              "const": "control"
+            },
+            "label": {
+              "$ref": "#/$defs/LocaleText"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "label",
+            "input"
+          ]
+        },
+        {
           "description": "An exact page of a pinned widget artifact composed as a baseline.",
           "type": "object",
           "properties": {
@@ -814,6 +836,26 @@
         "paramId",
         "type",
         "required"
+      ]
+    },
+    "WidgetControlInput": {
+      "description": "What a person does with a [`WidgetComponent::Control`].",
+      "oneOf": [
+        {
+          "description": "Presses it.",
+          "type": "string",
+          "const": "trigger"
+        },
+        {
+          "description": "Picks one of the values the page's data offers.",
+          "type": "string",
+          "const": "choice"
+        },
+        {
+          "description": "Types text.",
+          "type": "string",
+          "const": "text"
+        }
       ]
     },
     "WidgetDataBinding": {
