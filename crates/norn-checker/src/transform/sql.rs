@@ -918,8 +918,11 @@ impl Scope {
             Ex::Text(text) => zen_text(text, at)?,
             Ex::Bool(flag) => flag.to_string(),
             Ex::Null => "null".to_owned(),
-            Ex::Not(inner) => format!("not ({})", self.zen(inner, at)?),
-            Ex::Negate(inner) => format!("-({})", self.zen(inner, at)?),
+            // Every compound form is wrapped whole: ZEN binds `not` looser
+            // than `??`, so an unwrapped `not (a) ?? b` would read as
+            // `not (a ?? b)`.
+            Ex::Not(inner) => format!("(not ({}))", self.zen(inner, at)?),
+            Ex::Negate(inner) => format!("(-({}))", self.zen(inner, at)?),
             Ex::Binary(op, left, right) => {
                 format!("({} {op} {})", self.zen(left, at)?, self.zen(right, at)?)
             }
