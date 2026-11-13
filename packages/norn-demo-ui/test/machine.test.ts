@@ -141,6 +141,49 @@ withEngine("driver", () => {
     driver.dispose()
   })
 
+  test("an answer after the deadline is a timeout that keeps its key, so the retry replays", async () => {
+    const clock = manualClock()
+    const calls: { key: string; resolve(value: Classified): void }[] = []
+    // A transport that answers even after its abort: the server had already committed.
+    const transport: Transport = { call: (_call, _input, options) => new Promise<Classified>((resolve) => calls.push({ key: options.idempotencyKey, resolve })) }
+    let keys = 0
+    const driver = createDriver({ machine, evaluate, transport, clock, newKey: () => `k${++keys}` })
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    clock.advance(15000)
+    calls[0]?.resolve({ outcome: "accepted", payload: {} })
+    await settle()
+    expect(driver.snapshot().stateId).toBe("failed")
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    expect(calls[1]?.key).toBe("k1")
+    driver.dispose()
+  })
+
+  test("a cancel dispatched while observers hear of the step reaches the call that step started", async () => {
+    const { transport, calls } = manualTransport()
+    const driver = createDriver({
+      machine, evaluate, transport, clock: manualClock(),
+      onStep: (step) => { if (step.fired?.transitionId === "approve") driver.dispatch({ kind: "user", eventId: "cancel" }) },
+    })
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    expect(calls[0]?.signal.aborted).toBe(true)
+    await settle()
+    expect(driver.snapshot().stateId).toBe("browsing")
+    driver.dispose()
+  })
+
+  test("an answer the call cannot have is delivered as the outcome it also is", async () => {
+    const { transport, calls } = manualTransport()
+    const seen: Msg[] = []
+    const driver = createDriver({ machine, evaluate, transport, clock: manualClock(), onStep: (_, msg) => msg && seen.push(msg) })
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    // An action never sees its answer move (the checker refuses such a transition): a conflict refusal.
+    calls[0]?.resolve(classifyResponse(409, { code: "object.snapshot_moved" }))
+    await settle()
+    expect(seen.at(-1)).toEqual({ kind: "outcome", entry: 1, outcome: "refused", category: "conflict", payload: { code: "object.snapshot_moved", retryable: false } })
+    expect(driver.snapshot().stateId).toBe("refused")
+    driver.dispose()
+  })
+
   test("a 202 parks the page on the approval the server opened", async () => {
     const seen: Msg[] = []
     const { transport, calls } = manualTransport()

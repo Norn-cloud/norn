@@ -2,10 +2,13 @@
 // only: it starts the declared call, races it against the state's deadline, turns a cancel into an
 // abort, arms timers, and feeds every answer back as an outcome message. It holds no permission
 // logic and never invents an outcome: a call answered before its abort reports what the server said.
+// Commands run before observers hear of the step, so a dispatch from `onStep` finds the call the
+// step started.
 //
-// Idempotency: one key per (call, request body). A definitive answer (accepted, refused, pending
-// approval, answer moved) retires the key; a timeout, network failure or cancel keeps it, so a
-// retry of the same request replays instead of committing twice. An edited request gets a new key.
+// Idempotency: one key per (call, request body). A definitive outcome delivered to the page
+// (accepted, refused, pending approval, answer moved) retires the key; a timeout, network failure
+// or cancel keeps it, so a retry of the same request replays instead of committing twice. An
+// edited request gets a new key.
 
 import { type Classified, classifyResponse } from "./outcome.ts"
 import { type Cmd, type Evaluate, type Fields, type Machine, type MachineCall, type Msg, type Snapshot, type Step, init, update } from "./machine.ts"
@@ -42,6 +45,21 @@ export interface Driver {
 }
 
 const DEFINITIVE = new Set(["accepted", "refused", "pending_approval", "answer_moved"])
+
+/**
+ * The answer as an outcome the checker lets a page handle for `call` (`possible_outcomes` in
+ * `ui_machine.rs`): only a read's answer moves, and only an action or operation waits on approval.
+ * An answer outside that set is delivered as what it also is (a moved snapshot under an action or
+ * operation is a conflict refusal carrying the server's code; a 202 to a read is a 2xx), so every
+ * answer meets a transition the admitted machine was required to declare.
+ */
+function within(call: MachineCall, classified: Classified): Classified {
+  if (classified.outcome === "answer_moved" && call.kind !== "read") {
+    return { ...classified, outcome: "refused", category: "conflict", payload: { code: classified.payload.code, retryable: false } }
+  }
+  if (classified.outcome === "pending_approval" && call.kind === "read") return { ...classified, outcome: "accepted", payload: {} }
+  return classified
+}
 
 interface InFlight {
   readonly controller: AbortController
@@ -86,8 +104,8 @@ export function createDriver(options: DriverOptions): Driver {
   const dispatch = (msg: Msg): Step => {
     const step = update(machine, evaluate, current, msg)
     current = step.snapshot
-    options.onStep?.(step, msg)
     run(step.cmds)
+    options.onStep?.(step, msg)
     return step
   }
 
@@ -111,10 +129,13 @@ export function createDriver(options: DriverOptions): Driver {
     }
     inflight.set(cmd.entry, flight)
     transport.call(cmd.call, cmd.input, { signal: controller.signal, idempotencyKey: key }).then(
-      (classified) => {
+      (answer) => {
         settle(cmd.entry, flight)
-        if (DEFINITIVE.has(classified.outcome)) keys.delete(keyOf)
-        deliver(cmd.entry, flight.ended === "timeout" ? { outcome: "timeout", payload: {} } : classified)
+        // Past the deadline the page is told `timeout`, whatever arrived; the key then stays, so
+        // the retry replays the request the server may already have committed.
+        const delivered: Classified = flight.ended === "timeout" ? { outcome: "timeout", payload: {} } : within(cmd.call, answer)
+        if (DEFINITIVE.has(delivered.outcome)) keys.delete(keyOf)
+        deliver(cmd.entry, delivered)
       },
       () => {
         settle(cmd.entry, flight)
@@ -157,8 +178,8 @@ export function createDriver(options: DriverOptions): Driver {
     }
   }
 
-  options.onStep?.(opened, null)
   run(opened.cmds)
+  options.onStep?.(opened, null)
   return {
     snapshot: () => current,
     dispatch,

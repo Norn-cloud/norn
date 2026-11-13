@@ -10,9 +10,14 @@
 //! - every `pending` state names the one call or read it awaits, has a deadline, is entered only by
 //!   a transition that starts that call, is left only by its outcome, and handles every outcome the
 //!   server can produce for it with an unguarded transition (`pending_outcome_uncovered`);
-//! - every `error` state has a recovery a person or a deadline drives;
-//! - no cycle runs on timers alone (`input_free_cycle`): a loop needs an input;
-//! - for one state and one event, at most one unguarded transition fires (`nondeterministic`);
+//! - every `error` state has a recovery a person or a deadline drives: a transition that leaves it;
+//! - no cycle runs on timers alone (`input_free_cycle`): a loop needs an input. A timer transition
+//!   that stays in its state is no loop: the renderer arms a state's timers when it is entered, so
+//!   that timer fires once;
+//! - for one state and one message, at most one unguarded transition fires (`nondeterministic`);
+//!   a subscription message is every event of its binding, and the page opening is every
+//!   `page_opened` event;
+//! - `page_opened` fires once, so an initial state that is entered again needs another exit;
 //! - guards, assignments and request members type-check against the field record and the event
 //!   payload.
 //!
@@ -163,7 +168,9 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
 }
 
 /// Every outcome value the server can produce for `call`. Approval gates only calls; only reads
-/// can see their answer move. `cancelled` is possible only where the page offers a cancel.
+/// can see their answer move. `cancelled` is possible only where the page offers a cancel. The
+/// renderer's driver holds every answer to this set (`within` in `machine/driver.ts`): an answer
+/// outside it is delivered as the outcome in the set it also is, so none arrives unhandled.
 fn possible_outcomes(call: &WidgetMachineCall, cancellable: bool) -> BTreeSet<OutcomeValue> {
     let mut values: BTreeSet<OutcomeValue> = [
         (WidgetCallOutcome::Accepted, None),
@@ -372,6 +379,16 @@ pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
     .map_err(|error| format!("{error:?}"))
 }
 
+/// What fires a non-outcome transition, as the renderer matches a message to events
+/// (`candidateEvents` in `machine/machine.ts`): a person's or a timer's event by its id, a
+/// subscription's by its binding, and every `page_opened` event when the page opens.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Trigger<'m> {
+    Event(&'m str),
+    Subscription(&'m str),
+    PageOpened,
+}
+
 /// Per-transition facts gathered for the graph laws.
 #[derive(Default)]
 struct Facts<'m> {
@@ -381,8 +398,10 @@ struct Facts<'m> {
     recovers: BTreeSet<&'m str>,
     /// Pending states that offer a cancel.
     cancellable: BTreeSet<&'m str>,
-    /// `(state, event)` to unguarded transition indexes, for non-outcome events.
-    unguarded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
+    /// Edges that fire more than once: every edge but a `page_opened` one.
+    lasting: Graph<'m>,
+    /// `(state, trigger)` to unguarded transition indexes, for non-outcome events.
+    unguarded: BTreeMap<(&'m str, Trigger<'m>), Vec<usize>>,
     /// `state` to outcome value to unguarded transitions: `(index, specific)`, where `specific`
     /// marks an event that names the refusal category. A specific transition takes precedence over
     /// a catch-all one, so only two of the same specificity conflict.
@@ -650,6 +669,11 @@ impl<'m> MachineChecker<'m> {
                     "only user and subscription events declare a payload".to_owned(),
                 );
             }
+            self.unique(
+                event.payload.iter().map(|member| member.field_id.as_str()),
+                &format!("events/{index}/payload"),
+                "fieldId",
+            );
             self.check_fields(&event.payload, &format!("events/{index}/payload"), true);
         }
         // A control does nothing but raise events: one that raises none is dead.
@@ -784,6 +808,23 @@ impl<'m> MachineChecker<'m> {
             .map(|field| (field.field_id.clone(), field_type(field)))
             .collect();
         let mut facts = Facts::default();
+        // A pending state offers a cancel when a transition that stays in it, on an event that is
+        // not an outcome, cancels the call. Known before any outcome is judged possible.
+        for transition in &machine.transitions {
+            let cancels = transition
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, WidgetMachineEffect::Cancel));
+            let pending = self
+                .state(&transition.from)
+                .is_some_and(|state| state.role == WidgetStateRole::Pending);
+            let on_outcome = self
+                .event(&transition.on)
+                .is_some_and(|event| outcome_of(event).is_some());
+            if cancels && pending && transition.from == transition.target && !on_outcome {
+                facts.cancellable.insert(transition.from.as_str());
+            }
+        }
         for (index, transition) in machine.transitions.iter().enumerate() {
             let pointer = format!("{base}/transitions/{index}");
             let from_state = self.state(&transition.from);
@@ -849,12 +890,17 @@ impl<'m> MachineChecker<'m> {
             }
             facts.edges.entry(from).or_default().insert(target);
             let outcome = outcome_of(event);
+            if !matches!(event.source, WidgetMachineEventSource::PageOpened) {
+                facts.lasting.entry(from).or_default().insert(target);
+            }
+            // Staying in a state neither re-arms its timers nor leaves an error.
+            let leaves = from != target;
             match &event.source {
-                WidgetMachineEventSource::Timer { .. } => {
+                WidgetMachineEventSource::Timer { .. } if leaves => {
                     facts.timer_edges.entry(from).or_default().insert(target);
                     facts.recovers.insert(from);
                 }
-                WidgetMachineEventSource::User { .. } => {
+                WidgetMachineEventSource::User { .. } if leaves => {
                     facts.recovers.insert(from);
                 }
                 WidgetMachineEventSource::PageOpened if from != machine.initial_state_id => {
@@ -864,7 +910,9 @@ impl<'m> MachineChecker<'m> {
                         "page_opened fires once, in the initial state".to_owned(),
                     );
                 }
-                WidgetMachineEventSource::PageOpened
+                WidgetMachineEventSource::Timer { .. }
+                | WidgetMachineEventSource::User { .. }
+                | WidgetMachineEventSource::PageOpened
                 | WidgetMachineEventSource::Outcome { .. }
                 | WidgetMachineEventSource::Subscription { .. } => {}
             }
@@ -873,7 +921,7 @@ impl<'m> MachineChecker<'m> {
             if let Some((outcome, category)) = outcome {
                 match (from_state.role, &from_state.awaits) {
                     (WidgetStateRole::Pending, Some(call)) => {
-                        let possible = possible_outcomes(call, true);
+                        let possible = possible_outcomes(call, facts.cancellable.contains(from));
                         let matched = matched_outcomes(outcome, category);
                         if matched.iter().all(|value| !possible.contains(value)) {
                             self.push(
@@ -907,9 +955,20 @@ impl<'m> MachineChecker<'m> {
                     ),
                 }
             } else if transition.guard.is_none() && transition.component_guard.is_none() {
+                let trigger = match &event.source {
+                    WidgetMachineEventSource::Subscription { binding_id } => {
+                        Trigger::Subscription(binding_id.as_str())
+                    }
+                    WidgetMachineEventSource::PageOpened => Trigger::PageOpened,
+                    WidgetMachineEventSource::User { .. }
+                    | WidgetMachineEventSource::Timer { .. }
+                    | WidgetMachineEventSource::Outcome { .. } => {
+                        Trigger::Event(event.event_id.as_str())
+                    }
+                };
                 facts
                     .unguarded
-                    .entry((from, event.event_id.as_str()))
+                    .entry((from, trigger))
                     .or_default()
                     .push(index);
             }
@@ -966,19 +1025,13 @@ impl<'m> MachineChecker<'m> {
                 .effects
                 .iter()
                 .any(|effect| matches!(effect, WidgetMachineEffect::Cancel))
+                && (!facts.cancellable.contains(from) || from != target || outcome.is_some())
             {
-                if from_state.role == WidgetStateRole::Pending
-                    && from == target
-                    && outcome.is_none()
-                {
-                    facts.cancellable.insert(from);
-                } else {
-                    self.push(
-                        CANCEL_OUTSIDE_PENDING,
-                        format!("{pointer}/effects"),
-                        "cancel requests the end of the call in flight: it fires in a pending state, stays there, and the outcome follows".to_owned(),
-                    );
-                }
+                self.push(
+                    CANCEL_OUTSIDE_PENDING,
+                    format!("{pointer}/effects"),
+                    "cancel requests the end of the call in flight: it fires in a pending state, stays there, and the outcome follows".to_owned(),
+                );
             }
         }
         facts
@@ -987,13 +1040,18 @@ impl<'m> MachineChecker<'m> {
     /// One unguarded transition per state and event or outcome value.
     fn check_determinism(&mut self, facts: &Facts<'m>) {
         let base = self.base;
-        for ((from, event), indexes) in &facts.unguarded {
+        for ((from, trigger), indexes) in &facts.unguarded {
             if let Some(second) = indexes.get(1) {
+                let on = match trigger {
+                    Trigger::Event(event) => format!("`{event}`"),
+                    Trigger::Subscription(binding) => format!("subscription `{binding}`"),
+                    Trigger::PageOpened => "page_opened".to_owned(),
+                };
                 self.push(
                     NONDETERMINISTIC,
                     format!("{base}/transitions/{second}"),
                     format!(
-                        "state `{from}` has {} unguarded transitions on `{event}`",
+                        "state `{from}` has {} unguarded transitions on {on}",
                         indexes.len()
                     ),
                 );
@@ -1079,21 +1137,36 @@ impl<'m> MachineChecker<'m> {
                 .map(|state| state.state_id.as_str()),
             &reverse(&facts.edges),
         );
+        let initial = machine.initial_state_id.as_str();
+        let entered_again = facts
+            .edges
+            .iter()
+            .any(|(from, targets)| *from != initial && targets.contains(initial));
         for (index, state) in machine.states.iter().enumerate() {
             if state.role == WidgetStateRole::Terminal {
                 continue;
             }
             let id = state.state_id.as_str();
             let pointer = format!("{base}/states/{index}");
-            let exits = facts
-                .edges
-                .get(id)
-                .is_some_and(|targets| targets.iter().any(|target| *target != id));
-            if !exits {
+            let leaves = |graph: &Graph<'m>| {
+                graph
+                    .get(id)
+                    .is_some_and(|targets| targets.iter().any(|target| *target != id))
+            };
+            if !leaves(&facts.edges) {
                 self.push(
                     ABSORBING_STATE,
                     pointer,
                     format!("non-terminal state `{id}` has no exit"),
+                );
+            } else if id == initial && entered_again && !leaves(&facts.lasting) {
+                // `page_opened` is spent by the time the page comes back here.
+                self.push(
+                    ABSORBING_STATE,
+                    pointer,
+                    format!(
+                        "initial state `{id}` is entered again, and only page_opened, which fires once, leaves it"
+                    ),
                 );
             } else if !settled.contains(id) {
                 self.push(

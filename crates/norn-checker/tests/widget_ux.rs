@@ -4283,22 +4283,39 @@ fn a_call_in_flight_is_started_on_entry_and_left_only_by_its_outcome() {
     );
 }
 
+fn push(machine: &mut Value, list: &str, items: Value) {
+    let items = items.as_array().expect("items").clone();
+    machine[list].as_array_mut().expect(list).extend(items);
+}
+
 #[test]
 fn a_loop_needs_an_input_and_an_event_one_transition() {
+    let tick = json!([{ "eventId": "tick", "source": { "kind": "timer", "afterMs": 1000 } }]);
     assert_ui_code(
         edit(approve_machine(), |m| {
-            m["events"]
-                .as_array_mut()
-                .expect("events")
-                .push(json!({ "eventId": "tick", "source": { "kind": "timer", "afterMs": 1000 } }));
-            m["transitions"]
-                .as_array_mut()
-                .expect("transitions")
-                .push(json!({ "transitionId": "poll", "from": "browsing", "on": "tick", "target": "browsing" }));
+            push(m, "events", tick.clone());
+            push(
+                m,
+                "transitions",
+                json!([
+                    { "transitionId": "there", "from": "browsing", "on": "tick", "target": "awaiting-approval" },
+                    { "transitionId": "back", "from": "awaiting-approval", "on": "tick", "target": "browsing" }
+                ]),
+            );
         }),
         "widget.machine.input_free_cycle",
         "browsing",
     );
+    // A timer that stays in its state fires once per entry (the renderer arms on entry): no loop.
+    let found = ui_codes(edit(approve_machine(), |m| {
+        push(m, "events", tick);
+        push(
+            m,
+            "transitions",
+            json!([{ "transitionId": "once", "from": "browsing", "on": "tick", "target": "browsing" }]),
+        );
+    }));
+    assert!(found.is_empty(), "expected no UI findings; got {found:#?}");
     assert_ui_code(
         edit(approve_machine(), |m| {
             m["transitions"]
@@ -4308,6 +4325,81 @@ fn a_loop_needs_an_input_and_an_event_one_transition() {
         }),
         "widget.machine.nondeterministic",
         "dismiss",
+    );
+}
+
+/// The laws count only what the renderer does (`machine.ts`, `driver.ts`): a transition that stays
+/// is no recovery, `page_opened` is spent after the page opens, `cancelled` needs a cancel, one
+/// subscription message is every event of its binding, and a payload names each member once.
+#[test]
+fn the_laws_count_only_what_the_renderer_does() {
+    let orders_changed = json!({ "eventId": "orders-changed", "source": { "kind": "subscription", "bindingId": "orders" } });
+    // A person can only stay in `failed`; data alone leaves it.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            push(m, "events", json!([orders_changed.clone()]));
+            drop_transition(m, "retry-failed");
+            m["transitions"][11]["on"] = json!("orders-changed");
+            push(
+                m,
+                "transitions",
+                json!([{ "transitionId": "look-again", "from": "failed", "on": "dismiss", "target": "failed" }]),
+            );
+        }),
+        "widget.machine.error_without_recovery",
+        "failed",
+    );
+    // The page opens into the call; every way back to `browsing` then finds page_opened spent.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            push(
+                m,
+                "events",
+                json!([{ "eventId": "opened", "source": { "kind": "page_opened" } }]),
+            );
+            m["transitions"][0]["on"] = json!("opened");
+        }),
+        "widget.machine.absorbing_state",
+        "entered again",
+    );
+    // Without a cancel the driver never reports `cancelled`.
+    assert_ui_code(
+        edit(approve_machine(), |m| drop_transition(m, "cancel")),
+        "widget.machine.outcome_impossible",
+        "cancelled",
+    );
+    // Two events of one binding are one message; the first declared would always win.
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            push(
+                m,
+                "events",
+                json!([
+                    orders_changed,
+                    { "eventId": "orders-moved", "source": { "kind": "subscription", "bindingId": "orders" } }
+                ]),
+            );
+            push(
+                m,
+                "transitions",
+                json!([
+                    { "transitionId": "seen-changed", "from": "awaiting-approval", "on": "orders-changed", "target": "browsing" },
+                    { "transitionId": "seen-moved", "from": "awaiting-approval", "on": "orders-moved", "target": "browsing" }
+                ]),
+            );
+        }),
+        "widget.machine.nondeterministic",
+        "subscription `orders`",
+    );
+    assert_ui_code(
+        edit(approve_machine(), |m| {
+            m["events"][2]["payload"] = json!([
+                { "fieldId": "reason", "type": "text", "required": true },
+                { "fieldId": "reason", "type": "integer", "required": true }
+            ]);
+        }),
+        "widget.machine.duplicate_id",
+        "reason",
     );
 }
 
