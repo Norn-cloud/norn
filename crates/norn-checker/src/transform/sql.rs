@@ -1641,7 +1641,8 @@ mod properties {
             Ex::Column(alias, column) => {
                 RowExpr::Column(scope.column(alias.as_deref(), column, 0).ok()?)
             }
-            Ex::Number(text) => RowExpr::Number(text.parse().ok()?),
+            // SQL's `007.50` is ZEN's `7.50`: the same value, canonical text.
+            Ex::Number(text) => RowExpr::Number(super::zen_number(text).parse().ok()?),
             Ex::Text(text) => RowExpr::Text(text.clone()),
             Ex::Bool(flag) => RowExpr::Bool(*flag),
             Ex::Null => RowExpr::Null,
