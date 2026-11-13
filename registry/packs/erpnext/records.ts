@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "erpnext.three.source",
@@ -84,13 +84,13 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "Delivery Note Item", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Payment Entry", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "Warehouse Lot Balance", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
-    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "delivery_posting_state", dataset: "Delivery Note Item", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "GL Entry", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "posting_account_role", dataset: "GL Entry", field: "account_role", origin: "declared", values: [{value: "cogs"}, {value: "inventory"}]},
     {id: "posting_book", dataset: "GL Entry", field: "book", origin: "declared", values: [{value: "demo/stock-usd"}]},
-    {id: "settlement_currency", dataset: "Payment Entry", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "Payment Entry", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},

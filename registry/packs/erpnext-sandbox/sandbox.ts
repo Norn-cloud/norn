@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 // A live ERPNext sandbox (#921): the same rows as the synthetic export, read
 // through ERPNext's REST API by the generic pull engine (`norn.pull/1`). Native
@@ -243,7 +243,7 @@ export const SandboxSource = Norn.sourceSchema({
       origin: "declared",
       values: [{value: "moving_average"}]
     },
-    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},

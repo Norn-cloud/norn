@@ -615,3 +615,61 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         .collect();
     assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }
+
+/// Every canon currency enum and every pack's currency code set is the one
+/// ISO 4217 list (canon's `ISO_4217`), so a copy cannot drift and a real
+/// source's EGP maps like its USD.
+#[test]
+fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
+    let read = |path: &str| -> Value {
+        serde_json::from_str(&fs::read_to_string(root().join(path)).expect("artifact"))
+            .expect("json")
+    };
+    let codes = |values: &Value| -> Vec<String> {
+        values
+            .as_array()
+            .expect("values")
+            .iter()
+            .map(|value| value["value"].as_str().expect("code").to_owned())
+            .collect()
+    };
+    let mut lists = Vec::new();
+    for (artifact, root_key, property) in [
+        ("canon.Settlement.interface", "interface", "currency"),
+        ("canon.SettlementObservation.entity", "objectType", "currency"),
+        ("canon.StockValuation.interface", "interface", "cost_currency"),
+        ("canon.Holding.entity", "objectType", "cost_currency"),
+    ] {
+        let document = read(&format!("registry/packs/canon/artifacts/{artifact}.json"));
+        let found = document["payload"][root_key]["properties"]
+            .as_array()
+            .expect("properties")
+            .iter()
+            .find(|candidate| candidate["id"] == property)
+            .expect("the currency property");
+        assert_eq!(found["type"]["kind"], "enum", "{artifact}");
+        lists.push((artifact.to_owned(), codes(&found["type"]["values"])));
+    }
+    for source in [
+        "erpnext/artifacts/erpnext.three",
+        "odoo/artifacts/odoo.three",
+        "shopify/artifacts/shopify.three",
+        "erpnext-sandbox/artifacts/erpnext.sandbox",
+        "odoo-sandbox/artifacts/odoo.sandbox",
+    ] {
+        let document = read(&format!("registry/packs/{source}.source.json"));
+        for set in document["payload"]["codeSets"].as_array().expect("code sets") {
+            if set["field"].as_str().is_some_and(|field| field.ends_with("currency")) {
+                lists.push((format!("{source}#{}", set["id"]), codes(&set["values"])));
+            }
+        }
+    }
+    // Four canon enums and nine pack code sets (three per ERP, one Shopify, one per sandbox).
+    assert_eq!(lists.len(), 13, "{lists:?}");
+    let first = lists[0].1.clone();
+    assert_eq!(first.len(), 176);
+    assert!(first.windows(2).all(|pair| pair[0] < pair[1]), "sorted, unique");
+    for (at, list) in &lists {
+        assert_eq!(list, &first, "{at}");
+    }
+}

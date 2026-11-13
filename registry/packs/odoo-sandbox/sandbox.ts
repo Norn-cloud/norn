@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 // A live Odoo sandbox (#921): the same rows as the synthetic export, read
 // through Odoo's JSON-2 API (`web_search_read` with a field specification, so
@@ -284,7 +284,7 @@ export const SandboxSource = Norn.sourceSchema({
       origin: "declared",
       values: [{value: "moving_average"}]
     },
-    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "product.product", fields: ["id"], origin: "declared"},

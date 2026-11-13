@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "shopify.three.source",
@@ -71,7 +71,7 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "FulfillmentLine", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Transaction", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "delivery_posting_state", dataset: "FulfillmentLine", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "settlement_currency", dataset: "Transaction", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "Transaction", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "ProductVariant", fields: ["id"], origin: "declared"},
