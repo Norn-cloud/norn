@@ -14,7 +14,7 @@ function stage(policy?: string): { env: Env; db: Database } {
   for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0009_signup_policy.sql"]) db.exec(migration(name))
   if (policy !== undefined) db.query(`insert into "studio_setting" ("key", "value") values ('signup', ?)`).run(policy)
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { db, env: { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN } }
+  return { db, env: { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip" } }
 }
 
 let address = 0
