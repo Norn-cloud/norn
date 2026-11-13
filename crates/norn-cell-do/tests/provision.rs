@@ -45,6 +45,8 @@ use norn_cell_do::{base, seed};
 use serde_json::{Value, json};
 
 const ISSUER: &str = "https://studio-preview.example";
+/// A stage lineage key, as the deployed host passes one.
+const LINEAGE_KEY: [u8; 32] = [7; 32];
 const NOW: u64 = 1_800_000_000;
 /// The recorded three-systems set: its artifacts outside the reserved
 /// namespaces are a tenant's submission.
@@ -141,8 +143,15 @@ fn with_engine<E: SqlEngine + 'static>(
     scope: &CellScope,
     open: impl Fn() -> Result<E, String> + 'static,
 ) -> Result<Cell<E>, String> {
-    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open))
-        .map_err(|error| error.to_string())?;
+    // As wasm.rs builds a deployed tenant: with the stage's lineage key, so
+    // every route sees the receipt-handle runtime a deployed cell has.
+    let tenant = Tenant::open(
+        scope.clone(),
+        &DEMO_GRANTS,
+        Box::new(open),
+        Some(&LINEAGE_KEY),
+    )
+    .map_err(|error| error.to_string())?;
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
         .map_err(|refusal| refusal.code)?;
     Ok(Cell { tenant, tokens })
@@ -677,7 +686,7 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
         let admitted = provision::admit_submission(&trusted, &scope, &body).unwrap();
         let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
         let refusal =
-            provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
+            provision::provision_cell(engine, &scope, &trusted, &admitted, (NOW + 5) * 1000)
                 .map(|(_, receipt)| receipt)
                 .expect_err("a cell is provisioned once");
         assert_eq!(refusal.code, provision::codes::PROVISION_CONFLICT);
@@ -707,6 +716,11 @@ fn outsider_requests(scope: &CellScope) -> Vec<(&'static str, String, String, &'
             ("GET", "/v1/definitions/studio.dashboard.d1", ""),
             ("POST", "/v1/definitions:install", "{}"),
             ("POST", "/v1/definitions:admit", "not json"),
+            (
+                "POST",
+                "/v1/definitions:install",
+                r#"{"kind":"dashboard","id":"studio.dashboard.d1","payload":{"title":"","tiles":[]}}"#,
+            ),
             ("POST", "/v1/definitions/studio.dashboard.d1:retire", "{}"),
             ("GET", "/v1/objects/canon.Item", ""),
             ("GET", "/v1/objects/tenant.Unknown", ""),
@@ -1038,6 +1052,9 @@ struct Swept {
     vacant: u32,
     whole: u32,
     cases: u32,
+    /// Plans whose statement list ended while faults still fired: the
+    /// transaction may have more statements than the list reached.
+    unexhausted: Vec<String>,
 }
 
 /// HOST-PROVISION-ATOMIC through the request layer, on the Durable Object
@@ -1086,6 +1103,7 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
         vacant: 0,
         whole: 0,
         cases: 0,
+        unexhausted: Vec::new(),
     };
     for (kind, transaction, statements) in plans {
         let mut past = false;
@@ -1133,6 +1151,11 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             remove_store(&path);
             past = !hit;
         }
+        if !past && statements.len() > 1 {
+            swept
+                .unexhausted
+                .push(format!("{kind:?} at transaction {transaction}"));
+        }
     }
     swept
 }
@@ -1175,7 +1198,8 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         Ok("crash") => vec![EngineFaultKind::Crash],
         Ok("io") => vec![EngineFaultKind::Io],
         Ok("commit") => vec![EngineFaultKind::Commit],
-        _ => vec![
+        Ok(other) => panic!("NORN_SWEEP_KIND is crash, io or commit, not {other:?}"),
+        Err(_) => vec![
             EngineFaultKind::Crash,
             EngineFaultKind::Io,
             EngineFaultKind::Commit,
@@ -1192,6 +1216,15 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         started.elapsed().as_secs_f64()
     );
     assert!(swept.vacant >= 16 || from > 0 || kinds == [EngineFaultKind::Commit]);
+    // A shard that runs to the bound must reach the end of every transaction
+    // (a fault that no longer fires); a shard ending earlier stops by design.
+    if to == 400_000 {
+        assert!(
+            swept.unexhausted.is_empty(),
+            "statements left past the bound in: {:?}",
+            swept.unexhausted
+        );
+    }
 }
 
 // ------------------------------------------------------------- seeded cells
@@ -1224,4 +1257,21 @@ fn a_seeded_cell_is_not_provisioned_over() {
         403
     );
     assert_eq!(definitions(&mut cell, Some(&owner)), before);
+}
+
+/// A lineage key shorter than 32 bytes refuses to open the cell rather than
+/// serve weakly keyed receipt handles.
+#[test]
+fn a_short_lineage_key_refuses_to_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let refused = Tenant::open(
+        scope("org_a", "prod"),
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&path, StoreOptions::default()).map_err(|error| error.to_string())
+        }),
+        Some(&[1; 16]),
+    );
+    assert!(refused.is_err());
 }
