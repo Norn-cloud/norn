@@ -15,7 +15,7 @@ pub mod eval;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EnvOptions, Expression, InferredType, Type, ZenTypeEnv};
+use norn_expr::{EnvOptions, Expression, InferredType, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
     JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyTypeName, ResourceLimitProfile,
@@ -53,6 +53,10 @@ pub mod codes {
 }
 
 use crate::metric::codes as metric_codes;
+
+/// The column type vocabulary, and the bounded row-expression tree another
+/// engine lowers (VIEW-ENGINE-1); re-exported so engines need no other edge.
+pub use norn_expr::{RowArithmetic, RowComparison, RowExpr, Type};
 
 /// The ZEN root every transform expression reads its row from: `input.<column>`.
 pub const ROW_ROOT: &str = "input";
@@ -191,6 +195,24 @@ pub struct TypedExpression {
     pub env: ZenTypeEnv,
     /// The expected result type at admission.
     pub expected: Type,
+}
+
+impl TypedExpression {
+    /// The expression as the bounded row tree another engine can lower, or
+    /// `None` when it uses anything outside that subset (VIEW-ENGINE-1).
+    #[must_use]
+    pub fn row_tree(&self) -> Option<RowExpr> {
+        norn_expr::row_expression(self.expression.source(), ROW_ROOT)
+            .ok()
+            .flatten()
+    }
+}
+
+/// An RFC 3339 timestamp's instant as `(seconds, nanoseconds)` since the
+/// epoch, the order the exact engine sorts timestamps by; `None` if invalid.
+#[must_use]
+pub fn instant(text: &str) -> Option<(i64, u32)> {
+    norn_expr::temporal::timestamp_ordering_key(text).ok()
 }
 
 /// How one projected column is computed.

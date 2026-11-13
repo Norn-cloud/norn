@@ -109,7 +109,7 @@ fn limits() -> ReactiveLimits {
 }
 
 /// The stable refusal of an interpreter failure.
-const fn eval_refusal(error: &EvalError) -> &'static str {
+pub(crate) const fn eval_refusal(error: &EvalError) -> &'static str {
     match error {
         EvalError::BoundExceeded => "core.compute.bound_exceeded",
         EvalError::Input(_) => "core.compute.stale_input",
@@ -132,15 +132,29 @@ impl<E: SqlEngine> CellStore<E> {
         plan: &TransformPlan,
         world: &str,
         scope: &str,
+        access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<TransformResult, CellError> {
+        self.evaluate_transform_with(plan, (world, scope), access, Engine::Cell, |plan, input| {
+            eval::evaluate(plan, input).map_err(|error| refused(eval_refusal(&error)))
+        })
+    }
+
+    /// One snapshot, one engine, one envelope: every engine evaluates the
+    /// same authorized input and returns rows the envelope pins identically.
+    pub(crate) fn evaluate_transform_with(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
         mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+        engine: Engine,
+        run: impl FnOnce(&TransformPlan, &TransformInput) -> Result<eval::TransformOutput, CellError>,
     ) -> Result<TransformResult, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(scope)?;
             let revision = self.verified_head()?;
             let (input, withheld, exclusions) =
                 self.transform_inputs(plan, world, scope, &mut access)?;
-            let output =
-                eval::evaluate(plan, &input).map_err(|error| refused(eval_refusal(&error)))?;
+            let output = run(plan, &input)?;
             let definition_pin = self.transform_definition_pin()?;
             let plan_pin = crate::codec::hash_json(&(
                 "norn.transform/1",
@@ -184,7 +198,7 @@ impl<E: SqlEngine> CellStore<E> {
                 version: plan.version.clone(),
                 plan_pin,
                 definition_pin,
-                engine: Engine::Cell,
+                engine,
                 revision,
                 columns: output.columns,
                 grain: output.grain,

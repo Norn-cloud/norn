@@ -284,6 +284,32 @@ fn run(
     }
 }
 
+/// Order rows another engine produced exactly as [`evaluate`] orders its own
+/// (VIEW-ENGINE-1): by grain, nulls last; two rows with one identity refuse.
+///
+/// # Errors
+/// A value that is not an exact runtime value, or a repeated identity.
+pub fn order_output(
+    plan: &TransformPlan,
+    rows: Vec<(BTreeMap<String, RuntimeValue>, BTreeSet<MemberRef>)>,
+) -> Result<TransformOutput, EvalError> {
+    let rows = rows
+        .into_iter()
+        .map(|(values, members)| {
+            let values = values
+                .iter()
+                .map(|(name, value)| {
+                    Value::try_from(value)
+                        .map(|value| (name.clone(), value))
+                        .map_err(|error| EvalError::Input(error.to_string()))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(Row { values, members })
+        })
+        .collect::<Result<_, EvalError>>()?;
+    finish(plan, rows)
+}
+
 /// VIEW-GRAIN-1: order the output by grain (nulls last); no two rows share one.
 fn finish(plan: &TransformPlan, rows: Vec<Row>) -> Result<TransformOutput, EvalError> {
     let schema = plan.output_schema();
