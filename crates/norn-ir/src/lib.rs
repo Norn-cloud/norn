@@ -232,9 +232,9 @@ pub use theorem_input::{
 pub use view::{
     AggregateFn, AggregateNode, CalcExpr, DedupeKeep, DedupeNode, FilterNode, GroupKey, JoinKind,
     JoinNode, JoinOn, KeyJoin, LinkJoin, Measure, OrderKey, PrimitiveBasisClass, ProjectColumn,
-    ProjectNode, RelationalPlan, ScanNode, SortDirection, TemporalScope, TemporalScopeMode,
-    UnionNode, ViewInputKind, ViewInputRef, ViewIrPayload, ViewMaintenance, ViewNode, WindowColumn,
-    WindowFn, WindowNode,
+    ProjectNode, RefreshPolicy, RelationalPlan, ScanNode, SortDirection, TemporalScope,
+    TemporalScopeMode, UnionNode, ViewInputKind, ViewInputRef, ViewIrPayload, ViewMaintenance,
+    ViewNode, ViewRefresh, WindowColumn, WindowFn, WindowNode,
 };
 pub use widget::{
     WidgetActionBinding, WidgetDataDependency, WidgetPermission, WidgetProjectionHints,
@@ -1545,6 +1545,7 @@ define_payload_root!(DerivedPayload {
         maintenance => "maintenance" as ViewMaintenance
     }
     optional {
+        refresh => "refresh" as ViewRefresh,
         temporal_scope => "temporalScope" as TemporalScope,
         scope_required => "scopeRequired" as Vec<String>
     }

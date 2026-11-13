@@ -1177,6 +1177,14 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.sql_unsupported",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL",
+      "fix": "Write the query in the transform dialect: SELECT, FROM, declared JOINs, WHERE, GROUP BY with SUM/COUNT/MIN/MAX, DATE_TRUNC, window functions and UNION ALL.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.type_mismatch",
       "tier": "T2",
       "severity": "error",

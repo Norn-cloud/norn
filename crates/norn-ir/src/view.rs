@@ -76,14 +76,46 @@ pub struct TemporalScope {
     pub additional: JsonObject,
 }
 
-/// Maintenance strategy. Only `recompute_on_read` is supported in v0.
-/// `incremental` is reserved for a future IVM phase and MUST be rejected at extraction.
+/// Maintenance strategy. `recompute_on_read` evaluates on every read;
+/// `materialized` (VIEW-MAT-1, relational calcs only) keeps one stored result
+/// refreshed by the payload's `refresh`. `incremental` is reserved for a
+/// future IVM phase and MUST be rejected at extraction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMaintenance {
     RecomputeOnRead,
     /// Reserved — not implemented. The checker rejects artifacts carrying this value.
     Incremental,
+    /// VIEW-MAT-1: the cell stores the result with its frontier.
+    Materialized,
+}
+
+/// VIEW-MAT-1: when a materialized transform's stored result is refreshed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshPolicy {
+    /// A read that finds the inputs changed refreshes, unless the stored
+    /// result is younger than `maxAgeMs`.
+    OnRead,
+    /// Only `POST /v1/transforms/{transform}:refresh` refreshes.
+    Manual,
+}
+
+/// VIEW-MAT-1: a materialized transform's refresh policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ViewRefresh {
+    /// When the stored result is refreshed.
+    pub policy: RefreshPolicy,
+    /// `on_read` only: a stored result younger than this is served (labelled
+    /// stale) instead of refreshed.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WholeNumber")]
+    pub max_age_ms: Option<WholeNumber>,
 }
 
 /// Serializable calc expression leaf for a Derived view.
@@ -435,6 +467,15 @@ pub struct ViewIrPayload {
     pub calc: CalcExpr,
     pub output_schema: JsonObject,
     pub maintenance: ViewMaintenance,
+    /// VIEW-MAT-1: how a `materialized` transform refreshes; `on_read` when
+    /// absent. Only a materialized transform may declare it.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ViewRefresh")]
+    pub refresh: Option<ViewRefresh>,
     #[serde(
         default,
         deserialize_with = "present_non_null",

@@ -26,7 +26,7 @@ export function pinnedDependencies(pins: ReadonlyArray<DependencyPin> | undefine
 }
 
 export interface EnvelopeMeta {
-  readonly kind: "entity" | "rule" | "action" | "policy" | "mapping" | "law" | "connector" | "source_schema" | "business_pack" | "labels" | "model"
+  readonly kind: "entity" | "rule" | "action" | "policy" | "mapping" | "law" | "connector" | "source_schema" | "business_pack" | "labels" | "model" | "derived"
   readonly artifactId: string
   readonly namespace: string
   /** Human-readable title (the envelope `name`). */

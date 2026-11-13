@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { member, type Read } from "@/lib/exact"
 import { NotServed } from "@/lib/live-transport"
-import { exactValue, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
+import { exactValue, nodeDefinition, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
 import { cn } from "@/lib/utils"
 import { useCatalog } from "./sources.tsx"
 
@@ -184,89 +184,167 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
   )
 }
 
-type PlanNode = Node<{ node: TransformNode; output: boolean }, "step">
+/** How the graph is shaded: by operator only, or by the rows each node produced. */
+type Lens = "operator" | "volume"
 
-const WIDTH = 240
-const GAP_X = 36
-const GAP_Y = 80
-const HEIGHT = 84
+type PlanNode = Node<{ node: TransformNode; output: boolean; selected: boolean; rows: number | undefined; share: number | undefined }, "step">
 
-function StepCard({ data: { node, output } }: NodeProps<PlanNode>) {
+const WIDTH = 220
+const GAP_X = 64
+const GAP_Y = 28
+const HEIGHT = 76
+
+const count = new Intl.NumberFormat("en")
+
+/** One operator: its kind and id, its shape, and (under the volume lens) its rows, shaded by share of the largest node. */
+function StepCard({ data: { node, output, selected, rows, share } }: NodeProps<PlanNode>) {
+  const shade = share === undefined ? undefined : `color-mix(in oklab, var(--chart-1) ${Math.round(4 + share * 18)}%, var(--card))`
   return (
-    <div className={`w-[240px] rounded-xl border bg-card px-3 py-2 shadow-sm ${output ? "ring-1 ring-foreground/30" : ""}`}>
-      <Handle type="target" position={Position.Top} className="!opacity-0" />
+    <div data-node={node.id} data-selected={selected || undefined} style={shade === undefined ? undefined : { background: shade }}
+      className={cn("w-[220px] rounded-lg border bg-card px-3 py-2 shadow-sm transition-shadow", output && "border-foreground/40", selected && "ring-2 ring-ring")}>
+      <Handle type="target" position={Position.Left} className="!opacity-0" />
       <div className="flex items-center gap-2 text-sm font-medium"><Badge variant="secondary" className="font-mono text-[11px]">{node.op}</Badge><span className="truncate">{node.id}</span></div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{node.columns.length} columns · grain {node.grain.length === 0 ? "one row" : node.grain.join(", ")}</div>
-      <Handle type="source" position={Position.Bottom} className="!opacity-0" />
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="truncate">{node.columns.length} columns · {node.grain.length === 0 ? "one row" : node.grain.join(", ")}</span>
+        {rows !== undefined && <span className="shrink-0 font-mono tabular-nums text-foreground">{count.format(rows)}</span>}
+      </div>
+      {share !== undefined && <div aria-hidden className="mt-1.5 h-1 rounded-full bg-muted"><div className="h-1 rounded-full bg-chart-1/70" style={{ width: `${Math.max(2, share * 100)}%` }} /></div>}
+      <Handle type="source" position={Position.Right} className="!opacity-0" />
     </div>
   )
 }
 
 const NODE_TYPES = { step: StepCard }
 
-/** Lay the plan out top to bottom: each node one row below its deepest input. */
+/** Lay the plan out left to right: each node one column right of its deepest input, each column centred. */
 function planLayout(nodes: readonly TransformNode[]): ReadonlyMap<string, { readonly x: number; readonly y: number }> {
   const ids = new Set(nodes.map(({ id }) => id))
   const depth = new Map<string, number>()
   for (const node of nodes) depth.set(node.id, Math.max(0, ...node.inputs.filter((input) => ids.has(input) && input !== node.id).map((input) => (depth.get(input) ?? 0) + 1)))
-  const rows = new Map<number, number>()
-  const positions = new Map<string, { x: number; y: number }>()
+  const columns = new Map<number, string[]>()
   for (const node of nodes) {
     const at = depth.get(node.id) ?? 0
-    const row = rows.get(at) ?? 0
-    rows.set(at, row + 1)
-    positions.set(node.id, { x: row * (WIDTH + GAP_X), y: at * (HEIGHT + GAP_Y) })
+    columns.set(at, [...(columns.get(at) ?? []), node.id])
+  }
+  const tallest = Math.max(1, ...[...columns.values()].map((column) => column.length))
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const [at, column] of columns) {
+    const offset = ((tallest - column.length) * (HEIGHT + GAP_Y)) / 2
+    column.forEach((id, row) => positions.set(id, { x: at * (WIDTH + GAP_X), y: offset + row * (HEIGHT + GAP_Y) }))
   }
   return positions
 }
 
-/** The plan tab: the admitted operator graph and the output's typed columns with their lineage. */
+/**
+ * The plan tab: the admitted operator graph left to right, a list of the same nodes, and the selected
+ * node's definition and typed columns. Selecting in either view selects in both. The volume lens shades
+ * each node by the rows it produced for this reader, as the cell reports them.
+ */
 function PlanTab({ id }: { readonly id: string }) {
   const plan = useTransformPlan(id)
+  const rows = useTransformRows(id, undefined)
+  const { read } = useCatalog()
+  const [lens, setLens] = useState<Lens>("operator")
+  const [picked, setPicked] = useState<string | undefined>(undefined)
+  const volumes = rows.data?.document.nodeRows
+  const document = plan.data?.document
+  const selected = picked ?? document?.output
   const graph = useMemo(() => {
-    if (!plan.data) return { nodes: [], edges: [], rows: 1 }
-    const document = plan.data.document
+    if (!document) return { nodes: [], edges: [], height: 1 }
     const positions = planLayout(document.nodes)
     const ids = new Set(document.nodes.map(({ id: node }) => node))
-    const nodes: PlanNode[] = document.nodes.map((node) => ({ id: node.id, type: "step", position: positions.get(node.id) ?? { x: 0, y: 0 }, data: { node, output: node.id === document.output } }))
-    const edges: Edge[] = document.nodes.flatMap((node) => node.inputs.filter((input) => ids.has(input) && input !== node.id).map((input) => ({ id: `${input}->${node.id}`, source: input, target: node.id, markerEnd: { type: MarkerType.ArrowClosed } })))
-    const rows = Math.max(1, ...nodes.map(({ position }) => position.y / (HEIGHT + GAP_Y) + 1))
-    return { nodes, edges, rows }
-  }, [plan.data])
+    const largest = Math.max(1, ...Object.values(volumes ?? {}))
+    const nodes: PlanNode[] = document.nodes.map((node) => {
+      const counted = volumes?.[node.id]
+      const shown = lens === "volume" ? counted : undefined
+      return {
+        id: node.id, type: "step", position: positions.get(node.id) ?? { x: 0, y: 0 },
+        data: { node, output: node.id === document.output, selected: node.id === selected, rows: shown, share: shown === undefined ? undefined : Math.log1p(shown) / Math.log1p(largest) },
+      }
+    })
+    const edges: Edge[] = document.nodes.flatMap((node) => node.inputs.filter((input) => ids.has(input) && input !== node.id).map((input) => ({
+      id: `${input}->${node.id}`, source: input, target: node.id, markerEnd: { type: MarkerType.ArrowClosed },
+      ...(input === selected || node.id === selected ? { style: { strokeWidth: 2 } } : {}),
+    })))
+    const height = Math.max(1, ...nodes.map(({ position }) => position.y + HEIGHT))
+    return { nodes, edges, height }
+  }, [document, volumes, lens, selected])
   if (plan.isPending) return <p className="text-muted-foreground">Reading the plan…</p>
   if (plan.isError) return <ReadError error={plan.error} />
-  const document = plan.data.document
-  const output = document.nodes.find((node) => node.id === document.output)
+  const shown = plan.data.document
+  const focus = shown.nodes.find((node) => node.id === selected)
+  const definition = read.data ? nodeDefinition(read.data.document, id, selected) : undefined
   return (
     <div className="space-y-4">
-      <Panel icon={GitBranch} label="Definition graph" action={`${document.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}`}>
-        <div className="h-[min(70vh,max(320px,calc(var(--rows)*164px+60px)))] overflow-hidden rounded-md border bg-surface-subtle" style={{ "--rows": graph.rows } as CSSProperties}>
+      <Panel icon={GitBranch} label="Definition graph" action={
+        <div role="radiogroup" aria-label="Shade nodes by" className="inline-flex rounded-md border p-0.5 text-meta">
+          {(["operator", "volume"] as const).map((option) => (
+            <button key={option} type="button" role="radio" aria-checked={lens === option} disabled={option === "volume" && volumes === undefined}
+              title={option === "volume" && volumes === undefined ? "This cell does not report node volumes" : undefined}
+              onClick={() => setLens(option)}
+              className={cn("rounded px-2 py-0.5 capitalize disabled:opacity-50", lens === option ? "bg-muted font-medium text-foreground" : "text-muted-foreground")}>{option}</button>
+          ))}
+        </div>
+      }>
+        <div className="h-[min(60vh,max(260px,calc(var(--plan-height)*1px+80px)))] overflow-hidden rounded-md border bg-surface-subtle" style={{ "--plan-height": graph.height } as CSSProperties}>
           <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={NODE_TYPES} fitView colorMode="system" minZoom={0.2}
+            onNodeClick={(_, node) => setPicked(node.id)}
             nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
             <Background />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
+        <p className="mt-2 px-2.5 pb-1 text-meta text-muted-foreground">{shown.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}</p>
       </Panel>
-      {output && (
-        <Panel icon={Rows3} label="Output columns">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
+        <Panel icon={ListTree} label="Nodes">
           <TableCard>
-            <Table>
-              <TableHeader><TableRow><TableHead scope="col">Column</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Aggregation</TableHead><TableHead scope="col">Comes from</TableHead></TableRow></TableHeader>
+            <Table aria-label="Plan nodes">
+              <TableHeader><TableRow><TableHead scope="col">Node</TableHead><TableHead scope="col">Operator</TableHead><TableHead scope="col">Reads</TableHead><TableHead scope="col" className="text-right">Rows</TableHead></TableRow></TableHeader>
               <TableBody>
-                {output.columns.map((column) => (
-                  <TableRow key={column.name}>
-                    <TableCell className="font-medium">{column.name}{output.grain.includes(column.name) && <Badge variant="outline" className="ms-2">grain</Badge>}</TableCell>
-                    <TableCell className="font-mono text-meta">{column.type}{column.nullable ? "?" : ""}</TableCell>
-                    <TableCell>{column.additivity.replaceAll("_", " ")}</TableCell>
-                    <TableCell className="font-mono text-meta">{column.origins.map(({ input, property }) => `${input}.${property}`).join(", ") || "—"}</TableCell>
+                {shown.nodes.map((node) => (
+                  <TableRow key={node.id} aria-selected={node.id === selected} data-state={node.id === selected ? "selected" : undefined}
+                    className="cursor-pointer" onClick={() => setPicked(node.id)}>
+                    <TableCell className="font-medium"><button type="button" className="text-start underline-offset-4 hover:underline" onClick={() => setPicked(node.id)}>{node.id}</button>{node.id === shown.output && <Badge variant="outline" className="ms-2">output</Badge>}</TableCell>
+                    <TableCell className="font-mono text-meta">{node.op}</TableCell>
+                    <TableCell className="font-mono text-meta">{node.inputs.join(", ")}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">{volumes?.[node.id] === undefined ? "—" : count.format(volumes[node.id] ?? 0)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableCard>
         </Panel>
-      )}
+        {focus && (
+          <Panel icon={Rows3} label={`Node ${focus.id}`}>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+                <Badge variant="secondary" className="font-mono text-[11px]">{focus.op}</Badge>
+                <span>grain {focus.grain.length === 0 ? "one row" : focus.grain.join(", ")}</span>
+              </div>
+              {definition !== undefined && (
+                <Well className="max-h-64 overflow-auto px-3 py-2">
+                  <pre aria-label={`Definition of ${focus.id}`} className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap">{definition}</pre>
+                </Well>
+              )}
+              <TableCard>
+                <Table>
+                  <TableHeader><TableRow><TableHead scope="col">Column</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Comes from</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {focus.columns.map((column) => (
+                      <TableRow key={column.name}>
+                        <TableCell className="font-medium">{column.name}{focus.grain.includes(column.name) && <Badge variant="outline" className="ms-2">grain</Badge>}</TableCell>
+                        <TableCell className="font-mono text-meta">{column.type}{column.nullable ? "?" : ""}{column.additivity === "undeclared" ? "" : ` · ${column.additivity.replaceAll("_", " ")}`}</TableCell>
+                        <TableCell className="font-mono text-meta">{column.origins.map(({ input, property }) => `${input}.${property}`).join(", ") || "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableCard>
+            </div>
+          </Panel>
+        )}
+      </div>
     </div>
   )
 }

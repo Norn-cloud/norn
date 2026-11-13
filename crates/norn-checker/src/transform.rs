@@ -12,14 +12,16 @@
 //! reference interpreter. Admission grants no read authority.
 
 pub mod eval;
+pub mod sql;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EnvOptions, Expression, InferredType, Type, ZenTypeEnv};
+use norn_expr::{EnvOptions, Expression, InferredType, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
-    JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyTypeName, ResourceLimitProfile,
-    SortDirection, ViewInputKind, ViewIrPayload, ViewMaintenance, ViewNode, WindowFn,
+    JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyTypeName, RefreshPolicy,
+    ResourceLimitProfile, SortDirection, ViewInputKind, ViewIrPayload, ViewMaintenance, ViewNode,
+    WindowFn,
 };
 
 use norn_ir::metric::TimeGrain;
@@ -53,6 +55,10 @@ pub mod codes {
 }
 
 use crate::metric::codes as metric_codes;
+
+/// The column type vocabulary, and the bounded row-expression tree another
+/// engine lowers (VIEW-ENGINE-1); re-exported so engines need no other edge.
+pub use norn_expr::{RowArithmetic, RowComparison, RowExpr, Type};
 
 /// The ZEN root every transform expression reads its row from: `input.<column>`.
 pub const ROW_ROOT: &str = "input";
@@ -193,6 +199,24 @@ pub struct TypedExpression {
     pub expected: Type,
 }
 
+impl TypedExpression {
+    /// The expression as the bounded row tree another engine can lower, or
+    /// `None` when it uses anything outside that subset (VIEW-ENGINE-1).
+    #[must_use]
+    pub fn row_tree(&self) -> Option<RowExpr> {
+        norn_expr::row_expression(self.expression.source(), ROW_ROOT)
+            .ok()
+            .flatten()
+    }
+}
+
+/// An RFC 3339 timestamp's instant as `(seconds, nanoseconds)` since the
+/// epoch, the order the exact engine sorts timestamps by; `None` if invalid.
+#[must_use]
+pub fn instant(text: &str) -> Option<(i64, u32)> {
+    norn_expr::temporal::timestamp_ordering_key(text).ok()
+}
+
 /// How one projected column is computed.
 #[derive(Debug, Clone)]
 pub enum Projection {
@@ -330,8 +354,24 @@ pub struct TransformPlan {
     pub links: BTreeSet<(String, String)>,
     /// Fuel for one expression evaluation (its static cost fits it).
     pub fuel_units: u64,
+    /// VIEW-MAT-1: how a materialized transform is kept; `None` recomputes
+    /// on every read.
+    pub materialization: Option<Materialization>,
     /// The output node's schema.
     schema: NodeSchema,
+}
+
+/// VIEW-MAT-1: how a materialized transform's stored result is refreshed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Materialization {
+    /// A read that finds the inputs changed refreshes, unless the stored
+    /// result is younger than `max_age_ms`.
+    OnRead {
+        /// Serve (labelled stale) a stored result younger than this.
+        max_age_ms: Option<u64>,
+    },
+    /// Only an explicit refresh refreshes.
+    Manual,
 }
 
 impl TransformPlan {
@@ -361,6 +401,41 @@ fn view_root(artifact: &ArtifactEnvelope) -> Option<ViewIrPayload> {
     serde_json::to_value(payload.to_json_value())
         .and_then(serde_json::from_value::<ViewIrPayload>)
         .ok()
+}
+
+/// VIEW-MAT-1: the maintenance and refresh a relational transform declares.
+fn materialization(root: &ViewIrPayload, out: &mut Vec<Diagnostic>) -> Option<Materialization> {
+    let refusal = |out: &mut Vec<Diagnostic>, message: &str, pointer: &str| {
+        out.push(finding(codes::INVALID_PLAN, message, pointer));
+        None
+    };
+    match (&root.maintenance, &root.refresh) {
+        (ViewMaintenance::RecomputeOnRead, None) => None,
+        (ViewMaintenance::RecomputeOnRead, Some(_)) => refusal(
+            out,
+            "refresh applies to a materialized transform",
+            "/payload/refresh",
+        ),
+        (ViewMaintenance::Incremental, _) => refusal(
+            out,
+            "incremental maintenance is reserved for IVM (#135); use materialized",
+            "/payload/maintenance",
+        ),
+        (ViewMaintenance::Materialized, None) => Some(Materialization::OnRead { max_age_ms: None }),
+        (ViewMaintenance::Materialized, Some(refresh)) => {
+            match (refresh.policy, &refresh.max_age_ms) {
+                (RefreshPolicy::OnRead, max_age) => Some(Materialization::OnRead {
+                    max_age_ms: max_age.as_ref().map(|age| age.0),
+                }),
+                (RefreshPolicy::Manual, None) => Some(Materialization::Manual),
+                (RefreshPolicy::Manual, Some(_)) => refusal(
+                    out,
+                    "maxAgeMs applies to an on_read refresh",
+                    "/payload/refresh/maxAgeMs",
+                ),
+            }
+        }
+    }
 }
 
 /// Whether the artifact is a `ViewIR` v1 relational view.
@@ -445,13 +520,7 @@ impl<'a> Context<'a> {
             )]);
         };
         let mut out = Vec::new();
-        if root.maintenance != ViewMaintenance::RecomputeOnRead {
-            out.push(finding(
-                codes::INVALID_PLAN,
-                "a relational view is recomputed on read until materialization is admitted",
-                "/payload/maintenance",
-            ));
-        }
+        let materialization = materialization(&root, &mut out);
         if root
             .temporal_scope
             .as_ref()
@@ -517,6 +586,7 @@ impl<'a> Context<'a> {
             output: plan.output.clone(),
             links,
             fuel_units: self.limits.decide.fuel_units,
+            materialization,
             schema,
         })
     }
