@@ -243,7 +243,7 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
             Some(403)
         );
     }
-    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/3");
+    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/4");
     assert!(DEMO_GRANTS.capabilities(&["analyst".into()]).is_empty());
     assert_eq!(
         DEMO_GRANTS.capabilities(&["viewer".into()]),
@@ -269,7 +269,7 @@ fn the_grant_table_is_pinned_exactly() {
             ("owner", vec![Population, Values, Sources]),
         ]
     );
-    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/3");
+    assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/4");
     let held = |roles: &[&str]| {
         DEMO_GRANTS.capabilities(&roles.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>())
     };

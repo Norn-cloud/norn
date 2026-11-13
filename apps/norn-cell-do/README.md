@@ -27,7 +27,7 @@ POST /v1/cell:provision?orgId=<org>&environmentId=<environment>
 ```
 
 - **Who:** a verified host token whose organization is the scope's and whose
-  role is a provisioner in the declared grant table (`norn-cell-do-grants/3`:
+  role is a provisioner in the declared grant table (`norn-cell-do-grants/4`:
   `owner`). A cell that does not exist has no definitions, so this one
   authority is the host's; everything after it is the cell's own policy.
   Anyone else gets the opaque 403, and nothing is written.
@@ -102,10 +102,12 @@ A deployed cell accepts only the Studio Worker's signed host token (#817):
 `Authorization: Bearer <EdDSA JWT>`, audience `norn-host`, at most five
 minutes, its `norn.org` equal to the cell's organization, its role mapped
 through `studio-roles/1` and then the declared grant table
-`norn-cell-do-grants/3` (viewer: Population; member: + Values; admin and
+`norn-cell-do-grants/4` (viewer: Population; member: + Values; admin and
 owner: + Sources, and they alone write retained definitions: dashboards and
-agents through `/v1/definitions:admit`, `:install` and `/{id}:retire`; an
-owner alone provisions the cell).
+agents through `/v1/definitions:admit`, `:install` and `/{id}:retire`;
+members, admins and owners may load recorded rows under the admitted mappings
+through `/v1/observations:load`, which changes no definition; an owner alone
+provisions the cell).
 Two Worker settings are pinned configuration, never taken
 from a token:
 

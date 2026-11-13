@@ -236,12 +236,12 @@ fn the_access_document_reports_each_roles_decisions() {
     );
     assert_eq!(
         (document["policy"].as_str(), document["grantTable"].as_str()),
-        (Some("demo.host.read"), Some("norn-cell-do-grants/3"))
+        (Some("demo.host.read"), Some("norn-cell-do-grants/4"))
     );
     assert_eq!(
         document["capabilities"],
         json!({
-            "population": { "decision": "permit", "rule": "norn-cell-do-grants/3:viewer" },
+            "population": { "decision": "permit", "rule": "norn-cell-do-grants/4:viewer" },
             "values": { "decision": "deny", "rule": null },
             "sources": { "decision": "deny", "rule": null },
         })
@@ -251,7 +251,7 @@ fn the_access_document_reports_each_roles_decisions() {
     for capability in ["population", "values", "sources"] {
         assert_eq!(
             document["capabilities"][capability],
-            json!({ "decision": "permit", "rule": "norn-cell-do-grants/3:admin" }),
+            json!({ "decision": "permit", "rule": "norn-cell-do-grants/4:admin" }),
             "{capability}"
         );
     }
