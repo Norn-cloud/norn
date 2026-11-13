@@ -153,7 +153,7 @@ test("check: a query summing amounts across currencies is refused with the reaso
   await page.getByRole("button", { name: "Check", exact: true }).click()
   await expect(page.getByText("Refused", { exact: true })).toBeVisible()
   const reasons = page.getByRole("list", { name: "Why the query is refused" })
-  await expect(reasons).toContainText("mixes currencies")
+  await expect(reasons).toContainText("sum of o.amount mixes currencies: group by its currency o.currency")
   await shoot(page, "check-refused")
   // Technical readers see the registered code the checker refused with.
   await page.getByRole("radio", { name: "Technical" }).click()

@@ -1552,18 +1552,30 @@ impl Builder<'_, '_> {
     /// USD with EGP or kg with lb. Only a count of rows is exempt.
     fn partitioned(&mut self, column: &Column, keys: &[&Column], function: &str, at: &str) -> bool {
         let grouped = |source: &Origin| keys.iter().any(|key| key.exact.as_ref() == Some(source));
+        // Readers wrote the stored property (`SUM(o.amount)`), not the plan's
+        // copy of it: name the property when the column is one.
+        let measured = column.exact.as_ref().map_or_else(
+            || format!("{:?}", column.name),
+            |origin| format!("{}.{}", origin.alias, origin.property),
+        );
         let mut whole = true;
         if let Some(currency) = column
             .currency
             .as_ref()
             .filter(|currency| !grouped(currency))
         {
+            let remedy = if currency.property.is_empty() {
+                "its currency is on a linked record, so no column of this row can group it"
+                    .to_owned()
+            } else {
+                format!(
+                    "group by its currency {}.{}",
+                    currency.alias, currency.property
+                )
+            };
             self.fail(
                 metric_codes::MIXED_CURRENCY,
-                format!(
-                    "{function} of {:?} mixes currencies: group by its currency {:?}",
-                    column.name, currency.property
-                ),
+                format!("{function} of {measured} mixes currencies: {remedy}"),
                 at,
             );
             whole = false;
@@ -1572,8 +1584,8 @@ impl Builder<'_, '_> {
             self.fail(
                 metric_codes::MIXED_UNIT,
                 format!(
-                    "{function} of {:?} mixes units: group by its unit {:?}",
-                    column.name, unit.property
+                    "{function} of {measured} mixes units: group by its unit {}.{}",
+                    unit.alias, unit.property
                 ),
                 at,
             );

@@ -4935,6 +4935,10 @@
         "grain": {
           "description": "A calendar bucket for a date or timestamp column (ISO/UTC).",
           "$ref": "#/$defs/TimeGrain"
+        },
+        "label": {
+          "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged.",
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -7678,6 +7682,10 @@
           "description": "The function.",
           "$ref": "#/$defs/AggregateFn"
         },
+        "label": {
+          "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged.",
+          "type": "string"
+        },
         "name": {
           "description": "The output column name.",
           "type": "string"
@@ -9497,6 +9505,10 @@
       "properties": {
         "expression": {
           "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract.",
+          "type": "string"
+        },
+        "label": {
+          "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged.",
           "type": "string"
         },
         "name": {
@@ -16131,6 +16143,10 @@
         "fn": {
           "description": "The function.",
           "$ref": "#/$defs/WindowFn"
+        },
+        "label": {
+          "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged.",
+          "type": "string"
         },
         "name": {
           "description": "The output column name.",
