@@ -42,7 +42,11 @@ export interface SheetDocument {
 export interface SheetOptions {
   readonly document: SheetDocument
   readonly decision: SheetDecision
-  readonly evaluate: Evaluate
+  /**
+   * The ZEN engine the checker type-checked the machine's guards and assignments with. A promise
+   * is fine: the sheet paints its first state at once and takes input once the engine is here.
+   */
+  readonly evaluate: Evaluate | Promise<Evaluate>
   readonly transport: Transport
   readonly locale?: Locale
   /** The cell's clock now (for the countdown); the host keeps it current with `setNow`. */
@@ -64,9 +68,10 @@ const WORDS = {
     choose: "Choose an option", decide: "Decide", decideAs: "Decide: {0}", confirmAs: "Yes, {0}", sending: "Sending…",
     "confirm.high": "This is a high-risk decision.", "confirm.action": "This starts an action.",
     "confirm.body": "You're choosing \"{0}\" ({1}). The run goes on with it as soon as the cell records it.",
+    "confirm.bodyNoScope": "You're choosing \"{0}\". The run goes on with it as soon as the cell records it.",
     failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", back: "Back to inbox",
     decidedAs: "Decided: {0} · {1}", byYou: "by you", byOther: "by {0}", replayed: " (already recorded; the cell returned the first receipt)",
-    details: "Details", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
+    details: "Details", copy: "Copy", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
     resolvedDecided: "Decided by {0} at {1}", resolvedChoice: ": {0}", anotherDecider: "another decider", resolvedBody: "Someone else got there first. Nothing you chose was sent.",
     withdrawn: "Withdrawn at {0}", withdrawnBody: "The run no longer needs this decision.", expiredAt: "Expired at {0}", expiredBody: "The deadline passed before anyone decided.",
     expired: "Expired", gone: "No longer here", awaiting: "Waiting for approval", awaitingBody: "Your choice waits for an approval before it takes effect.",
@@ -78,9 +83,10 @@ const WORDS = {
     choose: "اختر خيارًا", decide: "قرّر", decideAs: "قرّر: {0}", confirmAs: "نعم، {0}", sending: "جارٍ الإرسال…",
     "confirm.high": "هذا قرار عالي المخاطرة.", "confirm.action": "هذا يبدأ إجراءً.",
     "confirm.body": "تختار «{0}» ({1}). يتابع التشغيل به فور تسجيل الخلية له.",
+    "confirm.bodyNoScope": "تختار «{0}». يتابع التشغيل به فور تسجيل الخلية له.",
     failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", back: "العودة إلى الصندوق",
     decidedAs: "تقرّر: {0} · {1}", byYou: "بواسطتك", byOther: "بواسطة {0}", replayed: " (مسجّل من قبل؛ أعادت الخلية الإيصال الأول)",
-    details: "التفاصيل", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
+    details: "التفاصيل", copy: "نسخ", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
     resolvedDecided: "قرّر {0} عند {1}", resolvedChoice: ": {0}", anotherDecider: "صاحب قرار آخر", resolvedBody: "سبقك شخص آخر. لم يُرسل شيء مما اخترته.",
     withdrawn: "سُحب عند {0}", withdrawnBody: "لم يعد التشغيل بحاجة إلى هذا القرار.", expiredAt: "انتهت المهلة عند {0}", expiredBody: "انقضت المهلة قبل أن يقرّر أحد.",
     expired: "انتهت المهلة", gone: "لم يعد هنا", awaiting: "بانتظار الموافقة", awaitingBody: "اختيارك بانتظار موافقة قبل أن يسري.",
@@ -157,15 +163,18 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
   const id = escape(decision.id)
   const button = (node: string, variant: string, text = label(byId.get(node), locale)) =>
     `<button type="button" data-node="${node}" data-variant="${variant}" class="norn-button">${escape(text)}</button>`
+  // The scope line says something only when options differ in it; one shared scope is the sheet's own subject.
+  const scopes = new Set(decision.options.map((option) => option.scope))
   const options = decision.options
     .map(
       (option) => `
-      <label class="norn-option" data-slot="label">
+      <label class="norn-option" data-slot="label" data-option="${escape(option.id)}">
         <ui-radio value="${escape(option.id)}" aria-label="${escape(option.label)}"><ui-radio-indicator></ui-radio-indicator></ui-radio>
         <span class="norn-option-text">
           <span class="norn-option-label">${escape(option.label)}${option.id === decision.agentPick ? ` <span class="norn-chip" data-tone="agent" title="${escape(w.suggestedTitle)}">${escape(w.suggested)}</span>` : ""}</span>
-          <span class="norn-meta">${escape(option.scope)}</span>
+          ${scopes.size > 1 ? `<span class="norn-meta">${escape(option.scope)}</span>` : ""}
           <span class="norn-meta">${escape("action" in option.effect ? w.starts : w.records)}</span>
+          <span class="norn-note" role="status" data-refusal hidden></span>
         </span>
       </label>`,
     )
@@ -194,18 +203,18 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
           <ui-textarea data-node="note-input"><textarea id="norn-note-${id}" rows="3" placeholder="${escape(w.notePlaceholder)}" aria-describedby="norn-note-${id}-problem"></textarea></ui-textarea>
           <p class="norn-problem" role="alert" data-problem="/note" id="norn-note-${id}-problem" hidden></p>
         </div>
-        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-confirm-${id}" data-region="confirm" hidden>
+        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-confirm-${id}" data-region="confirm" data-tone="${decision.risk === "high" ? "danger" : "neutral"}" hidden>
           <p class="norn-confirm-title" id="norn-confirm-${id}">${escape(decision.risk === "high" ? w["confirm.high"] : w["confirm.action"])}</p>
           <p class="norn-meta" data-region="confirm-body"></p>
         </div>
-        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-leave-${id}" data-region="decision-leave" hidden>
+        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-leave-${id}" data-region="decision-leave" data-tone="neutral" hidden>
           <p class="norn-confirm-title" id="norn-leave-${id}">${escape(label(byId.get("decision-leave"), locale))}</p>
           <p class="norn-meta">${escape(w.leaveBody)}</p>
           <div class="norn-actions"><span class="norn-spacer"></span>${button("stay-button", "ghost")}${button("leave-button", "outline")}</div>
         </div>
         <footer class="norn-actions norn-footer" data-region="decision-actions">
           <span class="norn-meta" data-region="hint"></span>
-          ${button("close-button", "ghost")}<span class="norn-spacer"></span>${button("back-button", "ghost")}${button("retry-button", "outline")}${button("confirm-button", "danger")}${button("decide-button", "solid")}
+          ${button("close-button", "ghost")}<span class="norn-spacer"></span>${button("back-button", "ghost")}${button("retry-button", "outline")}${button("confirm-button", decision.risk === "high" ? "danger" : "solid")}${button("decide-button", "solid")}
         </footer>
       </form>
       <section class="norn-outcome-card" data-region="decision-outcome" hidden>
@@ -247,7 +256,14 @@ function problems(body: unknown): readonly Problem[] {
  * Every control's presence and enabled state comes from the machine via `enabled`.
  */
 export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Driver {
-  const { document, decision, evaluate } = options
+  const { document, decision } = options
+  // The engine evaluates guards and assignments only; until it arrives the sheet shows its first
+  // state read-only and raises nothing, so no event is ever decided without it.
+  let engine: Evaluate | null = typeof options.evaluate === "function" ? options.evaluate : null
+  const evaluate: Evaluate = (expression, input) => {
+    if (engine === null) throw new Error("the expression engine is not loaded yet")
+    return engine(expression, input)
+  }
   const locale = options.locale ?? "en"
   const w = WORDS[locale]
   const page = document.payload.ux.pages[0]
@@ -256,6 +272,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
   adoptSheetStyles(root.ownerDocument)
   root.innerHTML = sheetMarkup(document, decision, locale)
   let lastBody: unknown
+  // The server's words for the refused choice, kept from the refusal that refused it.
+  let refusedWhy = ""
   let now = options.now
   const transport: Transport = {
     async call(call, input, callOptions) {
@@ -306,9 +324,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
         [w.decision, decision.id],
       ]
       const dl = details.querySelector("dl")
-      // Long values (the receipt hash) read as their first 16 characters; the whole value is the title.
-      const short = (value: string) => (value.length > 20 ? `${value.slice(0, 16)}…` : value)
-      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt><dd><code title="${escape(value)}">${escape(short(value))}</code></dd>`).join("")
+      // Dates, numbers and ids read whole; only the receipt hash shortens, with a copy button for all of it.
+      const cell = (term: string, value: string) =>
+        term === w.receipt && value.length > 20
+          ? `<dd class="norn-hash"><code title="${escape(value)}">${escape(value.slice(0, 16))}…</code><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
+          : `<dd><span class="norn-value">${escape(value)}</span></dd>`
+      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt>${cell(term, value)}`).join("")
       details.hidden = false
     } else if (state === "resolved") {
       const resolution = record(doc.resolution)
@@ -333,7 +354,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const state = snapshot.stateId
     const role = machine.states.find((candidate) => candidate.stateId === state)?.role
     const settled = role === "terminal"
+    const ready = engine !== null
     q(".norn-sheet")?.setAttribute("data-state", state)
+    q(".norn-sheet")?.setAttribute("data-engine", ready ? "ready" : "loading")
     // A terminal machine shows only its outcome; otherwise the form stays, with what it offers now.
     q('[data-region="form"]')?.toggleAttribute("hidden", settled)
     q('[data-host="back"]')?.toggleAttribute("hidden", !settled)
@@ -342,9 +365,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const choice = snapshot.fields.choice
     for (const element of root.querySelectorAll<HTMLButtonElement>("button[data-node]")) {
       const node = element.dataset.node ?? ""
-      const on = enabled(machine, evaluate, snapshot, node)
+      const on = ready && enabled(machine, evaluate, snapshot, node)
       // Decide stays in view while a choice is still to be made, so the form says what it waits for.
-      element.hidden = !on && !(node === "decide-button" && (state === "choosing" || state === "sending"))
+      element.hidden = !on && !(node === "decide-button" && (state === "choosing" || state === "sending" || state === "refused"))
       element.disabled = !on
     }
     const decideButton = q<HTMLButtonElement>('[data-node="decide-button"]')
@@ -352,27 +375,35 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const confirmButton = q<HTMLButtonElement>('[data-node="confirm-button"]')
     if (confirmButton) confirmButton.textContent = say("confirmAs", optionLabel(choice).toLowerCase())
     const hint = q('[data-region="hint"]')
-    if (hint) hint.textContent = choice || !enabled(machine, evaluate, snapshot, "option-choice") ? "" : w.choose
+    if (hint) hint.textContent = choice || !ready || !enabled(machine, evaluate, snapshot, "option-choice") ? "" : w.choose
     // The footer shows only while it offers something.
     const footer = q('[data-region="decision-actions"]')
     if (footer) footer.hidden = ![...footer.querySelectorAll<HTMLButtonElement>("button[data-node]")].some((button) => !button.hidden)
     const confirmBody = q('[data-region="confirm-body"]')
-    if (confirmBody) confirmBody.textContent = say("confirm.body", optionLabel(choice), decision.options.find((o) => o.id === choice)?.scope ?? "")
+    if (confirmBody) {
+      // The scope is named only when the options differ in it.
+      const scope = new Set(decision.options.map((o) => o.scope)).size > 1 ? decision.options.find((o) => o.id === choice)?.scope ?? "" : ""
+      confirmBody.textContent = say(scope ? "confirm.body" : "confirm.bodyNoScope", optionLabel(choice), scope)
+    }
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
     q('[data-region="decision-leave"]')?.toggleAttribute("hidden", state !== "leaving")
-    const editable = enabled(machine, evaluate, snapshot, "option-choice")
-    // Choices and the note show while they can change, and while a call is in flight (read-only).
-    for (const region of ["decision-choices", "decision-note"]) q(`[data-region="${region}"]`)?.toggleAttribute("hidden", !editable && state !== "sending")
+    const editable = ready && enabled(machine, evaluate, snapshot, "option-choice")
+    // Choices and the note show while they can change, while a call is in flight, and while the
+    // engine loads (read-only, so the sheet does not jump when it arrives).
+    for (const region of ["decision-choices", "decision-note"]) q(`[data-region="${region}"]`)?.toggleAttribute("hidden", !editable && state !== "sending" && ready)
     q("textarea")?.toggleAttribute("disabled", !editable)
     q('[data-node="option-choice"]')?.toggleAttribute("aria-disabled", !editable)
+    q('[data-node="option-choice"]')?.toggleAttribute("disabled", !ready)
     // The server's words for a refusal: the top-level message and unpointed diagnostics at the top,
     // pointed diagnostics at their field.
     const found = state === "refused" ? problems(lastBody) : []
     const top = record(lastBody)
     const status = q('[data-region="status"]')
     if (status) {
-      const message = state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
-      const extra = found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
+      // A refusal of one option reads under that option, not here.
+      const onOption = state === "refused" && snapshot.fields.refusedChoice != null
+      const message = onOption ? "" : state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
+      const extra = onOption ? [] : found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
       status.textContent = [message, ...extra].filter(Boolean).join(" ")
       status.hidden = status.textContent === ""
       status.dataset.tone = "danger"
@@ -382,6 +413,23 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       problem.textContent = words
       problem.hidden = words === ""
     }
+    // A choice the cell refused by law or permission stays refused: its radio is disabled and the
+    // server's reason and next step read under it, while the other options stay open.
+    const refusedChoice = typeof snapshot.fields.refusedChoice === "string" ? snapshot.fields.refusedChoice : null
+    if (state === "refused" && refusedChoice !== null) refusedWhy = [text(top.message), text(top.explanation)].filter(Boolean).join(" ")
+    for (const option of root.querySelectorAll<HTMLElement>("[data-option]")) {
+      const refused = option.dataset.option === refusedChoice
+      option.toggleAttribute("data-refused", refused)
+      option.querySelector("ui-radio")?.toggleAttribute("disabled", refused)
+      const why = option.querySelector<HTMLElement>("[data-refusal]")
+      if (why) {
+        why.textContent = refused ? refusedWhy : ""
+        why.hidden = !refused
+      }
+    }
+    // The radio group shows the machine's choice: a refusal that clears it unchecks the option.
+    const radios = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
+    if (radios && (radios.value ?? "") !== (snapshot.fields.choice ?? "")) radios.value = snapshot.fields.choice ?? ""
     const textarea = q<HTMLTextAreaElement>("textarea")
     if (textarea) {
       if (found.some((p) => p.pointer === "/note")) textarea.setAttribute("aria-invalid", "true")
@@ -405,8 +453,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     },
   })
 
-  /** Raise the first of the node's events the current state takes. */
+  /** Raise the first of the node's events the current state takes; nothing before the engine. */
   const raise = (nodeId: string, payload?: Fields) => {
+    if (engine === null) return false
     for (const event of eventsOf(machine, nodeId)) {
       if (driver.dispatch({ kind: "user", eventId: event.eventId, ...(payload ? { payload } : {}) }).fired) return true
     }
@@ -418,6 +467,11 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     if (link && options.navigate) {
       event.preventDefault()
       options.navigate(link.getAttribute("href") ?? "")
+      return
+    }
+    const copy = target?.closest<HTMLElement>("[data-copy]")
+    if (copy) {
+      void navigator.clipboard?.writeText(copy.dataset.copy ?? "")
       return
     }
     if (target?.closest("[data-host=back]")) {
@@ -443,12 +497,29 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const target = event.target as HTMLTextAreaElement | null
     if (target?.tagName === "TEXTAREA" && String(driver.snapshot().fields.note ?? "") !== target.value) raise("note-input", { value: target.value })
   })
-  ;(root as HTMLElement & { raise?: typeof raise; setNow?: (ms: number) => void }).raise = raise
+  /** Pick an option exactly as a click on its radio does: a disabled or unknown option is not picked. */
+  const choose = (optionId: string) => {
+    const radio = [...root.querySelectorAll<HTMLElement>("ui-radio")].find((candidate) => candidate.getAttribute("value") === optionId)
+    if (!radio || radio.hasAttribute("disabled") || radio.closest("[hidden]")) return false
+    return raise("option-choice", { value: optionId, confirm: needsConfirm(decision, optionId) })
+  }
+  // Named apart from the element's own `choose`, which forwards here once mounted.
+  ;(root as HTMLElement & { raise?: typeof raise; pick?: typeof choose; setNow?: (ms: number) => void }).raise = raise
+  ;(root as HTMLElement & { pick?: typeof choose }).pick = choose
   ;(root as HTMLElement & { setNow?: (ms: number) => void }).setNow = (ms: number) => {
     now = ms
     paint(driver.snapshot())
   }
   paint(driver.snapshot())
+  if (engine === null) {
+    void Promise.resolve(options.evaluate).then(
+      (loaded) => {
+        engine = loaded
+        paint(driver.snapshot())
+      },
+      () => q(".norn-sheet")?.setAttribute("data-engine", "unavailable"),
+    )
+  }
   return driver
 }
 
@@ -457,8 +528,15 @@ export interface NornDecisionSheet extends HTMLElement {
   options: SheetOptions
   /** The machine's current snapshot, for hosts and tests. */
   readonly snapshot: Snapshot | null
+  /** The expression engine has arrived, so the sheet takes input. */
+  readonly ready: boolean
   /** Raise the first event of `nodeId` the current state takes (a host's Escape raises `close-button`). */
   request(nodeId: string): boolean
+  /**
+   * Pick `optionId` through the machine, as a click on its radio would (a host's number keys). False,
+   * with nothing changed, when the option is unknown, disabled, or the current state takes no choice.
+   */
+  choose(optionId: string): boolean
 }
 
 /**
@@ -488,8 +566,14 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
     get snapshot(): Snapshot | null {
       return this.#driver?.snapshot() ?? null
     }
+    get ready(): boolean {
+      return this.querySelector(".norn-sheet")?.getAttribute("data-engine") === "ready"
+    }
     request(nodeId: string): boolean {
       return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false
+    }
+    choose(optionId: string): boolean {
+      return (this as unknown as { pick?: (option: string) => boolean }).pick?.(optionId) ?? false
     }
     #mount() {
       this.#driver?.dispose()

@@ -146,10 +146,7 @@ fn refused(status: u16, code: &str, message: &str) -> Response {
         message,
         message,
     );
-    Response {
-        status: refusal.status,
-        body: serde_json::to_string(&refusal).unwrap_or_else(|_e| String::from("{}")),
-    }
+    crate::incident::respond(refusal)
 }
 
 /// An upload id the cell can check without remembering it:
@@ -872,10 +869,7 @@ const MAX_LOAD_ROWS: usize = 500;
 /// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
 /// refuses stays in the inbox as quarantined evidence, with its reasons.
 fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
-    let answer = |refusal: &Refusal| Response {
-        status: refusal.status,
-        body: serde_json::to_string(refusal).unwrap_or_default(),
-    };
+    let answer = |refusal: &Refusal| crate::incident::respond(refusal.clone());
     let recorded = match serde_json::from_str::<Value>(body)
         .map_err(|error| error.to_string())
         .and_then(|document| crate::recorded::Recorded::parse(&document))

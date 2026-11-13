@@ -33,6 +33,7 @@ pub mod base;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
+pub mod incident;
 pub mod mcp;
 pub mod olap;
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]

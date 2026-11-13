@@ -602,10 +602,7 @@ fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
             status: status.as_u16(),
             body,
         },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
+        Err(refused) => crate::incident::respond(refused),
     }
 }
 
@@ -659,7 +656,10 @@ fn route<E: SqlEngine>(
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
-        ad_hoc_question(host, questions, actor, method, path, query, body)
+        // A runtime that publishes no questions answers no ad-hoc question
+        // either: the base's answer, whatever the body (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        ad_hoc_question(host, published, actor, method, path, query, body)
     } else if path == "/v1/questions:catalog" {
         ad_hoc_catalog(cell(host)?, questions, actor, method, query)
     } else if path == "/v1/transforms:compile" {
@@ -674,7 +674,11 @@ fn route<E: SqlEngine>(
             "this host's read routes take GET",
         ))
     } else {
-        match (question, questions) {
+        // A runtime that publishes no questions (a tenant's receipt handles)
+        // has no named question to answer: the base's 404, never a refusal
+        // that depends on the caller (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        match (question, published) {
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
@@ -1438,7 +1442,12 @@ pub fn analytics<E: SqlEngine>(
     }
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    let actor = actor.as_deref();
+    // A caller nobody verified is answered by the cell's ordinary routes,
+    // exactly as on a scope with no cell: the engine path never parses or
+    // refuses for them first, so its answers cannot tell a provisioned
+    // tenant from a vacant one (#1297 r1 B1 on the analytics routes).
+    let actor = actor.as_deref()?;
+    let actor = Some(actor);
     let result = match (request.method, export, profile, uploads) {
         ("GET", None, Some(kind), _) => engine_profile(host, actor, transport, kind, request.query),
         ("GET", Some(kind), None, _) => engine_export(host, actor, transport, kind, request.query),

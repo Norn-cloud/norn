@@ -298,7 +298,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
                 unlinked: 0,
             }
         };
-        let result = store.analytics_answer(prepared, response)?;
+        let mut result = store.analytics_answer(prepared, response)?;
         for row in result.rows.values() {
             for id in row.members.keys() {
                 if !visible(&gate_record(&grain, id, &scope))? {
@@ -306,6 +306,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
                 }
             }
         }
+        // SOURCE-AGREE-1: the host counts disputed members after the engine,
+        // with the exact engine's own function, so both answers agree.
+        result.source_disagreements = store.answer_source_disagreements(
+            plan,
+            &result.context.clone(),
+            result.known_as_of,
+            visible,
+        )?;
         Ok(result)
     }
 }
