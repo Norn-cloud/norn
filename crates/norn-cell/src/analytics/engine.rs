@@ -1413,8 +1413,10 @@ impl Projection {
             out
         });
         let dims = self.groups.len();
+        // Without a grouping the aggregate still answers one row; an empty
+        // contribution set is no bucket, as the exact engine answers it.
         let group_by = if dims == 0 {
-            String::new()
+            " HAVING count(*) > 0".to_owned()
         } else {
             format!(" GROUP BY {}", self.group_by())
         };
