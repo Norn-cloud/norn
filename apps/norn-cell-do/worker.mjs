@@ -216,15 +216,18 @@ export class Cell {
     let maxFetchMs = 0;
     let fetches = 0;
     let steps = 0;
+    // SYNC-YIELD-2: keep each step near STEP_BUDGET_MS by pacing its rows from the last step's time per row.
+    let rows = FIRST_STEP_ROWS;
     const timed = async (response) => {
       const before = Date.now();
-      const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before));
+      const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before, rows));
       // SYNC-YIELD-1: the timer turn also lets requests waiting on this cell run between pages.
       await tick();
       const spent = Date.now() - before;
       cellMs += spent;
       maxCellMs = Math.max(maxCellMs, spent);
       steps += 1;
+      if (next.mapped > 0) rows = Math.max(1, Math.min(MAX_STEP_ROWS, Math.floor((STEP_BUDGET_MS * next.mapped) / Math.max(1, spent))));
       return next;
     };
     let step = await timed(undefined);
@@ -253,6 +256,10 @@ export class Cell {
   }
 }
 
+// SYNC-YIELD-2: a sync step aims to hold the cell about this long; rows per step follow from the last step's time per row.
+const STEP_BUDGET_MS = 1500;
+const FIRST_STEP_ROWS = 8;
+const MAX_STEP_ROWS = 500;
 // A source page or an uploaded object, read once and bounded (bytes).
 const MAX_SOURCE_BODY = 20 * 1024 * 1024;
 // One outbound source or storage request may take this long.
