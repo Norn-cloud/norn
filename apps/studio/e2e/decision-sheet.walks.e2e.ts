@@ -32,7 +32,7 @@ test("every transition of the sheet's machine has a walk", () => {
 })
 
 const DECISION = "dec_QXBwcm92ZS1yZWZ1bmQ"
-/** Room for the checker engine to compile in a fresh page under load (not a machine timing). */
+/** Room for the expression engine to compile in a fresh page under the suite's load. */
 const ENGINE_MS = 30_000
 const STATUS = { visibility: 404, permission: 403, precondition: 422, conflict: 409, invalid: 422, limit: 429, internal: 500 } as const
 
@@ -81,10 +81,10 @@ async function openRefund(page: Page) {
   await page.goto("/decisions")
   await page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Refund 1,240.00 USD" }).click()
   const sheet = page.locator("norn-decision-sheet .norn-sheet")
-  // The sheet mounts once the checker engine (WASM) has compiled in this page; under the full
-  // suite's load that alone can take longer than an assertion's default 5 s, so the first wait is
-  // on the machine's initial state with room for the engine. Every later wait is on a state.
-  await expect(sheet).toHaveAttribute("data-state", machine.initialStateId, { timeout: ENGINE_MS })
+  // The sheet draws its first state at once; it takes input once the expression engine (WASM) is
+  // here, which the walk waits for before its first step (the decisions rows time both).
+  await expect(sheet).toHaveAttribute("data-state", machine.initialStateId)
+  await expect(sheet).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
   return {
     sheet,
     queue: (next: ReturnType<typeof answer>) => {
