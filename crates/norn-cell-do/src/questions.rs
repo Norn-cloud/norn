@@ -19,11 +19,7 @@ use norn_api::host::DevHost;
 use norn_api::question_routes::{AdHocQuestions, QuestionRuntime, QuestionSnapshot};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
-#[cfg(feature = "duckdb")]
-use norn_cell::CellError;
 use norn_cell::compute::QueryContext;
-#[cfg(feature = "duckdb")]
-use norn_cell::compute::QueryResult;
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellStore, InstalledDefinitionSet, ObjectRecord};
 use norn_checker::EffectiveCatalog;
@@ -297,27 +293,6 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     }
     fn handle_key(&self) -> &[u8] {
         &self.metrics.handle_key
-    }
-    /// With the `duckdb` feature, a plan `DuckDB` lowers (one keyed sum, or a
-    /// ratio of two, over decimals of scale at most 6) is answered there;
-    /// anything else falls back to the native exact engine. The answer's
-    /// `engine` names which one answered.
-    #[cfg(feature = "duckdb")]
-    fn evaluate(
-        &self,
-        store: &CellStore<E>,
-        plan: &QuestionPlan,
-        context: QueryContext,
-        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
-    ) -> Result<QueryResult, CellError> {
-        match store.evaluate_question_duckdb(plan, context.clone(), &mut *visible) {
-            Err(CellError::ComputeRefused(code))
-                if code == norn_checker::metric::compute::UNSUPPORTED_ENGINE =>
-            {
-                store.evaluate_question(plan, context, visible)
-            }
-            answered => answered,
-        }
     }
 }
 

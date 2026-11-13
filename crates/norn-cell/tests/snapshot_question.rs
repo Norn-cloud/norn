@@ -13,8 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_cell::compute::QueryContext;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, Model};
 use norn_checker::metric::derive::derive_metric_space;
 use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
 use proptest::prelude::*;
@@ -149,9 +149,16 @@ fn answer(
 ) -> BTreeMap<String, (String, u64)> {
     let mut context = context();
     context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
-    store
-        .evaluate_question(plan, context, |_| Ok(true))
-        .expect("cell answer")
+    weekly(
+        store
+            .evaluate_question(plan, context, |_| Ok(true))
+            .expect("cell answer"),
+    )
+}
+
+/// Week key → (total, nulls) of one answer.
+fn weekly(result: QueryResult) -> BTreeMap<String, (String, u64)> {
+    result
         .rows
         .into_values()
         .map(|row| {
@@ -208,6 +215,79 @@ fn a_stock_carries_its_last_valid_time_value_forward_and_sums_across_subjects() 
         .collect();
         assert_eq!(answer(&store, &plan), expected, "north only: {north_only}");
     }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the stock as it was known
+/// at each earlier commit, asked later, answers as it did then (a version
+/// committed since is not yet known), so a trace at the answer's frontier
+/// reads the members that answer named.
+#[test]
+fn a_stock_known_at_an_earlier_commit_answers_as_it_did_then() {
+    let (mut store, plan) = question(false);
+    let mut given = Vec::new();
+    for (tick, (key, quantity, at, location)) in (1u64..).zip(HISTORY) {
+        commit(&mut store, tick, key, quantity, at, location);
+        let frontier = store.verified_head().expect("head").commits;
+        given.push((tick, frontier, answer(&store, &plan)));
+    }
+    for (tick, frontier, then) in given {
+        // A knowledge cutoff is read at its own recorded clock.
+        let at = CLOCK.checked_add(tick).expect("clock");
+        let mut context = context();
+        context.now_ms = at;
+        let cutoff = KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(at),
+            frontier,
+        };
+        let known = store
+            .evaluate_question_known_at(&plan, context, cutoff, |_| Ok(true))
+            .expect("known at the cutoff");
+        assert_eq!(weekly(known.result), then, "as known at commit {frontier}");
+    }
+}
+
+/// "See the records" on a semi-additive card: the weekly stock answered,
+/// then moved by a later commit, traces at its answer's frontier and clock
+/// to every member of the week it named.
+#[test]
+fn a_stock_card_traces_at_its_answers_frontier() {
+    let (mut store, plan) = question(false);
+    load(&mut store);
+    let mut context = context();
+    context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
+    let answer = store
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("answered");
+    let (bucket, members) = answer
+        .rows
+        .iter()
+        .find(|(_, row)| !row.members.is_empty())
+        .map(|(bucket, row)| (bucket.clone(), row.members.len()))
+        .expect("a week with members");
+    commit(
+        &mut store,
+        99,
+        "s1",
+        Some(1),
+        "2026-07-07T12:00:00Z",
+        "north",
+    );
+    let lineage = answer.lineage_ref.clone();
+    let traced = store
+        .trace_question_answered_matching(
+            &plan,
+            context,
+            answer.known_as_of,
+            &|handle| handle == lineage,
+            &bucket,
+            |_| Ok(true),
+            norn_cell::compute::lineage::LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(true),
+            },
+        )
+        .expect("traced at its frontier");
+    assert_eq!(traced.contributions.len(), members);
 }
 
 /// Grouped by a non-time property, the stock is read as of the window's end,

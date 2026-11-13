@@ -805,12 +805,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         object_type: &str,
         key: &str,
+        through: Option<u64>,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Vec<ObjectRecord>>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
+        // At a knowledge cutoff only versions committed by its frontier exist.
+        let through = through.map_or(Ok(crate::engine::MAX_SAFE_INTEGER), |commit| {
+            to_i64(commit, "commit frontier")
+        })?;
         let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 ORDER BY \"version\" LIMIT 4097"),
-            params![world, root, key],
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"commit_seq\" <= ?4 ORDER BY \"version\" LIMIT 4097"),
+            params![world, root, key, through],
         )?;
         if rows.len() > 4096 {
             return Ok(None);
