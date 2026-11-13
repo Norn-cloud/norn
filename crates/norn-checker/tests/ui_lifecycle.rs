@@ -164,8 +164,8 @@ fn a_page_synced_with_a_transition_its_decision_emits_composes_cleanly() {
 
 #[test]
 fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck() {
-    // Without `cancel`, a rejected order is revised back to `draft`, where only the page's own
-    // submit moves it on; the page already shows `done`, so the pair can never end.
+    // When a draft cannot be cancelled, a rejected order revised back to `draft` waits for the
+    // page's own submit; the page already shows `done`, so the pair can never end.
     let found = lifecycle_findings(&submit_sync(), |entity| {
         let lifecycles = entity["payload"]["objectType"]["lifecycles"]
             .as_array_mut()
@@ -174,7 +174,11 @@ fn a_page_that_shows_done_while_the_object_can_only_come_back_to_draft_is_stuck(
             if lifecycle["property"] == "status"
                 && let Some(transitions) = lifecycle["transitions"].as_array_mut()
             {
-                transitions.retain(|transition| transition["id"] != "cancel");
+                for transition in transitions.iter_mut() {
+                    if transition["id"] == "cancel" {
+                        transition["from"] = json!(["submitted", "approved"]);
+                    }
+                }
             }
         }
     });
