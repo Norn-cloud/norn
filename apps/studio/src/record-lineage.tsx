@@ -1,9 +1,7 @@
 import { useQueries } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
-import "@xyflow/react/dist/style.css"
 import { Box, Database, FileText, GitBranch, List, Rows3, type LucideIcon } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -21,72 +19,63 @@ const HEIGHT = 56
 
 const ICON: Readonly<Record<LineageNode["kind"], LucideIcon>> = { record: Box, fact: Rows3, source: Database, document: FileText }
 
-type Card = Node<{ readonly node: LineageNode }, "card">
-
-function NodeCard({ data: { node } }: NodeProps<Card>) {
+function NodeCard({ node }: { readonly node: LineageNode }) {
   const Icon = ICON[node.kind]
   const body = (
-    <div className={cn("w-[220px] rounded-node border border-node-border bg-card px-3 py-2 shadow-[var(--node-highlight),var(--elevation-node)]", node.kind === "record" && "ring-2 ring-ring/30")}>
-      <Handle type="target" position={Position.Left} className="!opacity-0" />
-      <div className="flex min-w-0 items-center gap-2"><Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" /><span className="truncate text-sm font-medium">{node.title}</span></div>
+    <div className={cn("h-full w-full rounded-node border border-node-border bg-card px-3 py-2 shadow-[var(--node-highlight),var(--elevation-node)]", node.kind === "record" && "ring-2 ring-ring/30", node.kind === "fact" && "hover:shadow-[var(--node-highlight),var(--elevation-node-hover)]")}>
+      <div className="flex min-w-0 items-center gap-2"><Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" /><span className="truncate text-sm font-medium" title={node.title}>{node.title}</span></div>
       <div className="truncate ps-6 font-mono text-[11px] text-muted-foreground" title={node.detail}>{node.detail}</div>
-      <Handle type="source" position={Position.Right} className="!opacity-0" />
     </div>
   )
-  return node.kind === "fact" && node.ref ? <Link to="/sources/$concept/$" params={{ concept: node.ref.objectType, _splat: node.ref.key }} hash="lineage">{body}</Link> : body
+  return node.kind === "fact" && node.ref ? <Link to="/sources/$concept/$" params={{ concept: node.ref.objectType, _splat: node.ref.key }} hash="lineage" className="block h-full">{body}</Link> : body
 }
-
-const NODE_TYPES = { card: NodeCard }
 
 /** An edge's label: the one fact it feeds by name, or how many; the list view names them all. */
 const facts = (names: readonly string[]) => names.length === 0 ? "" : names.length === 1 ? (names[0] ?? "").replaceAll("_", " ") : `${names.length} facts`
 
+const PAD = 24
+
 /**
  * Sources on the left, the record on the right: each hop one column, its nodes in the order the
- * lineage names them. Every card has the same known size, so the first view is fitted from the
- * container's width, never from cards not yet measured.
+ * lineage names them, joined by arrows labelled with the facts they feed. Every card has one size,
+ * so the layout is fixed; a deep lineage scrolls sideways.
  */
 function Graph({ graph }: { readonly graph: LineageGraph }) {
-  const frame = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState<{ readonly width: number; readonly height: number } | null>(null)
-  useEffect(() => {
-    const element = frame.current
-    if (element === null) return
-    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight })
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-  const { nodes, edges, bounds } = useMemo(() => {
+  const { placed, width, height } = useMemo(() => {
     const deepest = Math.max(0, ...graph.nodes.map(({ hop }) => hop))
     const rows = new Map<number, number>()
-    const nodes: Card[] = graph.nodes.map((node) => {
+    const placed = new Map(graph.nodes.map((node) => {
       const row = rows.get(node.hop) ?? 0
       rows.set(node.hop, row + 1)
-      return { id: node.id, type: "card", position: { x: (deepest - node.hop) * (WIDTH + GAP_X), y: row * ROW }, width: WIDTH, height: HEIGHT, data: { node } }
-    })
-    const edges: Edge[] = graph.edges.map(({ from, to, facts: names }) => ({
-      id: `${from}→${to}`, source: from, target: to, type: "smoothstep", label: facts(names), labelStyle: { fontSize: 11 }, markerEnd: { type: MarkerType.ArrowClosed },
+      return [node.id, { node, x: PAD + (deepest - node.hop) * (WIDTH + GAP_X), y: PAD + row * ROW }] as const
     }))
     const tallest = Math.max(1, ...rows.values())
-    return { nodes, edges, bounds: { width: (deepest + 1) * WIDTH + deepest * GAP_X, height: (tallest - 1) * ROW + HEIGHT } }
+    return { placed, width: 2 * PAD + (deepest + 1) * WIDTH + deepest * GAP_X, height: 2 * PAD + (tallest - 1) * ROW + HEIGHT }
   }, [graph])
-  const viewport = size && (() => {
-    const pad = 32
-    const zoom = Math.min(1, (size.width - 2 * pad) / bounds.width, (size.height - 2 * pad) / bounds.height)
-    return { x: (size.width - bounds.width * zoom) / 2, y: (size.height - bounds.height * zoom) / 2, zoom }
-  })()
   return (
-    <div ref={frame} className="h-80 overflow-hidden rounded-md border border-border/70 bg-surface-subtle">
-      {viewport && (
-        <ReactFlow key={`${size?.width}x${size?.height}`} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} defaultViewport={viewport} colorMode="system" minZoom={0.2}
-          nodesDraggable={false} nodesConnectable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
-          <Background />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-      )}
+    <div className="overflow-x-auto rounded-md border border-border/70 bg-surface-subtle [background-image:radial-gradient(var(--border)_1px,transparent_1px)] [background-size:16px_16px]">
+      <div className="relative mx-auto" style={{ width, height, minHeight: 160 }}>
+        <svg aria-hidden className="absolute inset-0 overflow-visible" width={width} height={height}>
+          <defs><marker id="lineage-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L8,4 L0,8 z" className="fill-muted-foreground" /></marker></defs>
+          {graph.edges.map((edge) => {
+            const from = placed.get(edge.from)
+            const to = placed.get(edge.to)
+            if (from === undefined || to === undefined) return null
+            const [x1, y1, x2, y2] = [from.x + WIDTH, from.y + HEIGHT / 2, to.x - 2, to.y + HEIGHT / 2]
+            const middle = (x1 + x2) / 2
+            const label = facts(edge.facts)
+            return (
+              <g key={`${edge.from}→${edge.to}`}>
+                <path d={`M${x1},${y1} C${middle},${y1} ${middle},${y2} ${x2},${y2}`} className="fill-none stroke-muted-foreground/70" strokeWidth={1.25} markerEnd="url(#lineage-arrow)" />
+                {label && <text x={middle} y={(y1 + y2) / 2 - 6} textAnchor="middle" className="fill-muted-foreground text-[11px]">{label}</text>}
+              </g>
+            )
+          })}
+        </svg>
+        {[...placed.values()].map(({ node, x, y }) => (
+          <div key={node.id} className="absolute" style={{ left: x, top: y, width: WIDTH, height: HEIGHT }}><NodeCard node={node} /></div>
+        ))}
+      </div>
     </div>
   )
 }
