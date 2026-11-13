@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   if (created.status !== 0) throw new Error(`norn workspace create failed: ${created.stderr || created.stdout}`)
   console.log([
     "",
-    `Norn is ready at ${publicUrl}`,
+    `Set up: the owner and their workspace's cell exist.`,
     `Sign in as ${email}.${process.env.NORN_OWNER_PASSWORD ? "" : " The password is in the data volume: docker compose exec norn cat /data/secrets/owner-password"}`,
     "",
   ].join("\n"))

@@ -61,15 +61,25 @@ STUDIO_STAGE=$STAGE STUDIO_BUILD=$(cat /opt/norn/commit) BETTER_AUTH_URL=$NORN_P
   STUDIO_CLIENT_IP_HEADER=x-real-ip \
   bun "$STUDIO/celld-config.ts" "$STUDIO"
 celld deploy "$STUDIO"
-celld d1 migrations apply "$DB" "$STUDIO"
+
+# One node, durable in the bucket. It first listens on loopback only, so nobody reaches Studio until
+# its database is migrated, the sign-up policy is set and the owner exists; then it serves publicly,
+# reached only through the proxy, which sets X-Real-Ip from the connection (Caddyfile).
+serve() { CELLD_DURABILITY=bucket CELLD_ADDR="$1" CELLD_INTERNAL_ADDR=127.0.0.1:8081 celld & NODE=$!; }
+serve 127.0.0.1:8080
+for attempt in $(seq 1 120); do
+  celld d1 migrations apply "$DB" "$STUDIO" 2>/tmp/migrate.err && break
+  [ "$attempt" = 120 ] && { cat /tmp/migrate.err >&2; kill -TERM "$NODE"; exit 1; }
+  sleep 1
+done
+rm -f "$STUDIO/wrangler.json"
 # The first account owns this install; after it, sign-up is by invitation (migration 0009).
 celld d1 execute "$DB" --command "insert into studio_setting (key, value) values ('signup', 'first-owner') on conflict (key) do nothing"
-rm -f "$STUDIO/wrangler.json"
-
-# Serve: one node, durable in the bucket. The public listener is reached only through the proxy,
-# which sets X-Real-Ip from the connection (Caddyfile).
-CELLD_DURABILITY=bucket CELLD_ADDR=0.0.0.0:8080 CELLD_INTERNAL_ADDR=127.0.0.1:8081 celld &
-NODE=$!
-trap 'kill -TERM "$NODE" 2>/dev/null; wait "$NODE"' TERM INT
 NORN_PUBLIC_URL=$NORN_PUBLIC_URL bun /opt/norn/setup.ts || { kill -TERM "$NODE"; wait "$NODE"; exit 1; }
+kill -TERM "$NODE"; wait "$NODE" || true
+
+serve 0.0.0.0:8080
+until curl -fs -o /dev/null http://127.0.0.1:8080/; do sleep 1; done
+echo "Norn is ready at ${NORN_PUBLIC_URL}"
+trap 'kill -TERM "$NODE" 2>/dev/null; wait "$NODE"' TERM INT
 wait "$NODE"
