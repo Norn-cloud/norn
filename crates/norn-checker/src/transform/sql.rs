@@ -61,6 +61,7 @@ impl Refusal {
             span: Some(Span::pointer(format!("/sql/{}", self.at))),
             artifact_id: None,
             remediation: Some(DiagnosticRemediation::FixDefinition),
+            witness: None,
         }
     }
 }

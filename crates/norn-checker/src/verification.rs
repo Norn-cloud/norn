@@ -43,6 +43,7 @@ fn finding(
     message: impl Into<String>,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message: message.into(),

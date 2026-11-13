@@ -1037,7 +1037,7 @@
       "tier": "T3",
       "severity": "warning",
       "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded.",
-      "fix": "Correct the source that reports the wrong value; the finding resolves when the record returns to the earlier report.",
+      "fix": "Correct the source that reports the wrong value, or accept the disagreement with a reason (source.agreement.accept); the finding resolves when the record returns to the earlier report.",
       "no_fix": null
     },
     {
@@ -5001,6 +5001,78 @@
       "no_fix": null
     },
     {
+      "code": "widget.catalog.duplicate_entry",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a widget's catalog declares one entry id twice: {detail}",
+      "fix": "Give every catalog entry its own id.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.duplicate_renderer",
+      "tier": "T2",
+      "severity": "error",
+      "message": "two catalog entries render the same field type: {detail}",
+      "fix": "Keep one renderer per field type, so every screen draws that type the same way.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.event_payload_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page event's payload differs from the catalog event it raises: {detail}",
+      "fix": "Declare the page event's payload exactly as the entry's event declares it.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.invalid_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component's prop does not compile or does not fit its declared type: {detail}",
+      "fix": "Write the prop as ZEN over input.fields with the prop's declared type.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.island_machine",
+      "tier": "T2",
+      "severity": "error",
+      "message": "an opaque island declares an interaction machine: {detail}",
+      "fix": "Remove the machine: an island joins the checked machine only through its typed props and declared events.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unbound_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component's required prop is not bound: {detail}",
+      "fix": "Bind every required prop to a ZEN expression over the page machine's fields.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_entry",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page places a catalog component that is not declared: {detail}",
+      "fix": "Declare the entry in this widget's catalog, or pin the widget artifact whose catalog holds it.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page event from a catalog component does not name one of its declared events: {detail}",
+      "fix": "Set emits to an event the entry declares; only catalog components emit named events.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component is given a prop its entry does not declare: {detail}",
+      "fix": "Bind only the props the entry declares, or declare the prop on the entry.",
+      "no_fix": null
+    },
+    {
       "code": "widget.interaction.control_missing_for_transition",
       "tier": "T2",
       "severity": "error",
@@ -5073,6 +5145,70 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "widget.lifecycle.assumption_violated",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page state is shown while the object is in a lifecycle state it does not assume: {detail}",
+      "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.completion_unknown",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a page state and an object state reach an ending of both only through guarded transitions: {detail}",
+      "fix": "Add an unguarded way on, or accept that the guards decide whether the page and the lifecycle settle.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.stuck",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page state and an object state together reach no ending of both: {detail}",
+      "fix": "Show an ending only once the lifecycle has reached one, or give the page a way on while the object moves.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.sync_not_accepted",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {detail}",
+      "fix": "Sync the page transition that takes the accepted outcome of the action call that fires the lifecycle transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.sync_unfired",
+      "tier": "T2",
+      "severity": "error",
+      "message": "the action behind a synced page transition cannot fire its lifecycle transition: {detail}",
+      "fix": "Sync the transition the action's decision emits, or add it to the decision's fact schema.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.uncovered_transition",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a lifecycle transition the page fires is taken by no run: {detail}",
+      "fix": "Remove the sync, or let the page reach the call while the object can take the transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.unknown_lifecycle",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine names a lifecycle the object type does not declare: {detail}",
+      "fix": "Name an object type of the set and the property of one of its lifecycles.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.lifecycle.unknown_reference",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {detail}",
+      "fix": "Name a transition and states the page and the lifecycle declare.",
+      "no_fix": null
+    },
+    {
       "code": "widget.machine.absorbing_state",
       "tier": "T2",
       "severity": "error",
@@ -5094,6 +5230,22 @@
       "severity": "error",
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {detail}",
       "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.completion_unknown",
+      "tier": "T2",
+      "severity": "info",
+      "message": "an idle or terminal state is reachable from a page machine state only through guarded transitions: {detail}",
+      "fix": "Add an unguarded way on (a person's cancel, a deadline), or accept that the guards decide whether the page can settle.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.component_guard_outside_catalog",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine transition leaves its guard to component code: {detail}",
+      "fix": "Write the guard as a ZEN expression; only a catalog entry's machine may name a component guard.",
       "no_fix": null
     },
     {

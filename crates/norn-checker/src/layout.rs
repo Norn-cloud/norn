@@ -121,6 +121,7 @@ pub(crate) fn normalize_artifact(
 
 fn invalid_source_diagnostic(artifact_id: Option<String>, message: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("ir.validation.invalid_envelope"),
         severity: DiagnosticSeverity::Error,
         message: message.to_owned(),
@@ -450,6 +451,7 @@ fn duplicate_jdm_id<const N: usize>(
     path: [&str; N],
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("rule.validation.jdm_duplicate_id"),
         severity: DiagnosticSeverity::Error,
         message: format!("{kind} id {id:?} is not unique"),
@@ -494,6 +496,7 @@ fn decode_optional<T>(
 
 fn invalid_inline_field(artifact_id: &str, path: &[impl AsRef<str>], detail: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("layout.validation.invalid_inline_field"),
         severity: DiagnosticSeverity::Error,
         message: format!("legacy layout field is invalid: {detail}"),
@@ -1065,6 +1068,7 @@ pub fn widget_list_column_key(binding_id: &str, property_id: &str) -> String {
 #[must_use]
 pub fn layout_merge_conflict_diagnostic(artifact_id: &str, path: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("layout.validation.merge_conflict"),
         severity: DiagnosticSeverity::Warning,
         message: format!(
@@ -1087,6 +1091,7 @@ fn orphaned_layout_diagnostic<const N: usize>(
     entry_id: &str,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("layout.validation.orphaned_entry"),
         severity: DiagnosticSeverity::Warning,
         message: format!(

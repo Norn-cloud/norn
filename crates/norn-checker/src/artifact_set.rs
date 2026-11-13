@@ -478,6 +478,7 @@ pub(crate) fn scope_finding(
     let (dimension, required, actual) = scope_conflict(&owner.scope, &target.scope)?;
     let actual = actual.map_or_else(|| "unset".to_owned(), |value| format!("{value:?}"));
     Some(Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(codes::INCOMPATIBLE_SCOPE),
         severity: DiagnosticSeverity::Error,
         message: format!(
@@ -935,6 +936,7 @@ fn cycle_findings(
 
 fn finding(code: &str, message: String, artifact: &ArtifactEnvelope, pointer: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

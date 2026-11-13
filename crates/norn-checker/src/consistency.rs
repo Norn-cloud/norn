@@ -197,6 +197,7 @@ pub(crate) fn finding(
     origin: Option<&RuleOrigin>,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity,
         message,

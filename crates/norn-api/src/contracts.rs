@@ -259,6 +259,49 @@ pub struct NornCheckerDiagnostic {
     /// Suggested remediation, using the canonical Norn IR enum schema.
     #[schema(required = true, nullable = true, schema_with = diagnostic_remediation_schema)]
     pub remediation: Option<String>,
+    /// A run that shows the finding, when the check found one; absent otherwise (D84: additive).
+    #[schema(required = false, nullable = false)]
+    pub witness: Option<NornCheckerWitness>,
+}
+
+/// A shortest run that shows a checker finding: the edge path, and at each step which machine
+/// moved and by which transition.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornCheckerWitness {
+    /// The steps, from an initial state.
+    pub steps: Vec<NornCheckerWitnessStep>,
+}
+
+/// One step of a checker witness.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornCheckerWitnessStep {
+    /// The edge of the checked (composed) machine this step took.
+    pub edge: u64,
+    /// The sides that moved, each by its own transition.
+    pub moves: Vec<NornCheckerWitnessMove>,
+}
+
+/// One side's move in a checker witness step.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornCheckerWitnessMove {
+    /// Which machine moved.
+    pub side: NornCheckerWitnessSide,
+    /// The transition id it took.
+    pub label: String,
+}
+
+/// The machine a witness move belongs to.
+#[derive(Debug, Clone, Copy, ToSchema)]
+pub enum NornCheckerWitnessSide {
+    /// The page's interaction machine.
+    #[serde(rename = "ui")]
+    Ui,
+    /// The backend lifecycle.
+    #[serde(rename = "backend")]
+    Backend,
 }
 
 /// Checker tier labels are wire strings such as `T2` and `T3`.

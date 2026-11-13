@@ -101,10 +101,42 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         refused.to_string().contains("nowhere.three.mapping"),
         "{refused}"
     );
+    // More rows, or more page commits, than one load may make: 413 with a
+    // typed code, before anything is captured.
     let mut big = export.clone();
-    big["snapshot"] = Value::Array(vec![export["snapshot"][0].clone(); 501]);
-    let (status, _) = load(&mut connect, &host, &principals, ADMIN, &big.to_string());
-    assert_eq!(status, 400);
+    big["snapshot"] = Value::Array(
+        (0..101)
+            .map(|n| {
+                let mut row = export["snapshot"][0].clone();
+                row["record"]["name"] = json!(format!("SYN-ERPNEXT-big-{n}"));
+                row
+            })
+            .collect(),
+    );
+    let (status, refused) = load(&mut connect, &host, &principals, ADMIN, &big.to_string());
+    assert_eq!(status, 413, "{refused}");
+    assert!(
+        refused.to_string().contains("observations.too_large"),
+        "{refused}"
+    );
+    let mut history = export.clone();
+    history["snapshot"] = Value::Array(
+        (0..9)
+            .map(|n| {
+                let mut row = export["snapshot"][0].clone();
+                row["sourceVersion"] = json!(format!("v{n}"));
+                row
+            })
+            .collect(),
+    );
+    let (status, refused) = load(
+        &mut connect,
+        &host,
+        &principals,
+        ADMIN,
+        &history.to_string(),
+    );
+    assert_eq!(status, 413, "{refused}");
 }
 
 /// A large page's objects keep their per-record lineage through the route.
@@ -132,8 +164,8 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
         .iter()
         .find(|row| row["dataset"] == "Sales Order Item")
         .unwrap();
-    // One full page: 500 order lines.
-    for n in 1..=(500 - snapshot.len()) {
+    // One full load: 100 rows, the order lines in one page.
+    for n in 1..=(100 - snapshot.len()) {
         let mut line = order.clone();
         line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
         line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
@@ -146,7 +178,7 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
 
     let request = server::Request {
         method: "GET",
-        path: "/v1/objects/canon.OrderLine/demo%2Forder%2F00123%2Fline%2F1/lineage",
+        path: "/v1/objects/canon.OrderLine/demo%2Forder%2F00042%2Fline%2F1/lineage",
         query: SCOPE,
         authorization: ADMIN,
         now: 0,
@@ -156,7 +188,7 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
     assert_eq!(response.status, 200, "{}", response.body);
     let lineage: Value = serde_json::from_str(&response.body).unwrap();
     assert!(
-        lineage.to_string().contains("SYN-ERPNEXT-order-00123"),
+        lineage.to_string().contains("SYN-ERPNEXT-order-00042"),
         "{lineage}"
     );
 }
