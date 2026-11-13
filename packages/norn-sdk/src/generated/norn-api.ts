@@ -425,6 +425,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transforms/{transform}:refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * VIEW-MAT-1: recompute and store a materialized transform's result. Only
+         *     a reader who may read every input row refreshes; the stored result is
+         *     then served to such readers until the inputs change.
+         * @description # Errors
+         *     A denied gate, or a reader who may not read every input row (the same
+         *     opaque 403), an undeclared transform (404), a transform that is not
+         *     materialized (400), a bound (413), a stale or failed evaluation (422) or
+         *     a host failure.
+         */
+        post: operations["refresh_transform"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3129,6 +3155,7 @@ export interface components {
             inputs: components["schemas"]["NornIrViewInputRef"][];
             maintenance: components["schemas"]["NornIrViewMaintenance"];
             outputSchema: components["schemas"]["NornIrDerivedPayloadPropertyOutputSchema"];
+            refresh?: components["schemas"]["NornIrViewRefresh"];
             scopeRequired?: string[];
             temporalScope?: components["schemas"]["NornIrTemporalScope"];
             viewId: string;
@@ -6805,6 +6832,11 @@ export interface components {
          */
         NornIrRedaction: "none" | "masked" | "hashed" | "withheld";
         /**
+         * @description VIEW-MAT-1: when a materialized transform's stored result is refreshed.
+         * @enum {string}
+         */
+        NornIrRefreshPolicy: "on_read" | "manual";
+        /**
          * RefusalReason
          * @description Structured refusal evidence shared by checker and transport projections.
          *     DIAG-REASON-1: declaration pins and operands are disclosed as one unit.
@@ -8319,11 +8351,13 @@ export interface components {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
-         * @description Maintenance strategy. Only `recompute_on_read` is supported in v0.
-         *     `incremental` is reserved for a future IVM phase and MUST be rejected at extraction.
+         * @description Maintenance strategy. `recompute_on_read` evaluates on every read;
+         *     `materialized` (VIEW-MAT-1, relational calcs only) keeps one stored result
+         *     refreshed by the payload's `refresh`. `incremental` is reserved for a
+         *     future IVM phase and MUST be rejected at extraction.
          * @enum {string}
          */
-        NornIrViewMaintenance: "recompute_on_read" | "incremental";
+        NornIrViewMaintenance: "recompute_on_read" | "incremental" | "materialized";
         /** @description One closed relational operator (VIEW-TYPE-1). No arbitrary function node. */
         NornIrViewNode: components["schemas"]["NornIrViewNodeOneOf0"] | components["schemas"]["NornIrViewNodeOneOf1"] | components["schemas"]["NornIrViewNodeOneOf2"] | components["schemas"]["NornIrViewNodeOneOf3"] | components["schemas"]["NornIrViewNodeOneOf4"] | components["schemas"]["NornIrViewNodeOneOf5"] | components["schemas"]["NornIrViewNodeOneOf6"] | components["schemas"]["NornIrViewNodeOneOf7"];
         /** @description Every readable row of one declared input; its grain is the object id. */
@@ -8417,6 +8451,20 @@ export interface components {
             op: "dedupe";
             /** @description Order keys; with the key they must cover the input grain. */
             orderBy: components["schemas"]["NornIrOrderKey"][];
+        };
+        /** @description VIEW-MAT-1: a materialized transform's refresh policy. */
+        NornIrViewRefresh: {
+            /**
+             * Format: uint64
+             * @description `on_read` only: a stored result younger than this is served (labelled
+             *     stale) instead of refreshed.
+             */
+            maxAgeMs?: number;
+            /**
+             * @description When the stored result is refreshed.
+             * @enum {string}
+             */
+            policy: "on_read" | "manual";
         };
         /**
          * Format: uint64
@@ -9414,6 +9462,24 @@ export interface components {
             /** @description Admitted artifact version. */
             version: string;
         };
+        /** @description VIEW-MAT-1: the stored result a read was served from. */
+        NornMaterialization: {
+            /**
+             * Format: int64
+             * @description Commits in the cell when the stored result was computed: its frontier.
+             */
+            frontier: number;
+            /**
+             * Format: int64
+             * @description When it was computed, in milliseconds since the Unix epoch.
+             */
+            refreshedAtMs: number;
+            /**
+             * @description The inputs changed since: the rows are the frontier's, not the
+             *     current snapshot's.
+             */
+            stale: boolean;
+        };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {
             /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
@@ -9694,6 +9760,20 @@ export interface components {
         };
         /** @description Current or authenticated historical answer, matching the native service envelope. */
         NornQuestionAnswer: components["schemas"]["NornQueryResult"] | components["schemas"]["NornHistoricalQuestionResult"];
+        /** @description VIEW-MAT-1: when a materialized transform's stored result is refreshed. */
+        NornRefresh: {
+            /**
+             * Format: int64
+             * @description `on_read` only: a stored result younger than this is served,
+             *     labelled stale, instead of refreshed.
+             */
+            maxAgeMs: number | null;
+            /**
+             * @description `on_read`: a read that finds the inputs changed refreshes; `manual`:
+             *     only `POST /v1/transforms/{transform}:refresh` does.
+             */
+            policy: string;
+        };
         /**
          * @description A sort direction.
          * @enum {string}
@@ -9741,9 +9821,10 @@ export interface components {
         NornTransformLineage: {
             /**
              * Format: int64
-             * @description Commits in the cell when the row was read.
+             * @description Commits in the cell at the snapshot the row was computed from.
              */
             commits: number;
+            materialization: components["schemas"]["NornMaterialization"] | null;
             /** @description The input rows, ordered by input, then id. */
             members: components["schemas"]["NornTransformMember"][];
             /** @description The row. */
@@ -9791,7 +9872,8 @@ export interface components {
             columns: components["schemas"]["NornTransformColumn"][];
             /**
              * Format: int64
-             * @description Commits in the cell when the rows were read.
+             * @description Commits in the cell at the snapshot the rows were computed from: now,
+             *     or a stored result's frontier.
              */
             commits: number;
             /** @description No input row was withheld or excluded. */
@@ -9805,6 +9887,7 @@ export interface components {
             excluded: number;
             /** @description The columns that identify a row. */
             grain: string[];
+            materialization: components["schemas"]["NornMaterialization"] | null;
             /** @description Pass as `after` for the next page; null on the last page. */
             nextAfter: string | null;
             /** @description This page's rows, ordered by grain (nulls last). */
@@ -9831,6 +9914,7 @@ export interface components {
             nodes: components["schemas"]["NornTransformNode"][];
             /** @description The output node. */
             output: string;
+            refresh: components["schemas"]["NornRefresh"] | null;
             /** @description The transform. */
             transform: string;
             /** @description Its exact version. */
@@ -11412,6 +11496,88 @@ export interface operations {
                 };
             };
             /** @description The request was refused (`transform.not_found` or `transform.row_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.bound_exceeded`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    refresh_transform: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The transform's artifact id. */
+                transform: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored result now: its frontier and refresh time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornMaterialization"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): the transform is evaluated on every read, not materialized. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied on the transform or any object type it reads, or an input row this reader may not read, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`transform.not_found`). */
             404: {
                 headers: {
                     [name: string]: unknown;
