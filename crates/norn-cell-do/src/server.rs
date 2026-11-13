@@ -602,10 +602,7 @@ fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
             status: status.as_u16(),
             body,
         },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
+        Err(refused) => crate::incident::respond(refused),
     }
 }
 
