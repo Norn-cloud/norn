@@ -2,6 +2,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
+    clippy::unnecessary_wraps,
     missing_docs,
     reason = "VIEW-ROWS-1 native conformance"
 )]
@@ -353,7 +354,7 @@ fn a_materialization_is_served_exact_until_its_inputs_change() {
     let stored = store
         .serve_transform(&aged, (WORLD, SCOPE), whole, 1_000)
         .expect("served");
-    let frontier = stored.result.revision.clone();
+    let frontier = stored.result.revision;
     correct(&mut store);
     let young = store
         .serve_transform(&aged, (WORLD, SCOPE), whole, 5_000)
