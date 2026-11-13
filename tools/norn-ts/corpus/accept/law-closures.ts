@@ -48,7 +48,7 @@ export const balanced = Norn.law({
       expression: Norn.expression(Entry, (self) =>
         Norn.sum([{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].map((l) => l.amount)) === 0
         && [{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].every((l) => l.amount !== 0)
-        && ![{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].some((l) => l.sku.startsWith("VOID-") && ["A", "B"].some((p) => l.sku.endsWith(p)))
+        && ![{ amount: self.debit, sku: self.debit_sku }, { amount: self.credit, sku: self.credit_sku }].some((l) => l.sku.startsWith("VOID-") && [1, 2].some((p) => l.amount === p))
         && Norn.addDays(self.issue_date, 30) >= Norn.parseDate(self.due_date)),
     },
   },

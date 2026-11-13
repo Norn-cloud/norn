@@ -134,8 +134,9 @@ describe("closures, sum and day helpers", () => {
     ["one_big", X.one(lines, "l", X.gt(X.ref("l", "amount"), X.lit(1000))), `one(${LINES} as l, l.amount > 1000)`],
     ["few_lines", X.le(X.count(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), `count(${LINES} as l, l.amount > 0) <= 50`],
     ["filtered", X.ge(X.call("len", X.filter(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), `len(filter(${LINES} as l, l.amount > 0)) >= 1`],
-    // Nested closures bind distinct aliases; the inner list is a literal, as two nested to-many closures exceed the cost bound.
-    ["nested", X.all(lines, "a", (a) => X.some(X.list(X.lit("SKU-"), X.lit("SVC-")), "p", (p) => X.call("startsWith", X.ref("a", "sku"), p))), `all(${LINES} as a, some(['SKU-', 'SVC-'] as p, startsWith(a.sku, p)))`],
+    // Nested closures bind distinct aliases. A string read through a built list is costed at its largest single
+    // value (`norn-expr` cost.rs), so the inner body compares amounts; a nested string test would exceed the budget.
+    ["nested", X.all(lines, "a", (a) => X.some(X.list(X.lit(0), X.lit(1)), "p", (p) => X.gt(X.ref("a", "amount"), p))), `all(${LINES} as a, some([0, 1] as p, a.amount > p))`],
     ["terms", X.le(X.daysBetween(self("issue_date"), self("due_date")), X.lit(30)), "days_between(date(self.issue_date), date(self.due_date)) <= 30"],
     ["due_by", X.ge(X.addDays(self("issue_date"), X.lit(30)), X.call("date", self("due_date"))), "add_days(date(self.issue_date), 30) >= date(self.due_date)"],
     ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(lines, "l", (l) => X.ref("l", "amount"))), X.lit(0))), `(self.status != 'posted') or (sum(map(${LINES} as l, l.amount)) == 0)`],
@@ -183,7 +184,7 @@ test("typed lambdas in laws and guards compile to norn-zen/6 and are admitted", 
   const byId = new Map(compiled.artifacts.map((a) => [(a as { artifactId: string }).artifactId, a as { payload: Record<string, any> }]))
   const law = byId.get("books.JournalEntry.balanced.law")!.payload
   expect(law.condition).toBe("self.status == 'posted'")
-  expect(law.response.expression).toBe("(((sum(map([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount)) == 0) and all([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount != 0)) and (not some([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, startsWith(l.sku, 'VOID-') and some(['A', 'B'] as p, endsWith(l.sku, p))))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
+  expect(law.response.expression).toBe("(((sum(map([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount)) == 0) and all([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount != 0)) and (not some([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, startsWith(l.sku, 'VOID-') and some([1, 2] as p, l.amount == p)))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
   const guard = byId.get("books.JournalEntry.entity")!.payload.objectType.lifecycles[0].transitions[0].guards[0]
   expect(guard).toBe("(count(self.lines as l, l.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
   // Each lambda maps back to its source line.
