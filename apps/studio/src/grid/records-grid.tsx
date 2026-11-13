@@ -75,7 +75,8 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
   const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
   const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
-  const [draft, setDraft] = useState<readonly DraftClause[]>([])
+  // An opened view's filter is the draft too, so the editor opens on it with nothing unapplied.
+  const [draft, setDraft] = useState<readonly DraftClause[]>(() => fromPredicate(initial?.filter ?? null))
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
@@ -191,7 +192,8 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
     <Shell>
       <div className="grid gap-4 xl:grid-cols-[15rem_minmax(0,1fr)]">
       {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
-      <div className="grid min-w-0 gap-3">
+      {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
+      <div className="grid min-w-0 content-start gap-3">
         {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-sm font-medium">Narrow by</summary><div className="pt-3">{facets}</div></details>}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (

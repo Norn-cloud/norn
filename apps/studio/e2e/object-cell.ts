@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import type { Page, Route } from "@playwright/test"
 
 /**
@@ -136,6 +137,25 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
     requests.push(url)
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } })
+    // HOST-READ-7: exact value counts of the categorical properties over the rows the filter keeps.
+    if (url.pathname.endsWith("/v1/objects/canon.Holding:facets")) {
+      const { filter, problems } = validate(url)
+      if (problems.length > 0) return route.fulfill({ status: 400, json: { code: "query.invalid", message: "The cell refused this query.", diagnostics: problems } })
+      const asked = url.searchParams.get("properties")?.split(",") ?? Object.keys(KINDS).filter((property) => KINDS[property] !== "decimal")
+      const counted = rows.filter((row) => !row.withheld && (filter?.all ?? []).every((clause) => matches(row, clause)))
+      const facets = asked.map((property) => {
+        const held = new Map<string, number>()
+        let nulls = 0
+        for (const row of counted) {
+          const value = row.withheldProperties.includes(property) ? undefined : row.values[property]
+          if (value === undefined || value === null) nulls += 1
+          else held.set(String(value), (held.get(String(value)) ?? 0) + 1)
+        }
+        const values = [...held].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1)).map(([value, count]) => ({ value, count }))
+        return { property, values: values.slice(0, 20), otherRows: values.slice(20).reduce((sum, { count }) => sum + count, 0), nulls }
+      })
+      return route.fulfill({ json: { objectType: "canon.Holding", rows: counted.length, withheldRows: rows.filter((row) => row.withheld).length, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets } })
+    }
     if (!url.pathname.endsWith("/v1/objects/canon.Holding")) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "No such object type." } })
     const { sort, filter, limit, problems } = validate(url)
     if (problems.length > 0) return route.fulfill({ status: 400, json: { code: "query.invalid", message: "The cell refused this query.", diagnostics: problems } })
@@ -171,4 +191,42 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
 
 export async function session(page: Page, environmentId: string | null = "analytics") {
   await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId } }))
+}
+
+/** A stand-in for the cell's retained definitions, for saved views (VIEW-DEF-1): list, read, install with version checks, retire. */
+export async function viewsCell(page: Page) {
+  const views = new Map<string, { version: number; payload: unknown; retired: boolean }>()
+  const calls: { readonly method: string; readonly path: string; readonly body: unknown }[] = []
+  await page.route("**/api/host/v1/definitions**", async (route: Route) => {
+    const url = new URL(route.request().url())
+    const method = route.request().method()
+    const body = route.request().postData() === null ? null : JSON.parse(route.request().postData() ?? "null") as { id?: string; payload?: unknown; expectedVersion?: number } | null
+    calls.push({ method, path: url.pathname, body })
+    const tail = url.pathname.split("/v1/definitions")[1] ?? ""
+    // The definitions read that makes Studio live: the three systems' recorded artifacts.
+    if (tail === "") return route.fulfill({ json: { artifacts: JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown } })
+    if (tail === ":list") return route.fulfill({ json: { items: [...views].filter(([, view]) => !view.retired).map(([id, view]) => ({ id, kind: "view", version: view.version })), nextCursor: null } })
+    if (tail === ":install") {
+      const id = body?.id ?? ""
+      const current = views.get(id)
+      if (body?.expectedVersion !== undefined && current?.version !== body.expectedVersion) return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Someone changed this view first." } })
+      const version = (current?.version ?? 0) + 1
+      views.set(id, { version, payload: body?.payload, retired: false })
+      return route.fulfill({ json: { installed: true, id, version } })
+    }
+    const retire = /^\/(.+):retire$/.exec(tail)
+    if (retire !== null) {
+      const id = decodeURIComponent(retire[1] ?? "")
+      const current = views.get(id)
+      if (current === undefined || current.retired || current.version !== body?.expectedVersion) return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Someone changed this view first." } })
+      current.retired = true
+      current.version += 1
+      return route.fulfill({ json: { installed: true, id, version: current.version } })
+    }
+    const id = decodeURIComponent(tail.slice(1))
+    const view = views.get(id)
+    if (view === undefined || view.retired) return route.fulfill({ status: 404, json: { code: "definition.not_found", message: "No such definition." } })
+    return route.fulfill({ json: { id, kind: "view", version: view.version, payload: view.payload } })
+  })
+  return { views, calls }
 }
