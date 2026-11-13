@@ -79,7 +79,6 @@ pub mod mapping;
 mod markings;
 pub mod metric;
 pub mod metric_interchange;
-pub mod source_agreement;
 mod model;
 #[allow(
     missing_docs,
@@ -96,6 +95,7 @@ mod model;
     clippy::large_futures
 )]
 pub mod posting;
+pub mod source_agreement;
 pub mod table_analysis;
 pub mod tool_effect;
 mod unit_admission;

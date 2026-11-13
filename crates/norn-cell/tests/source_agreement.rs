@@ -278,10 +278,12 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     let mut cell = setup(&directory.path().join("flip.sqlite"));
     load(&mut cell, "erpnext");
     let reader = cell.store().read();
-    assert!(reader
-        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
-        .expect("one source")
-        .is_empty());
+    assert!(
+        reader
+            .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+            .expect("one source")
+            .is_empty()
+    );
     load(&mut cell, "shopify");
     let flipped = cell
         .store()
@@ -292,7 +294,11 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     let finding = &flipped[0].finding;
     assert_eq!(finding.status, DataQualityFindingStatus::Open);
     assert_eq!(finding.severity, norn_ir::DataQualitySeverity::Warning);
-    let DataQualityOutcome::SourceDisagreement { property, earlier, later } = &finding.outcome
+    let DataQualityOutcome::SourceDisagreement {
+        property,
+        earlier,
+        later,
+    } = &finding.outcome
     else {
         panic!("a source disagreement: {finding:#?}")
     };
@@ -304,13 +310,14 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     assert_ne!(earlier.system, later.system);
     assert!(earlier.fact.version < later.fact.version);
     // The holding is never excluded for it.
-    assert!(cell
-        .store()
-        .read()
-        .observation_findings(MAIN_WORLD, "canon.Holding", NORTH)
-        .expect("findings")
-        .iter()
-        .all(|f| !matches!(f.outcome, DataQualityOutcome::SourceDisagreement { .. })));
+    assert!(
+        cell.store()
+            .read()
+            .observation_findings(MAIN_WORLD, "canon.Holding", NORTH)
+            .expect("findings")
+            .iter()
+            .all(|f| !matches!(f.outcome, DataQualityOutcome::SourceDisagreement { .. }))
+    );
     load(&mut cell, "odoo");
     let returned = cell
         .store()
@@ -322,7 +329,10 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
             .iter()
             .map(|d| d.finding.status)
             .collect::<Vec<_>>(),
-        [DataQualityFindingStatus::Resolved, DataQualityFindingStatus::Open],
+        [
+            DataQualityFindingStatus::Resolved,
+            DataQualityFindingStatus::Open
+        ],
         "Odoo's on-hand returns to ERPNext's report and disagrees with Shopify's"
     );
 }
@@ -371,14 +381,18 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
     // The engine path counts with the same host function (exact/DuckDB parity).
     assert_eq!(
         cell.store()
-            .answer_source_disagreements(&plan, &after.context, after.known_as_of, &mut |_| Ok(true))
+            .answer_source_disagreements(&plan, &after.context, after.known_as_of, &mut |_| Ok(
+                true
+            ))
             .expect("engine-path counts"),
         after.source_disagreements
     );
     // SOURCE-AGREE-FRONTIER: the earlier answer's frontier still has none.
     assert_eq!(
         cell.store()
-            .answer_source_disagreements(&plan, &before.context, before.known_as_of, &mut |_| Ok(true))
+            .answer_source_disagreements(&plan, &before.context, before.known_as_of, &mut |_| Ok(
+                true
+            ))
             .expect("earlier frontier"),
         None
     );

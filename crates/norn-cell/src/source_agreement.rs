@@ -13,8 +13,8 @@ use norn_ir::{PropertyId, RuntimeValue, SourceClaim};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, SqlRow, params};
-use crate::read::{StoreReader, to_i64, to_u64};
 use crate::reactive::DecodeBudget;
+use crate::read::{StoreReader, to_i64, to_u64};
 use crate::source_provenance::InstanceSourceProvenance;
 use crate::system::FACT_VALUES;
 use crate::{CellError, ObjectRecord};
@@ -174,7 +174,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     .and_then(|v| v.get(&change.property).cloned())
                     .flatten();
                 let fact = FactRef::new(record.object_type.as_str(), key, record.version);
-                Ok(Some((SourceClaim { system, value, fact }, lineage)))
+                Ok(Some((
+                    SourceClaim {
+                        system,
+                        value,
+                        fact,
+                    },
+                    lineage,
+                )))
             };
             let (Some(earlier), Some(later)) = (claim(change.earlier)?, claim(change.later)?)
             else {
@@ -235,13 +242,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         }
         let bound = usize::try_from(rule::BOUND).unwrap_or(usize::MAX);
-        let candidates = self.changed_subjects(
-            world,
-            grain,
-            &partition,
-            frontier,
-            bound.saturating_add(1),
-        )?;
+        let candidates =
+            self.changed_subjects(world, grain, &partition, frontier, bound.saturating_add(1))?;
         let complete = candidates.len() <= bound;
         let mut counts: BTreeMap<String, u64> = BTreeMap::new();
         for id in candidates.iter().take(bound) {
