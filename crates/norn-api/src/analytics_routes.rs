@@ -753,39 +753,22 @@ pub fn page_objects<E: SqlEngine>(
     } else {
         (Vec::new(), Vec::new())
     };
-    let tenant = TenantId::of_scope(&host.scope().key());
     let page = if !values && !query.filter.is_empty() {
         PageResponse {
             total: 0,
             rows: Vec::new(),
         }
     } else {
-        let call = EngineCall::new(
-            "page",
-            &PageRequest {
-                tenant: tenant.clone(),
-                source: source.clone(),
-                filters,
-                sort,
-                ids: Vec::new(),
-                offset,
-                limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
-            },
-        )
-        .map_err(engine_failure)?;
-        let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
-            .map_err(engine_failure)?;
-        if answer.status != 200 {
-            let error = refused(&answer.body);
-            // The dataset was loaded again since the cursor.
-            if query.after.is_some()
-                && matches!(error, CellError::ComputeRefused(code) if code == "core.compute.stale_input")
-            {
-                return Err(crate::object_routes::snapshot_moved());
-            }
-            return Err(engine_failure(error));
-        }
-        decode(&answer.body).map_err(engine_failure)?
+        let request = PageRequest {
+            tenant: TenantId::of_scope(&host.scope().key()),
+            source,
+            filters,
+            sort,
+            ids: Vec::new(),
+            offset,
+            limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
+        };
+        engine_page(store, transport, &request, query.after.is_some())?
     };
     let returned = u64::try_from(page.rows.len()).unwrap_or(u64::MAX);
     let reached = offset.saturating_add(returned);
@@ -822,6 +805,35 @@ pub fn page_objects<E: SqlEngine>(
             approximate: false,
         }),
     })
+}
+
+/// One records page from the engine. A cursor whose dataset was loaded
+/// again since reads as `object.snapshot_moved`.
+fn engine_page<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    request: &norn_cell::analytics::PageRequest,
+    continued: bool,
+) -> Result<norn_cell::analytics::PageResponse, Refusal> {
+    let call = EngineCall::new("page", request).map_err(engine_failure)?;
+    let answer = exchange(
+        store,
+        transport,
+        &request.tenant,
+        mirror_world(&request.source),
+        &call,
+    )
+    .map_err(engine_failure)?;
+    if answer.status != 200 {
+        let error = refused(&answer.body);
+        if continued
+            && matches!(error, CellError::ComputeRefused(code) if code == "core.compute.stale_input")
+        {
+            return Err(crate::object_routes::snapshot_moved());
+        }
+        return Err(engine_failure(error));
+    }
+    decode(&answer.body).map_err(engine_failure)
 }
 
 /// One dataset row as the grid shows it: withheld (no values, no version)
