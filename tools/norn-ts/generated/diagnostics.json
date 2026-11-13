@@ -2985,6 +2985,14 @@
       "no_fix": null
     },
     {
+      "code": "mapping.model.link_claim_type_missing",
+      "tier": "T3",
+      "severity": "error",
+      "message": "map {map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base",
+      "fix": "Include norn.ObservedLinkClaim (registry/core/artifacts/norn.ObservedLinkClaim.entity.json) in the definition set, or install on a host whose trusted base carries it: the cell records every mapped link as an observed link claim.",
+      "no_fix": null
+    },
+    {
       "code": "mapping.model.link_target_mismatch",
       "tier": "T3",
       "severity": "error",
