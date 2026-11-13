@@ -523,7 +523,7 @@
     ],
     "source": {
       "schemaId": "odoo.three.source",
-      "sha256": "6472d633da08e9dadc2251228e21269964367122047b5c8bc79041680ddeee75",
+      "sha256": "9a996b1b5b2827db69b781441373fedc1e2750f83ab40553fb535eb8ba804ec0",
       "version": "0.1.0"
     }
   },
