@@ -102,6 +102,28 @@ class pair is admitted exactly when the requirement is undeclared or equal),
 non-numeric type, or against a declared one, refuses), and
 **METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
 
+**METRIC-GRAIN-LINK-1:** a sum's time may be a property of an object reached
+through one to-one link from the measured object (a posting's time is its
+event's). The linked property must be a stored, non-null timestamp or date.
+METRIC-DERIVE-1 uses a linked time only for an object with no time property of
+its own: for each additive property it derives one sum per time property one
+to-one hop away ("<property> by <link>.<time>"). Through a required link every
+row has a time. Through an optional link, a row whose link is absent has no
+time. It is treated exactly like a null measured value: skipped, never given an
+invented time, and counted, with the answer reporting the count as `unlinked`.
+Each row reads the linked object's current version at the answer's frontier,
+so correcting an event's time moves its rows. A snapshot
+(METRIC-SNAPSHOT-ASOF-1) keeps its own valid time: a question over a snapshot
+whose time is linked still refuses `question.validation.snapshot_aggregation`. The question window applies to the linked time. The exact engine
+supports one hop, sums rather than ratios, and a time grouping on that same
+path; anything else refuses as an unsupported engine shape.
+
+Named scenarios: **METRIC-LINK-TIME** (a posting is bucketed by its event's
+time), **METRIC-LINK-UNLINKED** (a row whose optional link is absent is
+skipped and counted, never bucketed), **METRIC-LINK-MOVES** (correcting the
+linked time moves the row), and **METRIC-LINK-OWN-FIRST** (an object with its
+own time derives no linked-time sum).
+
 **METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
 `unitSource`: one or more distinct sibling properties whose values together
 are its unit (canon's quantities take theirs from `unit` or, for money,
@@ -133,6 +155,20 @@ grouping with `eq` filters on every source lowers to the exact engine), and
 **METRIC-UNIT-DECLARATION** (a source that is the measure itself, missing or
 not a code property, a decimal with a static unit, or a member that drops a
 declared source, refuses).
+
+A decimal's `currencySource` partitions the same way. A metric that converts
+its amounts (`currency.conversion`) or whose source admits a single code needs
+no partition. Otherwise the source path (an ISO 4217 code, or an enum of
+several codes) is a partition path: a question that neither groups by it nor
+fixes it with an `eq` filter refuses `metric.validation.mixed_currency`, a
+reaggregation never rolls up across it, and derived candidates list it in
+`unit_partition`, so a derived question is grouped by currency. An ISO 4217
+registry code is grouped by and `eq`-filtered like a code, with an upper-case
+literal. The exact engine sums each partition's stored amounts and still
+refuses a conversion as an unsupported engine shape. Named scenarios:
+**METRIC-CURRENCY-PARTITION** (per currency, grouped or fixed, admits; free or
+`ne` refuses), **METRIC-CURRENCY-SINGLE** (a one-code source and a conversion
+need no partition).
 
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
@@ -255,7 +291,10 @@ property tests run both at the same frontier.
   cell recorded. Every row is typed exactly by its column: no value is
   rounded, and a timestamp is admitted exactly when the cell reads it as one,
   with the cell's own ordering key. A row that cannot be typed, or misses a
-  required value, is quarantined with its first reason (`bulk.*`).
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
 - **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
   sha256)`; every row is numbered from its file, so each number traces to
   `(uri, sha256, row)`, and an answer over the dataset is exact at its load.

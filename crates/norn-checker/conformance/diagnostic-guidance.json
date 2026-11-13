@@ -1644,6 +1644,10 @@
     "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target."
   },
   {
+    "code": "model.admission.prediction_type_mismatch",
+    "fix": "Name an object type that declares text properties subject and model_version and every output as a property of the same type, scale, unit and nullability (an enum with at least the output's values)."
+  },
+  {
     "code": "model.admission.unknown_feature",
     "fix": "Name a property the input object type declares, inherits, implements or gains from an extension."
   },
@@ -2462,6 +2466,10 @@
   {
     "code": "widget.machine.cancel_outside_pending",
     "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome."
+  },
+  {
+    "code": "widget.machine.control_without_event",
+    "fix": "Declare a user event that names the control, or remove the control."
   },
   {
     "code": "widget.machine.duplicate_id",

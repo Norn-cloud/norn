@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { columnId, define, kindOf, loadDataset } from "../src/lib/uploads.ts"
+import { columnId, define, kindOf, loadDataset, upload, uploadFailure } from "../src/lib/uploads.ts"
 
 const original = globalThis.fetch
 afterEach(() => { globalThis.fetch = original })
@@ -48,4 +48,20 @@ test("a dataset load reports the cell's counts; a cell with no engine says so an
 test("any other refusal of a dataset load is the cell's, shown as sent", async () => {
   cell(422, { code: "bulk.missing_column", message: "the file has no column amount" })
   await expect(loadDataset("up_1", "upload.Sale")).rejects.toThrow("the file has no column amount")
+})
+
+test("an upload step that gives up or cannot reach the storage says so in words", () => {
+  const timeout = Object.assign(new Error("signal timed out"), { name: "TimeoutError" })
+  expect(uploadFailure("cell", timeout).message).toContain("The cell did not answer within 90 seconds")
+  expect(uploadFailure("storage", timeout).message).toContain("The storage did not take the file")
+  expect(uploadFailure("storage", new TypeError("Failed to fetch")).message).toContain("could not reach the storage")
+  const refusal = new Error("the upload was read but not kept")
+  expect(uploadFailure("cell", refusal)).toBe(refusal)
+})
+
+test("a storage the browser cannot reach fails the upload with that reason, before the cell is asked to read it", async () => {
+  const calls = cell(200, { uploadId: "u1", putUrl: "https://storage.example/u1", putHeaders: { "content-type": "text/csv" }, expiresAt: "2026-11-13T00:00:00Z" })
+  const unreachable = async () => { throw new TypeError("Failed to fetch") }
+  await expect(upload(new File(["a,b\n1,2\n"], "x.csv", { type: "text/csv" }), unreachable)).rejects.toThrow("could not reach the storage")
+  expect(calls.map(({ url }) => new URL(url, "http://studio").pathname)).toEqual(["/api/host/v1/uploads:begin"])
 })

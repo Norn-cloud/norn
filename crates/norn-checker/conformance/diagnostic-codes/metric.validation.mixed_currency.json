@@ -1,6 +1,6 @@
 {
   "code": "metric.validation.mixed_currency",
-  "message": "Summing multiple currencies requires an explicit conversion.",
+  "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly.",
   "severity": "error",
   "since": "0.2.0",
   "tier": "T3"

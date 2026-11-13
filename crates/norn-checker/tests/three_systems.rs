@@ -507,8 +507,8 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
 
 /// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
 /// their own time property, and the stock (`Holding`) derives only its as-of
-/// snapshots over `observed_at` (METRIC-SNAPSHOT-ASOF-1). The amounts without a
-/// time grain of their own (`Posting`, `SettlementObservation`) derive nothing.
+/// snapshots over `observed_at` (METRIC-SNAPSHOT-ASOF-1). A posting's amount takes
+/// its event's time (METRIC-GRAIN-LINK-1); `SettlementObservation` derives nothing.
 /// Each quantity carries its unit partition (`unit`, `currency`).
 #[test]
 fn three_systems_derive_exactly_the_canon_flow_sums() {
@@ -556,6 +556,16 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
         ("canon.OrderLine", "quantity", "due_at", false),
         ("canon.Holding", "quantity", "observed_at", true),
         ("canon.Holding", "stock_cost", "observed_at", true),
+        // METRIC-GRAIN-LINK-1: a posting has no time of its own; it takes its event's.
+        ("canon.Posting", "amount", "occurred_at", false),
+        // A settlement is summed per currency by its optional event's time; one
+        // without an event is counted as unlinked, never bucketed.
+        (
+            "canon.SettlementObservation",
+            "amount",
+            "occurred_at",
+            false,
+        ),
     ]
     .map(|(model, measure, time, snapshot)| {
         (
@@ -573,12 +583,13 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
             .iter()
             .map(|path| path.property.as_str())
             .collect();
-        let expected: &[&str] =
-            if candidate.definition.type_params.expr.as_deref() == Some("quantity") {
-                &["unit", "currency"]
-            } else {
-                &[]
-            };
+        let expected: &[&str] = match candidate.definition.type_params.expr.as_deref() {
+            Some("quantity") => &["unit", "currency"],
+            Some("amount") => &["currency"],
+            // A stock's cost is held per its currency source.
+            Some("stock_cost") => &["cost_currency"],
+            _ => &[],
+        };
         assert_eq!(partition, expected, "{}", candidate.definition.name);
     }
 }

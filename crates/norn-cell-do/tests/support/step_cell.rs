@@ -284,6 +284,16 @@ impl AdHocQuestions<NativeEngine> for Handles {
     fn max_buckets(&self) -> usize {
         0
     }
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<NativeEngine>(self, question, max_rows)
+    }
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub(crate) struct Cell {

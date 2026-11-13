@@ -13,7 +13,9 @@
 //! `contract_checked`, the latter with at least one contract; each contract
 //! applies to its output's type. Over an artifact set, the input object type
 //! resolves in the candidate set or the installed base, and every feature and
-//! the target is a numeric, boolean or categorical property of it.
+//! the target is a numeric, boolean or categorical property of it; a named
+//! predictions type ([`ModelPredictions`]) carries every output as a property
+//! of the same type and nullability.
 use crate::entity_v2::object::{ObjectTypeName, PropertyId};
 use crate::entity_v2::property::{DecimalLiteral, PropertyType};
 use crate::members::present_non_null;
@@ -132,6 +134,22 @@ pub struct ModelContract {
     pub rule: ContractRule,
 }
 
+/// Where a model's predictions are written (#1171 M4): one object per scored
+/// input object, of a typed object type.
+///
+/// Admission (`norn-checker`, over a set): the type resolves in the candidate
+/// set or the installed base; it has a text property `subject` (the scored
+/// input object's id) and a text property `model_version` (the
+/// `ml.ModelVersion` id that produced it); and every output of the model is a
+/// property of it with the same id, the same type (a decimal's scale and unit,
+/// an enum's values as a superset) and the same nullability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelPredictions {
+    /// The predictions object type, by qualified name (`sales.ChurnPrediction`).
+    pub object_type: ObjectTypeName,
+}
+
 /// How the model was built: display text only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -177,6 +195,15 @@ pub struct ModelRoot {
     /// Checks every output must meet before it is written. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contracts: Vec<ModelContract>,
+    /// The typed object type predictions are written to; omitted when the
+    /// model names none.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ModelPredictions")]
+    pub predictions: Option<ModelPredictions>,
     /// Display-only description of how the model was built.
     pub method: ModelMethod,
     /// Reserved versioned extension slots, as on other artifact roots.
@@ -211,6 +238,7 @@ mod tests {
                   "rule": { "kind": "range", "min": "0", "max": "1" } },
                 { "id": "present", "output": "churn_probability", "rule": { "kind": "notNull" } }
             ],
+            "predictions": { "objectType": "sales.ChurnPrediction" },
             "method": { "label": "logistic regression", "version": "sklearn 1.6" }
         });
         let root: Result<ModelRoot, _> = serde_json::from_value(wire.clone());

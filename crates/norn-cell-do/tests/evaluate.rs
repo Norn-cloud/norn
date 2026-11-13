@@ -26,7 +26,7 @@ use norn_kernel::authz::AccessRequest;
 use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 
 /// The analytics runtime with overridable bounds and one metric whose access
@@ -96,6 +96,16 @@ impl AdHocQuestions<NativeEngine> for Bounded {
     }
     fn max_buckets(&self) -> usize {
         self.buckets
+    }
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<NativeEngine>(self, question, max_rows)
+    }
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
     }
 }
 

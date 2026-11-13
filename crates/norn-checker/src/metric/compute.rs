@@ -45,6 +45,20 @@ pub struct KeyedSum {
     /// each bucket's end, ordered by `time_property` (subject = the root
     /// object's identity), instead of summing every row in its bucket.
     pub as_of: bool,
+    /// METRIC-GRAIN-LINK-1: `time_property` belongs to the object this to-one
+    /// link reaches, not to the measured row.
+    pub time_link: Option<LinkedTime>,
+}
+
+/// METRIC-GRAIN-LINK-1: a sum's time read through one to-one link.
+#[derive(Debug, Clone)]
+pub struct LinkedTime {
+    /// The to-one link from the measured object.
+    pub link: norn_ir::LinkId,
+    /// The one concrete object type the link reaches.
+    pub target_type: ObjectTypeName,
+    /// The linked object's stored, non-null time property.
+    pub property: EffectiveProperty,
 }
 
 /// QUERY-GRAIN-1: a checked sum or ratio of sums. Construction is through [`admit`].
@@ -87,6 +101,12 @@ impl QuestionPlan {
     #[must_use]
     pub fn definitions(&self) -> &[MetricDefinition] {
         &self.definitions
+    }
+
+    /// METRIC-GRAIN-LINK-1: the to-one link this plan's time is read through.
+    #[must_use]
+    pub fn time_link(&self) -> Option<&LinkedTime> {
+        self.sums.first().and_then(|sum| sum.time_link.as_ref())
     }
 
     /// METRIC-SNAPSHOT-ASOF-1: whether this plan is a snapshot (as-of) sum,
@@ -158,7 +178,8 @@ pub fn admit(
         || selection.reaggregate.is_some()
         || question.dimensions.len() > MAX_GROUP_BY
         || question.dimensions.iter().any(|dimension| {
-            !dimension.path.links.is_empty()
+            // A linked path is only a time grouping, checked against the sum's linked time below.
+            (!dimension.path.links.is_empty() && dimension.grain.is_none())
                 || !dimension.grain.is_none_or(|grain| GRAINS.contains(&grain))
         })
         || question.filters.iter().any(unsupported_filter)
@@ -196,16 +217,7 @@ pub fn admit(
             lower_sum(definition, question, catalog)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // METRIC-SNAPSHOT-ASOF-1: one snapshot sum; a week grouping buckets its own time.
-    if sums.iter().any(|sum| sum.as_of)
-        && (sums.len() != 1
-            || question.dimensions.iter().any(|dimension| {
-                dimension.grain.is_some()
-                    && sums
-                        .first()
-                        .is_none_or(|sum| dimension.path.property != sum.time_property)
-            }))
-    {
+    if unsupported_time_shape(question, &sums) {
         return Err(refuse());
     }
     let properties = catalog
@@ -225,6 +237,34 @@ pub fn admit(
     })
 }
 
+/// A snapshot or a linked time this profile cannot execute: more than one
+/// sum, or a time grouping off the sum's own (linked) time path.
+fn unsupported_time_shape(question: &QuestionIR, sums: &[KeyedSum]) -> bool {
+    // METRIC-GRAIN-LINK-1: one sum, grouped in time only along its own linked path.
+    let linked = sums.first().and_then(|sum| {
+        sum.time_link
+            .as_ref()
+            .map(|link| (link.link.clone(), sum.time_property.clone()))
+    });
+    let linked_off_path = question.dimensions.iter().any(|dimension| {
+        !dimension.path.links.is_empty()
+            && linked.as_ref().is_none_or(|(link, property)| {
+                dimension.path.links.as_slice() != std::slice::from_ref(link)
+                    || &dimension.path.property != property
+            })
+    });
+    // METRIC-SNAPSHOT-ASOF-1: one snapshot sum; a time grouping buckets its own time.
+    let snapshot_off_path = sums.iter().any(|sum| sum.as_of)
+        && question.dimensions.iter().any(|dimension| {
+            dimension.grain.is_some()
+                && sums
+                    .first()
+                    .is_none_or(|sum| dimension.path.property != sum.time_property)
+        });
+    let several = sums.len() != 1 && (linked.is_some() || sums.iter().any(|sum| sum.as_of));
+    several || linked_off_path || snapshot_off_path
+}
+
 fn lower_sum(
     definition: &MetricDefinition,
     question: &QuestionIR,
@@ -240,9 +280,14 @@ fn lower_sum(
     else {
         return Err(refuse());
     };
+    // An amount summed per currency (METRIC-UNIT-PARTITION-1) is summed as stored;
+    // the checker admitted the question only if it partitions by that currency.
     if object_type != &question.object_set
-        || !metric.time_dimension.links.is_empty()
-        || metric.currency.is_some()
+        || metric.time_dimension.links.len() > 1
+        || metric
+            .currency
+            .as_ref()
+            .is_some_and(|currency| currency.conversion.is_some())
         || definition.norn.freshness.is_some()
         || definition.norn.authz.is_some()
         || metric.default_filters.iter().any(unsupported_filter)
@@ -268,15 +313,63 @@ fn lower_sum(
         metric.additivity,
         norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
     );
-    if as_of && (!metric.snapshot || !metric.snapshot_groupings.is_empty()) {
+    if as_of
+        && (!metric.snapshot
+            || !metric.snapshot_groupings.is_empty()
+            || !metric.time_dimension.links.is_empty())
+    {
         return Err(refuse());
     }
+    let time_link = match metric.time_dimension.links.as_slice() {
+        [] => None,
+        [link] => Some(
+            linked_time(
+                catalog,
+                object_type.as_str(),
+                link,
+                &metric.time_dimension.property,
+            )
+            .ok_or_else(refuse)?,
+        ),
+        _ => return Err(refuse()),
+    };
     Ok(KeyedSum {
         name: metric.name,
         property: property.clone(),
         time_property: metric.time_dimension.property,
         filters: metric.default_filters,
         as_of,
+        time_link,
+    })
+}
+
+/// METRIC-GRAIN-LINK-1: a to-one `link` of `source` reaching exactly one
+/// concrete object type whose `property` is a stored, non-null time.
+fn linked_time(
+    catalog: &EffectiveCatalog,
+    source: &str,
+    link: &norn_ir::LinkId,
+    property: &PropertyId,
+) -> Option<LinkedTime> {
+    let declared = catalog
+        .links_for_object_type(source)?
+        .iter()
+        .find(|candidate| &candidate.id == link)?;
+    if declared.cardinality.to != norn_ir::Multiplicity::One {
+        return None;
+    }
+    let targets = catalog.target_types(declared.target.as_str())?;
+    let [target] = targets.into_iter().collect::<Vec<_>>().try_into().ok()?;
+    let object = catalog.object_type_named(&target)?.ok()?;
+    let time = object.property(property.as_str())?;
+    let is_time = matches!(
+        time.kind,
+        EffectiveKind::Base(PropertyType::Timestamp { .. } | PropertyType::Date {})
+    );
+    (is_time && !time.nullable && !time.computed).then(|| LinkedTime {
+        link: link.clone(),
+        target_type: object.name.clone(),
+        property: time.clone(),
     })
 }
 

@@ -4344,3 +4344,66 @@ fn a_view_presents_a_bound_subject_with_fitting_behaviours() {
     widget["payload"]["ux"]["pages"][0]["root"]["behaviors"] = json!(["selection"]);
     assert_ui_code(widget, "widget.view.behavior_unfit", "orders-page");
 }
+
+/// Studio's decision sheet is a declared page: its machine handles every outcome of the decide
+/// call (UI-MACHINE-1) and the checker admits it with no finding at all.
+#[test]
+fn studio_decision_sheet_is_admitted_clean() {
+    let sheet: Value = serde_json::from_str(include_str!(
+        "../../../apps/studio/src/decisions/decision-sheet.widget.json"
+    ))
+    .expect("decision sheet should be JSON");
+    let found: Vec<Diagnostic> = findings_with_support(sheet, Vec::new(), &[])
+        .into_iter()
+        .filter(|finding| {
+            finding.artifact_id.as_deref() == Some("norn.studio.decision-sheet.widget")
+        })
+        .collect();
+    assert_clean(&found);
+}
+
+fn machine(sheet: &mut Value) -> &mut Value {
+    &mut sheet["payload"]["ux"]["pages"][0]["machine"]
+}
+
+#[test]
+fn a_control_raises_an_event_and_a_choice_carries_its_value() {
+    let sheet: Value = serde_json::from_str(include_str!(
+        "../../../apps/studio/src/decisions/decision-sheet.widget.json"
+    ))
+    .expect("decision sheet should be JSON");
+    let codes = |sheet: Value| -> Vec<(String, String)> {
+        findings_with_support(sheet, Vec::new(), &[])
+            .into_iter()
+            .map(|finding| (finding.code.as_str().to_owned(), finding.message))
+            .collect()
+    };
+    let mut dead = sheet.clone();
+    machine(&mut dead)["events"]
+        .as_array_mut()
+        .expect("events")
+        .retain(|event| event["eventId"] != "stay");
+    machine(&mut dead)["transitions"]
+        .as_array_mut()
+        .expect("transitions")
+        .retain(|transition| transition["on"] != "stay");
+    let found = codes(dead);
+    assert!(
+        found.iter().any(
+            |(code, message)| code == "widget.machine.control_without_event"
+                && message.contains("stay-button")
+        ),
+        "{found:#?}"
+    );
+    let mut untyped = sheet;
+    machine(&mut untyped)["events"][0]["payload"] =
+        json!([{ "fieldId": "confirm", "type": "boolean", "required": true }]);
+    let found = codes(untyped);
+    assert!(
+        found
+            .iter()
+            .any(|(code, message)| code == "widget.machine.invalid_event"
+                && message.contains("option-choice")),
+        "{found:#?}"
+    );
+}

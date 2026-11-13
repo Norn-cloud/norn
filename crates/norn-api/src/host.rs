@@ -46,6 +46,59 @@ impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
     }
 }
 
+/// Whether a cell's model declares the kernel's action types: a provisioned
+/// tenant cell (and `norn dev`) serves governed actions and reopens under
+/// [`crate::kernel_set::serving_model`]; a cell this build seeds itself
+/// reopens under the bare [`crate::kernel_set::kernel_model`].
+#[must_use]
+pub fn serves_actions(model: &Model) -> bool {
+    model
+        .object_types()
+        .any(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+}
+
+/// The model a restarted host rebuilds for `canonical_set` (HOST-REOPEN-1):
+/// the serving model for a cell that serves actions, else the bare model.
+/// # Errors
+/// `host.error` when the set cannot be read or projected.
+pub fn reopen_model(canonical_set: &str, serving: bool) -> Result<Model, Refusal> {
+    let artifacts = crate::kernel_set::retained_artifacts(canonical_set).map_err(Refusal::host)?;
+    if serving {
+        crate::kernel_set::serving_model(&artifacts).map_err(Refusal::host)
+    } else {
+        crate::kernel_set::kernel_model(&artifacts)
+            .map_err(|refusal| Refusal::host(format!("{refusal:?}")))
+    }
+}
+
+/// DEFS-REOPEN-1: a revision installs only under the model a restarted host
+/// rebuilds from its retained set ([`reopen_model`]); anything else would
+/// commit a layout the next open refuses. Every path that installs a model
+/// (definitions, flows, uploads, provisioning) checks it here, before
+/// anything is written.
+/// # Errors
+/// `host.error` when the candidate's model or layout differs from the
+/// reopen model of `canonical_set`, or the set cannot be read.
+pub fn check_reopens(
+    candidate_model: &Model,
+    canonical_set: &str,
+    serving: bool,
+) -> Result<(), Refusal> {
+    let reopened = reopen_model(canonical_set, serving)?;
+    if reopened.model_hash() != candidate_model.model_hash()
+        || reopened.ddl_hash() != candidate_model.ddl_hash()
+    {
+        return Err(Refusal::host(format!(
+            "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
+            candidate_model.model_hash(),
+            reopened.model_hash(),
+            candidate_model.ddl_hash(),
+            reopened.ddl_hash()
+        )));
+    }
+    Ok(())
+}
+
 /// What one captured source row came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ingested {
@@ -187,6 +240,78 @@ impl<E: SqlEngine> DevHost<E> {
         result.map(|()| out).map_err(Refusal::host)
     }
 
+    /// Install `added` over the active definitions as the next governed
+    /// version: an artifact of the same id is replaced, the whole set is
+    /// re-admitted on the cell's own base, and the model is the one the cell
+    /// reopens under (HOST-REOPEN-1, checked by [`Self::install_definitions`]).
+    /// The trusted host calls this (generated upload types, the cell's own
+    /// packs); no route supplies artifacts to it.
+    /// # Errors
+    /// No active definitions, the checker's refusal (its findings), or the
+    /// install's refusal.
+    pub fn install_artifacts(
+        &self,
+        added: &[norn_ir::ArtifactEnvelope],
+        installed_at: u64,
+    ) -> Result<u64, String> {
+        let active = self
+            .active_definitions()
+            .map_err(|r| r.message)?
+            .ok_or("the cell has no definitions to extend")?;
+        let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
+        let ours: std::collections::BTreeSet<&str> =
+            added.iter().map(|a| a.artifact_id.as_str()).collect();
+        let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
+            crate::kernel_set::retained_artifacts(&active.canonical_set)?
+                .into_iter()
+                .filter(|a| !ours.contains(a.artifact_id.as_str()))
+                .collect();
+        artifacts.extend(added.iter().cloned());
+        let admitted = crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(
+            |refusal| match refusal {
+                crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                    .iter()
+                    .map(|f| format!("{}: {}", f.code, f.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+            },
+        )?;
+        // The model this cell reopens under (DEFS-REOPEN-1), by its kind.
+        let serving = serves_actions(self.cell().map_err(|r| r.explanation)?.store().model());
+        let model = reopen_model(&admitted.canonical_set, serving).map_err(|r| r.explanation)?;
+        let installed = self
+            .install_definitions(
+                model,
+                InstalledDefinitionInput {
+                    canonical_set: admitted.canonical_set,
+                    registry: vec![],
+                    receipt_sha256: admitted.receipt_sha256,
+                    admission_receipt: Some(admitted.receipt),
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at,
+                    layout: None,
+                },
+                Some(active.version),
+            )
+            .map_err(|r| format!("{}: {}", r.code, r.message))?;
+        Ok(installed.version)
+    }
+
+    /// Whether the cell's active model declares the object type `name`.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn serves_object_type(&self, name: &str) -> Result<bool, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        Ok(cell
+            .store()
+            .model()
+            .object_types()
+            .any(|declared| declared.name.as_str() == name))
+    }
+
     /// One artifact of the active definitions, as its JSON envelope. For the
     /// trusted host process (a source sync reading its connector); no route
     /// reaches it.
@@ -273,26 +398,13 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
-        // DEFS-REOPEN-1: a revision installs only under the model a restarted
-        // host rebuilds from its retained set (HOST-REOPEN-1); anything else
-        // would commit a layout the next open refuses. Checked before
-        // anything is written.
-        let reopened = crate::kernel_set::retained_artifacts(&input.canonical_set)
-            .and_then(|artifacts| crate::kernel_set::serving_model(&artifacts))
-            .map_err(Refusal::host)?;
-        if reopened.model_hash() != candidate_model.model_hash()
-            || reopened.ddl_hash() != candidate_model.ddl_hash()
-        {
-            return Err(Refusal::host(format!(
-                "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
-                candidate_model.model_hash(),
-                reopened.model_hash(),
-                candidate_model.ddl_hash(),
-                reopened.ddl_hash()
-            )));
-        }
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
+        check_reopens(
+            &candidate_model,
+            &input.canonical_set,
+            serves_actions(cell.store().model()),
+        )?;
         let installed = cell
             .install_definitions(candidate_model, input, expected_version)
             .map_err(|error| {

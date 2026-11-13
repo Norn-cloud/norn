@@ -121,3 +121,39 @@ test.skipIf(!checker)("Rust admits the model and refuses an unknown or non-admit
   expect(codes(compile(SOURCE.replace('"region"],', '"region", "signed_up"],')))).toContain("model.admission.feature_kind")
   expect(codes(compile(SOURCE.replace('input: Customer,', 'input: "sales.Prospect",')))).toContain("model.admission.unknown_input")
 }, 30_000)
+
+// M4: a model names the typed object type its predictions are written to.
+const PREDICTION = `
+export const ChurnPrediction = Norn.type({
+  name: "sales.ChurnPrediction",
+  title: "Churn prediction",
+  version: "1.0.0",
+  properties: Schema.Struct({
+    prediction_id: Schema.String,
+    subject: Schema.String,
+    model_version: Schema.String,
+    churn_probability: Norn.decimal(4),
+    risk_band: Schema.NullOr(Schema.Literals(["low", "medium", "high"])),
+    will_churn: Schema.Boolean,
+  }),
+})
+`
+const PREDICTING = SOURCE.replace("export const Churn = ", `${PREDICTION}\nexport const Churn = `)
+  .replace('  method: { label: "logistic regression"', '  predictions: ChurnPrediction,\n  method: { label: "logistic regression"')
+
+test("predictions name a referenced type or a qualified name", () => {
+  const model = compile(PREDICTING).find((a) => a.kind === "model")
+  expect(model.payload.predictions).toEqual({ objectType: "sales.ChurnPrediction" })
+  const byName = compile(PREDICTING.replace("predictions: ChurnPrediction,", 'predictions: "sales.Forecast",')).find((a) => a.kind === "model")
+  expect(byName.payload.predictions).toEqual({ objectType: "sales.Forecast" })
+  // Omitted, the payload has no predictions member.
+  expect(compile(SOURCE).find((a) => a.kind === "model").payload.predictions).toBeUndefined()
+}, 30_000)
+
+test.skipIf(!checker)("Rust admits a fitting predictions type and refuses one that does not hold an output", () => {
+  const codes = (artifacts: any[]): string[] =>
+    (checker!.checkArtifactSet(artifacts).diagnostics.diagnostics as unknown as readonly { code: string }[]).map((d) => d.code)
+  expect(codes(compile(PREDICTING))).toEqual([])
+  expect(codes(compile(PREDICTING.replace("    will_churn: Schema.Boolean,\n  }),\n})\n\nexport const Churn", "  }),\n})\n\nexport const Churn"))))
+    .toContain("model.admission.prediction_type_mismatch")
+}, 30_000)
