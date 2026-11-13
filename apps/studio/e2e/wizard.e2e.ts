@@ -87,7 +87,7 @@ test("validate: the cell checks on submit; its input refusal names no field, so 
   const form = sheet(page)
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.getByRole("alert").first()).toContainText("The input doesn't fit this action")
   await expect(steps(page).nth(3)).toHaveAttribute("aria-current", "step")
   await expect(steps(page).nth(0)).not.toHaveAccessibleName(/problem/)
   await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
