@@ -586,7 +586,7 @@
                 "from": "choosing",
                 "on": "decide",
                 "target": "sending",
-                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and not input.fields.needsConfirm",
+                "guard": "input.fields.choice != null and (input.fields.choice ?? \"\") != (input.fields.refusedChoice ?? \"\") and not input.fields.needsConfirm",
                 "effects": [
                   {
                     "kind": "start",
@@ -606,14 +606,14 @@
                 "from": "choosing",
                 "on": "decide",
                 "target": "confirming",
-                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and input.fields.needsConfirm"
+                "guard": "input.fields.choice != null and (input.fields.choice ?? \"\") != (input.fields.refusedChoice ?? \"\") and input.fields.needsConfirm"
               },
               {
                 "transitionId": "refused--decide",
                 "from": "refused",
                 "on": "decide",
                 "target": "sending",
-                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and not input.fields.needsConfirm",
+                "guard": "input.fields.choice != null and (input.fields.choice ?? \"\") != (input.fields.refusedChoice ?? \"\") and not input.fields.needsConfirm",
                 "effects": [
                   {
                     "kind": "start",
@@ -633,7 +633,7 @@
                 "from": "refused",
                 "on": "decide",
                 "target": "confirming",
-                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and input.fields.needsConfirm"
+                "guard": "input.fields.choice != null and (input.fields.choice ?? \"\") != (input.fields.refusedChoice ?? \"\") and input.fields.needsConfirm"
               },
               {
                 "transitionId": "choosing--close",
