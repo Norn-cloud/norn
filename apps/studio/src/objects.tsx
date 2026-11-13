@@ -12,7 +12,7 @@ import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
-import { ViewToggle, useCardView, useView } from "@/lib/view"
+import { useView } from "@/lib/view"
 import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
@@ -104,7 +104,7 @@ export function ObjectPage() {
           <TabsContent value="overview" className="pt-4">
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
               <div className="min-w-0 space-y-6">
-                <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
+                {view === "technical" && <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>}
                 {concept.lifecycles.map((lifecycle) => (
                   <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
                     <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
@@ -307,17 +307,16 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 
 /** The record's facts in words, or, in the technical view, the exact document the server sent. */
 function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
-  const card = useCardView()
+  const { view } = useView()
   const { catalog } = useCatalog()
   // Scan provenance (the bytes a record was read from and the extractor) is not what the record
   // says: the evidence beside each value and the Technical view carry it.
   const provenance = new Set(concept.parents.includes(SOURCE_DOCUMENT) ? catalog?.byName.get(SOURCE_DOCUMENT)?.fields.map((field) => field.id) ?? [] : [])
-  const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
-  if (card.view === "technical") {
-    return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
+  if (view === "technical") {
+    return <Panel icon={Braces} label="Record document"><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
   }
   return (
-    <Panel icon={Rows3} label="Facts" action={toggle}><Well className="p-1.5">
+    <Panel icon={Rows3} label="Facts"><Well className="p-1.5">
       <dl className="divide-y divide-border/60 text-sm">
         {concept.fields.filter((field) => !provenance.has(field.id)).map((field) => (
           <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">

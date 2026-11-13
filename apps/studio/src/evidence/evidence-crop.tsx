@@ -130,13 +130,50 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
   )
 }
 
-/** The evidence objects of one value, each with its crop. */
+/** A value's place in its document, in words: "line 1 · amount", or the document's own "total". */
+const fieldOf = (evidence: Evidence, record?: EvidenceRef) => {
+  const subject = (evidence.subject ?? record)?.id ?? ""
+  const part = subject.includes("~") ? subject.slice(subject.lastIndexOf("~") + 1).replace(/-/g, " ") : ""
+  const property = evidence.subjectProperty.replaceAll("_", " ")
+  return part ? `${part} · ${property}` : property
+}
+
+/** One read value as a dense row: where it is, what was read, how sure the reader was, and the governed correction. */
+function EvidenceRow({ evidence, record, actionFor }: { readonly evidence: Evidence; readonly record?: EvidenceRef; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
+  const { view } = useView()
+  const subject = evidence.subject ?? record
+  const confidence = evidence.confidenceBp === null ? "—" : `${(evidence.confidenceBp / 100).toFixed(1)}%`
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto_auto_2rem] items-center gap-x-3 px-1 py-1.5 text-meta tabular-nums">
+      <span className="min-w-0 truncate text-muted-foreground">{fieldOf(evidence, record)}</span>
+      <span className="font-mono text-sm text-foreground" title={`Read as “${evidence.text}”, page ${evidence.page}`}><span className="sr-only">Read as </span>{evidence.text}</span>
+      <Chip tone={evidence.confidenceBp === null ? "gray" : evidence.confidenceBp >= 9000 ? "green" : "amber"} title={`The extractor's confidence: ${evidence.extractor} ${evidence.extractorVersion}, page ${evidence.page}`}>{confidence}</Chip>
+      <span className="flex justify-end">{actionFor?.(evidence)}</span>
+      {subject && <div className="col-span-4 empty:hidden"><Correction evidence={evidence} subject={subject} /></div>}
+      {view === "technical" && <div className="col-span-4 flex min-w-0 items-center gap-1 text-muted-foreground">Document <CopyId value={evidence.documentDigest} short={12} /> <span className="truncate font-mono">{evidence.documentUri}</span></div>}
+    </li>
+  )
+}
+
+/**
+ * The evidence objects of one value. With the scanned pages served, each shows its crop; without
+ * them, the reads are dense rows under one quiet note (never a placeholder per value).
+ */
 export function EvidenceList({ refs, record, filter, actionFor }: { readonly refs: readonly EvidenceRef[]; readonly record?: EvidenceRef; readonly filter?: (evidence: Evidence) => boolean; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const evidence = useQuery({ queryKey: ["evidence", refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
+  // The first page decides: a cell that serves scanned pages serves them all.
+  const first = evidence.data?.find((item) => !/^https?:\/\//.test(item.documentUri))
+  const page = useQuery({ queryKey: ["scan", first?.documentUri], queryFn: () => readScan(first!.documentUri), retry: false, staleTime: 4 * 60_000, enabled: first !== undefined })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>
   if (evidence.isError) return <p className="text-meta text-muted-foreground">The evidence could not be read.</p>
   const shown = filter ? evidence.data.filter(filter) : evidence.data
   if (shown.length === 0) return <p className="text-meta text-muted-foreground">No evidence was recorded for this value.</p>
+  if (first !== undefined && page.isError) return (
+    <div className="space-y-1">
+      <ul className="divide-y divide-border/70">{shown.map((item) => <EvidenceRow key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...record ? { record } : {}} {...actionFor ? { actionFor } : {}} />)}</ul>
+      <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"><FileSearch aria-hidden className="size-3.5" />{pageProblem(page.error)}</p>
+    </div>
+  )
   return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...record ? { record } : {}} {...actionFor ? { actionFor } : {}} />)}</div>
 }

@@ -15,8 +15,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
-import { ViewProvider, ViewToggle, useView } from "@/lib/view"
-import { LOCALES, LocaleProvider, LocaleToggle, directionOf, isLocale, useLocale } from "@/lib/locale"
+import { ViewProvider, useView } from "@/lib/view"
+import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import { useMode } from "@/lib/live-transport"
 import { useStudioScope } from "@/lib/definitions"
@@ -170,9 +170,27 @@ function NavSection({ section, pathname }: { readonly section: Section; readonly
 
 export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
 
+/** The view (Business or Technical) and the language, as menu choices: they live in the account menu, not the page bar. */
+function ViewAndLanguage({ view, setView, locale, setLocale }: { readonly view: ReturnType<typeof useView>["view"]; readonly setView: ReturnType<typeof useView>["setView"]; readonly locale: ReturnType<typeof useLocale>["locale"]; readonly setLocale: ReturnType<typeof useLocale>["setLocale"] }) {
+  return <>
+    <DropdownMenuLabel className="text-xs text-muted-foreground">View</DropdownMenuLabel>
+    <DropdownMenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
+      <DropdownMenuRadioItem value="business">Business</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="technical">Technical</DropdownMenuRadioItem>
+    </DropdownMenuRadioGroup>
+    <DropdownMenuSeparator />
+    <DropdownMenuLabel className="text-xs text-muted-foreground">Language</DropdownMenuLabel>
+    <DropdownMenuRadioGroup value={locale} onValueChange={(next) => { if (isLocale(next)) setLocale(next) }}>
+      {LOCALES.map(({ tag, name }) => <DropdownMenuRadioItem key={tag} value={tag} lang={tag}>{name}</DropdownMenuRadioItem>)}
+    </DropdownMenuRadioGroup>
+  </>
+}
+
 /** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
 export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
   const { user, organization } = account
+  const { view, setView } = useView()
+  const { locale, setLocale } = useLocale()
   return (
     <SidebarMenu><SidebarMenuItem>
       <DropdownMenu>
@@ -193,6 +211,8 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
             <span>{organization?.name ?? "No organization"}</span>
             {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
           </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <ViewAndLanguage view={view} setView={setView} locale={locale} setLocale={setLocale} />
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
         </DropdownMenuContent>
@@ -280,25 +300,11 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { locale, setLocale } = useLocale()
   return (
     <div className="flex items-center gap-1">
-      {/* Wide: both choices in the bar. Narrow: one menu holds them, so the bar never runs off the screen. */}
-      <div className="hidden items-center gap-1 lg:flex">
-        <LocaleToggle locale={locale} onChange={setLocale} />
-        <ViewToggle view={view} onChange={setView} label="Business or technical view" />
-      </div>
+      {/* The view and language live in the account menu; on a phone the sidebar is hidden, so one small menu holds them. */}
+      {view === "technical" && <span className="hidden rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground lg:inline">Technical view</span>}
       <DropdownMenu>
-        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="text-muted-foreground lg:hidden"><SlidersHorizontal /><span className="sr-only">Language and view</span></Button></DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuLabel>Language</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={locale} onValueChange={(next) => { if (isLocale(next)) setLocale(next) }}>
-            {LOCALES.map(({ tag, name }) => <DropdownMenuRadioItem key={tag} value={tag} lang={tag}>{name}</DropdownMenuRadioItem>)}
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>View</DropdownMenuLabel>
-          <DropdownMenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
-            <DropdownMenuRadioItem value="business">Business</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="technical">Technical</DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="text-muted-foreground md:hidden"><SlidersHorizontal /><span className="sr-only">Language and view</span></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52"><ViewAndLanguage view={view} setView={setView} locale={locale} setLocale={setLocale} /></DropdownMenuContent>
       </DropdownMenu>
       {tools}
       <DropdownMenu>

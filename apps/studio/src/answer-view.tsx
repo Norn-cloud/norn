@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Rows3, Split } from "lucide-react"
-import { Chip, FactChip } from "@/components/chip"
+import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
+import { Chip } from "@/components/chip"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -231,11 +232,20 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           </div>
         )}
         <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>
-        <div className="flex flex-wrap items-center gap-1.5 pt-1" aria-label="As of">
-          <FactChip icon={GitCommitHorizontal} label="Known after" title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</FactChip>
-          <FactChip icon={Clock} label="Read" title="The cell's clock when it answered">{stamp(answer.nowMs)}</FactChip>
-          {engineOf(answer) && <FactChip icon={Cpu}>{engineOf(answer)}</FactChip>}
-          {sources.length > 0 && <FactChip icon={Database} label="Sources">{sources.join(", ")}</FactChip>}
+        {/* Where the number stands, in one quiet line; the full receipt of the read opens from the info button. */}
+        <div className="flex flex-wrap items-center gap-1 text-meta text-muted-foreground tabular-nums" aria-label="As of">
+          <span>{[engineOf(answer), `read ${stamp(answer.nowMs)}`].filter(Boolean).join(" · ")}</span>
+          <Popover>
+            <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label="How this number was read"><Info /></Button></PopoverTrigger>
+            <PopoverContent align="start" className="w-80 text-sm">
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 tabular-nums">
+                <dt className="flex items-center gap-1.5 text-muted-foreground"><GitCommitHorizontal aria-hidden className="size-3.5" />Known after</dt><dd title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</dd>
+                <dt className="flex items-center gap-1.5 text-muted-foreground"><Clock aria-hidden className="size-3.5" />Read</dt><dd title="The cell's clock when it answered">{stamp(answer.nowMs)}</dd>
+                {engineOf(answer) && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Cpu aria-hidden className="size-3.5" />Engine</dt><dd>{engineOf(answer)}</dd></>}
+                {sources.length > 0 && <><dt className="flex items-center gap-1.5 text-muted-foreground"><Database aria-hidden className="size-3.5" />Sources</dt><dd>{sources.join(", ")}</dd></>}
+              </dl>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
       {/* A series over time is drawn; a breakdown by values is read in its table. */}

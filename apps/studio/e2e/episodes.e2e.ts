@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { chooseFromAccountMenu } from "./account-menu.ts"
 
 // One test per state of the episode timeline (#1220 L-1). The object route is stubbed with the
 // contract-checked fixture (test/learning-episode.test.ts checks it against the served envelope and
@@ -64,12 +65,12 @@ test("view: an overridden suggestion reads as the strongest signal, with the blo
 test("view: technical shows the pins, generation and law ids; business keeps them out of the way", async ({ page }) => {
   await open(page, "ep_demo_overridden")
   await expect(page.getByText("demo.credit.hold_over_limit")).toHaveCount(0)
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(page.getByText("demo.credit.hold_over_limit")).toBeVisible()
   await expect(band(page, "What was known")).toContainText("generation 12 · as of commit 4806")
   await expect(page.getByRole("complementary", { name: "Receipts" })).toContainText("Decision · commit 4812")
   await shoot(page, "technical")
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
 })
 
 test("view: an accepted suggestion whose outcome is still open stays context only", async ({ page }) => {

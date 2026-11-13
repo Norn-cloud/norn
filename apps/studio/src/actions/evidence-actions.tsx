@@ -43,14 +43,17 @@ export function useEvidenceActions(objectType: string, id: string) {
       .filter((reference) => reference.actionId === action.actionId && reference.objectType === evidence.ref.objectType)
       .map((reference) => ({ action, reference })))
     return fits.length === 0 ? null : (
-      <div className="flex flex-wrap gap-2 pt-1">
-        {fits.map(({ action, reference }) => (
-          <Button key={`${action.actionId}/${reference.field}`} type="button" size="sm" variant="outline"
-            onClick={() => setActing({ action, prefill: { [action.objectIdField]: subject.id, [reference.field]: evidence.ref.id } })}>
-            <Pencil />{fits.length === 1 ? "Correct this value" : action.title}
-          </Button>
-        ))}
-      </div>
+      <span className="inline-flex gap-1">
+        {fits.map(({ action, reference }) => {
+          const name = fits.length === 1 ? "Correct this value" : action.title
+          return (
+            <Button key={`${action.actionId}/${reference.field}`} type="button" size="icon-sm" variant="ghost" aria-label={name} title={name} className="text-muted-foreground hover:text-foreground"
+              onClick={() => setActing({ action, prefill: { [action.objectIdField]: subject.id, [reference.field]: evidence.ref.id } })}>
+              <Pencil />
+            </Button>
+          )
+        })}
+      </span>
     )
   }
   return { actionFor, sheet: (onDone: () => void) => <ActionSheet open={acting} onClose={() => { setActing(null); onDone() }} /> }

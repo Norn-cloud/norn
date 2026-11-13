@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { chooseFromAccountMenu } from "./account-menu.ts"
 
 // LABEL-LOCALE-1 / MESSAGE-LOCALE-1: one row per locale and theme. Arabic mirrors the layout (dir=rtl),
 // shows labels and catalog messages in Arabic, and keeps ids, codes and phone numbers isolated left-to-right.
@@ -75,7 +76,7 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
   await session(page)
   await page.goto("/sources")
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr")
-  await page.getByRole("radio", { name: "العربية" }).click()
+  await chooseFromAccountMenu(page, "العربية")
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
   await expect(page.locator("html")).toHaveAttribute("lang", "ar")
   // The recorded model carries the Arabic locale pack (registry/packs/locale-ar): titles read in Arabic.
@@ -95,6 +96,6 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
     await settled(page)
     await page.screenshot({ path: `test-results/locale/app-ar-${scheme}.png` })
   }
-  await page.getByRole("radio", { name: "English" }).click()
+  await chooseFromAccountMenu(page, "English")
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr")
 })
