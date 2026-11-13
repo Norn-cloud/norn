@@ -1,0 +1,123 @@
+{
+  "artifactId": "shop.rule.tier.rule",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "rule",
+  "lifecycle": "draft",
+  "name": "Tier",
+  "namespace": "shop",
+  "payload": {
+    "contract": "sub_decision",
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "edges": [
+        {
+          "id": "edge_0",
+          "sourceId": "in",
+          "targetId": "decision",
+          "type": "edge"
+        },
+        {
+          "id": "edge_1",
+          "sourceId": "decision",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "in",
+          "name": "input",
+          "type": "inputNode"
+        },
+        {
+          "content": {
+            "hitPolicy": "unique",
+            "inputs": [
+              {
+                "id": "condition",
+                "name": "condition",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "field": "r",
+                "id": "out_r",
+                "name": "r"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "row_0",
+                "condition": "tier == 'a'",
+                "out_r": "'x'"
+              },
+              {
+                "_id": "row_1",
+                "condition": "vip",
+                "out_r": "'y'"
+              }
+            ]
+          },
+          "id": "decision",
+          "name": "decision",
+          "type": "decisionTableNode"
+        },
+        {
+          "id": "out",
+          "name": "output",
+          "type": "outputNode"
+        }
+      ]
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "enum": [
+            "a",
+            "b",
+            "c"
+          ],
+          "type": "string"
+        },
+        "vip": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tier",
+        "vip"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "r": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "r"
+      ],
+      "type": "object"
+    },
+    "ruleId": "shop.rule.tier",
+    "ruleVersion": "2.0",
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/rule-ir-v2/invalid/unique-overlap.rule.json"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_demo"
+  },
+  "version": "0.1.0"
+}

@@ -5308,11 +5308,10 @@ export interface components {
         /**
          * @description JDM hit policy shared by decision tables and switch nodes.
          *
-         *     DMN policies other than `first` and `collect` translate or are rejected at
-         *     DMN ingress (T3-DEC-4); they have no JDM representation.
-         * @enum {string}
+         *     DMN policies other than `first`, `collect` and `unique` translate or are
+         *     rejected at DMN ingress (T3-DEC-4); they have no JDM representation.
          */
-        NornIrJdmHitPolicy: "first" | "collect";
+        NornIrJdmHitPolicy: ("first" | "collect") | "unique";
         /**
          * @description One JDM node, internally tagged by its JDM `type`.
          *
@@ -5432,11 +5431,8 @@ export interface components {
         };
         /** @description Switch-node content (`SwitchNodeContent`). */
         NornIrJdmSwitchContent: {
-            /**
-             * @description Absent means `first` (the `zen-engine` default).
-             * @enum {string}
-             */
-            hitPolicy?: "first" | "collect";
+            /** @description Absent means `first` (the `zen-engine` default). */
+            hitPolicy?: components["schemas"]["NornIrJdmHitPolicy"];
             statements: components["schemas"]["NornIrJdmSwitchStatement"][];
         };
         /** @description One switch branch; edges leave the switch with `sourceHandle` = `id`. */

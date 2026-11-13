@@ -1,0 +1,7 @@
+{
+  "code": "law.example.unsupported",
+  "message": "a law example cannot be evaluated on one value: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

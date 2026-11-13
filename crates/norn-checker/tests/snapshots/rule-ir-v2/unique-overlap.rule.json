@@ -1,0 +1,18 @@
+{
+  "checkerVersion": "0.2.0",
+  "diagnostics": [
+    {
+      "artifactId": "shop.rule.tier.rule",
+      "code": "rule.validation.jdm_unique_overlap",
+      "message": "unique table 'decision' has rows [\"row_0\", \"row_1\"] matching the same input {\"tier\":\"a\",\"vip\":true} (1 overlapping inputs of 6); make the rows disjoint, or use first or collect",
+      "remediation": "fix_definition",
+      "severity": "error",
+      "span": {
+        "pointer": "/payload/graph/nodes/1/content/hitPolicy",
+        "source": null
+      },
+      "tier": "T2"
+    }
+  ],
+  "format": "norn-checker/diagnostics@1"
+}
