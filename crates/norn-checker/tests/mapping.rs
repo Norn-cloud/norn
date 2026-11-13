@@ -1231,13 +1231,11 @@ fn erpnext_mapping_checks_clean_in_the_artifact_set() {
 /// and then quarantining every linked row at mapping time.
 #[test]
 fn a_linking_mapping_without_the_claim_type_is_refused() {
-    let mapping = mapping_artifact(
-        read_json(&ir_fixtures().join("mapping/erpnext.mapping.json")),
-        false,
-    );
-    let payload: norn_ir::mapping::MappingIr =
-        serde_json::from_value(mapping.payload.clone()).expect("the mapping payload decodes");
-    let first_linking = payload
+    let payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    let decoded: norn_ir::mapping::MappingIr =
+        serde_json::from_value(payload.clone()).expect("the mapping payload decodes");
+    let mapping = mapping_artifact(payload, false);
+    let first_linking = decoded
         .maps
         .iter()
         .position(|map| !map.links.is_empty())
