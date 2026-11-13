@@ -21,6 +21,7 @@ const rows = (page: Page) => grid(page).locator('[role="row"][aria-rowindex]:not
 const firstCell = (page: Page, column: number) => rows(page).first().locator('[role="gridcell"]').nth(column)
 /** A column's position by its header, so a type that gains a property moves no assertion. */
 async function columnIndex(page: Page, name: string): Promise<number> {
+  await expect(grid(page).getByRole("columnheader", { name, exact: true })).toBeVisible()
   const headers = (await grid(page).getByRole("columnheader").allInnerTexts()).map((text) => text.trim())
   const index = headers.indexOf(name)
   if (index < 0) throw new Error(`No ${name} column among ${headers.join(", ")}`)
