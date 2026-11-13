@@ -260,6 +260,9 @@ PY
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
+      # The Python client is generated here from the checked document, never checked in;
+      # the demo runs it against a dev host (#521).
+      bash sdks/python/run-demo.sh "$upstream/python-client"
       ;;
     browser)
       # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the
