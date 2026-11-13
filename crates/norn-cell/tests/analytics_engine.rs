@@ -476,6 +476,7 @@ fn a_sync_that_skips_commits_is_refused() {
         after: 7,
         through: 9,
         rows: Vec::new(),
+        links: Vec::new(),
     };
     assert_eq!(
         engine.sync(&skipping).expect_err("refused").code,
@@ -879,6 +880,7 @@ fn bulk_path_measurements() {
                 after: batch,
                 through: batch + 1,
                 rows,
+                links: Vec::new(),
             })
             .expect("sync");
     }
