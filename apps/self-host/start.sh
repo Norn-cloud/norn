@@ -20,14 +20,14 @@ secret() { # secret NAME: a 32-byte hex value, created on first use
 AUTH_SECRET=$(secret better-auth-secret)
 LINEAGE_KEY=$(secret lineage-key)
 
-# The bundled store has no accounts on its private network; create the fleet bucket there. Any
-# other S3-compatible store: create the bucket yourself and leave NORN_CREATE_BUCKET unset.
-if [ "${NORN_CREATE_BUCKET:-0}" = 1 ]; then
+# The bundled store has no accounts on its private network; create the fleet bucket there. Your
+# own storage: the bucket must already exist, and its credentials must be able to write to it.
+if [ "${S3_ENDPOINT}" = "http://s3:8333" ]; then
   bucket=${CELLD_BUCKET#s3://}; bucket=${bucket%%/*}
-  for attempt in $(seq 1 60); do
+  for attempt in $(seq 1 120); do
     code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${S3_ENDPOINT}/${bucket}" || true)
     case "$code" in 200|409) break ;; esac
-    [ "$attempt" = 60 ] && { echo "the store at ${S3_ENDPOINT} did not create bucket ${bucket} (HTTP ${code})" >&2; exit 1; }
+    [ "$attempt" = 120 ] && { echo "the store at ${S3_ENDPOINT} did not create bucket ${bucket} (HTTP ${code})" >&2; exit 1; }
     sleep 1
   done
 fi
@@ -61,6 +61,14 @@ STUDIO_STAGE=$STAGE STUDIO_BUILD=$(cat /opt/norn/commit) BETTER_AUTH_URL=$NORN_P
   STUDIO_CLIENT_IP_HEADER=x-real-ip \
   bun "$STUDIO/celld-config.ts" "$STUDIO"
 celld deploy "$STUDIO"
+rm -f "$STUDIO/wrangler.json"
+# Studio's database, for celld d1 (migrations and operator SQL). No secrets; kept in the data volume:
+#   docker compose exec norn celld d1 execute norn-studio-auth-self --command "<sql>" /data/deploy/ops
+OPS=/data/deploy/ops
+rm -rf "$OPS" && mkdir -p "$OPS" && cp -R "$STUDIO/worker/migrations" "$OPS/migrations"
+cat > "$OPS/wrangler.json" <<JSON
+{ "name": "norn-studio-${STAGE}-ops", "d1_databases": [{ "binding": "AUTH_DB", "database_name": "${DB}", "migrations_dir": "migrations" }] }
+JSON
 
 # One node, durable in the bucket. It first listens on loopback only, so nobody reaches Studio until
 # its database is migrated, the sign-up policy is set and the owner exists; then it serves publicly,
@@ -68,13 +76,12 @@ celld deploy "$STUDIO"
 serve() { CELLD_DURABILITY=bucket CELLD_ADDR="$1" CELLD_INTERNAL_ADDR=127.0.0.1:8081 celld & NODE=$!; }
 serve 127.0.0.1:8080
 for attempt in $(seq 1 120); do
-  celld d1 migrations apply "$DB" "$STUDIO" 2>/tmp/migrate.err && break
+  celld d1 migrations apply "$DB" "$OPS" 2>/tmp/migrate.err && break
   [ "$attempt" = 120 ] && { cat /tmp/migrate.err >&2; kill -TERM "$NODE"; exit 1; }
   sleep 1
 done
 # The first account owns this install; after it, sign-up is by invitation (migration 0009).
-celld d1 execute "$DB" --command "insert into studio_setting (key, value) values ('signup', 'first-owner') on conflict (key) do nothing" "$STUDIO"
-rm -f "$STUDIO/wrangler.json"
+celld d1 execute "$DB" --command "insert into studio_setting (key, value) values ('signup', 'first-owner') on conflict (key) do nothing" "$OPS"
 NORN_PUBLIC_URL=$NORN_PUBLIC_URL bun /opt/norn/setup.ts || { kill -TERM "$NODE"; wait "$NODE"; exit 1; }
 kill -TERM "$NODE"; wait "$NODE" || true
 

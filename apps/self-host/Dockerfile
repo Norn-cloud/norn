@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.10
+# syntax=docker/dockerfile:1.7-labs
 # Norn, self-hosted: celld serving the tenant cell Worker and Studio from one image (#728).
 # Build context: the repository root (compose.yaml sets it). Every tool is pinned.
 

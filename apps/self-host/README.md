@@ -58,18 +58,57 @@ Caddy answers on ports 80 and 443 and obtains and renews the certificate itself.
 | service | what it is |
 | --- | --- |
 | `norn` | [celld](https://github.com/denoland/celld) v0.6.3 (pinned by digest), serving Studio and the tenant cell Worker. Each workspace's data lives in its own cell. |
-| `s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), the bucket celld keeps everything in. It is reachable only on the compose network. |
+| `s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), the bucket celld keeps everything in, reachable only on the compose network. Replace it with your own storage (below). |
 | `proxy` | [Caddy](https://caddyserver.com), the only published port. It sets the client address Studio's sign-in rate limit counts. |
 
-Storage is reached only through the S3 API, so any S3-compatible store can replace SeaweedFS: set
-`CELLD_BUCKET`, `S3_ENDPOINT`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` on
-the `norn` service, create the bucket, remove `NORN_CREATE_BUCKET` and drop `s3`.
+## Use your own storage
+
+Norn keeps everything in one S3 bucket: cells, Studio's database and deployments. The bundled
+SeaweedFS needs no account, but any S3-compatible store works in its place. Create a bucket and an
+access key that can read and write it, then turn the bundled store off and point Norn at yours:
+
+| variable | meaning |
+| --- | --- |
+| `NORN_BUNDLED_STORE` | `0`: the bundled SeaweedFS does not start. |
+| `NORN_S3_ENDPOINT` | The store's S3 endpoint. |
+| `NORN_S3_REGION` | Its region. |
+| `NORN_S3_BUCKET` | The bucket. |
+| `NORN_S3_ACCESS_KEY_ID`, `NORN_S3_SECRET_ACCESS_KEY` | The access key. |
+
+Put them in `apps/self-host/.env`, which Compose reads on every command and git ignores, so the
+secret stays out of the repository.
+
+**Cloudflare R2.** Create the bucket in the dashboard, then an R2 API token with Object Read &
+Write on it:
+
+```sh
+NORN_BUNDLED_STORE=0
+NORN_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+NORN_S3_REGION=auto
+NORN_S3_BUCKET=norn
+NORN_S3_ACCESS_KEY_ID=<token access key id>
+NORN_S3_SECRET_ACCESS_KEY=<token secret access key>
+```
+
+**Hetzner Object Storage.** Create the bucket in a location (`fsn1`, `nbg1` or `hel1`), then S3
+credentials for the project:
+
+```sh
+NORN_BUNDLED_STORE=0
+NORN_S3_ENDPOINT=https://fsn1.your-objectstorage.com
+NORN_S3_REGION=fsn1
+NORN_S3_BUCKET=<your bucket>
+NORN_S3_ACCESS_KEY_ID=<access key>
+NORN_S3_SECRET_ACCESS_KEY=<secret key>
+```
+
+Moving an install between stores means copying the bucket's objects while Norn is stopped.
 
 ## Data and secrets
 
 - Everything lives in three Docker volumes: `norn-data` (secrets and celld's local working set),
-  `s3-data` (the bucket: cells, Studio's database, deployments) and `caddy-data` (certificates).
-  Back up `s3-data` and `norn-data` together.
+  `s3-data` (the bundled bucket: cells, Studio's database, deployments) and `caddy-data`
+  (certificates). Back up the bucket and `norn-data` together.
 - The secrets (Studio's signing secret, the lineage key, the generated owner password) are created
   once, on the first start, in `/data/secrets`, readable only by the container's user.
 - `docker compose down` stops Norn and keeps the data; `docker compose down -v` deletes it.
