@@ -912,7 +912,7 @@ impl Scope {
     fn zen(&self, ex: &Ex, at: usize) -> Result<String, Refusal> {
         Ok(match ex {
             Ex::Column(alias, column) => {
-                format!("input.{}", self.column(alias.as_deref(), column, at)?)
+                zen_column(&self.column(alias.as_deref(), column, at)?, at)?
             }
             Ex::Number(number) => number.clone(),
             Ex::Text(text) => zen_text(text, at)?,
@@ -969,6 +969,25 @@ struct Lowering<'c> {
     nodes: Map<String, Value>,
     inputs: Vec<(String, String)>,
     counter: usize,
+}
+
+/// The ZEN path of one row column, as the engine's own ZEN parser reads it:
+/// `input.c`, or `input["c"]` where `c` cannot follow a dot (a ZEN keyword
+/// such as `true`); a column neither form reads back as refuses.
+fn zen_column(column: &str, at: usize) -> Result<String, Refusal> {
+    let root = super::ROW_ROOT;
+    for path in [format!("{root}.{column}"), format!("{root}[\"{column}\"]")] {
+        if matches!(
+            norn_expr::row_expression(&path, root),
+            Ok(Some(norn_expr::RowExpr::Column(read))) if read == column
+        ) {
+            return Ok(path);
+        }
+    }
+    Err(refusal(
+        format!("column {column:?} has no ZEN path the engine reads back"),
+        at,
+    ))
 }
 
 /// A ZEN string literal holding exactly `text`. ZEN strings take no escapes:
@@ -2111,6 +2130,24 @@ mod properties {
         ";",
     ];
 
+    /// `ex` reads a column that no ZEN path reads back.
+    fn pathless(ex: &Ex, scope: &Scope) -> bool {
+        match ex {
+            Ex::Column(alias, column) => scope
+                .column(alias.as_deref(), column, 0)
+                .and_then(|name| super::zen_column(&name, 0))
+                .is_err(),
+            Ex::Not(inner) | Ex::Negate(inner) | Ex::IsNull(inner, _) => pathless(inner, scope),
+            Ex::Binary(_, left, right) => pathless(left, scope) || pathless(right, scope),
+            Ex::Case(condition, then, otherwise) => {
+                pathless(condition, scope) || pathless(then, scope) || pathless(otherwise, scope)
+            }
+            Ex::Coalesce(args) => args.iter().any(|arg| pathless(arg, scope)),
+            Ex::Call(call) => call.args.iter().any(|arg| pathless(arg, scope)),
+            Ex::Text(_) | Ex::Number(_) | Ex::Bool(_) | Ex::Null => false,
+        }
+    }
+
     /// `ex` holds a text with both quote kinds, which no ZEN literal holds.
     fn unquotable(ex: &Ex) -> bool {
         match ex {
@@ -2226,7 +2263,10 @@ mod properties {
                 // The one refusal of a lowerable tree: a text no ZEN quote holds.
                 Err(found) => {
                     prop_assert!(
-                        unquotable(&filter) || unquotable(&value),
+                        unquotable(&filter)
+                            || unquotable(&value)
+                            || pathless(&filter, &scope)
+                            || pathless(&value, &scope),
                         "{}: {:?}",
                         sql,
                         found
