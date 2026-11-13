@@ -328,7 +328,10 @@ impl<E: SqlEngine> DevHost<E> {
 }
 
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
-pub const PAGE_ROWS: usize = 500;
+/// A page's receipt lists every fact it writes (about 1.3 KB per mapped row),
+/// and tracing one object's lineage reads that receipt within one slice's
+/// 256 KiB decode budget, so a page stays well under 200 rows.
+pub const PAGE_ROWS: usize = 64;
 
 /// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
 /// [`PAGE_ROWS`] and before a source record the page already carries.
@@ -442,11 +445,11 @@ mod page_tests {
     #[test]
     fn pages_split_at_the_bound_a_new_input_and_a_repeated_record() {
         let (items, bins) = (input("items"), input("bins"));
-        let many: Vec<_> = (0..1_200)
+        let many: Vec<_> = (0..150)
             .map(|n| (row(&format!("r{n}")), items.clone()))
             .collect();
         let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
-        assert_eq!(sizes, [500, 500, 200]);
+        assert_eq!(sizes, [PAGE_ROWS, PAGE_ROWS, 150 - 2 * PAGE_ROWS]);
 
         let mixed = vec![
             (row("x"), items.clone()),

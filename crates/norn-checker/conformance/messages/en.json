@@ -1235,6 +1235,9 @@
     "model.admission.feature_kind": {
       "message": "a model's feature or target property has a kind a model cannot read"
     },
+    "model.admission.prediction_type_mismatch": {
+      "message": "a model's predictions type does not hold its outputs, subject and model version"
+    },
     "model.admission.unknown_feature": {
       "message": "a model's feature or target is not a property of its input object type"
     },
@@ -1849,6 +1852,9 @@
     },
     "widget.machine.cancel_outside_pending": {
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
+    },
+    "widget.machine.control_without_event": {
+      "message": "a page control raises no event of the page machine: {$detail}"
     },
     "widget.machine.duplicate_id": {
       "message": "a page machine declares one field, event, state or transition id twice: {$detail}"

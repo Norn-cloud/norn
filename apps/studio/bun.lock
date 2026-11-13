@@ -17,6 +17,8 @@
         "@tanstack/react-router": "1.170.46",
         "@tanstack/react-table": "8.21.3",
         "@tanstack/react-virtual": "3.14.22",
+        "@ui-sdk/core": "0.1.0-beta.1",
+        "@ui-sdk/web": "0.1.0-beta.1",
         "@xyflow/react": "12.12.1",
         "ai": "7.0.162",
         "better-auth": "1.7.12",
@@ -623,6 +625,10 @@
     "@types/unist": ["@types/unist@3.0.3", "", {}, "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q=="],
 
     "@types/use-sync-external-store": ["@types/use-sync-external-store@0.0.6", "", {}, "sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg=="],
+
+    "@ui-sdk/core": ["@ui-sdk/core@0.1.0-beta.1", "", {}, "sha512-sWsZW8RN6Gviir7REQYuDIafm9hierHQE31OJ+2g+1Pp3lDVKp/dk0+0dxFvqOQRmBveRvlE9FiARgNlQ9dMFw=="],
+
+    "@ui-sdk/web": ["@ui-sdk/web@0.1.0-beta.1", "", { "peerDependencies": { "@ui-sdk/core": "^0.1.0-beta.1" } }, "sha512-PnlZD27q90B+vNbGcOYhpFjdCaguYqZoYnslgDL+KLYNTqzKgE64eUKp9IfawMpcosKOnk8aGPiaw3uaOTHMpQ=="],
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.4.0", "", {}, "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ=="],
 

@@ -17,7 +17,7 @@ use norn_cell_do::server::{self, Response};
 use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
-const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 const STRANGER: Option<&str> = Some("Bearer fixture:stranger@demo");
 const SECRET: [u8; 32] = [5; 32];

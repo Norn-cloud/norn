@@ -20,10 +20,17 @@ pack holds what happens to a trained model:
   with `POST /v1/definitions:admit` then `:install` (with the signoff), it
   gates promote: a call parks as a decision an admin or owner approves, and
   the approved call still goes through the law.
-- **ml.access**: members register and request promotion; admins and owners
-  retire.
+- **ml.PredictionBatch** and **ml.predictionbatch.record** (M4): one
+  application of a model version to an input snapshot (`input_type`,
+  `input_revision`, the number of predictions written). Create-only, and only
+  for a version in `production`; the batch is linked to it as `applied`. Each
+  prediction is an object of the model's `predictions` type, carrying
+  `subject` (the scored object's id) and `model_version`.
+- **ml.access**: members register, request promotion and record prediction
+  batches; admins and owners retire.
 
-`sdks/python/models/run-demo.sh` runs registration and the law end to end on
-a dev host. The approval gate needs a hosted cell's roles (a dev host declares
+`sdks/python/models/run-demo.sh` runs registration, the law and applying a
+model (`sdks/python/models/norn_models.apply_model`, which checks every output
+contract on every row before it writes anything) end to end on a dev host. The approval gate needs a hosted cell's roles (a dev host declares
 none); `crates/norn-cell-do/tests/ml_approval.rs` admits the definition against
 the hosted grant table.

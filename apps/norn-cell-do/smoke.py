@@ -28,7 +28,7 @@ ANALYTICS = "orgId=org_demo&environmentId=analytics"
 ANSWER = "/v1/questions/demo.yield_week/answer"
 TRACE = "/v1/questions/demo.yield_week/trace"
 GUEST = "Bearer fixture:guest@demo"
-VIEWER = "Bearer fixture:viewer@demo"
+VIEWER = "Bearer fixture:admin@demo"
 
 
 # The analytics cell refuses to open without the stage's lineage key
