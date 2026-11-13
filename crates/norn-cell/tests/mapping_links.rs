@@ -1265,3 +1265,70 @@ async fn obs_page_commits_export_and_restore_with_their_members() {
         cell.store().read().dump().expect("dump")
     );
 }
+
+/// OBS-PAGE-1: an object of a page of 500 records traces to its own source
+/// row under the default decode budget of one trace: the page commit's receipt
+/// (about 1.3 KB per record) is read within the trace's receipt allowance.
+#[test]
+fn obs_page_members_trace_under_the_default_budget() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("traced.sqlite"));
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    let order = rows
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .expect("an order line")
+        .clone();
+    for row in rows
+        .iter()
+        .filter(|row| row["dataset"] != "Sales Order Item")
+    {
+        let (raw, input) = raw_of(row, "1");
+        for (id, _) in cell
+            .inject_mapping_page(&[raw], &input)
+            .expect("capture")
+            .pages
+        {
+            cell.process_mapping_page(&id).expect("page");
+        }
+    }
+    let mut lines = Vec::new();
+    let mut input = None;
+    for n in 1..=500 {
+        let mut line = order.clone();
+        line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
+        line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
+        let (raw, page_input) = raw_of(&line, "1");
+        lines.push(raw);
+        input = Some(page_input);
+    }
+    let input = input.expect("input");
+    for (id, _) in cell
+        .inject_mapping_page(&lines, &input)
+        .expect("capture")
+        .pages
+    {
+        cell.process_mapping_page(&id).expect("page");
+    }
+    let reader = cell.store().read();
+    let object = reader
+        .object(MAIN_WORLD, "canon.OrderLine", "demo/order/00042/line/1")
+        .expect("read")
+        .expect("landed");
+    let fact = norn_ir::FactRef::new("canon.OrderLine", &object.id, object.version);
+    let mut budget =
+        norn_cell::reactive::DecodeBudget::new(&norn_cell::reactive::ReactiveLimits::from_profile(
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        ));
+    let traced = reader
+        .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
+        .expect("traced")
+        .expect("source lineage");
+    assert!(
+        format!("{traced:?}").contains("SYN-ERPNEXT-order-00042"),
+        "{traced:?}"
+    );
+}

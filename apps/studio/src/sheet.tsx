@@ -133,7 +133,7 @@ function Sheet() {
   const states = SHEET.filter(({ id }) => only === null || id === only)
   return (
     <main className="space-y-8 bg-background p-6 text-foreground">
-      {only === null && <h1 className="text-title font-medium">Canvas: every state of every component</h1>}
+      {only === null && <h1 className="text-title font-semibold tracking-tight">Canvas: every state of every component</h1>}
       {states.map((state) => (
         <section key={state.id} data-state={state.id} className="space-y-2">
           {only === null && <header><div className="font-mono text-sm">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}

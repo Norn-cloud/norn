@@ -96,9 +96,9 @@ export function DecisionsPage() {
   })()
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-4">
+    <div className="grid max-w-4xl gap-4">
       <header className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-xl font-medium">Decisions</h1>
+        <h1 className="text-title font-semibold tracking-tight">Decisions</h1>
         {page && <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
         <span className="flex-1" />
         <Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>

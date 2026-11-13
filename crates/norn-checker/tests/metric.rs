@@ -683,13 +683,11 @@ fn mandatory_paths_reject_optional_forward_and_unproven_inverse_existence() {
             &catalog(&ontology.to_string()),
         );
         assert_code(&findings, codes::PARTIAL_PATH);
-        for pointer in [
-            "/metrics/0/x-norn/timeDimension",
-            "/metrics/0/x-norn/currency/property",
-        ] {
-            assert!(findings.iter().any(|d| d.code == codes::PARTIAL_PATH
-                && d.span.as_ref().expect("span").pointer == pointer));
-        }
+        assert!(findings.iter().any(|d| d.code == codes::PARTIAL_PATH
+            && d.span.as_ref().expect("span").pointer == "/metrics/0/x-norn/currency/property"));
+        // METRIC-GRAIN-LINK-1: a partial time path is admitted; rows it misses are skipped and counted.
+        assert!(!findings.iter().any(|d| d.code == codes::PARTIAL_PATH
+            && d.span.as_ref().expect("span").pointer == "/metrics/0/x-norn/timeDimension"));
         // A non-null terminal rate cannot repair a missing FX link.
         ontology[1]["payload"]["objectType"]["properties"]
             .as_array_mut()

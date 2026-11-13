@@ -416,14 +416,41 @@
     "defined_concept.validation.invalid_payload": {
       "message": "defined-concept payload does not match its strict root"
     },
+    "derived.validation.column_conflict": {
+      "message": "a relational view's node outputs two columns with one name"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "a relational view's projection drops or changes a column that identifies its rows"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\""
     },
     "derived.validation.invalid_payload": {
       "message": "DerivedIR payload is invalid at {$path}: {$detail}"
     },
+    "derived.validation.invalid_plan": {
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit"
+    },
     "derived.validation.io_in_view": {
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type"
+    },
+    "derived.validation.order_not_total": {
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "a relational view's expression or column does not have the type its operator needs"
+    },
+    "derived.validation.union_shape": {
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ"
+    },
+    "derived.validation.unknown_column": {
+      "message": "a relational view names a column that its input row does not have"
     },
     "entity.deprecation.v1_payload": {
       "message": "entity {$artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\""
@@ -1182,7 +1209,7 @@
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
     "metric.validation.partial_path": {
-      "message": "Mandatory time, currency and rate inputs require total paths."
+      "message": "Currency and rate inputs require total paths."
     },
     "metric.validation.ratio_aggregation": {
       "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."
@@ -1207,6 +1234,9 @@
     },
     "model.admission.feature_kind": {
       "message": "a model's feature or target property has a kind a model cannot read"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "a model's predictions type does not hold its outputs, subject and model version"
     },
     "model.admission.unknown_feature": {
       "message": "a model's feature or target is not a property of its input object type"
@@ -1814,6 +1844,78 @@
     "widget.interaction.unreachable_page": {
       "message": "an app page has no control that reaches it from the entry page: {$detail}"
     },
+    "widget.machine.absorbing_state": {
+      "message": "a non-terminal page machine state has no exit: {$detail}"
+    },
+    "widget.machine.await_outside_pending": {
+      "message": "a page machine state that is not pending declares awaits or a deadline: {$detail}"
+    },
+    "widget.machine.cancel_outside_pending": {
+      "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
+    },
+    "widget.machine.control_without_event": {
+      "message": "a page control raises no event of the page machine: {$detail}"
+    },
+    "widget.machine.duplicate_id": {
+      "message": "a page machine declares one field, event, state or transition id twice: {$detail}"
+    },
+    "widget.machine.error_without_recovery": {
+      "message": "a page machine error state has no transition a person or a timer drives: {$detail}"
+    },
+    "widget.machine.initial_not_idle": {
+      "message": "a page machine's initial state is not an idle state: {$detail}"
+    },
+    "widget.machine.input_free_cycle": {
+      "message": "a page machine state is on a cycle that runs on timers alone: {$detail}"
+    },
+    "widget.machine.invalid_event": {
+      "message": "a page machine event is malformed: {$detail}"
+    },
+    "widget.machine.invalid_expression": {
+      "message": "a page machine guard or assignment does not compile or type-check: {$detail}"
+    },
+    "widget.machine.invalid_field": {
+      "message": "a page machine field or payload member has a missing or ill-typed initial value: {$detail}"
+    },
+    "widget.machine.nondeterministic": {
+      "message": "a page machine state has more than one unguarded transition on one event or outcome: {$detail}"
+    },
+    "widget.machine.outcome_impossible": {
+      "message": "a page machine handles an outcome the awaited call cannot have: {$detail}"
+    },
+    "widget.machine.outcome_outside_pending": {
+      "message": "a page machine outcome event fires from a state that is not pending: {$detail}"
+    },
+    "widget.machine.pending_abandoned": {
+      "message": "a page machine leaves a pending state on an event that is not the call's outcome: {$detail}"
+    },
+    "widget.machine.pending_entered_without_start": {
+      "message": "a transition enters a pending page machine state without starting exactly the call it awaits: {$detail}"
+    },
+    "widget.machine.pending_outcome_uncovered": {
+      "message": "a pending page machine state has no unguarded transition for an outcome its call can have: {$detail}"
+    },
+    "widget.machine.pending_without_await": {
+      "message": "a pending page machine state does not name the call or read it awaits: {$detail}"
+    },
+    "widget.machine.pending_without_deadline": {
+      "message": "a pending page machine state has no positive deadline: {$detail}"
+    },
+    "widget.machine.start_without_pending": {
+      "message": "a page machine starts a call that no pending state awaits, or one already in flight: {$detail}"
+    },
+    "widget.machine.terminal_has_transition": {
+      "message": "a terminal page machine state has an outgoing transition: {$detail}"
+    },
+    "widget.machine.trap_region": {
+      "message": "no idle or terminal state is reachable from a page machine state: {$detail}"
+    },
+    "widget.machine.unknown_reference": {
+      "message": "a page machine names a state, event, field, node, binding, operation or navigation item it does not declare: {$detail}"
+    },
+    "widget.machine.unreachable_state": {
+      "message": "a page machine state cannot be reached from the initial state: {$detail}"
+    },
     "widget.validation.invalid_payload": {
       "message": "WidgetIR payload is invalid at {$path}: {$detail}"
     },
@@ -1822,6 +1924,15 @@
     },
     "widget.validation.unsafe_action_binding": {
       "message": "action binding must target a Norn action or process command, not a raw mutation"
+    },
+    "widget.view.behavior_unfit": {
+      "message": "a node carries an accessibility behaviour its component cannot have, or lists one twice: {$detail}"
+    },
+    "widget.view.subject_mismatch": {
+      "message": "a page view's kind cannot present its subject: {$detail}"
+    },
+    "widget.view.subject_unbound": {
+      "message": "a page view's object type or action is neither read nor called by the contract: {$detail}"
     }
   }
 }

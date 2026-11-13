@@ -67,7 +67,7 @@ export function ObjectPage() {
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="text-meta text-muted-foreground">{concept?.title ?? conceptTitle(name)}</div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-title font-medium">{data ? recordName(data.object.document) : id}</h1>
+            <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:anywhere]">{data ? recordName(data.object.document) : id}</h1>
             {data?.object.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
           </div>
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
@@ -126,7 +126,7 @@ export function ObjectPage() {
             <Panel icon={KeyRound} label="Access"><Well>
               {data.object.origin === "live"
                 ? <Empty icon={KeyRound} action={null}>The cell decided this read for your account; it does not publish the decision and its policy for one record yet.</Empty>
-                : <Empty icon={KeyRound} action={<Button asChild variant="outline" size="sm"><Link to="/status">See what is live</Link></Button>}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
+                : <Empty icon={KeyRound} action={null}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
             </Well></Panel>
           </TabsContent>
         </Tabs>

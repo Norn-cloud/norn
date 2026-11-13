@@ -1,6 +1,8 @@
 //! `ModelIR` (#1171 M1): a model is admitted only when its payload is
 //! well-formed, its trust is backed by contracts that fit its outputs, and its
-//! input type and features resolve in the set or the installed base.
+//! input type and features resolve in the set or the installed base; a named
+//! predictions type (M4) must hold every output with the same type and
+//! nullability, plus `subject` and `model_version`.
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -353,6 +355,136 @@ fn an_unknown_member_or_a_free_expression_is_refused() {
         local_codes(&with(
             "/contracts/0/rule",
             json!({ "kind": "expression", "source": "x > 0" })
+        )),
+        one("model.validation.invalid_payload")
+    );
+}
+
+/// `sales.ChurnPrediction`: where `churn_payload`'s predictions are written,
+/// with `property` replaced by `value` (or removed when `value` is null).
+fn churn_prediction(property: Option<(&str, Value)>) -> ArtifactEnvelope {
+    let mut properties = vec![
+        json!({ "id": "prediction_id", "type": { "kind": "text" } }),
+        json!({ "id": "subject", "type": { "kind": "text" } }),
+        json!({ "id": "model_version", "type": { "kind": "text" } }),
+        json!({ "id": "churn_probability", "type": { "kind": "decimal", "scale": 4 } }),
+        json!({ "id": "risk_band", "type": { "kind": "enum", "values": [
+            { "value": "low" }, { "value": "medium" }, { "value": "high" } ] },
+            "constraints": { "nullable": true } }),
+        json!({ "id": "will_churn", "type": { "kind": "boolean" } }),
+    ];
+    if let Some((id, value)) = property {
+        properties.retain(|property| property["id"] != id);
+        if !value.is_null() {
+            properties.push(value);
+        }
+    }
+    entity(
+        "sales.ChurnPrediction.entity",
+        &json!({ "name": "sales.ChurnPrediction", "properties": properties }),
+    )
+}
+
+/// `churn_payload` writing its predictions to `predictions`.
+fn predicting_to(predictions: Value) -> Value {
+    let mut payload = churn_payload();
+    payload["predictions"] = predictions;
+    payload
+}
+
+fn with_predictions() -> Value {
+    predicting_to(json!({ "objectType": "sales.ChurnPrediction" }))
+}
+
+#[test]
+fn a_predictions_type_with_every_output_is_admitted() {
+    let payload = with_predictions();
+    assert_eq!(local_codes(&payload), BTreeSet::new());
+    assert_eq!(
+        set_codes(
+            &[
+                account(),
+                customer(),
+                churn_prediction(None),
+                model(&payload)
+            ],
+            &[]
+        ),
+        BTreeSet::new()
+    );
+    // Installed, the type resolves from the base.
+    assert_eq!(
+        model_set_codes(
+            &[model(&payload)],
+            &[account(), customer(), churn_prediction(None)]
+        ),
+        BTreeSet::new()
+    );
+}
+
+#[test]
+fn a_predictions_type_that_does_not_fit_the_outputs_is_refused() {
+    let cases = [
+        ("subject", Value::Null),
+        (
+            "model_version",
+            json!({ "id": "model_version", "type": { "kind": "integer" } }),
+        ),
+        ("will_churn", Value::Null),
+        (
+            "churn_probability",
+            json!({ "id": "churn_probability", "type": { "kind": "decimal", "scale": 2 } }),
+        ),
+        (
+            "churn_probability",
+            json!({ "id": "churn_probability", "type": { "kind": "integer" } }),
+        ),
+        (
+            "risk_band",
+            json!({ "id": "risk_band", "type": { "kind": "enum", "values": [ { "value": "low" } ] },
+                    "constraints": { "nullable": true } }),
+        ),
+        (
+            "risk_band",
+            json!({ "id": "risk_band", "type": { "kind": "enum", "values": [ { "value": "low" }, { "value": "high" } ] } }),
+        ),
+        (
+            "will_churn",
+            json!({ "id": "will_churn", "type": { "kind": "boolean" }, "constraints": { "nullable": true } }),
+        ),
+    ];
+    for (property, value) in cases {
+        let prediction = churn_prediction(Some((property, value.clone())));
+        assert_eq!(
+            model_set_codes(
+                &[
+                    account(),
+                    customer(),
+                    prediction,
+                    model(&with_predictions())
+                ],
+                &[]
+            ),
+            one("model.admission.prediction_type_mismatch"),
+            "{property}: {value}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_or_malformed_predictions_type_is_refused() {
+    let unknown = predicting_to(json!({ "objectType": "sales.Forecast" }));
+    assert_eq!(
+        model_set_codes(&[account(), customer(), model(&unknown)], &[]),
+        one("model.admission.prediction_type_mismatch")
+    );
+    assert_eq!(
+        local_codes(&predicting_to(json!({ "objectType": "forecast" }))),
+        one("model.validation.invalid_id")
+    );
+    assert_eq!(
+        local_codes(&predicting_to(
+            json!({ "objectType": "sales.ChurnPrediction", "writer": "x" })
         )),
         one("model.validation.invalid_payload")
     );

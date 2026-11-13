@@ -196,6 +196,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 |row| row.get(0),
             )?
             .ok_or(CellError::MappingBundleMismatch)?;
+        // A row whose exact text rechecked under the verified install gives
+        // the same result again (MAPPING-PLAN-1's byte-equal reuse).
+        if let Some(cache) = self.mapping_plans
+            && let Some((seen, bundle)) = cache.borrow().claims.get(id)
+            && *seen == encoded
+        {
+            return Ok(bundle.clone());
+        }
         let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
@@ -203,6 +211,15 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             return Err(CellError::MappingBundleMismatch);
         }
         self.recheck_mapping_bundle(&bundle)?;
+        if let Some(cache) = self.mapping_plans {
+            let mut cache = cache.borrow_mut();
+            if cache.claims.len() >= crate::mapping_bundle::MAX_CACHED_CLAIM_BUNDLES {
+                cache.claims.clear();
+            }
+            cache
+                .claims
+                .insert(id.to_owned(), (encoded, bundle.clone()));
+        }
         Ok(bundle)
     }
 
@@ -437,6 +454,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .push(entry);
         }
         let present = |key: &FactKey| self.present_after(model, commit, key);
+        // Each source's live links, read once per plan: a source's journal
+        // can hold every claim of every earlier version of its records.
+        let mut live: BTreeMap<FactKey, BTreeSet<LinkKey>> = BTreeMap::new();
         let mut links = BTreeMap::new();
         let mut sealed = Vec::new();
         for ((source, role), group) in &groups {
@@ -458,7 +478,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             for (entry, standing) in group.iter().zip(&ranked) {
                 let Some(to) = target(entry) else { continue };
                 let key = LinkKey::new(source.clone(), role.as_str(), to.clone());
-                let exists = self.mapping_link_exists(&key, model)?;
+                let exists = self.mapping_link_exists(&key, model, &mut live)?;
                 let supported = group
                     .iter()
                     .zip(&ranked)
@@ -526,11 +546,19 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         key: &LinkKey,
         model: CommitModel<'_, '_>,
+        live: &mut BTreeMap<FactKey, BTreeSet<LinkKey>>,
     ) -> Result<bool, CellError> {
-        Ok(GuardView(self)
-            .links_of(&key.source)?
-            .iter()
-            .any(|live| model.canonical_link(live) == model.canonical_link(key)))
+        let links = match live.entry(key.source.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(
+                GuardView(self)
+                    .links_of(&key.source)?
+                    .iter()
+                    .map(|link| model.canonical_link(link))
+                    .collect(),
+            ),
+        };
+        Ok(links.contains(&model.canonical_link(key)))
     }
 
     fn mapping_link_write(

@@ -27,7 +27,7 @@ use serde_json::Value;
 
 use crate::recorded::Recorded;
 
-/// Rows per page; the cell's bound is higher (OBS-PAGE-1 hosts default to 500).
+/// Rows per page, as every host delivers them (see `norn_api::host::PAGE_ROWS`).
 const PAGE_ROWS: usize = norn_api::host::PAGE_ROWS;
 
 /// What one load did, per snapshot file.

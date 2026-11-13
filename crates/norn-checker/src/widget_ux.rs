@@ -229,6 +229,8 @@ pub(crate) fn check_widget_ux_set(
             &nullable_inputs,
             &composed,
         ));
+        diagnostics.extend(crate::ui_machine::check(artifact, &ux));
+        diagnostics.extend(crate::ui_view::check(artifact, &ux));
     }
     diagnostics
 }
@@ -544,7 +546,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 }
                 ActionSurface::Form(form_id.clone())
             }
-            WidgetComponent::Dialog { .. } => surface.clone(),
+            // A control only raises page machine events; `ui_machine` checks its uses.
+            WidgetComponent::Dialog { .. } | WidgetComponent::Control { .. } => surface.clone(),
             WidgetComponent::Form { form_id } => {
                 self.add_page_use(Usage::Form(form_id.clone()), page_id);
                 self.rendered_forms
@@ -633,6 +636,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 | WidgetComponent::ChildGrid { .. }
                 | WidgetComponent::Action { .. }
                 | WidgetComponent::Navigation { .. }
+                | WidgetComponent::Control { .. }
                 | WidgetComponent::Composition { .. } => false,
             }
     }
@@ -999,6 +1003,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
             | WidgetComponent::Composition { .. } => record,
         };
         let mut invocations = Vec::new();
@@ -1166,7 +1171,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Dialog { .. }
             | WidgetComponent::ChildGrid { .. }
             | WidgetComponent::Field { .. }
-            | WidgetComponent::Navigation { .. } => {}
+            | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. } => {}
         }
         for (index, child) in node.children.iter().enumerate() {
             invocations.extend(self.effect_tree(
@@ -1712,6 +1718,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
             | WidgetComponent::Composition { .. } => row_context,
         };
         if let WidgetComponent::Navigation { item_id } = &node.component {
@@ -3617,7 +3624,9 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                     );
                 }
             }
-            WidgetComponent::Composition { .. } | WidgetComponent::Dialog { .. } => {}
+            WidgetComponent::Composition { .. }
+            | WidgetComponent::Dialog { .. }
+            | WidgetComponent::Control { .. } => {}
         }
         self.check_children(node, path);
         let child_surface = match &node.component {
@@ -3635,6 +3644,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
             | WidgetComponent::Composition { .. } => surface,
         };
         for (index, child) in node.children.iter().enumerate() {
@@ -4118,6 +4128,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::ChildGrid { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
             | WidgetComponent::Composition { .. } => node.children.is_empty(),
         };
         if !valid {
@@ -6864,7 +6875,7 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
     Some(if property.nullable { ty.optional() } else { ty })
 }
 
-fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
+pub(crate) fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
     let ty = match value_type {
         norn_ir::WidgetValueType::Text => Type::text(),
         norn_ir::WidgetValueType::Integer => Type::Integer,
@@ -7288,6 +7299,7 @@ fn collect_tree_semantic_ids(
         WidgetComponent::Form { .. }
         | WidgetComponent::Action { .. }
         | WidgetComponent::Navigation { .. }
+        | WidgetComponent::Control { .. }
         | WidgetComponent::Detail { .. }
         | WidgetComponent::Dialog { .. } => {}
     }

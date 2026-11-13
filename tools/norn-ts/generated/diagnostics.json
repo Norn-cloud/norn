@@ -1105,6 +1105,22 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.column_conflict",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's node outputs two columns with one name",
+      "fix": "Rename one of the columns, or give the join a prefix that keeps every output name unique.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.grain_dropped",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's projection drops or changes a column that identifies its rows",
+      "fix": "Pass every grain column through unchanged under its own name, for example `input.id` as `id`.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.incremental_not_supported",
       "tier": "T2",
       "severity": "error",
@@ -1121,12 +1137,68 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.invalid_plan",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit",
+      "fix": "Declare every node and input the plan names, keep the plan acyclic with every node feeding the output, and use only entity inputs, recompute_on_read maintenance and the current temporal scope.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.io_in_view",
       "tier": "T2",
       "severity": "error",
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "derived.validation.join_undeclared",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type",
+      "fix": "Join along a link the left object type declares, or on a key the right object type declares (or its id), with the right side at that type's identity grain.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.order_not_total",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity",
+      "fix": "Add the input's grain columns to the order (or the partition or key), so every row has one place.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.output_schema_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it",
+      "fix": "Set `outputSchema` to `{}`; the admitted plan publishes the inferred columns.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.type_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's expression or column does not have the type its operator needs",
+      "fix": "Make predicates Boolean, keep group and order keys scalar, and give each operator a column of the type it reads.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.union_shape",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ",
+      "fix": "Project every union input to the same columns, in the same order, with the same types and contracts.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.unknown_column",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view names a column that its input row does not have",
+      "fix": "Name a column of the input node's row; columns from a join carry the join's prefix.",
+      "no_fix": null
     },
     {
       "code": "entity.deprecation.v1_payload",
@@ -3148,7 +3220,7 @@
       "code": "metric.validation.partial_path",
       "tier": "T3",
       "severity": "error",
-      "message": "Mandatory time, currency and rate inputs require total paths.",
+      "message": "Currency and rate inputs require total paths.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
@@ -3214,6 +3286,14 @@
       "severity": "error",
       "message": "a model's feature or target property has a kind a model cannot read",
       "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.prediction_type_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's predictions type does not hold its outputs, subject and model version",
+      "fix": "Name an object type that declares text properties subject and model_version and every output as a property of the same type, scale, unit and nullability (an enum with at least the output's values).",
       "no_fix": null
     },
     {
@@ -4833,6 +4913,198 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "widget.machine.absorbing_state",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a non-terminal page machine state has no exit: {detail}",
+      "fix": "Add a transition out of the state, or give it the terminal role if the page is done there.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.await_outside_pending",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine state that is not pending declares awaits or a deadline: {detail}",
+      "fix": "Give the state the pending role, or remove awaits and deadlineMs.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.cancel_outside_pending",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {detail}",
+      "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.control_without_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page control raises no event of the page machine: {detail}",
+      "fix": "Declare a user event that names the control, or remove the control.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.duplicate_id",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine declares one field, event, state or transition id twice: {detail}",
+      "fix": "Give every field, event, state and transition of the page machine its own id.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.error_without_recovery",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine error state has no transition a person or a timer drives: {detail}",
+      "fix": "Add a retry, edit or dismiss transition on a user event, or a timed recovery.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.initial_not_idle",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine's initial state is not an idle state: {detail}",
+      "fix": "Start the machine in an idle state and start calls from a page_opened transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.input_free_cycle",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine state is on a cycle that runs on timers alone: {detail}",
+      "fix": "Break the cycle with a user, outcome or subscription event; subscribe to the data instead of polling it.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.invalid_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine event is malformed: {detail}",
+      "fix": "Give timers a positive delay, categories only to refused outcomes, payloads only to user and subscription events, and use page_opened only from the initial state.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.invalid_expression",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine guard or assignment does not compile or type-check: {detail}",
+      "fix": "Write guards as Boolean ZEN over input.fields and input.event, and assignments typed as their field.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.invalid_field",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine field or payload member has a missing or ill-typed initial value: {detail}",
+      "fix": "Give every required state field an initial value of its declared type; payload members carry none.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.nondeterministic",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine state has more than one unguarded transition on one event or outcome: {detail}",
+      "fix": "Keep one unguarded transition per event and outcome, and guard the others.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.outcome_impossible",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine handles an outcome the awaited call cannot have: {detail}",
+      "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, and cancelled only where the state offers a cancel.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.outcome_outside_pending",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine outcome event fires from a state that is not pending: {detail}",
+      "fix": "Move the transition to the pending state that awaits the call.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.pending_abandoned",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine leaves a pending state on an event that is not the call's outcome: {detail}",
+      "fix": "Stay in the pending state and issue a cancel effect; leave on the outcome that follows.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.pending_entered_without_start",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a transition enters a pending page machine state without starting exactly the call it awaits: {detail}",
+      "fix": "Add one start effect with the target state's awaits call to the transition.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.pending_outcome_uncovered",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a pending page machine state has no unguarded transition for an outcome its call can have: {detail}",
+      "fix": "Add an unguarded transition for each listed outcome; guarded transitions refine but do not cover.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.pending_without_await",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a pending page machine state does not name the call or read it awaits: {detail}",
+      "fix": "Set awaits to the action binding, data binding or operation the state waits for.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.pending_without_deadline",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a pending page machine state has no positive deadline: {detail}",
+      "fix": "Set deadlineMs on the pending state and handle its timeout outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.start_without_pending",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine starts a call that no pending state awaits, or one already in flight: {detail}",
+      "fix": "Target a pending state that awaits the started call, and start it only on entry.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.terminal_has_transition",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a terminal page machine state has an outgoing transition: {detail}",
+      "fix": "Remove the transition, or give the state a non-terminal role.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.trap_region",
+      "tier": "T2",
+      "severity": "error",
+      "message": "no idle or terminal state is reachable from a page machine state: {detail}",
+      "fix": "Add a path from the state back to an idle state or on to a terminal one.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.unknown_reference",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine names a state, event, field, node, binding, operation or navigation item it does not declare: {detail}",
+      "fix": "Declare the referenced state, event, field, binding or navigation item, or reference one that exists in this widget.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.unreachable_state",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine state cannot be reached from the initial state: {detail}",
+      "fix": "Add a transition that leads to the state, or remove it.",
+      "no_fix": null
+    },
+    {
       "code": "widget.validation.invalid_payload",
       "tier": "T2",
       "severity": "error",
@@ -4855,6 +5127,30 @@
       "message": "action binding must target a Norn action or process command, not a raw mutation",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "widget.view.behavior_unfit",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a node carries an accessibility behaviour its component cannot have, or lists one twice: {detail}",
+      "fix": "Put item behaviours on lists, grids and navigation, overlay behaviours on dialogs, live regions on sections, details and lists.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.view.subject_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page view's kind cannot present its subject: {detail}",
+      "fix": "Present object types in collection, record or lineage views, actions in forms, questions and transforms in question views, dashboards, flows and decisions in their own kinds.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.view.subject_unbound",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page view's object type or action is neither read nor called by the contract: {detail}",
+      "fix": "Add a data binding that reads the object type or an action binding that calls the action, or change the subject.",
+      "no_fix": null
     }
   ]
 }

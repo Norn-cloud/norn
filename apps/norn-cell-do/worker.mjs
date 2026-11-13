@@ -114,7 +114,10 @@ export class Cell {
         redirect: "manual",
         signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
       });
-      return { status: response.status, body: await response.text() };
+      const text = await response.text();
+      // The cell may answer its caller opaquely; the operator sees why.
+      if (response.status !== 200) console.error(`analytics engine ${call.op} answered ${response.status}: ${text.slice(0, 500)}`);
+      return { status: response.status, body: text };
     } catch (error) {
       console.error(`analytics engine call failed: ${error}`);
       return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };

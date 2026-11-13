@@ -551,6 +551,10 @@ impl Facts {
                     }
                 }
             }
+            WidgetComponent::Control { label, .. } => {
+                self.interactive.insert(id.to_owned());
+                self.add_label(id, context.effective(node, label));
+            }
             WidgetComponent::List { .. }
             | WidgetComponent::Detail { .. }
             | WidgetComponent::Composition { .. } => {}

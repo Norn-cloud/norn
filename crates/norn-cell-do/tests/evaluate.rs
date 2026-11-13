@@ -26,7 +26,7 @@ use norn_kernel::authz::AccessRequest;
 use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 
 /// The analytics runtime with overridable bounds and one metric whose access

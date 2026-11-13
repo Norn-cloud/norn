@@ -86,7 +86,7 @@ wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do
 python3 apps/norn-cell-do/smoke.py celld   # or: wrangler
 ```
 
-The smoke build enables `fixtures` (`Bearer fixture:viewer@demo`, `guest@demo`);
+The smoke build enables `fixtures` (`Bearer fixture:admin@demo`, `guest@demo`);
 a deployable build omits it and then requires a verified host token.
 
 Pins: celld v0.6.3 and Wrangler 4.157.0, as in `crates/norn-cell/README.md`.

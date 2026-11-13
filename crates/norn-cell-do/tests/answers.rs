@@ -15,7 +15,7 @@ use norn_cell_do::server::{self, Response};
 use serde_json::Value;
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
-const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The test stage's lineage key (the `NORN_LINEAGE_KEY` Worker secret in a deploy).
 const SECRET: [u8; 32] = [5; 32];

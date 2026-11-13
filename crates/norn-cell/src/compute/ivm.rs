@@ -54,8 +54,9 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        // METRIC-SNAPSHOT-ASOF-1: a snapshot is not maintained incrementally.
-        if plan.as_of() {
+        // METRIC-SNAPSHOT-ASOF-1 / METRIC-GRAIN-LINK-1: neither a snapshot nor a
+        // linked time is maintained incrementally.
+        if plan.as_of() || plan.time_link().is_some() {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
         let (snapshot, source_pins, receipt_pin) = store.question_snapshot_at_with(

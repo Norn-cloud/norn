@@ -49,7 +49,9 @@ pub use defined_concept::DefinedConceptRoot;
 pub mod labels;
 pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
 pub mod model;
-pub use model::{ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelRoot};
+pub use model::{
+    ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelPredictions, ModelRoot,
+};
 pub mod trust;
 pub use trust::TrustLevel;
 pub mod decision_question;
@@ -228,8 +230,11 @@ pub use theorem_input::{
     TheoremStateModel, TheoremVariable, TheoremVariableDomain, TheoremVariableType,
 };
 pub use view::{
-    CalcExpr, PrimitiveBasisClass, TemporalScope, TemporalScopeMode, ViewInputKind, ViewInputRef,
-    ViewIrPayload, ViewMaintenance,
+    AggregateFn, AggregateNode, CalcExpr, DedupeKeep, DedupeNode, FilterNode, GroupKey, JoinKind,
+    JoinNode, JoinOn, KeyJoin, LinkJoin, Measure, OrderKey, PrimitiveBasisClass, ProjectColumn,
+    ProjectNode, RelationalPlan, ScanNode, SortDirection, TemporalScope, TemporalScopeMode,
+    UnionNode, ViewInputKind, ViewInputRef, ViewIrPayload, ViewMaintenance, ViewNode, WindowColumn,
+    WindowFn, WindowNode,
 };
 pub use widget::{
     WidgetActionBinding, WidgetDataDependency, WidgetPermission, WidgetProjectionHints,
@@ -238,16 +243,20 @@ pub use widget::{
 pub use widget_ux::{
     ArtifactRef as WidgetArtifactRef, LocaleText, PropertyRef, WIDGET_UX_V1_VERSION,
     WidgetActionConfirmation, WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity,
-    WidgetApp, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
-    WidgetContextParam, WidgetDataBinding, WidgetDataQuery, WidgetDismissalMethod,
-    WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl, WidgetFieldFormat,
-    WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter, WidgetFilterOperator,
-    WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit, WidgetKeyValue,
-    WidgetNativeProjection, WidgetNavigationDestination, WidgetNavigationItem, WidgetNode,
-    WidgetOutcomeState, WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds,
-    WidgetPageRef, WidgetRoute, WidgetRouteParameter, WidgetSection, WidgetSectionKind,
-    WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection, WidgetUx,
-    WidgetUxActionBinding, WidgetValueType, WidgetVersionConflictBinding, ZenCondition,
+    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetComponent, WidgetConfirmationStrength,
+    WidgetConflictBehavior, WidgetContextParam, WidgetControlInput, WidgetDataBinding,
+    WidgetDataQuery, WidgetDismissalMethod, WidgetEffectHandler, WidgetExpressionInputs,
+    WidgetFieldControl, WidgetFieldFormat, WidgetFieldPresentation, WidgetFieldTarget,
+    WidgetFilter, WidgetFilterOperator, WidgetFilterValue, WidgetForm, WidgetFormMode,
+    WidgetFormSubmit, WidgetKeyValue, WidgetMachine, WidgetMachineCall, WidgetMachineEffect,
+    WidgetMachineEvent, WidgetMachineEventSource, WidgetMachineField, WidgetMachineState,
+    WidgetMachineTransition, WidgetNativeProjection, WidgetNavigationDestination,
+    WidgetNavigationItem, WidgetNode, WidgetOutcomeState, WidgetOverride, WidgetOverrideValue,
+    WidgetPage, WidgetPageBounds, WidgetPageRef, WidgetRefusalCategory, WidgetRoute,
+    WidgetRouteParameter, WidgetSection, WidgetSectionKind, WidgetSelectionMode,
+    WidgetShellHandlers, WidgetSort, WidgetSortDirection, WidgetStateRole, WidgetUx,
+    WidgetUxActionBinding, WidgetValueType, WidgetVersionConflictBinding, WidgetView,
+    WidgetViewKind, WidgetViewSubject, ZenCondition,
 };
 
 /// Representation-independent JSON number classification (issue #2440).
@@ -1520,7 +1529,8 @@ define_payload_root!(
         }
         optional {
             target => "target" as PropertyId,
-            contracts => "contracts" as Vec<ModelContract>
+            contracts => "contracts" as Vec<ModelContract>,
+            predictions => "predictions" as ModelPredictions
         }
     }
 );
