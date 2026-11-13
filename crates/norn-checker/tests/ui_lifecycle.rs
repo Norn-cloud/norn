@@ -2,7 +2,12 @@
 //! order fixture's `status` lifecycle and its approval decision (which can emit `submit` and
 //! `approve`) back a page that submits an order.
 
-#![allow(clippy::expect_used, reason = "fixtures")]
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::needless_pass_by_value,
+    reason = "JSON fixtures built and edited in place"
+)]
 
 use std::collections::BTreeSet;
 
