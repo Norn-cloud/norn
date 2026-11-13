@@ -1014,14 +1014,18 @@ pub fn kept_upload_key(upload_id: &str) -> String {
 
 /// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
 /// are already kept; new bytes for the same upload are its next version.
+/// A cell whose definitions predate `source.Upload` first gets the cell's
+/// own sources pack through the governed install ([`ensure_upload_records`]).
 ///
 /// # Errors
-/// The cell has no `source.Upload` definitions, or refused the record.
+/// The pack could not be installed, the cell refused the record, or the
+/// write failed.
 pub fn keep_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload: &KeptUpload,
     now_ms: u64,
 ) -> Result<(), String> {
+    ensure_upload_records(host, now_ms)?;
     let key = kept_upload_key(&upload.upload_id);
     let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
     let store = match upload.store {
@@ -1068,6 +1072,44 @@ pub fn keep_upload<E: SqlEngine>(
     }
 }
 
+/// The cell's own sources pack: connections, sync runs and upload records,
+/// and the mapping that lands the cell's reports as them.
+const SOURCES_PACK: [&str; 6] = [
+    include_str!("../../../registry/packs/sources/artifacts/source.Synced.interface.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Connection.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.SyncRun.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Upload.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.source.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.mapping.json"),
+];
+
+/// UPLOAD-RECORD-1 for a cell provisioned before `source.Upload`: install the
+/// cell's own sources pack as the next governed definitions version (the
+/// shared install path, DEFS-REOPEN-1), once. `Ok(true)` when it installed.
+///
+/// # Errors
+/// The pack is refused or the install fails; the upload is then refused,
+/// never completed without its record.
+pub fn ensure_upload_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    installed_at: u64,
+) -> Result<bool, String> {
+    if host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(false);
+    }
+    let pack = SOURCES_PACK
+        .iter()
+        .map(|text| serde_json::from_str::<norn_ir::ArtifactEnvelope>(text))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("the sources pack: {e}"))?;
+    host.install_artifacts(&pack, installed_at)
+        .map_err(|reason| format!("the sources pack was not installed: {reason}"))?;
+    Ok(true)
+}
+
 /// The kept record of the upload `upload_id`, if the cell completed it.
 ///
 /// # Errors
@@ -1076,6 +1118,12 @@ pub fn kept_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload_id: &str,
 ) -> Result<Option<KeptUpload>, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(None);
+    }
     let Some(object) = host
         .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
         .map_err(|refusal| refusal.message)?

@@ -720,11 +720,14 @@ impl Connect {
             owner: actor.to_owned(),
             completed_at: norn_api::sources::rfc3339(now_ms),
         };
+        // UPLOAD-RECORD-1: never complete without the record. A cell whose
+        // definitions predate source.Upload gets the pack first; one that
+        // cannot is refused with a typed reason.
         if let Err(reason) = norn_api::sources::keep_upload(host, &kept, now_ms) {
             return refused(
-                500,
-                "host.error",
-                &format!("the upload was read but not kept: {reason}"),
+                409,
+                "upload.not_recorded",
+                &format!("the upload was read but its record was not kept: {reason}"),
             );
         }
         self.uploads.insert(id.to_owned(), upload.clone());
