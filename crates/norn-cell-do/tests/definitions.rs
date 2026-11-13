@@ -567,6 +567,75 @@ fn ids_kinds_and_methods_are_checked() {
     assert_eq!(malformed.status, 400, "{}", malformed.body);
 }
 
+/// VIEW-DEF-1: a saved records view is admitted when its type is declared and
+/// its filter, sort and columns hold for that type, by the grid's own rules;
+/// each violation is refused at its pointer, and an admitted view installs,
+/// lists and reads back like any retained definition.
+#[test]
+fn a_saved_view_is_checked_by_the_grid_rules_and_kept_like_any_definition() {
+    let cell = cell(DefinitionKinds::default());
+    let view = json!({
+        "title": "Gold conversions",
+        "objectType": analytics::TYPE,
+        "filter": {"all": [{"property": "metal", "op": "eq", "value": "gold"}]},
+        "sort": "occurred_at:desc",
+        "columns": ["metal", "input", "occurred_at"]
+    });
+    let body =
+        |payload: &Value| json!({ "kind": "view", "id": "studio.view.gold", "payload": payload });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&view));
+    assert_eq!(status, 200, "{admitted}");
+    let wrong = json!({
+        "title": "",
+        "objectType": analytics::TYPE,
+        "filter": {"all": [{"property": "input", "op": "contains", "value": "1"}]},
+        "sort": "nowhere:asc",
+        "columns": ["metal", "nowhere"],
+        "extra": true
+    });
+    let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&wrong));
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
+    let found = pointers(&refused);
+    for pointer in ["/title", "/columns/1", "/extra"] {
+        assert!(
+            found.iter().any(|(_, at)| at == pointer),
+            "{pointer}: {found:?}"
+        );
+    }
+    for prefix in ["/filter", "/sort"] {
+        assert!(
+            found.iter().any(|(_, at)| at.starts_with(prefix)),
+            "{prefix}: {found:?}"
+        );
+    }
+    let unknown = json!({ "title": "X", "objectType": "demo.Missing" });
+    let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&unknown));
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
+    assert_eq!(
+        pointers(&refused),
+        [(
+            "definition.invalid_payload".to_owned(),
+            "/objectType".to_owned()
+        )]
+    );
+    let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body(&view));
+    assert_eq!(status, 200, "{installed}");
+    let (status, listed) = get(&cell, "/v1/definitions:list", "&kind=view", VIEWER);
+    assert_eq!(status, 200, "{listed}");
+    assert!(listed.to_string().contains("Gold conversions"), "{listed}");
+    let (status, read) = get(&cell, "/v1/definitions/studio.view.gold", "", VIEWER);
+    assert_eq!(status, 200, "{read}");
+    assert_eq!(read["payload"]["sort"], json!("occurred_at:desc"));
+}
+
 /// The agent hook: the registered checker sees the canonical payload and the
 /// host's context, and its findings come back with their pointers.
 fn stub_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
