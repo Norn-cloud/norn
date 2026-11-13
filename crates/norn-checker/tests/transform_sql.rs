@@ -350,6 +350,8 @@ const OUTSIDE_THE_DIALECT: &[&str] = &[
     "SELECT o.amount AS \"the amount\" FROM \"shop.Order\" o",
     "SELECT o.amount AS amount FROM \"shop.Order\" AS \"o o\"",
     "SELECT o.amount AS montant_€ FROM \"shop.Order\" o",
+    // ZEN strings take no escapes: a text holding both quote kinds has no literal.
+    "SELECT o.amount AS amount FROM \"shop.Order\" o WHERE o.note = 'say \"it''s\"'",
 ];
 
 #[test]

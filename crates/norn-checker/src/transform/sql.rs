@@ -915,7 +915,7 @@ impl Scope {
                 format!("input.{}", self.column(alias.as_deref(), column, at)?)
             }
             Ex::Number(number) => number.clone(),
-            Ex::Text(text) => zen_text(text),
+            Ex::Text(text) => zen_text(text, at)?,
             Ex::Bool(flag) => flag.to_string(),
             Ex::Null => "null".to_owned(),
             Ex::Not(inner) => format!("not ({})", self.zen(inner, at)?),
@@ -968,8 +968,20 @@ struct Lowering<'c> {
     counter: usize,
 }
 
-fn zen_text(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+/// A ZEN string literal holding exactly `text`. ZEN strings take no escapes:
+/// one ends at the next quote of its own kind, so `text` is quoted with a
+/// kind it does not contain, and text holding both kinds has no ZEN literal.
+fn zen_text(text: &str, at: usize) -> Result<String, Refusal> {
+    if !text.contains('"') {
+        Ok(format!("\"{text}\""))
+    } else if !text.contains('\'') {
+        Ok(format!("'{text}'"))
+    } else {
+        Err(refusal(
+            "a text holding both ' and \" has no exact ZEN literal; split it",
+            at,
+        ))
+    }
 }
 
 impl Lowering<'_> {
@@ -2096,6 +2108,21 @@ mod properties {
         ";",
     ];
 
+    /// `ex` holds a text with both quote kinds, which no ZEN literal holds.
+    fn unquotable(ex: &Ex) -> bool {
+        match ex {
+            Ex::Text(text) => text.contains('"') && text.contains('\''),
+            Ex::Not(inner) | Ex::Negate(inner) | Ex::IsNull(inner, _) => unquotable(inner),
+            Ex::Binary(_, left, right) => unquotable(left) || unquotable(right),
+            Ex::Case(condition, then, otherwise) => {
+                unquotable(condition) || unquotable(then) || unquotable(otherwise)
+            }
+            Ex::Coalesce(args) => args.iter().any(unquotable),
+            Ex::Call(call) => call.args.iter().any(unquotable),
+            Ex::Column(..) | Ex::Number(_) | Ex::Bool(_) | Ex::Null => false,
+        }
+    }
+
     /// Column names that are plain SQL identifiers but name ZEN keywords,
     /// builtins and the row root.
     const TRICKY: [&str; 20] = [
@@ -2191,8 +2218,20 @@ mod properties {
                 base: "o".to_owned(),
             };
             let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool(), &BTreeSet::new());
-            let plan = lower_sql(&sql, &catalog)
-                .map_err(|found| TestCaseError::fail(format!("{sql}: {found:?}")))?;
+            let plan = match lower_sql(&sql, &catalog) {
+                Ok(plan) => plan,
+                // The one refusal of a lowerable tree: a text no ZEN quote holds.
+                Err(found) => {
+                    prop_assert!(
+                        unquotable(&filter) || unquotable(&value),
+                        "{}: {:?}",
+                        sql,
+                        found
+                    );
+                    prop_assert!(found.iter().all(|d| d.code.as_str() == super::SQL_UNSUPPORTED));
+                    return Ok(());
+                }
+            };
             let nodes = plan.nodes.as_object().expect("nodes");
             let predicate = nodes
                 .values()
