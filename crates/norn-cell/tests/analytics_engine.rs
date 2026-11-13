@@ -1335,7 +1335,10 @@ mod sources_pack {
                 ("last_trigger".into(), text("upload")),
                 ("watermark".into(), text("{\"rows\":4}")),
                 ("rows_read".into(), RuntimeValue::from(read)),
-                ("rows_landed".into(), RuntimeValue::from(read - 1)),
+                (
+                    "rows_landed".into(),
+                    RuntimeValue::from(read.saturating_sub(1)),
+                ),
                 ("rows_quarantined".into(), RuntimeValue::from(1i64)),
                 ("quarantine_reasons".into(), text("bulk.type=1")),
                 ("last_error_code".into(), RuntimeValue::Null),
@@ -1379,7 +1382,7 @@ mod sources_pack {
             .profile(&ProfileRequest {
                 tenant: tenant(),
                 source: source.clone(),
-                columns: columns.clone(),
+                columns,
             })
             .expect("profile");
         assert_eq!(profile.rows, 2);
@@ -1448,6 +1451,10 @@ mod alias_names {
     ];
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one type through every engine operation"
+    )]
     fn a_type_whose_properties_are_named_like_engine_aliases_profiles_pages_and_exports() {
         let mut properties: Vec<serde_json::Value> = ALIASES
             .iter()
@@ -1560,14 +1567,17 @@ mod alias_names {
             })
             .expect("label page");
         assert_eq!(text.total, 1);
-        let path = engine
-            .export(&ExportRequest {
-                tenant: tenant(),
-                source,
-                columns,
-                format: ExportFormat::Jsonl,
-            })
-            .expect("export");
-        std::fs::remove_file(path).expect("scratch export");
+        for format in [ExportFormat::Jsonl, ExportFormat::Parquet] {
+            let path = engine
+                .export(&ExportRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    columns: columns.clone(),
+                    format,
+                })
+                .expect("export");
+            assert!(std::fs::metadata(&path).expect("exported").len() > 0);
+            std::fs::remove_file(path).expect("scratch export");
+        }
     }
 }

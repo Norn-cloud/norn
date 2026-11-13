@@ -836,7 +836,7 @@ fn queried(
         Some(
             row.values
                 .iter()
-                .map(|(id, value)| Ok((id.clone(), runtime_value(value)?)))
+                .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
                 .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
                 .map_err(Refusal::host)?,
         )
