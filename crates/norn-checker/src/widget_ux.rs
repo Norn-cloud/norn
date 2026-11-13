@@ -550,7 +550,6 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             // A control only raises page machine events; `ui_machine` checks its uses.
             WidgetComponent::Dialog { .. }
             | WidgetComponent::Control { .. }
-            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Catalog { .. } => surface.clone(),
             WidgetComponent::Form { form_id } => {
                 self.add_page_use(Usage::Form(form_id.clone()), page_id);

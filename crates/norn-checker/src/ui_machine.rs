@@ -884,7 +884,7 @@ impl<'m> MachineChecker<'m> {
                                     outcome_name(outcome)
                                 ),
                             );
-                        } else if (transition.guard.is_none() && transition.component_guard.is_none()) {
+                        } else if transition.guard.is_none() && transition.component_guard.is_none() {
                             let slot = facts.covered.entry(from).or_default();
                             for value in matched {
                                 slot.entry(value)
@@ -906,7 +906,7 @@ impl<'m> MachineChecker<'m> {
                         ),
                     ),
                 }
-            } else if (transition.guard.is_none() && transition.component_guard.is_none()) {
+            } else if transition.guard.is_none() && transition.component_guard.is_none() {
                 facts
                     .unguarded
                     .entry((from, event.event_id.as_str()))

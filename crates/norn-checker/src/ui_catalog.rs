@@ -174,19 +174,18 @@ fn check_entries(ux: &WidgetUx, findings: &mut Vec<Finding>) {
                 ),
             });
         }
-        if let Some(value_type) = entry.renders {
-            if let Some(first) =
+        if let Some(value_type) = entry.renders
+            && let Some(first) =
                 renderers.insert(format!("{value_type:?}"), entry.entry_id.as_str())
-            {
-                findings.push(Finding {
-                    code: DUPLICATE_RENDERER,
-                    pointer: format!("{pointer}/renders"),
-                    message: format!(
-                        "`{}` and `{first}` both render {value_type:?}: one renderer per field type",
-                        entry.entry_id
-                    ),
-                });
-            }
+        {
+            findings.push(Finding {
+                code: DUPLICATE_RENDERER,
+                pointer: format!("{pointer}/renders"),
+                message: format!(
+                    "`{}` and `{first}` both render {value_type:?}: one renderer per field type",
+                    entry.entry_id
+                ),
+            });
         }
     }
 }
