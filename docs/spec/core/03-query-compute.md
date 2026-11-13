@@ -267,7 +267,8 @@ property tests run both at the same frontier.
   equals the exact engine's, normalizing only `engine`; the same Core 03
   refusals apply. Past the bound the engine answers where the exact engine
   refuses: each bucket carries `memberCount` and `membershipDigest` instead
-  of listing members, and the trace pages them.
+  of listing members. The engine pages a bucket's members by identity; the
+  trace route does not page them yet.
 - **METRIC-GRAIN-LINK-1 (engine):** the mirror keeps every link edge's
   state after its last change, with that change's commit. A linked-time
   answer joins each row to its one live edge and to the target's version
@@ -285,7 +286,21 @@ property tests run both at the same frontier.
   cell recorded. Every row is typed exactly by its column: no value is
   rounded, and a timestamp is admitted exactly when the cell reads it as one,
   with the cell's own ordering key. A row that cannot be typed, or misses a
-  required value, is quarantined with its first reason (`bulk.*`).
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
+- **HOST-READ-3 (dataset):** a loaded dataset's rows live only in the
+  engine, so `GET /v1/objects/{type}` for its type is answered there, in the
+  grid's grammar and visibility: every clause holds (text by bytes, numbers
+  exactly, instants and dates by the cell's ordering key), absent values sort
+  last in either direction, then identity; a caller without Values sees every
+  row withheld and no clause matches. A cursor is an offset bound to the
+  load, the query, the scope and the caller; a reload since it is
+  `object.snapshot_moved`. A sort or filter has no scan bound, and the total
+  is exact. `GET /v1/objects/{type}/{id}` reads one dataset row the same way
+  (named scenario
+  `a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows`).
 - **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
   sha256)`; every row is numbered from its file, so each number traces to
   `(uri, sha256, row)`, and an answer over the dataset is exact at its load.

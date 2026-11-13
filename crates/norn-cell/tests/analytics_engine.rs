@@ -1536,3 +1536,321 @@ mod linked_time {
         }
     }
 }
+
+/// The sources pack's own types (a typed registry instant, enums, nullable
+/// text, an interface) mirror, profile, page and export on the engine like
+/// any other type.
+mod sources_pack {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{ExportFormat, ExportRequest, PageRequest, ProfileRequest};
+    use norn_ir::{ArtifactEnvelope, EntityRoot};
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+
+    fn artifact(path: &str) -> ArtifactEnvelope {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path),
+        )
+        .expect(path);
+        serde_json::from_str(&text).expect(path)
+    }
+
+    fn store() -> CellStore {
+        let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
+        for path in [
+            "registry/core/artifacts/std.value_types.entity.json",
+            "registry/packs/sources/artifacts/source.Synced.interface.json",
+            "registry/packs/sources/artifacts/source.Connection.entity.json",
+            "registry/packs/sources/artifacts/source.SyncRun.entity.json",
+        ] {
+            let artifact = artifact(path);
+            let root: EntityRoot = serde_json::from_value(
+                serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
+            )
+            .expect("entity root");
+            match root {
+                EntityRoot::V2(root) => objects.push(root.object_type),
+                EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+                EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+                EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+                    panic!("{path} is outside this profile")
+                }
+            }
+        }
+        let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+            .expect("model");
+        CellStore::open_in_memory(model).expect("cell")
+    }
+
+    fn connection(id: &str, ended: Option<&str>, read: i64) -> FactWriteRow {
+        let text = |t: &str| RuntimeValue::from(t);
+        FactWriteRow::Put {
+            object_type: "source.Connection".into(),
+            key: id.into(),
+            values: BTreeMap::from([
+                ("id".into(), text(id)),
+                ("system".into(), text("upload")),
+                ("label".into(), text("items.csv")),
+                ("target".into(), text("s3://uploads/demo/items.csv")),
+                ("auth".into(), text("presigned_upload")),
+                ("status".into(), text("partial")),
+                (
+                    "last_sync_started_at".into(),
+                    text("2026-11-12T12:00:00.000Z"),
+                ),
+                (
+                    "last_sync_ended_at".into(),
+                    ended.map_or(RuntimeValue::Null, text),
+                ),
+                ("last_trigger".into(), text("upload")),
+                ("watermark".into(), text("{\"rows\":4}")),
+                ("rows_read".into(), RuntimeValue::from(read)),
+                (
+                    "rows_landed".into(),
+                    RuntimeValue::from(read.saturating_sub(1)),
+                ),
+                ("rows_quarantined".into(), RuntimeValue::from(1i64)),
+                ("quarantine_reasons".into(), text("bulk.type=1")),
+                ("last_error_code".into(), RuntimeValue::Null),
+                ("last_error_message".into(), RuntimeValue::Null),
+                ("connector_id".into(), text("")),
+                ("source_schema_id".into(), text("")),
+                ("mapping_id".into(), text("")),
+            ]),
+        }
+    }
+
+    #[test]
+    fn the_sources_types_mirror_profile_page_and_export() {
+        let (_dir, engine) = engine();
+        let mut store = store();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes: vec![
+                    connection("upload.a", Some("2026-11-12T12:00:01.000Z"), 4),
+                    connection("upload.b", None, 9),
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("connections commit");
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "source.Connection")
+            .expect("source");
+        let table = store.analytics_table("source.Connection").expect("table");
+        let columns: Vec<String> = table.columns.iter().map(|c| c.id.clone()).collect();
+        // A row carries its own `id` and `version`; no property is exported under them.
+        let exported: Vec<String> = columns
+            .iter()
+            .filter(|c| !["id", "version"].contains(&c.as_str()))
+            .cloned()
+            .collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns,
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 2);
+        let page = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: Vec::new(),
+                sort: Vec::new(),
+                ids: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("page");
+        assert_eq!(page.total, 2);
+        let path = engine
+            .export(&ExportRequest {
+                tenant: tenant(),
+                source,
+                columns: exported,
+                format: ExportFormat::Jsonl,
+            })
+            .expect("export");
+        std::fs::remove_file(path).expect("scratch export");
+    }
+}
+
+/// A property may be named like any alias the engine's SQL uses: every
+/// operation reads such a type as any other (the `label` profile fault).
+mod alias_names {
+    use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
+    use norn_cell::analytics::{
+        ExportFormat, ExportRequest, PageClause, PageKey, PageOp, PageOperand, PageRequest,
+        ProfileRequest,
+    };
+    use std::collections::BTreeMap;
+
+    const WORLD: &str = "main";
+    /// Every bare alias in the engine's statements, and their numbered forms.
+    const ALIASES: [&str; 25] = [
+        "a",
+        "b",
+        "base",
+        "c",
+        "contributes",
+        "digest",
+        "f",
+        "first",
+        "g",
+        "gk",
+        "label",
+        "n",
+        "p",
+        "pk",
+        "r",
+        "refuse",
+        "rn",
+        "s",
+        "t",
+        "v",
+        "x",
+        "g0",
+        "a0",
+        "n0",
+        "c0",
+    ];
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one type through every engine operation"
+    )]
+    fn a_type_whose_properties_are_named_like_engine_aliases_profiles_pages_and_exports() {
+        let mut properties: Vec<serde_json::Value> = ALIASES
+            .iter()
+            .map(|id| serde_json::json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}}))
+            .collect();
+        properties
+            .push(serde_json::json!({"id": "amount", "type": {"kind": "decimal", "scale": 2}}));
+        properties.push(
+            serde_json::json!({"id": "at", "type": {"kind": "timestamp", "timezone": "utc"}}),
+        );
+        let object: norn_ir::ObjectTypeDef = serde_json::from_value(
+            serde_json::json!({"name": "demo.Aliased", "properties": properties}),
+        )
+        .expect("type");
+        let mut store =
+            CellStore::open_in_memory(Model::from_definitions(&[object], &[]).expect("model"))
+                .expect("cell");
+        let writes = (0..3i64)
+            .map(|i| {
+                let mut values: BTreeMap<String, RuntimeValue> = ALIASES
+                    .iter()
+                    .map(|id| {
+                        (
+                            (*id).to_owned(),
+                            RuntimeValue::from(format!("{id}-{i}").as_str()),
+                        )
+                    })
+                    .collect();
+                values.insert(
+                    "amount".into(),
+                    RuntimeValue::from(
+                        norn_ir::Decimal::parse(&format!("{i}.25")).expect("decimal"),
+                    ),
+                );
+                values.insert(
+                    "at".into(),
+                    RuntimeValue::from(format!("2026-11-1{i}T12:00:00Z").as_str()),
+                );
+                FactWriteRow::Put {
+                    object_type: "demo.Aliased".into(),
+                    key: format!("k{i}"),
+                    values,
+                }
+            })
+            .collect();
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: CLOCK,
+                writes,
+                ..CommitBatch::default()
+            })
+            .expect("rows commit");
+        let (_dir, engine) = engine();
+        super::sync(&store, &engine, WORLD);
+        let (source, _) = store
+            .analytics_source(WORLD, "synthetic", "demo.Aliased")
+            .expect("source");
+        let columns: Vec<String> = store
+            .analytics_table("demo.Aliased")
+            .expect("table")
+            .columns
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let profile = engine
+            .profile(&ProfileRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                columns: columns.clone(),
+            })
+            .expect("profile");
+        assert_eq!(profile.rows, 3);
+        for id in &columns {
+            let page = engine
+                .page(&PageRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    filters: vec![PageClause {
+                        column: id.clone(),
+                        op: PageOp::Present,
+                        operands: Vec::new(),
+                    }],
+                    sort: vec![PageKey {
+                        column: id.clone(),
+                        descending: true,
+                    }],
+                    ids: vec!["k1".into(), "k0".into(), "k2".into()],
+                    offset: 1,
+                    limit: 1,
+                })
+                .expect("page");
+            assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
+            assert_eq!(page.rows[0].id, "k1", "{id}");
+        }
+        let text = engine
+            .page(&PageRequest {
+                tenant: tenant(),
+                source: source.clone(),
+                filters: vec![PageClause {
+                    column: "label".into(),
+                    op: PageOp::Eq,
+                    operands: vec![PageOperand::Text("label-2".into())],
+                }],
+                sort: Vec::new(),
+                ids: Vec::new(),
+                offset: 0,
+                limit: 10,
+            })
+            .expect("label page");
+        assert_eq!(text.total, 1);
+        for format in [ExportFormat::Jsonl, ExportFormat::Parquet] {
+            let path = engine
+                .export(&ExportRequest {
+                    tenant: tenant(),
+                    source: source.clone(),
+                    columns: columns.clone(),
+                    format,
+                })
+                .expect("export");
+            assert!(std::fs::metadata(&path).expect("exported").len() > 0);
+            std::fs::remove_file(path).expect("scratch export");
+        }
+    }
+}

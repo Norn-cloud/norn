@@ -4,7 +4,8 @@
  * internals stay opaque. The model declares its input (an object type), the
  * input properties it reads as features, an optional supervised target, the
  * typed prediction columns it writes, its trust and the closed contracts each
- * output must meet. The Rust checker is the authority on every rule; this
+ * output must meet, and optionally the typed object type its predictions are
+ * written to. The Rust checker is the authority on every rule; this
  * builder refuses only what it can see locally (malformed ids).
  */
 import type { Json } from "../canonical.ts"
@@ -48,6 +49,8 @@ export interface ModelDef {
   readonly outputs: ReadonlyArray<ModelOutput>
   readonly trust: TrustLevel
   readonly contracts?: ReadonlyArray<ModelContract>
+  /** The qualified name of the object type predictions are written to (M4). */
+  readonly predictions?: string
   readonly method: { readonly label: string; readonly version?: string }
   readonly at?: SourceLocation
 }
@@ -81,6 +84,7 @@ export function lowerModel(def: ModelDef, options: EnvelopeOptions): ModelBuildR
     trust: def.trust,
     // The canonical form omits an empty contract list.
     contracts: contracts.length === 0 ? undefined : contracts.map((c) => ({ id: c.id, output: c.output, rule: c.rule })),
+    predictions: def.predictions === undefined ? undefined : { objectType: def.predictions },
     method: { label: def.method.label, version: def.method.version },
   }
   const artifact = envelope(

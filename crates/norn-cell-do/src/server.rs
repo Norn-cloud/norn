@@ -1297,6 +1297,58 @@ pub fn analytics<E: SqlEngine>(
             .filter(|kind| !kind.is_empty() && !kind.contains('/'))
     };
     let (export, profile) = (leaf(":export"), leaf(":profile"));
+    // A loaded dataset's records live only in the engine (D102); every other
+    // type's grid is the cell's own.
+    let records = leaf("")
+        .filter(|kind| request.method == "GET" && !kind.contains(':'))
+        .filter(|kind| {
+            decoded(kind).is_ok_and(|kind| {
+                norn_api::analytics_routes::serves_records(host, &kind).unwrap_or(false)
+            })
+        });
+    if let Some(kind) = records {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        return Some(respond(engine_records(
+            host,
+            actor.as_deref(),
+            transport,
+            kind,
+            request.query,
+        )));
+    }
+    // One dataset row by identity; a row's links, history and findings stay
+    // the cell's, which has none for it.
+    let row = request
+        .path
+        .strip_prefix("/v1/objects/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(kind, id)| {
+            request.method == "GET"
+                && !kind.is_empty()
+                && !id.is_empty()
+                && !id.contains('/')
+                && !kind.contains(':')
+                && decoded(kind).is_ok_and(|kind| {
+                    norn_api::analytics_routes::serves_records(host, &kind).unwrap_or(false)
+                })
+        });
+    if let Some((kind, id)) = row {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        let answer = scope_of(request.query).and_then(|scope| {
+            let (kind, id) = (decoded(kind)?, decoded(id)?);
+            document_json(&norn_api::analytics_routes::record_object(
+                host,
+                &scope,
+                actor.as_deref(),
+                (&kind, &id),
+                &CellObjectAccess,
+                transport,
+            )?)
+        });
+        return Some(respond(answer));
+    }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }
@@ -1338,6 +1390,44 @@ fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     })
+}
+
+fn engine_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    // The native grid's bounds: the cursor has its own.
+    let mut fields = parse_within(
+        query,
+        &["orgId", "environmentId", "limit", "sort", "filter", "after"],
+        MAX_OBJECT_QUERY_BYTES.saturating_add(MAX_CURSOR_BYTES),
+    )?;
+    let cursor_bytes = fields.get("after").map_or(0, String::len);
+    if query.len().saturating_sub(cursor_bytes) > MAX_OBJECT_QUERY_BYTES {
+        return Err(Refusal::invalid("the query string exceeds the host bound"));
+    }
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectQueryParams {
+        limit: fields.remove("limit"),
+        sort: fields.remove("sort"),
+        filter: fields.remove("filter"),
+        after: fields.remove("after"),
+    };
+    document_json(&norn_api::analytics_routes::page_objects(
+        host,
+        &scope,
+        actor,
+        &decoded(kind)?,
+        &params,
+        &CellObjectAccess,
+        transport,
+    )?)
 }
 
 fn engine_profile<E: SqlEngine>(

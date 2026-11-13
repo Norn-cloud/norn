@@ -4,6 +4,7 @@ use crate::{
     engine::{SqlEngine, params},
     mapping_bundle::MappingBundle,
     reactive::{BudgetedRead, DecodeBudget},
+    system::INBOX,
 };
 use norn_ir::{FactRef, InstanceProvenance, PropertyId, RuntimeValue, SourceRecordRef};
 use serde::Serialize;
@@ -92,6 +93,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
+        if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+            return self.page_member_provenance(observation_id, &receipt, &instance, budget);
+        }
         let length: Option<i64> = self.conn.query_optional(
             &format!(
                 "SELECT ({} + octet_length(hash)) FROM _norn_export_journal WHERE commit_seq = ?1",
@@ -123,14 +127,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if input.get("observationId").and_then(RuntimeValue::as_str) != Some(observation_id) {
             return Err(invalid());
         }
-        let mut observed: norn_kernel::Observed<RuntimeValue> =
+        let observed: norn_kernel::Observed<RuntimeValue> =
             norn_ir::runtime::decode(input.get("observed").ok_or_else(invalid)?)
                 .map_err(CellError::Encoding)?;
         if observed.id.0 != *observation_id {
             return Err(invalid());
-        }
-        if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
-            observed = page_member(input, &instance)?;
         }
         if observed.input.get("artifactPins").is_none() {
             return Ok(None);
@@ -145,40 +146,53 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.recheck_mapping_bundle(&bundle)?;
         source_from_bundle(&bundle, &instance).map(Some)
     }
-}
 
-/// OBS-PAGE-1: the member whose bundle maps `instance`, among the members a
-/// page commit consumed (retained in its consumed input).
-fn page_member(
-    input: &RuntimeValue,
-    instance: &ObjectRecord,
-) -> Result<norn_kernel::Observed<RuntimeValue>, CellError> {
-    let invalid = || CellError::MappingBundleMismatch;
-    let members: Vec<crate::PendingObservation> =
-        norn_ir::runtime::decode(input.get("members").ok_or_else(invalid)?)
-            .map_err(CellError::Encoding)?;
-    for member in members {
-        let candidate: norn_kernel::Observed<RuntimeValue> =
-            norn_ir::runtime::decode(&member.observed).map_err(CellError::Encoding)?;
-        let maps = candidate
-            .input
-            .get("records")
-            .and_then(RuntimeValue::as_array)
-            .is_some_and(|records| {
-                records.iter().any(|r| {
-                    r.get("key").and_then(RuntimeValue::as_str) == Some(instance.id.as_str())
-                        && r.get("objectType").and_then(RuntimeValue::as_str)
-                            == Some(instance.object_type.as_str())
-                })
-            });
-        if maps {
-            if candidate.id.0 != member.observation_id {
-                return Err(invalid());
-            }
-            return Ok(candidate);
+    /// OBS-PAGE-1: the lineage of an object a page commit wrote. The page's
+    /// export record carries every member, far more than one trace may read,
+    /// so this reads only the page row and the one member row whose bundle
+    /// maps the object: the member is listed by the page, consumed by the
+    /// receipt's commit, and its bundle recomputes from its retained pins.
+    fn page_member_provenance(
+        &self,
+        page: &str,
+        receipt: &crate::Receipt,
+        instance: &ObjectRecord,
+        budget: &mut DecodeBudget,
+    ) -> Result<Option<InstanceSourceProvenance>, CellError> {
+        let invalid = || CellError::MappingBundleMismatch;
+        let exhausted = || CellError::ComputeRefused("core.compute.bound_exceeded");
+        let seq = crate::read::to_i64(receipt.body.commit_seq, "source commit")?;
+        let row: Option<(String, String, i64)> = self.conn.query_optional(
+            &format!(
+                "SELECT m.\"observation_id\", m.\"observed\", octet_length(m.\"observed\") + octet_length(p.\"observed\") \
+                 FROM \"{INBOX}\" p, json_each(p.\"observed\", '$.input.members') AS listed \
+                 JOIN \"{INBOX}\" m ON m.\"observation_id\" = listed.value \
+                 WHERE p.\"observation_id\" = ?1 AND p.\"consumed_commit_seq\" = ?2 AND m.\"consumed_commit_seq\" = ?2 \
+                 AND EXISTS (SELECT 1 FROM json_each(m.\"observed\", '$.input.records') AS r \
+                   WHERE json_extract(r.value, '$.key') = ?3 AND json_extract(r.value, '$.objectType') = ?4)"
+            ),
+            params![page, seq, &instance.id, instance.object_type.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (member, observed, bytes) = row.ok_or_else(invalid)?;
+        if !budget.charge_rows(2)
+            || !budget.charge(crate::read::to_u64(bytes, "page member bytes")?)
+        {
+            return Err(exhausted());
         }
+        let observed: norn_kernel::Observed<RuntimeValue> =
+            serde_json::from_str(&observed).map_err(|_invalid| invalid())?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        if observed.id.0 != member
+            || member != format!("mapping-bundle:{}", bundle.digest)
+            || receipt.body.definitions_version != bundle.definitions_version
+        {
+            return Err(invalid());
+        }
+        self.recheck_mapping_bundle(&bundle)?;
+        source_from_bundle(&bundle, instance).map(Some)
     }
-    Err(invalid())
 }
 
 fn source_from_bundle(

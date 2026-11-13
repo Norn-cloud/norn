@@ -17,7 +17,7 @@ use std::time::Duration;
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
-    ProfileRequest, SyncRequest,
+    PageRequest, ProfileRequest, SyncRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -182,6 +182,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/evaluate" => answer(stream, &request, |r: EvaluateRequest| engine.evaluate(&r)),
         "/v1/members" => answer(stream, &request, |r: MembersRequest| engine.members(&r)),
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
+        "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
         "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
         _ => refuse(
@@ -217,7 +218,15 @@ fn status_of(refused: &EngineRefusal) -> u16 {
     crate::olap::refusal_status(&refused.code)
 }
 
+/// Every refusal is answered to the cell, which maps it to its own, and
+/// logged for the operator: the cell's answer to its caller may be opaque.
 fn refuse(stream: &TcpStream, status: u16, refused: &EngineRefusal) -> std::io::Result<()> {
+    let _logged = writeln!(
+        std::io::stderr(),
+        "norn-olapd: refused {status} {}: {}",
+        refused.code,
+        refused.detail
+    );
     let body = serde_json::to_string(refused).unwrap_or_else(|_e| String::from("{}"));
     respond(stream, status, "application/json", body.as_bytes())
 }
