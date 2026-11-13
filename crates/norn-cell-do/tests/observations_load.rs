@@ -192,3 +192,60 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
         "{lineage}"
     );
 }
+
+/// A member's service key may ingest recorded rows under the admitted
+/// mappings (a source writer), but holds no right to change definitions or
+/// to use the uploads that install them.
+#[test]
+fn a_member_service_key_loads_but_cannot_install_definitions() {
+    const PRINCIPALS: &[(&str, &[&str])] = &[("loader@demo", &["member"])];
+    const LOADER: Option<&str> = Some("Bearer fixture:loader@demo");
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(PRINCIPALS, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    let mut connect = connect();
+    let export: Value = serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap();
+    let body = json!({ "profile": export["profile"], "snapshot": export["snapshot"] }).to_string();
+    let (status, loaded) = load(&mut connect, &host, &principals, LOADER, &body);
+    assert_eq!(status, 200, "{loaded}");
+    assert_eq!(
+        loaded["landed"],
+        export["snapshot"].as_array().unwrap().len(),
+        "{loaded}"
+    );
+
+    let install = server::Request {
+        method: "POST",
+        path: "/v1/definitions:install",
+        query: SCOPE,
+        authorization: LOADER,
+        now: 0,
+        body: "{}",
+    };
+    let refused = server::handle(&host, &principals, &install);
+    assert!(
+        matches!(refused.status, 403 | 404),
+        "{} {}",
+        refused.status,
+        refused.body
+    );
+    let begin = server::Request {
+        method: "POST",
+        path: "/v1/uploads:begin",
+        query: SCOPE,
+        authorization: LOADER,
+        now: 0,
+        body: r#"{"fileName":"rows.csv","contentType":"text/csv","size":10}"#,
+    };
+    let routed = connect
+        .route(Some(&host), &principals, &begin, 0)
+        .expect("a connect route");
+    assert_ne!(routed.response.status, 200, "{}", routed.response.body);
+}

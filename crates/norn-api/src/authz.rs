@@ -24,6 +24,10 @@ pub enum Operation {
     /// or read an upload (`upload`): a write of the cell's sources, decided
     /// like a definitions write.
     SyncSource(String),
+    /// Capture and map recorded source rows under the cell's already
+    /// admitted mappings (`observations:load`). It changes no definition:
+    /// the rows land as observations, refused rows stay quarantined.
+    IngestObservations,
     /// Decide a decision a flow run waits on, whose request declares these
     /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
     /// run; it grants the run nothing.
@@ -229,6 +233,7 @@ mod tests {
                 Operation::WriteDefinitions,
                 Operation::StartRun("demo.flow".into()),
                 Operation::ProvisionCell,
+                Operation::IngestObservations,
                 Operation::Decide {
                     roles: vec!["viewer".into()],
                     law: None,

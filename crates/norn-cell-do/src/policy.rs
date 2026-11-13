@@ -64,6 +64,10 @@ pub struct GrantTable {
     /// Norn roles that may write retained definitions (admit, install,
     /// retire); a writer must also hold a read grant.
     pub definition_writers: &'static [&'static str],
+    /// Norn roles that may ingest recorded source rows under the admitted
+    /// mappings (no definition change); an ingester must also hold a read
+    /// grant.
+    pub source_writers: &'static [&'static str],
     /// Norn roles that may provision the cell of their own organization's
     /// scope; a provisioner must also hold a read grant.
     pub provisioners: &'static [&'static str],
@@ -99,6 +103,17 @@ impl GrantTable {
         granted
     }
 
+    /// Whether `roles` include a declared source writer that also holds a
+    /// read grant.
+    #[must_use]
+    pub fn ingests(&self, roles: &[String]) -> bool {
+        !self.capabilities(roles).is_empty()
+            && self
+                .source_writers
+                .iter()
+                .any(|writer| roles.iter().any(|held| held == writer))
+    }
+
     /// Whether `roles` include a declared definition writer that also holds
     /// a read grant.
     #[must_use]
@@ -118,7 +133,7 @@ impl GrantTable {
 /// provisioner grant: an owner alone creates the cell of its organization's
 /// scope. Reads and definition writes are as in `/2`.
 pub const DEMO_GRANTS: GrantTable = GrantTable {
-    version: "norn-cell-do-grants/3",
+    version: "norn-cell-do-grants/4",
     entries: &[
         ("viewer", &[ReadCapability::Population]),
         (
@@ -143,6 +158,7 @@ pub const DEMO_GRANTS: GrantTable = GrantTable {
         ),
     ],
     definition_writers: &["admin", "owner"],
+    source_writers: &["member", "admin", "owner"],
     provisioners: &["owner"],
 };
 
@@ -466,6 +482,12 @@ impl Authorizer for ReadPolicy {
             Operation::ProvisionCell => request
                 .actor
                 .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
+            Operation::IngestObservations => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| self.table.ingests(&caller.roles))
+            }),
             // The gate: a verified member of the cell's organization, and an
             // action the scope's policy governs. The kernel callback below
             // decides the call itself, per target.

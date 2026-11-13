@@ -440,15 +440,21 @@ impl Connect {
             Route::Observations => "observations".to_owned(),
         };
         // CONNECT-AUTH-1: decided first, answered like a scope with no cell.
+        // A load only ingests under admitted mappings; sync and uploads may
+        // install definitions (an upload's generated mapping), so they stay
+        // a sources write decided like a definitions write.
+        let operation = match &route {
+            Route::Observations => Operation::IngestObservations,
+            Route::Sync(_)
+            | Route::Begin
+            | Route::Complete(_)
+            | Route::Define(_)
+            | Route::Load(_)
+            | Route::Read => Operation::SyncSource(target.clone()),
+        };
         let allowed = host.filter(|host| {
             request.method == "POST"
-                && authorize(
-                    *host,
-                    &scope_of(request.query),
-                    actor.as_deref(),
-                    Operation::SyncSource(target.clone()),
-                )
-                .is_ok()
+                && authorize(*host, &scope_of(request.query), actor.as_deref(), operation).is_ok()
         });
         let (Some(host), Some(actor)) = (allowed, actor) else {
             return Some(Routed::reply(server::outside::<E>(request)));
