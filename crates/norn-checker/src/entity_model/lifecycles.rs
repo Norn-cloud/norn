@@ -220,6 +220,7 @@ impl<'a> Checker<'a, '_> {
             };
             let clean = self.check_declaration(&at, lifecycle, &states);
             if clean {
+                // The declaration's own shape; malformed members are local.
                 let findings = crate::lifecycle_soundness::check_declaration(lifecycle, &states);
                 self.soundness(&at, findings);
             }
@@ -228,9 +229,16 @@ impl<'a> Checker<'a, '_> {
                 self.check_default(&at, &["initial"], lifecycle, member, &machine);
             }
             if clean {
-                self.check_structure(&at, &machine);
+                // Soundness and structure hold of the effective machine: the
+                // inherited triggers, modes, guards, endings, events and
+                // compensation apply with the redeclaration's own.
                 let effective = self.machines(&def.name);
-                if let Some(machine) = effective.get(&lifecycle.property) {
+                let machine = effective.get(&lifecycle.property).unwrap_or(&machine);
+                let findings =
+                    crate::lifecycle_soundness::check_effective_transitions(lifecycle, machine);
+                self.soundness(&at, findings);
+                self.check_structure(&at, machine);
+                if effective.contains_key(&lifecycle.property) {
                     self.check_path_properties(&at, machine);
                 }
             }
