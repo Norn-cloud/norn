@@ -107,7 +107,7 @@ type Covered = BTreeMap<OutcomeValue, Vec<(usize, bool)>>;
 type Graph<'m> = BTreeMap<&'m str, BTreeSet<&'m str>>;
 
 /// The field record and the event payload an expression sees.
-type Env<'e> = (&'e BTreeMap<String, Type>, &'e BTreeMap<String, Type>);
+pub(crate) type Env<'e> = (&'e BTreeMap<String, Type>, &'e BTreeMap<String, Type>);
 
 struct Finding {
     code: &'static str,
@@ -128,7 +128,21 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
                 base: &base,
                 findings: Vec::new(),
             };
-            findings.extend(checker.run(page));
+            findings.extend(checker.run(Some(page)));
+        }
+    }
+    // A catalog component's own machine (UI-CATALOG-1) meets the same laws; its user events come
+    // from the component's own controls, which the contract does not enumerate.
+    for (index, entry) in ux.catalog.iter().enumerate() {
+        if let Some(machine) = &entry.machine {
+            let base = format!("/payload/ux/catalog/{index}/machine");
+            let checker = MachineChecker {
+                ux,
+                machine,
+                base: &base,
+                findings: Vec::new(),
+            };
+            findings.extend(checker.run(None));
         }
     }
     findings
@@ -264,7 +278,7 @@ fn outcome_of(event: &WidgetMachineEvent) -> Option<OutcomeValue> {
     }
 }
 
-fn field_type(field: &WidgetMachineField) -> Type {
+pub(crate) fn field_type(field: &WidgetMachineField) -> Type {
     crate::widget_ux::value_type(field.value_type, field.required)
 }
 
@@ -336,7 +350,7 @@ fn reverse<'m>(graph: &Graph<'m>) -> Graph<'m> {
     reversed
 }
 
-fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
+pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
     ZenTypeEnv::input_only_with_records(
         BTreeMap::from([
             ("machine.fields".to_owned(), env.0.clone()),
@@ -508,7 +522,7 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    fn run(mut self, page: &WidgetPage) -> Vec<Finding> {
+    fn run(mut self, page: Option<&WidgetPage>) -> Vec<Finding> {
         let machine = self.machine;
         self.unique(
             machine.fields.iter().map(|f| f.field_id.as_str()),
@@ -560,15 +574,18 @@ impl<'m> MachineChecker<'m> {
     }
 
     /// Events: sources name declared things; payloads only where the source carries one.
-    fn check_events(&mut self, page: &WidgetPage) {
+    fn check_events(&mut self, page: Option<&WidgetPage>) {
         let mut nodes = BTreeMap::new();
-        collect_nodes(&page.root, &mut nodes);
+        if let Some(page) = page {
+            collect_nodes(&page.root, &mut nodes);
+        }
         let mut raised: BTreeSet<&str> = BTreeSet::new();
         for (index, event) in self.machine.events.iter().enumerate() {
             let pointer = format!("{}/events/{index}", self.base);
             let carries_payload = match &event.source {
-                WidgetMachineEventSource::User { node_id } => {
+                WidgetMachineEventSource::User { node_id, .. } => {
                     match nodes.get(node_id.as_str()) {
+                        None if page.is_none() => {}
                         None => self.push(
                             UNKNOWN_REFERENCE,
                             format!("{pointer}/source/nodeId"),

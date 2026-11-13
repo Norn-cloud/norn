@@ -2318,6 +2318,42 @@
       "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
       "review": "needs_review"
     },
+    "widget.catalog.duplicate_entry": {
+      "message": "كتالوج الواجهة يعلن معرّف المدخل نفسه مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.duplicate_renderer": {
+      "message": "مدخلا كتالوج يعرضان نوع الحقل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.event_payload_mismatch": {
+      "message": "حمولة حدث صفحة تختلف عن حدث الكتالوج الذي يطلقه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.invalid_prop": {
+      "message": "خاصية مكوّن كتالوج لا تُترجم أو لا تطابق نوعها المعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.island_machine": {
+      "message": "جزيرة معتمة تعلن ترسيمة تفاعل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unbound_prop": {
+      "message": "خاصية مطلوبة لمكوّن كتالوج غير مربوطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_entry": {
+      "message": "صفحة تضع مكوّن كتالوج غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_event": {
+      "message": "حدث صفحة من مكوّن كتالوج لا يسمّي أحد أحداثه المعلنة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_prop": {
+      "message": "مكوّن كتالوج يُعطى خاصية لا يعلنها مدخله: {$detail}",
+      "review": "needs_review"
+    },
     "widget.interaction.control_missing_for_transition": {
       "message": "عنصر تنقل معلَن أو ربط إجراء ليس له عنصر تحكم يقدّمه: {$detail}",
       "review": "needs_review"
