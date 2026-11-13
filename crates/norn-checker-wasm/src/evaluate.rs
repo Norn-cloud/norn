@@ -52,13 +52,14 @@ pub fn evaluate_expression_json(expr: &str, input_json: &str, profile: Option<&s
                 "profile",
                 format!("unsupported expression profile {profile:?}"),
             ),
+            0,
         );
     }
 
     let limits = ResourceLimitProfile::norn_limits_v1();
     let context = match parse_expression_inputs(input_json, &limits) {
         Ok(context) => context,
-        Err(error) => return evaluation_abi_error_json(profile, error),
+        Err(error) => return evaluation_abi_error_json(profile, error, 0),
     };
     if let Err(diagnostics) = validate_evaluation_source(expr, &limits) {
         let first_code = diagnostics
@@ -120,11 +121,9 @@ pub fn evaluate_expression_json(expr: &str, input_json: &str, profile: Option<&s
     let result_json = match String::from_utf8(result_json) {
         Ok(result_json) => result_json,
         Err(error) => {
-            return evaluation_error_json(
+            return evaluation_abi_error_json(
                 profile,
-                ExprError::Evaluation {
-                    message: error.to_string(),
-                },
+                invalid("result", error.to_string()),
                 attempt.units_used,
             );
         }
@@ -253,13 +252,14 @@ fn expr_value_to_runtime(value: ExprValue) -> Result<norn_ir::RuntimeValue, Expr
 }
 
 /// Serialize an evaluator failure as a stable, discriminated ABI result.
-fn evaluation_abi_error_json(profile: &str, error: Invalid) -> String {
+fn evaluation_abi_error_json(profile: &str, error: Invalid, units_used: u64) -> String {
     let Invalid { argument, detail } = error;
     let (code, message) = (
-        if argument == "profile" {
-            "expr.profile.invalid"
-        } else {
-            "expr.input.invalid"
+        match argument {
+            "profile" => "expr.profile.invalid",
+            // The evaluated value could not be written out: the ABI's reserved output failure.
+            "result" => "expr.output.invalid",
+            _ => "expr.input.invalid",
         },
         detail,
     );
@@ -267,7 +267,7 @@ fn evaluation_abi_error_json(profile: &str, error: Invalid) -> String {
         "format": EVALUATION_FORMAT,
         "ok": false,
         "profile": profile,
-        "unitsUsed": 0,
+        "unitsUsed": units_used,
         "error": {
             "code": code,
             "argument": argument,
