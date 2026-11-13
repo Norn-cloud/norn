@@ -19,14 +19,30 @@ services:
       NORN_CREATE_BUCKET: "1"
       S3_ENDPOINT: http://s3:8333
       AWS_REGION: us-east-1
-      # The store accepts only requests from this compose network (see s3 below).
+      # The bundled store has no accounts; it is reachable only on the internal network.
       AWS_ACCESS_KEY_ID: norn
       AWS_SECRET_ACCESS_KEY: norn-local-store
     volumes:
       - norn-data:/data
     networks: [internal, edge]
     depends_on:
-      proxy:
+      s3:
+        condition: service_healthy
+    restart: unless-stopped
+
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
+    volumes:
+      - s3-data:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null"]
+      interval: 3s
+      retries: 40
+    restart: unless-stopped
+
+  proxy:
     image: caddy:2.10.2
     environment:
       NORN_SITE: ${NORN_SITE:-:8080}
