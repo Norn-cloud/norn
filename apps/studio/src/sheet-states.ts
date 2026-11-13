@@ -13,6 +13,7 @@ export interface SheetState {
 export const SHEET: readonly SheetState[] = [
   { component: "LifecycleView", id: "lifecycle-view/counts", note: "Each state of the lifecycle with the cell's live count, columns by distance from the start, arrows labelled with their transitions; a state no record is in reads 0." },
   { component: "LifecycleView", id: "lifecycle-view/lower-bound", note: "Past the cell's scan bound every count reads as a lower bound (≥); withheld and quarantined rows are said under the board, never counted." },
+  { component: "LifecycleView", id: "lifecycle-view/not-served", note: "A cell without the facets route (a bare 404) says it does not serve lifecycle counts yet, with Try again; the view asks again by itself in 10 s. Never an endless Counting…" },
   { component: "LifecycleView", id: "lifecycle-view/refused", note: "A refused read says the reader can't see the counts; the lifecycle still draws, counts as a dash." },
   { component: "LifecycleView", id: "lifecycle-view/live", note: "A commit publishes a new answer on the socket and the counts change in place (12 → 11 drafts)." },
   { component: "LifecycleView", id: "lifecycle-view/stepper", note: "The checker's counterexample, stepped: each step names the page's and the object's transitions; taken lifecycle transitions and the object's current state are highlighted." },

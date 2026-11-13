@@ -56,3 +56,12 @@ test("locale: Arabic runs right to left with Arabic digits and words", async ({ 
   await expect(card(view, "draft").locator("[data-count]")).toHaveText("١٢")
   await expect(view.getByText("الخطوة ٤ من ٤")).toBeVisible()
 })
+
+test("not served: a cell without the facets route says so, never counting forever; Try again asks again", async ({ page }) => {
+  const view = await specimen(page, "lifecycle-view/not-served")
+  await expect(view.getByText(/This cell does not serve lifecycle counts yet\./)).toBeVisible()
+  await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+  await expect(card(view, "draft").locator("[data-count]")).toHaveText("—")
+  await view.getByRole("button", { name: "Try again" }).click()
+  await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+})

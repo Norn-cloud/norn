@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { defineLifecycleView, type LifecycleFinding, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
+import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
+import viewDocument from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.widget.json"
 import type { Concept, Lifecycle } from "../lib/catalog.ts"
 import { loadChecker } from "../lib/canvas/checker.ts"
-import { useStudioScope } from "../lib/definitions.ts"
+import { scopedHostFetch, useStudioScope } from "../lib/definitions.ts"
 import { liveAnswer } from "../lib/live-reads.ts"
 import { useLocale } from "../lib/locale.tsx"
 import { transport } from "../lib/transport.ts"
@@ -16,6 +17,8 @@ import { transport } from "../lib/transport.ts"
  * names declares this object type and property in its page machine's `lifecycle`; nothing is read
  * from its message. The checker loads after the view paints, and its findings join once it is here.
  */
+const DOCUMENT = viewDocument as unknown as LifecycleViewDocument
+
 export function LifecycleView({ concept, lifecycle }: { readonly concept: Concept; readonly lifecycle: Lifecycle }) {
   const { locale } = useLocale()
   const scope = useStudioScope().data ?? null
@@ -23,7 +26,9 @@ export function LifecycleView({ concept, lifecycle }: { readonly concept: Concep
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
-  const states = field?.scalar.kind === "enum" ? field.scalar.values : [...new Set([...lifecycle.initial, ...lifecycle.terminal, ...lifecycle.transitions.flatMap(({ from, to }) => [...from, to])])]
+  const transitions = lifecycle.transitions ?? []
+  const terminal = lifecycle.terminal ?? []
+  const states = field?.scalar.kind === "enum" ? field.scalar.values : [...new Set([...lifecycle.initial, ...terminal, ...transitions.flatMap(({ from, to }) => [...from, to])])]
   const findings = findingsFor(concept.name, lifecycle.property, definitions.data?.document, checker.data)
   const findingsKey = JSON.stringify(findings.map(({ code, message }) => [code, message]))
 
@@ -32,10 +37,20 @@ export function LifecycleView({ concept, lifecycle }: { readonly concept: Concep
     defineLifecycleView()
     const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
     const path = `/v1/objects/${encodeURIComponent(concept.name)}:facets?properties=${encodeURIComponent(lifecycle.property)}`
+    const call = scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
     view.options = {
-      lifecycle: { property: lifecycle.property, states, initial: lifecycle.initial, terminal: lifecycle.terminal, transitions: lifecycle.transitions, endings: lifecycle.endings ?? [] },
+      document: DOCUMENT,
+      lifecycle: { property: lifecycle.property, states, initial: lifecycle.initial, terminal, transitions: transitions.map(({ id, from, to }) => ({ id, from, to })), endings: lifecycle.endings ?? [] },
       title: concept.title,
-      counts: (listener) => liveAnswer(path, scope, listener),
+      // The cell's GET, as the reader; a bare 404 or 503 is a route this cell does not serve.
+      read: async () => {
+        const response = await call(path, { headers: { accept: "application/json" } })
+        const text = await response.text()
+        let body: unknown
+        try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
+        return { status: response.status, body }
+      },
+      changes: (listener) => liveAnswer(path, scope, listener),
       findings,
       locale: locale === "ar" ? "ar" : "en",
       label: (id) => field?.valueLabels?.get(id) ?? id.replaceAll("_", " "),

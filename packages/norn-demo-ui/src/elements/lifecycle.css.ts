@@ -24,6 +24,8 @@ export const LIFECYCLE_CSS = `
 .norn-life-arrows text[data-active] { fill: var(--primary, #2563eb); font-weight: 600; }
 .norn-life-foot { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
 .norn-life-refused { margin: 0; font-size: .875rem; border-radius: .5rem; padding: .5rem .75rem; background: color-mix(in oklab, var(--muted, #f4f4f5) 60%, transparent); }
+.norn-life-retry { font: inherit; font-size: .8125rem; margin-inline-start: .5rem; border-radius: .5rem; padding: .125rem .625rem; border: 1px solid var(--border, #d4d4d8); background: var(--background, #fff); color: inherit; cursor: pointer; }
+.norn-life-retry:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }
 .norn-life-findings { display: grid; gap: .5rem; }
 .norn-life-findings h3 { margin: 0; font-size: .875rem; font-weight: 600; }
 .norn-life-finding { display: grid; gap: .5rem; padding: .625rem .75rem; border-radius: .625rem; border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: var(--card, #fff); }

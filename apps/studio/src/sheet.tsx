@@ -25,7 +25,8 @@ import { catalogOf } from "./lib/catalog.ts"
 import { LocaleProvider, applyLocale, isLocale, type Locale } from "./lib/locale.tsx"
 import type { Artifact } from "./lib/transport.ts"
 import { FactsTable } from "./sources.tsx"
-import { defineLifecycleView, type FacetsAnswer, type LifecycleDoc, type LifecycleFinding, type LifecycleViewOptions, type LiveAnswer, type NornLifecycleView } from "../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
+import { defineLifecycleView, type FacetsAnswer, type LifecycleDoc, type LifecycleFinding, type LifecycleViewDocument, type LifecycleViewOptions, type LiveAnswer, type NornLifecycleView } from "../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
+import lifecycleViewDocument from "../../../packages/norn-demo-ui/src/elements/lifecycle-view.widget.json"
 import "./index.css"
 
 const DEFINITIONS = Object.values(import.meta.glob<string>("../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })).map((source) => JSON.parse(source) as Envelope)
@@ -104,15 +105,22 @@ const STUCK: LifecycleFinding = {
     { edge: 14, moves: [{ side: "backend", label: "revise" }] },
   ] },
 }
-function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "lifecycle" | "title" | "counts"> & { readonly answers: readonly LiveAnswer[] }) {
+function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "document" | "lifecycle" | "title" | "read" | "changes"> & { readonly answers: readonly LiveAnswer[] }) {
   return <div ref={(host) => {
     if (host === null || host.firstChild) return
     defineLifecycleView()
     const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
+    let current = 0
     view.options = {
+      document: lifecycleViewDocument as unknown as LifecycleViewDocument,
       lifecycle: ORDER_LIFECYCLE, title: (options.locale ?? SPECIMEN_LOCALE) === "ar" ? "أمر شراء" : "Purchase order", ...options,
-      // The first answer at once; any later one a moment after, as a commit would publish it.
-      counts: (listener) => { const timers = answers.map((answer, index) => setTimeout(() => listener(answer), index * 400)); return () => timers.forEach(clearTimeout) },
+      // The cell answers the read with the current answer; a later answer arrives on the socket a
+      // moment after, as a commit would publish it, and the view reads again.
+      read: async () => answers[current] ?? { status: 503, body: undefined },
+      changes: (listener) => {
+        const timers = answers.map((answer, index) => setTimeout(() => { current = index; listener(answer) }, index * 400))
+        return () => timers.forEach(clearTimeout)
+      },
     }
     host.append(view)
   }} />
@@ -121,6 +129,7 @@ function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "
 const SPECIMENS: Record<string, () => ReactNode> = {
   "lifecycle-view/counts": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} />,
   "lifecycle-view/lower-bound": () => <LifecycleSpecimen answers={[facets({ draft: 6200, submitted: 1900, received: 1900 }, { approximate: true, withheldRows: 14, quarantinedRows: 2 })]} />,
+  "lifecycle-view/not-served": () => <LifecycleSpecimen answers={[{ status: 404, body: undefined }]} />,
   "lifecycle-view/refused": () => <LifecycleSpecimen answers={[{ status: 403, body: { code: "authz.denied" } }]} />,
   "lifecycle-view/live": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7 }), facets({ draft: 11, submitted: 8 })]} />,
   "lifecycle-view/stepper": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, rejected: 2, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 3 }} />,

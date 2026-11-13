@@ -9,6 +9,9 @@
 // machine moved and by which transition, so the view highlights each lifecycle transition the
 // run takes and the state it lands in. Nothing is read from a finding's message.
 
+import { createDriver, type Driver } from "../machine/driver.ts"
+import type { Machine } from "../machine/machine.ts"
+import { classifyResponse } from "../machine/outcome.ts"
 import { adoptLifecycleStyles } from "./lifecycle.css.ts"
 
 export interface LifecycleTransitionDoc {
@@ -61,12 +64,21 @@ export interface LiveAnswer {
   readonly body: unknown
 }
 
+/** The view's admitted widget document (`lifecycle-view.widget.json`): its load states as a machine. */
+export interface LifecycleViewDocument {
+  readonly payload: { readonly ux: { readonly pages: readonly { readonly machine: Machine }[] } }
+}
+
 export interface LifecycleViewOptions {
+  /** The admitted document whose machine decides the view's load states (UI-MACHINE-1). */
+  readonly document: LifecycleViewDocument
   readonly lifecycle: LifecycleDoc
   /** The object type's title, as the host names it. */
   readonly title: string
-  /** Subscribe to the type's facets on the lifecycle property; returns the unsubscribe. */
-  readonly counts: (listener: (answer: LiveAnswer) => void) => () => void
+  /** Read the type's facets on the lifecycle property once (the cell's GET, as the reader). */
+  readonly read: () => Promise<LiveAnswer>
+  /** Subscribe to changes of that answer (the live read); each new answer is read again. Returns the unsubscribe. */
+  readonly changes: (listener: (answer: LiveAnswer) => void) => () => void
   /** Findings with a witness for this lifecycle (`widget.lifecycle.*`). */
   readonly findings?: readonly LifecycleFinding[]
   readonly locale?: Locale
@@ -84,6 +96,7 @@ const WORDS = {
     other: (n: number) => `${n} in states this view does not list`, atLeast: (n: string) => `≥ ${n}`,
     findings: "Counterexamples the checker found", step: (i: string, n: string) => `Step ${i} of ${n}`, prev: "Previous step", next: "Next step",
     page: "page", object: "object", opened: "Where the page opens",
+    notServed: "This cell does not serve lifecycle counts yet.", failed: "The cell did not answer.", retry: "Try again", again: "Asking again shortly.",
   },
   ar: {
     rows: (n: string) => `${n} سجل`, start: "البداية", end: "نهاية", rests: "يمكن أن يستقر هنا", none: "—",
@@ -92,6 +105,7 @@ const WORDS = {
     other: (n: number) => `${n} في حالات لا يعرضها هذا العرض`, atLeast: (n: string) => `${n} على الأقل`,
     findings: "أمثلة مضادة وجدها المدقق", step: (i: string, n: string) => `الخطوة ${i} من ${n}`, prev: "الخطوة السابقة", next: "الخطوة التالية",
     page: "الصفحة", object: "الكائن", opened: "حيث تُفتح الصفحة",
+    notServed: "هذه الخلية لا تقدّم أعداد دورة الحياة بعد.", failed: "لم تُجب الخلية.", retry: "حاول مرة أخرى", again: "سنسأل مرة أخرى بعد قليل.",
   },
 } as const
 
@@ -185,7 +199,8 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
         <h2 class="norn-life-title">${escape(options.title)} · ${escape(label(lifecycle.property))}</h2>
         <p class="norn-life-meta" data-region="total" aria-live="polite"></p>
       </header>
-      <p class="norn-life-refused" data-region="refused" hidden></p>
+      <p class="norn-life-refused" data-region="refused" role="status" hidden></p>
+      <p class="norn-life-refused" data-region="unavailable" role="status" hidden><span data-region="unavailable-text"></span> <button type="button" class="norn-life-retry" data-node="retry-button">${escape(w.retry)}</button></p>
       <div class="norn-life-board" data-region="board">
         <svg class="norn-life-arrows" aria-hidden="true"><defs><marker id="norn-life-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker></defs></svg>
         ${columns.map((column) => `<ol class="norn-life-col">${column.map((state) => `
@@ -272,13 +287,13 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     drawArrows()
   }
 
-  const paintCounts = (counts: Counts, rows: { total: number; lowerBound: boolean } | null) => {
+  const paintCounts = (counts: Counts, rows: { total: number; lowerBound: boolean } | null, dash = false) => {
     for (const card of root.querySelectorAll<HTMLElement>("[data-state]")) {
       const cell = card.querySelector<HTMLElement>("[data-count]")
       const count = counts.states.get(card.dataset.state ?? "")
       if (!cell || !count) continue
       cell.toggleAttribute("data-pending", count.kind === "pending")
-      cell.textContent = count.kind === "pending" ? (counts.refused ? w.none : w.pending) : count.lowerBound ? w.atLeast(number.format(count.count)) : number.format(count.count)
+      cell.textContent = count.kind === "pending" ? (counts.refused || dash ? w.none : w.pending) : count.lowerBound ? w.atLeast(number.format(count.count)) : number.format(count.count)
     }
     const total = q('[data-region="total"]')
     if (total) total.textContent = rows === null ? "" : w.rows(rows.lowerBound ? w.atLeast(number.format(rows.total)) : number.format(rows.total))
@@ -316,14 +331,55 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => drawArrows())
   const board = q('[data-region="board"]')
   if (resize && board) resize.observe(board)
-  const stop = options.counts((answer) => {
-    const counts = countsFrom(lifecycle, answer, locale)
-    const body = answer.status < 400 ? (answer.body as Partial<FacetsAnswer>) : null
-    paintCounts(counts, body && typeof body.rows === "number" ? { total: body.rows, lowerBound: body.approximate === true } : null)
+
+  // The machine decides every load state; the view only draws the one it is in.
+  const page = options.document.payload.ux.pages[0]
+  if (!page) throw new Error("the lifecycle view's document has no page")
+  let last: LiveAnswer | null = null
+  const paintState = (state: string) => {
+    q(".norn-life")?.setAttribute("data-machine-state", state)
+    const unavailable = q('[data-region="unavailable"]')
+    if (unavailable) unavailable.hidden = state !== "unavailable"
+    const text = q('[data-region="unavailable-text"]')
+    // A bare 404 or 503 (no coded refusal) is a route this cell does not serve, as everywhere in Studio.
+    const coded = typeof (last?.body as { code?: unknown } | undefined)?.code === "string"
+    if (text) text.textContent = state !== "unavailable" ? "" : last !== null && (last.status === 404 || last.status === 503) && !coded ? `${w.notServed} ${w.again}` : `${w.failed} ${w.again}`
+    if (state === "showing" || state === "refused") {
+      const counts = countsFrom(lifecycle, last, locale)
+      const body = last && last.status < 400 ? (last.body as Partial<FacetsAnswer>) : null
+      paintCounts(counts, body && typeof body.rows === "number" ? { total: body.rows, lowerBound: body.approximate === true } : null)
+    } else if (state === "unavailable") paintCounts(countsFrom(lifecycle, null, locale), null, true)
     drawArrows()
+  }
+  const driver: Driver = createDriver({
+    machine: page.machine,
+    // The view's machine has no guards or assignments, so no expression engine is needed.
+    evaluate: () => {
+      throw new Error("the lifecycle view's machine evaluates no expressions")
+    },
+    transport: {
+      async call() {
+        last = await options.read()
+        return classifyResponse(last.status, last.body)
+      },
+    },
+    onStep: (step) => paintState(step.snapshot.stateId),
+  })
+  paintState(driver.snapshot().stateId)
+  driver.dispatch({ kind: "page_opened" })
+  root.addEventListener("click", (event) => {
+    if ((event.target as Element | null)?.closest('[data-node="retry-button"]')) driver.dispatch({ kind: "user", eventId: "retry" })
+  })
+  let seen: string | null = null
+  const stop = options.changes((answer) => {
+    // The first answer marks where the view already is; a later one is a commit that moved it.
+    const digest = JSON.stringify(answer)
+    if (seen !== null && digest !== seen) driver.dispatch({ kind: "subscription", bindingId: "subject" })
+    seen = digest
   })
   return () => {
     stop()
+    driver.dispose()
     resize?.disconnect()
   }
 }

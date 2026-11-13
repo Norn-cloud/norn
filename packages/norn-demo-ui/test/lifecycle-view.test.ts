@@ -51,3 +51,26 @@ test("a counterexample steps by its witness: taken lifecycle transitions and whe
   expect(stepState(ORDER, stuck, 2)).toEqual({ transitions: new Set(["submit"]), state: "submitted" })
   expect(stepState(ORDER, stuck, 4)).toEqual({ transitions: new Set(["submit", "reject", "revise"]), state: "draft" })
 })
+
+// The view's load states are a declared machine, admitted by the checker like any page's: every
+// state can exit (no endless "Counting…"), every outcome of the read is handled.
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
+import { describe } from "bun:test"
+
+const pkg = process.env.NORN_CHECKER_WASM_PKG
+const withChecker = pkg ? describe : describe.skip
+withChecker("the checker", () => {
+  test("admits the view's machine: no widget.machine.* finding", async () => {
+    const checker = (await import(pathToFileURL(join(pkg!, "norn_checker_wasm.js")).href)) as {
+      initSync(options: { module: Uint8Array }): unknown
+      checkArtifactSet(artifactsJson: string, contextJson: string): string
+    }
+    checker.initSync({ module: readFileSync(join(pkg!, "norn_checker_wasm_bg.wasm")) })
+    const document = readFileSync(join(import.meta.dir, "../src/elements/lifecycle-view.widget.json"), "utf8")
+    const result = JSON.parse(checker.checkArtifactSet(`[${document}]`, "null")) as { diagnostics: { diagnostics: { code: string; message: string }[] } }
+    const machine = result.diagnostics.diagnostics.filter((finding) => finding.code.startsWith("widget.machine."))
+    expect(machine).toEqual([])
+  })
+})
