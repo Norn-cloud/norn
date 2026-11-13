@@ -675,3 +675,58 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     assert!(!joined.contains("ada@example.com"), "{joined}");
     assert!(viewer.reveals.is_empty() && !viewer.complete);
 }
+
+/// The `pitch` cell's set: the three-systems catalog with the privacy pack
+/// (its marking catalog and reveal policy) and its `canon.Party` overlay in
+/// place of the canon artifact. It admits as one set, and the canon pack
+/// alone stays unmarked.
+#[test]
+fn the_privacy_pack_admits_over_the_three_systems_set() {
+    use norn_checker::{
+        EntityArtifactSetContext,
+        receipt::{ReceiptSources, check_artifact_set_with_receipt},
+    };
+    use norn_ir::{ArtifactEnvelope, ResourceLimitProfile};
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| -> ArtifactEnvelope {
+        serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
+    };
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
+        &std::fs::read_to_string(root.join("fixtures/demo/explorer/three-systems.definitions.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let canon = artifacts
+        .iter()
+        .find(|artifact| artifact.artifact_id == "canon.Party.entity")
+        .unwrap();
+    assert!(!serde_json::to_string(canon).unwrap().contains("pii.contact"));
+    for artifact in &mut artifacts {
+        if artifact.artifact_id == "canon.Party.entity" {
+            *artifact = read("registry/packs/privacy/overlays/canon.Party.entity.json");
+        }
+    }
+    artifacts.push(read("registry/packs/privacy/artifacts/privacy.markings.entity.json"));
+    artifacts.push(read("registry/packs/privacy/artifacts/privacy.reveal.policy.json"));
+    let (base, candidate): (Vec<_>, Vec<_>) = artifacts
+        .iter()
+        .cloned()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let values = |set: &[ArtifactEnvelope]| -> Vec<V> {
+        set.iter()
+            .map(|a| V::from_json(serde_json::to_value(a).unwrap()).unwrap())
+            .collect()
+    };
+    let sources = ReceiptSources::new(&values(&candidate), &values(&base)).unwrap();
+    let checked = check_artifact_set_with_receipt(
+        &sources,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .unwrap();
+    assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+}
