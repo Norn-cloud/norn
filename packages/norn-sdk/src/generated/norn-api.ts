@@ -3703,6 +3703,15 @@ export interface components {
             id: string;
             /** @description When this finding was most recently observed. */
             lastSeen: string;
+            /**
+             * @description LAW-LINK-1: for a law that reads its subject's to-one links, the exact
+             *     version of each target it read, by link id (a link with no target is
+             *     absent), so the evaluation replays exactly. Empty for every other
+             *     finding, and then omitted.
+             */
+            links?: {
+                [key: string]: components["schemas"]["NornIrFactRef"];
+            };
             /** @description Human-readable summary of the finding. */
             message: string;
             /** @description Typed result and evidence for the failed expectation. */
