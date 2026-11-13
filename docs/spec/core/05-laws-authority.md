@@ -45,7 +45,7 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
-**LAW-WITHIN-1 (deadline obligation):** a structured requirement with `timing = within {trigger, retrigger, cancel?, accountable, calendar?}` is admitted only as an `obligation` whose law is `eventually` with `law.timing = within {millis}` (positive canonical u64 decimal text, the ordinary LawIR rule, and at most `MAX_WITHIN_MILLIS` = 2^63) and a `predicate` response, with no `condition`, lifecycle-state or commitment filter, exception or `defeatedBy` entry, no calendar pin, nonblank `trigger` and `accountable`, and Boolean response and cancel predicates. Any other pairing refuses with `law.validation.unsupported_temporal` (calendar, gated or defeasible activations included), `law.validation.invalid_document` (grade mismatch, invalid or over-cap duration, or non-predicate response), `law.model.unknown_binding` or `law.model.predicate_type`. Monitor semantics, per law instance and subject, over commits in ledger order, using only each commit's ledger position `seq` and the cell's committed clock `t` (never a wall clock):
+**LAW-WITHIN-1 (deadline obligation):** a structured requirement with `timing = within {trigger, retrigger, cancel?, accountable, calendar?}` is admitted only as an `obligation` whose law is `eventually` with `law.timing = within {millis}` (positive canonical u64 decimal text, the ordinary LawIR rule, and at most `MAX_WITHIN_MILLIS` = 2^63) and a `predicate` response, with no `condition`, lifecycle-state or commitment filter, exception (except an exception tree admitted under the LIFE-SOUND-9 proof, see *Lifecycle soundness*) or `defeatedBy` entry, no calendar pin, nonblank `trigger` and `accountable`, and Boolean response and cancel predicates. Any other pairing refuses with `law.validation.unsupported_temporal` (calendar, gated or defeasible activations included), `law.validation.invalid_document` (grade mismatch, invalid or over-cap duration, or non-predicate response), `law.model.unknown_binding` or `law.model.predicate_type`. Monitor semantics, per law instance and subject, over commits in ledger order, using only each commit's ledger position `seq` and the cell's committed clock `t` (never a wall clock):
 
 1. *Expire.* An open activation with `t ≥ deadline` closes as `violated`, recorded at this commit (see *Violation placement*), before this commit is otherwise considered. A commit at exactly the deadline does not discharge.
 2. *Settle.* An open activation closes as `discharged` if the response holds on the committed state, else as `cancelled` if the cancel predicate holds. Discharge takes precedence.
@@ -674,6 +674,20 @@ trigger, mode and compensation unless it states its own.
   (`lifecycle.soundness.wait_without_deadline`); a timer leads to a state from
   which an ending is reachable (`lifecycle.soundness.deadline_without_remedy`);
   no cycle fires on timers alone (`lifecycle.soundness.timer_cycle`).
+- **LIFE-SOUND-9 (cancellable deadlines; ruling on #1313):** LAW-WITHIN-1
+  still refuses a defeasible `within` (Reading B). `check_defeasible_requirement`
+  relaxes it for one shape only, an exception tree with no condition, scope
+  filter or defeat edge (Reading A: an applying exception cancels the
+  activation), and only behind a proof: in every live state reachable from the
+  trigger's target, where the exception could cancel the open activation, a
+  declared good or compensated ending (`completed`, `compensated`, `resting`;
+  an unclassified terminal does not count) is reachable along unguarded edges.
+  Otherwise it refuses with `lifecycle.soundness.cancellation_dead_end`, naming
+  the failing states, those that reach no such ending at all, and the smallest
+  blocking set: the guarded transitions on the path crossing the fewest guards.
+  A trigger that is not a transition of the subject's lifecycle is
+  `law.model.unknown_binding`. The relaxation is gated by the proof, never a
+  default.
 - **LIFE-SOUND-8 (compensations close):** over the product of the chart with
   "effect owed" for each transition that declares `compensatedBy`, no run
   reaches a `cancelled`, `compensated` or `breached_visible` ending after the
