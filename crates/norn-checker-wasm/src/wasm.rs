@@ -155,7 +155,6 @@ pub fn tool_edge(source_schema_json: &str, target_schema_json: &str) -> Result<S
 }
 
 #[cfg(feature = "checker")]
-#[cfg(feature = "checker")]
 /// `version()`: see [`crate::version_json`].
 #[wasm_bindgen]
 #[must_use]
@@ -163,6 +162,7 @@ pub fn version() -> String {
     crate::version_json()
 }
 
+#[cfg(feature = "checker")]
 /// Read-only `explainArtifactSet` shared with the native CLI.
 /// # Errors
 /// Throws on malformed transport input.
