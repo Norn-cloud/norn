@@ -152,6 +152,8 @@ routes! {
     ObjectFindings => ("GET", "/v1/objects/{type}/{id}/findings"),
     /// `GET /v1/objects/{type}/{id}/history`.
     ObjectHistory => ("GET", "/v1/objects/{type}/{id}/history"),
+    /// `POST /v1/objects/{type}/{id}/reveal` (PRIVACY-2).
+    ObjectReveal => ("POST", "/v1/objects/{type}/{id}/reveal"),
     /// `GET /v1/objects/{type}:quarantined`.
     ObjectsQuarantined => ("GET", "/v1/objects/{type}:quarantined"),
     /// `GET /v1/questions/{question}/answer`.
@@ -291,6 +293,7 @@ impl Route {
                 (Some(_), Some("lineage")) => Self::ObjectLineage,
                 (Some(_), Some("findings")) => Self::ObjectFindings,
                 (Some(_), Some("history")) => Self::ObjectHistory,
+                (Some(_), Some("reveal")) => Self::ObjectReveal,
                 (Some(_), Some(_)) => return None,
             });
         }
@@ -670,6 +673,8 @@ fn route<E: SqlEngine>(
         compile(cell(host)?, actor, method, query, body)
     } else if let Some(transform) = transform_refresh_path(path) {
         refresh(cell(host)?, actor, transform, (method, query, now))
+    } else if let Some((kind, Some(id), Some("reveal"))) = object {
+        revealed(cell(host)?, actor, (kind, id), (method, query, body))
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -965,11 +970,52 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
     let leaf = segments.next();
     if segments.next().is_some()
         || id.is_some_and(str::is_empty)
-        || leaf.is_some_and(|leaf| !matches!(leaf, "links" | "lineage" | "findings" | "history"))
+        || leaf.is_some_and(|leaf| {
+            !matches!(leaf, "links" | "lineage" | "findings" | "history" | "reveal")
+        })
     {
         return None;
     }
     Some((kind, id, leaf))
+}
+
+/// PRIVACY-2: `POST /v1/objects/{type}/{id}/reveal`, scoped by the query
+/// string: the value of one marked property, with its ledger receipt.
+fn revealed<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (object_type, id): (&str, &str),
+    (method, query, body): (&str, &str, &str),
+) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a reveal is a POST",
+        ));
+    }
+    let decoded = |text: &str| {
+        percent_encoding::percent_decode_str(text)
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
+    };
+    let fields = parse(query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.get("orgId").cloned(),
+        environment_id: fields.get("environmentId").cloned(),
+    };
+    let request: norn_api::privacy::NornRevealRequest = serde_json::from_str(body)
+        .map_err(|error| Refusal::invalid(format!("the request body is not a reveal: {error}")))?;
+    document_json(&norn_api::privacy::reveal(
+        host,
+        &scope,
+        actor,
+        (&decoded(object_type)?, &decoded(id)?),
+        &request,
+        &CellObjectAccess,
+    )?)
 }
 
 /// HOST-READ-5: `GET /v1/objects/{type}:profile`, scoped by the query string.

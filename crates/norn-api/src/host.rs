@@ -147,6 +147,17 @@ impl<E: SqlEngine> DevHost<E> {
             secret.and_then(|secret| crate::privacy::PseudonymKey::derive(secret, &self.scope));
         self
     }
+    /// Key this cell's pseudonyms with `secret` in place; see
+    /// [`Self::with_pseudonym_secret`].
+    pub fn set_pseudonym_secret(&mut self, secret: Option<&[u8]>) {
+        self.pseudonyms =
+            secret.and_then(|secret| crate::privacy::PseudonymKey::derive(secret, &self.scope));
+    }
+    /// Whether this cell's pseudonyms are keyed.
+    #[must_use]
+    pub const fn has_pseudonym_key(&self) -> bool {
+        self.pseudonyms.is_some()
+    }
     pub(crate) const fn pseudonym_key(&self) -> Option<&crate::privacy::PseudonymKey> {
         self.pseudonyms.as_ref()
     }

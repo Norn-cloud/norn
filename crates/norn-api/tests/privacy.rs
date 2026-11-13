@@ -1,0 +1,307 @@
+//! PRIVACY-1/2: marked properties leave the server projected, and a reveal
+//! is a governed action with a ledger receipt.
+//!
+//! A cell declares `pii.contact` as a `pseudonym` of `Customer` and keeps
+//! customer emails under it. A viewer sees a stable pseudonym that never
+//! equals the email, the same for equal emails (so filters, counts and joins
+//! still hold), different in another cell; an auditor whose policy allows
+//! `norn.reveal` sees the field as revealable and reveals it with a purpose,
+//! which commits a receipt before the value is returned.
+#![cfg(not(target_arch = "wasm32"))]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    missing_docs,
+    reason = "privacy correspondence"
+)]
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
+use norn_api::host::DevHost;
+use norn_api::object_query::ObjectQueryParams;
+use norn_api::object_routes::{ObjectAccess, get_object_query, get_queried_object};
+use norn_api::privacy::{NornMaskMode, NornRevealRequest, reveal};
+use norn_api::refusal::Refusal;
+use norn_api::scope::{CellScope, ScopeQuery};
+use norn_cell::engine::NativeEngine;
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
+use norn_ir::RuntimeValue as V;
+use norn_kernel::authz::{
+    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+};
+use serde_json::{Value as Json, json};
+
+const TYPE: &str = "shop.Customer";
+const SECRET: [u8; 32] = [42; 32];
+
+fn physical(org: &str) -> CellScope {
+    CellScope {
+        org_id: org.into(),
+        environment_id: "dev".into(),
+    }
+}
+fn scope(org: &str) -> ScopeQuery {
+    ScopeQuery {
+        org_id: Some(org.into()),
+        environment_id: Some("dev".into()),
+    }
+}
+
+/// Everyone reads every row; only `auditor` may reveal `pii.contact`.
+struct Policy;
+impl Authorizer for Policy {
+    fn authorize(&self, _: &AccessRequest<'_>) -> Result<(), Refusal> {
+        Ok(())
+    }
+    fn read(&self, _: &ReadRequest<'_>) -> Result<(), Refusal> {
+        Ok(())
+    }
+    fn reveal(&self, actor: &str, marking: &str) -> bool {
+        actor == "auditor" && marking == "pii.contact"
+    }
+}
+
+struct Mapping;
+impl ObjectAccess for Mapping {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        let key = ScopeKey {
+            org: scope.org_id.clone(),
+            environment: Some(scope.environment_id.clone()),
+            tenant: None,
+            workspace: None,
+            business_unit: None,
+        };
+        Ok(PdpRequest {
+            principal: PrincipalInput {
+                subject_id: actor.into(),
+                actor_kind: ActorKind::User,
+                agent_session_id: None,
+                roles: vec![],
+                attributes: BTreeMap::new(),
+            },
+            scope: Some(key.clone()),
+            capability: format!("fixture.{capability:?}"),
+            action_id: "norn.read".into(),
+            resource: ResourceInput {
+                object_type: row
+                    .map_or(object_type, |row| row.object_type.as_str())
+                    .into(),
+                id: row.map_or(object_type, |row| row.id.as_str()).into(),
+                scope: key,
+                attributes: BTreeMap::new(),
+            },
+            context: BTreeMap::new(),
+            binding: None,
+            delegation: Delegation::Direct,
+        })
+    }
+}
+
+fn customer(key: &str, name: &str, email: &str) -> FactWriteRow {
+    FactWriteRow::Put {
+        object_type: TYPE.into(),
+        key: key.into(),
+        values: BTreeMap::from([
+            ("name".to_owned(), V::from(name)),
+            ("email".to_owned(), V::from(email)),
+        ]),
+    }
+}
+
+/// A cell at `org` whose `pii.contact` marking projects as `mask`.
+fn host(org: &str, mask: &Json, secret: Option<&[u8]>) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": TYPE,
+        "properties": [
+            {"id": "name", "type": {"kind": "text"}},
+            {"id": "email", "type": {"kind": "text"}, "markings": ["pii.contact"]}
+        ]
+    }))
+    .unwrap();
+    let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
+    let artifacts = json!([
+        {"irVersion":"0.1","artifactId":"shop.Customer.entity","kind":"entity","namespace":"shop","name":"Customer","version":"0.1.0","lifecycle":"draft","scope":{"orgId":org,"environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}},
+        {"irVersion":"0.1","artifactId":"shop.markings.entity","kind":"entity","namespace":"shop","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":org,"environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":mask}]}}
+    ]);
+    let key = physical(org).key();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).unwrap(),
+                    registry: vec![],
+                    receipt_sha256: "privacy".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &key,
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: 2,
+                writes: vec![
+                    customer("c1", "Ada", "ada@example.com"),
+                    customer("c2", "Ada L.", "ada@example.com"),
+                    customer("c3", "Grace", "grace@example.com"),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical(org), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(secret);
+    (host, directory)
+}
+
+fn pseudonym() -> Json {
+    json!({"kind": "pseudonym", "subject": "Customer"})
+}
+
+fn email(host: &DevHost<NativeEngine>, org: &str, actor: &str, id: &str) -> (V, Json) {
+    let record = get_queried_object(host, &scope(org), Some(actor), TYPE, id, &Mapping).unwrap();
+    let document = serde_json::to_value(&record).unwrap();
+    (
+        record.values.unwrap().get("email").cloned().unwrap_or(V::Null),
+        document,
+    )
+}
+
+#[test]
+fn a_viewer_reads_stable_pseudonyms_that_keep_joins_and_counts() {
+    let (cell, _dir) = host("org_a", &pseudonym(), Some(&SECRET));
+    let (first, document) = email(&cell, "org_a", "viewer", "c1");
+    let text = first.as_str().unwrap().to_owned();
+    assert!(text.starts_with("Customer #"), "{text}");
+    assert!(!text.contains("ada"), "the value never leaves: {text}");
+    assert_eq!(document["masked"]["email"]["mode"], "pseudonym");
+    assert_eq!(document["masked"]["email"]["revealable"], false);
+    assert_eq!(document["masked"]["email"]["markings"], json!(["pii.contact"]));
+    assert_eq!(document["values"]["name"], "Ada", "unmarked values are untouched");
+    // Stable across reads, equal for equal values, distinct for others.
+    assert_eq!(email(&cell, "org_a", "viewer", "c1").0, first);
+    assert_eq!(email(&cell, "org_a", "viewer", "c2").0, first);
+    assert_ne!(email(&cell, "org_a", "viewer", "c3").0, first);
+    // A grid query: filters and counts work on the pseudonym, never the value.
+    let query = |filter: Option<Json>| {
+        get_object_query(
+            &cell,
+            &scope("org_a"),
+            Some("viewer"),
+            TYPE,
+            &ObjectQueryParams {
+                filter: filter.map(|filter| filter.to_string()),
+                ..ObjectQueryParams::default()
+            },
+            &Mapping,
+        )
+        .unwrap()
+    };
+    let joined = query(Some(json!({"all": [{"property": "email", "op": "eq", "value": text}]})));
+    assert_eq!(joined.total.unwrap().count, 2);
+    let raw = query(Some(json!({"all": [{"property": "email", "op": "eq", "value": "ada@example.com"}]})));
+    assert_eq!(raw.total.unwrap().count, 0, "the stored value is no oracle");
+    let all = query(None);
+    let distinct: BTreeSet<String> = all
+        .records
+        .iter()
+        .map(|record| record.values.as_ref().unwrap()["email"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(distinct.len(), 2);
+    // Another cell keys its pseudonyms differently.
+    let (other, _other_dir) = host("org_b", &pseudonym(), Some(&SECRET));
+    assert_ne!(email(&other, "org_b", "viewer", "c1").0, first);
+}
+
+#[test]
+fn an_auditor_reveals_with_a_receipt_and_a_viewer_is_refused() {
+    let (cell, _dir) = host("org_a", &pseudonym(), Some(&SECRET));
+    let (projected, document) = email(&cell, "org_a", "auditor", "c1");
+    assert_eq!(document["masked"]["email"]["revealable"], true);
+    assert_ne!(projected, V::from("ada@example.com"), "revealable is not revealed");
+    let request = NornRevealRequest {
+        property: "email".into(),
+        purpose: Some("refund dispute #12".into()),
+        idempotency_key: "k1".into(),
+    };
+    let revealed = reveal(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        (TYPE, "c1"),
+        &request,
+        &Mapping,
+    )
+    .unwrap();
+    assert_eq!(revealed.value, V::from("ada@example.com"));
+    let receipt = &revealed.receipt;
+    assert_eq!(
+        (receipt.actor.as_str(), receipt.property.as_str(), receipt.purpose.as_str()),
+        ("auditor", "email", "refund dispute #12")
+    );
+    assert_eq!(receipt.markings, vec!["pii.contact".to_owned()]);
+    assert!(!receipt.replayed);
+    // A retry replays the same receipt; the key cannot be reused for another reveal.
+    let again = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c1"), &request, &Mapping)
+        .unwrap();
+    assert!(again.receipt.replayed);
+    assert_eq!(again.receipt.commit_seq, receipt.commit_seq);
+    let other = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c3"), &request, &Mapping)
+        .unwrap_err();
+    assert_eq!(other.code, "reveal.idempotency_conflict");
+    // A viewer may not reveal; an unmarked property is not revealable at all.
+    let denied = reveal(&cell, &scope("org_a"), Some("viewer"), (TYPE, "c1"), &request, &Mapping)
+        .unwrap_err();
+    assert_eq!(denied.status, http::StatusCode::FORBIDDEN);
+    let unmarked = NornRevealRequest {
+        property: "name".into(),
+        ..request
+    };
+    let absent = reveal(&cell, &scope("org_a"), Some("auditor"), (TYPE, "c1"), &unmarked, &Mapping)
+        .unwrap_err();
+    assert_eq!(absent.status, http::StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
+    let (refused, _a) = host("org_a", &json!({"kind": "refuse"}), Some(&SECRET));
+    let record =
+        get_queried_object(&refused, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    assert_eq!(record.withheld_properties, vec!["email".to_owned()]);
+    assert!(!record.values.unwrap().contains_key("email"));
+    assert_eq!(record.masked["email"].mode, NornMaskMode::Refuse);
+
+    let (redacted, _b) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
+    assert_eq!(email(&redacted, "org_a", "viewer", "c1").0, V::from("•••"));
+
+    let (last, _c) = host("org_a", &json!({"kind": "last-n", "count": 4}), Some(&SECRET));
+    assert_eq!(email(&last, "org_a", "viewer", "c1").0, V::from("•••.com"));
+
+    let (unkeyed, _d) = host("org_a", &pseudonym(), None);
+    let (value, document) = email(&unkeyed, "org_a", "viewer", "c1");
+    assert_eq!(value, V::from("•••"));
+    assert_eq!(document["masked"]["email"]["mode"], "redacted");
+}

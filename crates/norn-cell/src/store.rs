@@ -110,8 +110,56 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
                 id.as_str()
             )));
         }
+        // PRIVACY-2: no rule may newly allow revealing a declared marking.
+        let (before, after) = (
+            reveal_rules(previous, id.as_str())?,
+            reveal_rules(candidate, id.as_str())?,
+        );
+        if let Some(rule) = after.difference(&before).next() {
+            return Err(CellError::DefinitionMigrationRefused(format!(
+                "install widens who may reveal `{}` (rule {rule}); reveal grants on a declared marking are never widened in place",
+                id.as_str()
+            )));
+        }
     }
     Ok(())
+}
+
+/// The `norn.reveal` rules of every `AccessIR` policy in `encoded` that can
+/// apply to `marking`, without their ids (a renamed rule is the same rule).
+fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellError> {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(encoded).map_err(CellError::Json)?;
+    let mut rules = BTreeSet::new();
+    for artifact in artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Policy)
+    {
+        let Ok(norn_ir::access::PolicyRoot::Access(access)) =
+            serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value::<norn_ir::access::PolicyRoot>)
+        else {
+            continue;
+        };
+        for rule in &access.rules {
+            let reveals = rule.resource_type.as_str() == "norn.Marking"
+                && rule.actions.iter().any(|action| action == "norn.reveal");
+            let names = rule.all_of.iter().all(|condition| match condition {
+                norn_ir::access::AccessCondition::Marking(marking_condition) => marking_condition
+                    .any_of
+                    .iter()
+                    .any(|id| id.as_str() == marking),
+                _ => true,
+            });
+            if reveals && names {
+                let mut unnamed = rule.clone();
+                unnamed.rule_id.clear();
+                unnamed.actions = vec!["norn.reveal".to_owned()];
+                rules.insert(serde_json::to_string(&unnamed).map_err(CellError::Json)?);
+            }
+        }
+    }
+    Ok(rules)
 }
 
 fn preflight_source_marking_changes<E: SqlEngine>(
