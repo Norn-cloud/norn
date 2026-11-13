@@ -96,7 +96,9 @@ fn a_derived_question_on_the_engine_is_grouped_by_the_unit_sources_it_leaves_fre
         .unwrap(),
     );
     let derived = DerivedQuestions::new([7; 32], scope);
-    let runtime = derived.questions(&host).expect("the demo's derived metrics");
+    let runtime = derived
+        .questions(&host)
+        .expect("the demo's derived metrics");
     let on_engine = EngineQuestions::new(&runtime, &transport, host.scope());
     let questions: &dyn AdHocQuestions<NativeEngine> = &on_engine;
     let call = |method: &'static str, path: &'static str, body: &str| {
@@ -121,10 +123,16 @@ fn a_derived_question_on_the_engine_is_grouped_by_the_unit_sources_it_leaves_fre
         .as_array()
         .unwrap()
         .iter()
-        .find(|metric| metric["objectType"] == "canon.OrderLine" && metric["expression"] == "quantity")
+        .find(|metric| {
+            metric["objectType"] == "canon.OrderLine" && metric["expression"] == "quantity"
+        })
         .expect("the derived order-line quantity")
         .clone();
-    assert_eq!(metric["unitPartition"], json!(["unit", "currency"]), "{metric}");
+    assert_eq!(
+        metric["unitPartition"],
+        json!(["unit", "currency"]),
+        "{metric}"
+    );
     let question = json!({
         "irVersion": "0.1", "name": "demo.ordered_by_week", "objectSet": "canon.OrderLine",
         "aggregate": [{"metric": metric["name"]}],
