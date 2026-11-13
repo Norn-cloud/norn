@@ -63,7 +63,8 @@ export const ReopenDisagreement = Norn.action({
   derive: [{ field: "reviewed_by", inputRequired: false,
     expression: Norn.expression(Schema.Struct({ actor: Schema.Struct({ subjectId: Schema.String }) }), context => context.actor.subjectId, { root: "context" }) }],
   preconditions: [Norn.expression(Schema.Struct({ input: ReopenInput }), x => x.input.reason !== "")],
-  writes: [{ type: AgreementReview, change: "modified" }],
+  // An upsert may create; a reopened review of a never-accepted finding changes nothing.
+  writes: [{ type: AgreementReview, change: "modified" }, { type: AgreementReview, change: "created" }],
   effect: { kind: "upsert_input_object", type: AgreementReview, objectIdField: "id", writeMode: { kind: "upsert" } },
   access: { artifactId: "source.agreement.access.policy", version: "0.1.0" },
 })
