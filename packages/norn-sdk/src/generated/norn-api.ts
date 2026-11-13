@@ -10672,6 +10672,49 @@ export interface components {
              */
             seq: number;
         };
+        /** @description The visible links of one declared link type in one direction. */
+        NornLinkCount: {
+            /**
+             * Format: int64
+             * @description How many visible links of this type touch the object in this direction;
+             *     a lower bound when the counts are not complete.
+             */
+            count: number;
+            /** @description Which end of the link the requested object is. */
+            direction: components["schemas"]["NornLinkDirection"];
+            /** @description The link id. */
+            link: string;
+            /** @description The link's declaring (source) type. */
+            sourceType: string;
+            /** @description The declared target type. */
+            targetType: string;
+        };
+        /**
+         * @description The server's counts of the visible links touching an object, by link type
+         *     and direction. Links to rows the caller cannot see are not counted.
+         */
+        NornLinkCounts: {
+            /**
+             * Format: int64
+             * @description The most visible links the server counts for one read.
+             */
+            bound: number;
+            /**
+             * @description True when every visible link was counted; false when the count stopped
+             *     at `bound` visible links, and each count is then a lower bound.
+             */
+            complete: boolean;
+            /**
+             * @description One entry per link type and direction with at least one visible link,
+             *     in (direction, source type, link, target type) order.
+             */
+            groups: components["schemas"]["NornLinkCount"][];
+        };
+        /**
+         * @description Which end of a link the requested object is.
+         * @enum {string}
+         */
+        NornLinkDirection: "out" | "in";
         /** @description One live link touching the requested object. */
         NornLinkEdge: {
             /** @description The link id. */
@@ -10827,6 +10870,7 @@ export interface components {
          *     counted.
          */
         NornObjectLinkPage: {
+            counts?: components["schemas"]["NornLinkCounts"] | null;
             /** @description The requested object's identity. */
             id: string;
             /** @description Visible links, in the cell's stable order. */
