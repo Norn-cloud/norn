@@ -445,6 +445,15 @@ impl<E: SqlEngine> Tenant<E> {
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
         }
+        // A caller who is not a verified member of the organization gets
+        // exactly what a scope with no cell answers, on every route: a
+        // provisioned cell's live runtimes (questions, analytics) never shape
+        // an outsider's answer (#1297 r1 B1, made structural).
+        if matches!(self.state, State::Serving(_))
+            && self.verified_member(principals, request).is_none()
+        {
+            return self.vacant(principals, request, None);
+        }
         match &self.state {
             State::Serving(serving) if request.path == "/v1/access" => server::access(
                 &serving.host,
@@ -464,7 +473,11 @@ impl<E: SqlEngine> Tenant<E> {
                 // over its derived metrics; a revision whose metrics do not
                 // derive serves receipt handles only.
                 let derived = match (&serving.questions, &self.derived) {
-                    (None, Some(derived)) => derived.questions(&serving.host).ok(),
+                    // A revision whose metrics do not derive publishes none.
+                    (None, Some(derived)) => derived
+                        .questions(&serving.host)
+                        .ok()
+                        .filter(|runtime| !runtime.definitions().is_empty()),
                     _ => None,
                 };
                 let questions = serving
@@ -502,6 +515,25 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
+    /// The request's verified principal, when the declared table grants it
+    /// something in this cell's organization.
+    fn verified_member(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Option<crate::policy::Caller> {
+        // The verified principal lives exactly as long as this decision.
+        let _request = RequestScope::new(principals);
+        principals
+            .resolve(request.authorization, request.now)
+            .and_then(|subject| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == subject)
+                    .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
+            })
+    }
+
     /// A request to a scope with no cell, or with one this host cannot open
     /// (`unopenable`). Only a verified member of the organization learns
     /// which: anyone else is answered exactly as for a scope with no cell.
@@ -511,18 +543,7 @@ impl<E: SqlEngine> Tenant<E> {
         request: &Request<'_>,
         unopenable: Option<&str>,
     ) -> Response {
-        let caller = {
-            // The verified principal lives exactly as long as this decision.
-            let _request = RequestScope::new(principals);
-            principals
-                .resolve(request.authorization, request.now)
-                .and_then(|subject| {
-                    self.caller
-                        .current()
-                        .filter(|caller| caller.subject_id == subject)
-                        .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
-                })
-        };
+        let caller = self.verified_member(principals, request);
         if let Some(caller) = caller.filter(|_| self.names_this_scope(request.query)) {
             let refusal = match unopenable {
                 None => provision::not_provisioned(),
