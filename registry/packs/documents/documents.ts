@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { SourceEvidence } from "../../core/src/evidence.ts"
+import { SourceEvidence, SourceDocument as ScanProvenance } from "../../core/src/evidence.ts"
 
 /**
  * Scanned source documents (#588, #343): receipts, invoices and expense
@@ -43,7 +43,7 @@ export const LedgerEntry = Norn.type({
 export const ScannedDocument = Norn.type({
   name: "docs.ScannedDocument", title: "Scanned document", version: "0.1.0", role: "thing",
   description: "A scanned receipt, invoice or expense report as its extractor read it. `lines_total` is the mapping's sum of the printed line amounts (null when the document prints no lines). A correction is a governed patch that records its reason, its evidence and the verified actor.",
-  implements: [SourceDocument],
+  implements: [SourceDocument, ScanProvenance],
   properties: Schema.Struct({
     id: Schema.String, doc_number: Schema.String, kind: Schema.Literals(["receipt", "invoice", "expense_report"]),
     vendor: Schema.String, issued_on: Schema.NullOr(Norn.date()), currency: Schema.Literals(["USD"]),
@@ -58,8 +58,14 @@ export const ScannedDocument = Norn.type({
 
 export const DocumentLine = Norn.type({
   name: "docs.DocumentLine", title: "Scanned document line", version: "0.1.0", role: "thing",
+  description: "One printed line as its extractor read it. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and restates the document's sum of lines in the same commit.",
   implements: [SourceDocumentLine],
-  properties: Schema.Struct({ id: Schema.String, line_no: Schema.Int, description: Schema.String, currency: Schema.Literals(["USD"]), amount: Money }),
+  properties: Schema.Struct({
+    id: Schema.String, document_id: Schema.String, line_no: Schema.Int, description: Schema.String, currency: Schema.Literals(["USD"]), amount: Money,
+    review: Schema.Literals(["extracted", "corrected"]),
+    correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
+  }),
+  lifecycles: [{ property: "review", initial: ["extracted"], terminal: ["corrected"], transitions: [{ id: "correct", from: ["extracted"], to: "corrected" }] }],
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "document", target: ScannedDocument, cardinality: { to: "one", from: "many", required: true } }],
 })
@@ -68,7 +74,7 @@ export const FieldEvidence = Norn.type({
   name: "docs.FieldEvidence", title: "Extracted field evidence", version: "0.1.0", role: "thing",
   implements: [SourceEvidence],
   properties: Schema.Struct({
-    id: Schema.String, subject_property: Schema.String,
+    id: Schema.String, subject_property: Schema.String, subject_type: Schema.NullOr(Schema.String), subject_key: Schema.NullOr(Schema.String),
     document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String, page: Schema.Int,
     bbox_x: Norn.decimal(4), bbox_y: Norn.decimal(4), bbox_w: Norn.decimal(4), bbox_h: Norn.decimal(4),
     text: Schema.String, extractor: Schema.String, extractor_version: Schema.String, confidence_bp: Schema.NullOr(Schema.Int),
@@ -213,9 +219,10 @@ export const Mapping = Norn.mapping({
       target: { type: DocumentLine, interface: SourceDocumentLine },
       subject: "input.name", sourceRecord: "'synthetic-scans/demo/' + input.name",
       properties: [
-        { property: "id", value: "input.name" }, { property: "line_no", value: "input.line_no" },
+        { property: "id", value: "input.name" }, { property: "document_id", value: "input.parent" }, { property: "line_no", value: "input.line_no" },
         { property: "description", value: "input.description" }, { property: "currency", value: "'USD'" },
-        { property: "amount", value: "input.amount" },
+        { property: "amount", value: "input.amount" }, { property: "review", value: "'extracted'" },
+        { property: "correction_reason", value: "null" }, { property: "corrected_by", value: "null" }, { property: "correction_evidence", value: "null" },
       ],
       links: [{ link: "document", targetMap: "document", key: "input.parent" }],
     },
@@ -224,7 +231,11 @@ export const Mapping = Norn.mapping({
       target: { type: FieldEvidence, interface: SourceEvidence },
       subject: "input.name", sourceRecord: "'synthetic-scans/demo/' + input.name",
       properties: [
-        { property: "id", value: "input.name" }, { property: "subject_property", value: "input.field" },
+        // A printed line's value is evidence for that line's amount; the line is its subject.
+        { property: "id", value: "input.name" },
+        { property: "subject_property", value: "startsWith(input.field, 'lines.') ? 'amount' : input.field" },
+        { property: "subject_type", value: "startsWith(input.field, 'lines.') ? 'docs.DocumentLine' : null" },
+        { property: "subject_key", value: "startsWith(input.field, 'lines.') ? input.parent + '~line-' + split(input.field, '.')[1] : null" },
         { property: "document_uri", value: "input.document_uri" }, { property: "document_digest", value: "input.document_digest" },
         { property: "media_type", value: "input.media_type" }, { property: "page", value: "input.page" },
         { property: "bbox_x", value: "input.bbox_x" }, { property: "bbox_y", value: "input.bbox_y" },
@@ -238,7 +249,7 @@ export const Mapping = Norn.mapping({
 })
 
 const CorrectionInput = Schema.Struct({
-  id: Schema.String, currency: Schema.Literals(["USD"]), total: Money, lines_total: Schema.optionalKey(Money),
+  id: Schema.String, currency: Schema.Literals(["USD"]), total: Money,
   correction_reason: Schema.String, correction_evidence: Schema.String,
   corrected_by: Schema.optionalKey(Schema.String),
 })
@@ -255,8 +266,7 @@ export const CorrectScannedDocument = Norn.action({
   input: CorrectionInput, output: Schema.Struct({ id: Schema.String }),
   inputLabels: {
     id: { title: "Document", description: "The scanned document to correct." },
-    total: { title: "Corrected total", description: "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry." },
-    lines_total: { title: "Corrected sum of lines", description: "Only when a printed line was misread too: the sum of the lines as printed." },
+    total: { title: "Corrected total", description: "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry; a misread line is corrected on that line." },
     correction_reason: { title: "Reason", description: "Why the imported value is wrong, kept with the correction." },
     correction_evidence: { title: "Evidence", description: "The evidence object the correction rests on, for example SCAN-INV-0042~total; copy it from the evidence beside the value." },
   },
@@ -274,10 +284,82 @@ export const CorrectScannedDocument = Norn.action({
   access: { artifactId: "docs.scanned_document.access.policy", version: "0.1.0" },
 })
 
+const LineCorrectionInput = Schema.Struct({
+  id: Schema.String, currency: Schema.Literals(["USD"]), amount: Money, document_total: Schema.optionalKey(Money),
+  correction_reason: Schema.String, correction_evidence: Schema.String,
+})
+const LineValues = Schema.Struct({ id: Schema.String, document_id: Schema.String, currency: Schema.Literals(["USD"]), amount: Money })
+const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Literals(["USD"]), total: Money, lines_total: Schema.NullOr(Money) })
+const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
+const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
+const Patch = Schema.Struct({
+  amount: Schema.optionalKey(Money), total: Schema.optionalKey(Money), lines_total: Schema.optionalKey(Money), currency: Schema.optionalKey(Schema.Literals(["USD"])),
+  correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
+})
+
+/**
+ * The line correction's writer: the line takes the printed amount, and its
+ * document's sum of lines moves by the same difference (and its total, when
+ * that was misread too), in one commit, so the document's laws judge the
+ * corrected whole. Who corrected is the verified actor.
+ */
+export const LineCorrectionWriter = Norn.decision({
+  id: "docs.document_line.writer", title: "Restate a corrected line and its document", version: "0.1.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
+  input: Schema.Struct({ slice: LineSlice, event: Schema.Struct({ input: LineCorrectionInput, actor: Schema.String, operationId: Schema.String }) }),
+  output: Schema.Struct({
+    facts: Schema.Array(Schema.Struct({ op: Schema.Literals(["patch"]), objectType: Schema.Literals(["docs.DocumentLine", "docs.ScannedDocument"]), key: Schema.String, patch: Patch })),
+    commands: Schema.Array(Schema.Struct({})), timers: Schema.Array(Schema.Struct({})),
+  }),
+}, input => ({
+  facts: [
+    { op: "patch", objectType: "docs.DocumentLine", key: input.event.input.id, patch: {
+      amount: input.event.input.amount, correction_reason: input.event.input.correction_reason,
+      correction_evidence: input.event.input.correction_evidence, corrected_by: input.event.actor } },
+    { op: "patch", objectType: "docs.ScannedDocument", key: input.slice.line.document_id, patch: {
+      currency: input.slice.document.currency,
+      lines_total: (input.slice.document.lines_total ?? input.slice.line.amount) - input.slice.line.amount + input.event.input.amount,
+      total: input.event.input.document_total ?? input.slice.document.total,
+      correction_reason: input.event.input.correction_reason, correction_evidence: input.event.input.correction_evidence, corrected_by: input.event.actor } },
+  ],
+  commands: [], timers: [],
+}))
+
+/**
+ * The governed correction of one printed line: the line's amount as printed,
+ * cited by the evidence read for that line. The document's sum of lines is
+ * restated with it; when the document's printed total was misread too, the
+ * same correction fixes it, so the laws judge both at once.
+ */
+export const CorrectDocumentLine = Norn.action({
+  id: "docs.document_line.correct", title: "Correct an extracted line", version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: LineCorrectionInput, output: Schema.Struct({ id: Schema.String }), synchronousRule: LineCorrectionWriter,
+  inputLabels: {
+    id: { title: "Line", description: "The printed line to correct." },
+    amount: { title: "Corrected amount", description: "The line's amount as printed on the scanned page." },
+    document_total: { title: "Corrected document total", description: "Only when the document's printed total was misread too: the total as printed." },
+    correction_reason: { title: "Reason", description: "Why the imported value is wrong, kept with the correction." },
+    correction_evidence: { title: "Evidence", description: "The evidence object read for this line, for example SCAN-INV-0043~lines.1.amount." },
+  },
+  slice: [
+    { name: "line", type: DocumentLine, key: { property: { from: "input", property: "id" } } },
+    { name: "document", type: ScannedDocument, key: { property: { from: "line", property: "document_id" } } },
+    { name: "evidence", type: FieldEvidence, key: { property: { from: "input", property: "correction_evidence" } } },
+  ],
+  preconditions: [Norn.expression(Schema.Struct({ input: LineCorrectionInput, slice: LineSlice }),
+    x => x.input.correction_reason !== "" && (x.slice.evidence.subject_key ?? "") === x.input.id)],
+  writes: [{ type: DocumentLine, change: "modified" }, { type: ScannedDocument, change: "modified" }],
+  effect: { kind: "fire_transition", type: DocumentLine, objectIdField: "id", lifecycle: "review", transition: "correct" },
+  access: { artifactId: "docs.scanned_document.access.policy", version: "0.1.0" },
+})
+
 /** Who may correct: a data steward, or (on the alpha) any member of the org. */
 export const CorrectionAccess = Norn.access({
   id: "docs.scanned_document.access", title: "Scanned document steward", version: "0.1.0",
-  rules: [{ ruleId: "steward", actions: [CorrectScannedDocument], resourceType: ScannedDocument,
-    scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }],
-  }],
+  rules: [
+    { ruleId: "steward", actions: [CorrectScannedDocument], resourceType: ScannedDocument,
+      scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }] },
+    { ruleId: "steward_lines", actions: [CorrectDocumentLine], resourceType: DocumentLine,
+      scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }] },
+  ],
 })

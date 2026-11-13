@@ -1,0 +1,375 @@
+{
+  "artifactId": "docs.document_line.writer.rule",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "rule",
+  "lifecycle": "active",
+  "name": "Restate a corrected line and its document",
+  "namespace": "docs",
+  "payload": {
+    "contract": "decide",
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "edges": [
+        {
+          "id": "edge_0",
+          "sourceId": "in",
+          "targetId": "decision"
+        },
+        {
+          "id": "edge_1",
+          "sourceId": "decision",
+          "targetId": "out"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "in",
+          "name": "input",
+          "type": "inputNode"
+        },
+        {
+          "content": {
+            "expressions": [
+              {
+                "id": "out_facts",
+                "key": "facts",
+                "value": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]"
+              },
+              {
+                "id": "out_commands",
+                "key": "commands",
+                "value": "[]"
+              },
+              {
+                "id": "out_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          },
+          "id": "decision",
+          "name": "decision",
+          "type": "expressionNode"
+        },
+        {
+          "id": "out",
+          "name": "output",
+          "type": "outputNode"
+        }
+      ]
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "input": {
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "nornType": {
+                    "currencySource": {
+                      "links": [],
+                      "property": "currency"
+                    },
+                    "kind": "decimal",
+                    "scale": 2
+                  },
+                  "type": "number"
+                },
+                "correction_evidence": {
+                  "type": "string"
+                },
+                "correction_reason": {
+                  "type": "string"
+                },
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "document_total": {
+                  "nornType": {
+                    "currencySource": {
+                      "links": [],
+                      "property": "currency"
+                    },
+                    "kind": "decimal",
+                    "scale": 2
+                  },
+                  "type": "number"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "currency",
+                "amount",
+                "correction_reason",
+                "correction_evidence"
+              ],
+              "type": "object"
+            },
+            "operationId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "actor",
+            "operationId"
+          ],
+          "type": "object"
+        },
+        "slice": {
+          "additionalProperties": false,
+          "properties": {
+            "document": {
+              "additionalProperties": false,
+              "properties": {
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "lines_total": {
+                  "nornType": {
+                    "currencySource": {
+                      "links": [],
+                      "property": "currency"
+                    },
+                    "kind": "decimal",
+                    "scale": 2
+                  },
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "total": {
+                  "nornType": {
+                    "currencySource": {
+                      "links": [],
+                      "property": "currency"
+                    },
+                    "kind": "decimal",
+                    "scale": 2
+                  },
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "currency",
+                "total",
+                "lines_total"
+              ],
+              "type": "object"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "subject_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "subject_key"
+              ],
+              "type": "object"
+            },
+            "line": {
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "nornType": {
+                    "currencySource": {
+                      "links": [],
+                      "property": "currency"
+                    },
+                    "kind": "decimal",
+                    "scale": 2
+                  },
+                  "type": "number"
+                },
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "document_id": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "document_id",
+                "currency",
+                "amount"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "line",
+            "document",
+            "evidence"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "objectType": {
+                "enum": [
+                  "docs.DocumentLine",
+                  "docs.ScannedDocument"
+                ],
+                "type": "string"
+              },
+              "op": {
+                "enum": [
+                  "patch"
+                ],
+                "type": "string"
+              },
+              "patch": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "nornType": {
+                      "currencySource": {
+                        "links": [],
+                        "property": "currency"
+                      },
+                      "kind": "decimal",
+                      "scale": 2
+                    },
+                    "type": "number"
+                  },
+                  "corrected_by": {
+                    "type": "string"
+                  },
+                  "correction_evidence": {
+                    "type": "string"
+                  },
+                  "correction_reason": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "enum": [
+                      "USD"
+                    ],
+                    "type": "string"
+                  },
+                  "lines_total": {
+                    "nornType": {
+                      "currencySource": {
+                        "links": [],
+                        "property": "currency"
+                      },
+                      "kind": "decimal",
+                      "scale": 2
+                    },
+                    "type": "number"
+                  },
+                  "total": {
+                    "nornType": {
+                      "currencySource": {
+                        "links": [],
+                        "property": "currency"
+                      },
+                      "kind": "decimal",
+                      "scale": 2
+                    },
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "patch"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "timers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "type": "object"
+    },
+    "ruleId": "docs.document_line.writer",
+    "ruleVersion": "2.0",
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.document_line.writer.rule.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

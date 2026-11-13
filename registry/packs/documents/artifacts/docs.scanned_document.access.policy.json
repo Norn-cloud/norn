@@ -34,6 +34,31 @@
             "environment"
           ]
         }
+      },
+      {
+        "actions": [
+          "docs.document_line.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.DocumentLine",
+        "ruleId": "steward_lines",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
       }
     ]
   },

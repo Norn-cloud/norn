@@ -223,6 +223,10 @@
             "value": "input.name"
           },
           {
+            "property": "document_id",
+            "value": "input.parent"
+          },
+          {
             "property": "line_no",
             "value": "input.line_no"
           },
@@ -237,6 +241,22 @@
           {
             "property": "amount",
             "value": "input.amount"
+          },
+          {
+            "property": "review",
+            "value": "'extracted'"
+          },
+          {
+            "property": "correction_reason",
+            "value": "null"
+          },
+          {
+            "property": "corrected_by",
+            "value": "null"
+          },
+          {
+            "property": "correction_evidence",
+            "value": "null"
           }
         ],
         "source": {
@@ -269,7 +289,15 @@
           },
           {
             "property": "subject_property",
-            "value": "input.field"
+            "value": "startsWith(input.field, 'lines.') ? 'amount' : input.field"
+          },
+          {
+            "property": "subject_type",
+            "value": "startsWith(input.field, 'lines.') ? 'docs.DocumentLine' : null"
+          },
+          {
+            "property": "subject_key",
+            "value": "startsWith(input.field, 'lines.') ? input.parent + '~line-' + split(input.field, '.')[1] : null"
           },
           {
             "property": "document_uri",

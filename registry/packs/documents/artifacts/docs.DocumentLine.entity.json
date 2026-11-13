@@ -9,6 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
+      "description": "One printed line as its extractor read it. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and restates the document's sum of lines in the same commit.",
       "identity": [
         {
           "name": "primary",
@@ -19,6 +20,26 @@
       ],
       "implements": [
         "docs.SourceDocumentLine"
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "extracted"
+          ],
+          "property": "review",
+          "terminal": [
+            "corrected"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "extracted"
+              ],
+              "id": "correct",
+              "to": "corrected"
+            }
+          ]
+        }
       ],
       "links": [
         {
@@ -35,6 +56,12 @@
       "properties": [
         {
           "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_id",
           "type": {
             "kind": "text"
           }
@@ -71,6 +98,47 @@
             },
             "kind": "decimal",
             "scale": 2
+          }
+        },
+        {
+          "id": "review",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "extracted"
+              },
+              {
+                "value": "corrected"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "correction_reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "corrected_by",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "correction_evidence",
+          "type": {
+            "kind": "text"
           }
         }
       ],

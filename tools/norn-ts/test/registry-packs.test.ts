@@ -40,10 +40,10 @@ test.skipIf(!checker)("the Rust checker admits every registry pack and link", ()
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
   const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
-  // The core interfaces packs implement (physics, and the documents pack's norn.SourceEvidence), plus
+  // The core interfaces packs implement (physics, and the documents pack's norn.SourceEvidence and norn.SourceDocument), plus
   // the value types and units. Not every core interface: some (core.Order) name registry standard
   // types (iso4217) this checker call does not install.
-  const base = [...physics.map(name => `core.${name}.interface.json`), "norn.SourceEvidence.interface.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
+  const base = [...physics.map(name => `core.${name}.interface.json`), "norn.SourceEvidence.interface.json", "norn.SourceDocument.interface.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))

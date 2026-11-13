@@ -68,6 +68,9 @@ pub struct LawFailure {
     /// LAW-LINK-1: the exact version of each link target the failing instance
     /// read, by link id. Non-empty exactly when the outcome is `Linked`.
     pub links: std::collections::BTreeMap<String, norn_ir::FactRef>,
+    /// DIAG-REASON-1: the stored values the law read, by path (`total`,
+    /// `ledger_entry.amount`), so a refusal can say what was checked.
+    pub values: std::collections::BTreeMap<String, norn_ir::RuntimeValue>,
 }
 
 /// LAW-LINK-1: one link target in the snapshot a law is checked against.
@@ -250,6 +253,43 @@ pub fn reaches(
         || catalog.implements(target, declared.as_str())
 }
 
+/// DIAG-REASON-1: the stored values a law read, by path: its subject's own
+/// properties (`total`) and, through a to-one link, its target's
+/// (`ledger_entry.amount`). A refusal discloses them as its operands.
+fn law_operands(
+    law: &LawIR,
+    subject: &JsonObject,
+    targets: &std::collections::BTreeMap<String, JsonObject>,
+) -> std::collections::BTreeMap<String, norn_ir::RuntimeValue> {
+    let response = if let LawResponse::Predicate { expression } = &law.response {
+        Some(expression.as_str())
+    } else {
+        None
+    };
+    let mut operands = std::collections::BTreeMap::new();
+    for text in law
+        .condition
+        .iter()
+        .map(norn_ir::ZenExpression::as_str)
+        .chain(response)
+    {
+        let Ok(paths) = norn_expr::expression_read_paths(text, "self") else {
+            continue;
+        };
+        for path in paths {
+            let value = match path.as_slice() {
+                [property] => subject.get(property),
+                [link, property] => targets.get(link).and_then(|target| target.get(property)),
+                _ => None,
+            };
+            if let Some(value) = value {
+                operands.insert(path.join("."), value.clone());
+            }
+        }
+    }
+    operands
+}
+
 /// The expression object of stored values.
 fn expr_object(values: &JsonObject) -> Result<Value, LawEvaluationError> {
     values
@@ -402,6 +442,7 @@ fn law_failure(
         message: format!("{}: {}", law.id, law.rationale),
         invariant,
         links: std::collections::BTreeMap::new(),
+        values: std::collections::BTreeMap::new(),
     })
 }
 
@@ -520,9 +561,11 @@ pub fn evaluate_linked(
         }
         let mut object = subject.clone();
         let mut pinned = std::collections::BTreeMap::new();
+        let mut targets = std::collections::BTreeMap::new();
         for link in reads {
             let value = match links.target(&link)? {
                 Some(target) => {
+                    targets.insert(link.clone(), target.values.clone());
                     pinned.insert(
                         link.clone(),
                         norn_ir::FactRef::new(
@@ -588,6 +631,7 @@ pub fn evaluate_linked(
         if let Err(outcome) = result {
             let mut failure = law_failure(artifact, &law, outcome, invariant_failure)?;
             failure.links = pinned;
+            failure.values = law_operands(&law, values, &targets);
             failures.push(failure);
         }
     }

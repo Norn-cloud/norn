@@ -282,6 +282,13 @@ impl<X> Refusable for CommitError<X> {
         {
             refusal.reason = Some(invariant_reason(key, owner, version, id, outcome));
         }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            refusal.reason = Some(law_reason(key, failure));
+        }
         refusal.retryable = matches!(
             self,
             Self::Conflict { .. }
@@ -418,6 +425,22 @@ fn invariant_reason(
             invariant_id: id.clone(),
             version: version.to_owned(),
         }),
+    }
+}
+
+/// DIAG-REASON-1: a governing law's refusal names the law, its subject and
+/// the values it checked, pinned to the exact law declaration.
+fn law_reason(key: &crate::FactKey, failure: &crate::governing_laws::LawFailure) -> RefusalReason {
+    let law = if let norn_ir::DataQualityRuleRef::Law { law_id, .. } = &failure.rule_ref {
+        law_id.clone()
+    } else {
+        String::new()
+    };
+    RefusalReason {
+        law,
+        subject: key.to_string(),
+        values: failure.values.clone(),
+        pin: Some(failure.rule_ref.clone()),
     }
 }
 
@@ -620,6 +643,12 @@ impl<X> Refusable for DecisionRefusal<X> {
         } = self
         {
             Some(invariant_reason(key, owner, version, id, outcome))
+        } else if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            Some(law_reason(key, failure))
         } else {
             self.lifecycle_reason()
         };
