@@ -133,10 +133,7 @@ impl PseudonymKey {
     pub fn keyed_id(&self, id: &str) -> String {
         let mut message = b"norn.row-id/1\0".to_vec();
         message.extend_from_slice(id.as_bytes());
-        hmac(&self.0, &message)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        crate::uploads::hex(&hmac(&self.0, &message))
     }
 }
 
