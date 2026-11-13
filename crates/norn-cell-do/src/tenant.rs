@@ -263,6 +263,9 @@ pub struct Tenant<E: SqlEngine> {
     derived: Option<DerivedQuestions>,
     /// D102: the link to the tenant analytics engine, once the host has one.
     engine: Option<crate::olap::Exchange>,
+    /// A cell this build seeded itself: never provisioned, not even as a
+    /// replay of a submission equal to its seed.
+    seeded: bool,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -297,6 +300,7 @@ impl<E: SqlEngine> Tenant<E> {
             handles: handles(handle_key)?,
             derived,
             engine: None,
+            seeded: false,
         })
     }
 
@@ -324,6 +328,7 @@ impl<E: SqlEngine> Tenant<E> {
             handles: None,
             derived: None,
             engine: None,
+            seeded: true,
         })
     }
 
@@ -634,6 +639,11 @@ impl<E: SqlEngine> Tenant<E> {
                 )?;
                 return Err(provision::unopenable(Some(reason)).with_cause(reason));
             }
+        }
+        if self.seeded {
+            // The seed is this build's, not a provisioning: a submission
+            // equal to it must not answer as its replay.
+            return Err(provision::already_provisioned());
         }
         let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
         if matches!(self.state, State::Vacant) {

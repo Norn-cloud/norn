@@ -33150,7 +33150,7 @@
             "items": {
               "$ref": "#/components/schemas/NornArtifactEnvelope"
             },
-            "description": "The tenant's artifact envelopes; none in a reserved namespace (core., std.)."
+            "description": "The tenant's artifact envelopes; none in a reserved namespace (core., std.) and none a cell-owned type (norn.ObservedLinkClaim.entity, norn.SourceEvidence.interface)."
           },
           "baseSha256": {
             "type": "string",

@@ -12106,7 +12106,7 @@ export interface components {
         };
         /** @description `POST /v1/cell:provision`. */
         ProvisionRequest: {
-            /** @description The tenant's artifact envelopes; none in a reserved namespace (core., std.). */
+            /** @description The tenant's artifact envelopes; none in a reserved namespace (core., std.) and none a cell-owned type (norn.ObservedLinkClaim.entity, norn.SourceEvidence.interface). */
             artifacts: components["schemas"]["NornArtifactEnvelope"][];
             /**
              * @description Lower-case hex SHA-256 of the trusted base the artifacts were
