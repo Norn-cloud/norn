@@ -770,10 +770,7 @@ pub(crate) fn check_model_set(
         }
     }
     findings.extend(crate::model_privacy::check(
-        &models,
-        artifacts,
-        base,
-        finding,
+        &models, artifacts, base, finding,
     ));
     findings
 }

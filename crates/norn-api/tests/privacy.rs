@@ -383,13 +383,13 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
 /// auditor's, and an auditor's reveal with its receipt. `NORN_BLESS=1`
 /// rewrites them; review the diff.
 const PARTY_ROWS: [(&str, &str, &str); 6] = [
-        ("demo/party/0001", "Amira Haddad", "person"),
-        ("demo/party/0002", "Nile Gold Traders", "organization"),
-        ("demo/party/0003", "Amira Haddad", "person"),
-        ("demo/party/0004", "Karim Mansour", "person"),
-        ("demo/party/0005", "Delta Refinery", "organization"),
-        ("demo/party/0006", "Salma Farouk", "person"),
-    ];
+    ("demo/party/0001", "Amira Haddad", "person"),
+    ("demo/party/0002", "Nile Gold Traders", "organization"),
+    ("demo/party/0003", "Amira Haddad", "person"),
+    ("demo/party/0004", "Karim Mansour", "person"),
+    ("demo/party/0005", "Delta Refinery", "organization"),
+    ("demo/party/0006", "Salma Farouk", "person"),
+];
 
 /// The Party-shaped cell the retained documents are read from.
 fn party_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {

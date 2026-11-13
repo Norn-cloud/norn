@@ -1,5 +1,5 @@
 {
-  "guardId": 4,
+  "guardId": 3,
   "segments": [
     {
       "text": "Show weekly refunds for "
@@ -42,7 +42,7 @@
     }
   ],
   "reveals": [
-    6
+    5
   ],
   "complete": true
 }

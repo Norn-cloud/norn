@@ -1,6 +1,6 @@
 {
-  "guardId": 4,
-  "receiptHash": "0430d4b88551cb29b364c99a3177a950476002d6780fe42a745f5360aed2e719",
+  "guardId": 3,
+  "receiptHash": "ab3afa8dc2a03c4ed78ce4bbc93720e93cf902fa912aa69f7f789e8d2e9ca1bd",
   "safePrompt": "Show weekly refunds for [CUSTOMER_1]: she was charged twice on card [CARD_1]. Reach her at [EMAIL_1] or [PHONE_1].",
   "tokens": [
     {
