@@ -3,12 +3,12 @@
 //! `WidgetMachine.lifecycle` names an object type's lifecycle, the page transitions that fire one
 //! of its transitions (`syncs`), and the lifecycle states each page state may be shown in
 //! (`assumes`). The page and the lifecycle are lowered to the shared soundness core and composed
-//! ([`soundness::compose`]): a synced page transition fires only together with its lifecycle
+//! (`soundness::compose`): a synced page transition fires only together with its lifecycle
 //! transition, every other page transition fires while the object stays put, and every lifecycle
 //! transition the page does not fire (another actor, a timer, an event) may fire at any time. The
 //! page opens on the object in any lifecycle state it can be in that the opening state assumes.
 //!
-//! A product state ends only when both sides have ([`compose::product_ending`]), so these laws
+//! A product state ends only when both sides have (`compose::product_ending`), so these laws
 //! catch what neither machine shows alone:
 //!
 //! - a page that shows an ending while the object has not reached one, with no way on, is stuck
@@ -52,7 +52,7 @@ const ASSUMPTION_VIOLATED: &str = "widget.lifecycle.assumption_violated";
 const UNCOVERED_TRANSITION: &str = "widget.lifecycle.uncovered_transition";
 
 /// Every code these laws emit besides the composition's own refusals
-/// ([`compose::ComposeError::code`], `lifecycle.soundness.*`).
+/// (`compose::ComposeError::code`, `lifecycle.soundness.*`).
 pub const CODES: [&str; 8] = [
     UNKNOWN_LIFECYCLE,
     UNKNOWN_REFERENCE,
