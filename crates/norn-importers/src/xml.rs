@@ -89,28 +89,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Element, String> {
                 let name = std::str::from_utf8(start.name().as_ref())
                     .map_err(|error| error.to_string())?
                     .to_owned();
-                let mut attributes = Vec::new();
-                let mut keys = std::collections::BTreeSet::new();
-                for attribute in start.attributes() {
-                    let attribute = attribute.map_err(|error| error.to_string())?;
-                    if attributes.len() >= MAX_ATTRIBUTES {
-                        return Err("too many attributes on one element".into());
-                    }
-                    let key = std::str::from_utf8(attribute.key.as_ref())
-                        .map_err(|error| error.to_string())?
-                        .to_owned();
-                    if !keys.insert(key.clone()) {
-                        return Err(format!("duplicate attribute {key}"));
-                    }
-                    let value = attribute
-                        .decoded_and_normalized_value(
-                            quick_xml::XmlVersion::Implicit1_0,
-                            reader.decoder(),
-                        )
-                        .map_err(|error| error.to_string())?
-                        .into_owned();
-                    attributes.push((key, value));
-                }
+                let attributes = attributes(&start, reader.decoder())?;
                 let element = Element {
                     name,
                     attributes,
@@ -166,6 +145,34 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Element, String> {
     let mut root = root.ok_or("no root element")?;
     finish(&mut root);
     Ok(root)
+}
+
+/// The attributes of `start`, decoded and normalized: at most
+/// [`MAX_ATTRIBUTES`], each name once.
+fn attributes(
+    start: &quick_xml::events::BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+) -> Result<Vec<(String, String)>, String> {
+    let mut attributes = Vec::new();
+    let mut keys = std::collections::BTreeSet::new();
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|error| error.to_string())?;
+        if attributes.len() >= MAX_ATTRIBUTES {
+            return Err("too many attributes on one element".into());
+        }
+        let key = std::str::from_utf8(attribute.key.as_ref())
+            .map_err(|error| error.to_string())?
+            .to_owned();
+        if !keys.insert(key.clone()) {
+            return Err(format!("duplicate attribute {key}"));
+        }
+        let value = attribute
+            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| error.to_string())?
+            .into_owned();
+        attributes.push((key, value));
+    }
+    Ok(attributes)
 }
 
 fn close(element: Element, stack: &mut [Element], root: &mut Option<Element>) {
