@@ -297,9 +297,24 @@ const WriterInput = Schema.Struct({
   id: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount, document_total: Schema.optionalKey(Amount),
   correction_reason: Schema.String, correction_evidence: Schema.String,
 })
-const LineValues = Schema.Struct({ id: Schema.String, document_id: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount })
-const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Literals(["USD"]), total: Amount, lines_total: Schema.NullOr(Amount) })
-const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
+// The writer reads whole slice records (a closed schema names every member).
+const LineValues = Schema.Struct({
+  id: Schema.String, document_id: Schema.String, line_no: Schema.Int, description: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount,
+  review: Schema.Literals(["extracted", "corrected"]), correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
+})
+const DocumentValues = Schema.Struct({
+  id: Schema.String, doc_number: Schema.String, kind: Schema.Literals(["receipt", "invoice", "expense_report"]),
+  vendor: Schema.String, issued_on: Schema.NullOr(Schema.String), currency: Schema.Literals(["USD"]),
+  total: Amount, lines_total: Schema.NullOr(Amount), line_count: Schema.Int,
+  document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String,
+  extractor: Schema.String, extractor_version: Schema.String, correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
+})
+const EvidenceValues = Schema.Struct({
+  id: Schema.String, subject_property: Schema.String, subject_type: Schema.NullOr(Schema.String), subject_key: Schema.NullOr(Schema.String),
+  document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String, page: Schema.Int,
+  bbox_x: Amount, bbox_y: Amount, bbox_w: Amount, bbox_h: Amount,
+  text: Schema.String, extractor: Schema.String, extractor_version: Schema.String, confidence_bp: Schema.NullOr(Schema.Int),
+})
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
   currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount), lines_total: Schema.optionalKey(Amount),

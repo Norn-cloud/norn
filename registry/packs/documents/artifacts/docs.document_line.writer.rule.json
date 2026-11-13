@@ -138,14 +138,64 @@
             "document": {
               "additionalProperties": false,
               "properties": {
+                "corrected_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_evidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "currency": {
                   "enum": [
                     "USD"
                   ],
                   "type": "string"
                 },
+                "doc_number": {
+                  "type": "string"
+                },
+                "document_digest": {
+                  "type": "string"
+                },
+                "document_uri": {
+                  "type": "string"
+                },
+                "extractor": {
+                  "type": "string"
+                },
+                "extractor_version": {
+                  "type": "string"
+                },
                 "id": {
                   "type": "string"
+                },
+                "issued_on": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "enum": [
+                    "receipt",
+                    "invoice",
+                    "expense_report"
+                  ],
+                  "type": "string"
+                },
+                "line_count": {
+                  "type": "integer"
                 },
                 "lines_total": {
                   "type": [
@@ -153,34 +203,115 @@
                     "null"
                   ]
                 },
+                "media_type": {
+                  "type": "string"
+                },
                 "total": {
                   "type": "number"
+                },
+                "vendor": {
+                  "type": "string"
                 }
               },
               "required": [
                 "id",
+                "doc_number",
+                "kind",
+                "vendor",
+                "issued_on",
                 "currency",
                 "total",
-                "lines_total"
+                "lines_total",
+                "line_count",
+                "document_uri",
+                "document_digest",
+                "media_type",
+                "extractor",
+                "extractor_version",
+                "correction_reason",
+                "corrected_by",
+                "correction_evidence"
               ],
               "type": "object"
             },
             "evidence": {
               "additionalProperties": false,
               "properties": {
+                "bbox_h": {
+                  "type": "number"
+                },
+                "bbox_w": {
+                  "type": "number"
+                },
+                "bbox_x": {
+                  "type": "number"
+                },
+                "bbox_y": {
+                  "type": "number"
+                },
+                "confidence_bp": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "document_digest": {
+                  "type": "string"
+                },
+                "document_uri": {
+                  "type": "string"
+                },
+                "extractor": {
+                  "type": "string"
+                },
+                "extractor_version": {
+                  "type": "string"
+                },
                 "id": {
                   "type": "string"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "integer"
                 },
                 "subject_key": {
                   "type": [
                     "string",
                     "null"
                   ]
+                },
+                "subject_property": {
+                  "type": "string"
+                },
+                "subject_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": "string"
                 }
               },
               "required": [
                 "id",
-                "subject_key"
+                "subject_property",
+                "subject_type",
+                "subject_key",
+                "document_uri",
+                "document_digest",
+                "media_type",
+                "page",
+                "bbox_x",
+                "bbox_y",
+                "bbox_w",
+                "bbox_h",
+                "text",
+                "extractor",
+                "extractor_version",
+                "confidence_bp"
               ],
               "type": "object"
             },
@@ -190,10 +321,31 @@
                 "amount": {
                   "type": "number"
                 },
+                "corrected_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_evidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "currency": {
                   "enum": [
                     "USD"
                   ],
+                  "type": "string"
+                },
+                "description": {
                   "type": "string"
                 },
                 "document_id": {
@@ -201,13 +353,29 @@
                 },
                 "id": {
                   "type": "string"
+                },
+                "line_no": {
+                  "type": "integer"
+                },
+                "review": {
+                  "enum": [
+                    "extracted",
+                    "corrected"
+                  ],
+                  "type": "string"
                 }
               },
               "required": [
                 "id",
                 "document_id",
+                "line_no",
+                "description",
                 "currency",
-                "amount"
+                "amount",
+                "review",
+                "correction_reason",
+                "corrected_by",
+                "correction_evidence"
               ],
               "type": "object"
             }
