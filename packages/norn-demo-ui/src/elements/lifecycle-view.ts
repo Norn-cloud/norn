@@ -53,6 +53,8 @@ export interface WitnessMove {
 export interface LifecycleFinding {
   readonly code: string
   readonly message: string
+  /** The page state the run ends in, from the widget's own machine (the host knows it, not the witness). */
+  readonly pageState?: string
   readonly witness: { readonly steps: readonly { readonly edge: number; readonly moves: readonly WitnessMove[] }[] }
 }
 
@@ -82,8 +84,10 @@ export interface LifecycleViewOptions {
   /** Findings with a witness for this lifecycle (`widget.lifecycle.*`). */
   readonly findings?: readonly LifecycleFinding[]
   readonly locale?: Locale
-  /** A state's or transition's display name; defaults to its id with spaces. */
+  /** A state's or transition's display name; defaults to its id in words, sentence case. */
   readonly label?: (id: string) => string
+  /** Technical view: each finding also shows its code and the checker's own words. */
+  readonly technical?: boolean
   /** Open one finding's stepper at a step (a deep link, or a design specimen). */
   readonly open?: { readonly finding: number; readonly step: number }
 }
@@ -96,6 +100,9 @@ const WORDS = {
     other: (n: number) => `${n} in states this view does not list`, atLeast: (n: string) => `≥ ${n}`,
     findings: "Counterexamples the checker found", step: (i: string, n: string) => `Step ${i} of ${n}`, prev: "Previous step", next: "Next step",
     page: "page", object: "object", opened: "Where the page opens",
+    stuck: (page: string, type: string, state: string) => `The page can show “${page}” while the ${type} is still “${state}”, and nothing can finish it.`,
+    unknown: (page: string, type: string, state: string) => `The page can show “${page}” while the ${type} is “${state}”; whether it can finish depends on the rules.`,
+    unexpected: (page: string, type: string, state: string) => `The page shows “${page}” while the ${type} is “${state}”, which it does not expect.`,
     notServed: "This cell does not serve lifecycle counts yet.", failed: "The cell did not answer.", retry: "Try again", again: "Asking again shortly.",
   },
   ar: {
@@ -105,6 +112,9 @@ const WORDS = {
     other: (n: number) => `${n} في حالات لا يعرضها هذا العرض`, atLeast: (n: string) => `${n} على الأقل`,
     findings: "أمثلة مضادة وجدها المدقق", step: (i: string, n: string) => `الخطوة ${i} من ${n}`, prev: "الخطوة السابقة", next: "الخطوة التالية",
     page: "الصفحة", object: "الكائن", opened: "حيث تُفتح الصفحة",
+    stuck: (page: string, type: string, state: string) => `قد تعرض الصفحة «${page}» بينما ${type} ما زال «${state}»، ولا شيء يستطيع إنهاءه.`,
+    unknown: (page: string, type: string, state: string) => `قد تعرض الصفحة «${page}» بينما ${type} «${state}»؛ وإمكان إنهائه يتوقف على القواعد.`,
+    unexpected: (page: string, type: string, state: string) => `تعرض الصفحة «${page}» بينما ${type} «${state}»، وهذا ما لا تتوقعه.`,
     notServed: "هذه الخلية لا تقدّم أعداد دورة الحياة بعد.", failed: "لم تُجب الخلية.", retry: "حاول مرة أخرى", again: "سنسأل مرة أخرى بعد قليل.",
   },
 } as const
@@ -185,13 +195,22 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const { lifecycle } = options
   const locale = options.locale ?? "en"
   const w = WORDS[locale]
-  const label = options.label ?? ((id: string) => id.replaceAll("_", " "))
+  // The definition's ids in words, sentence case ("on_accepted" reads "On accepted").
+  const label = options.label ?? ((id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) })
   const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en")
   const findings = (options.findings ?? []).filter((finding) => finding.witness.steps.length > 0)
   adoptLifecycleStyles(root.ownerDocument)
   const endings = new Map((lifecycle.endings ?? []).map((ending) => [ending.state, ending.outcome]))
   const role = (state: string) =>
     [lifecycle.initial.includes(state) ? w.start : "", lifecycle.terminal.includes(state) ? w.end : endings.get(state) === "resting" ? w.rests : ""].filter(Boolean).join(" · ")
+  /** A finding in the reader's words: the page state and the object's state at the end of its run. */
+  const headline = (finding: LifecycleFinding) => {
+    const object = stepState(lifecycle, finding, finding.witness.steps.length).state
+    if (finding.pageState === undefined || object === null) return finding.message
+    const type = locale === "en" ? options.title.toLowerCase() : options.title
+    const words = finding.code.endsWith(".stuck") ? w.stuck : finding.code.endsWith(".completion_unknown") ? w.unknown : finding.code.endsWith(".assumption_violated") ? w.unexpected : null
+    return words === null ? finding.message : words(label(finding.pageState), type, label(object))
+  }
   const columns = layout(lifecycle)
   const column = new Map(columns.flatMap((states, index) => states.map((state) => [state, index] as const)))
   root.innerHTML = `
@@ -217,7 +236,8 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
         <h3>${escape(w.findings)}</h3>
         ${findings.map((finding, index) => `
           <article class="norn-life-finding" data-finding="${index}">
-            <button type="button" data-pick="${index}">${escape(finding.message)}</button>
+            <button type="button" data-pick="${index}">${escape(headline(finding))}</button>
+            ${options.technical ? `<p class="norn-life-technical"><code>${escape(finding.code)}</code> ${escape(finding.message)}</p>` : ""}
             <div data-region="stepper" hidden>
               <ol class="norn-life-steps">
                 <li data-step="0">${escape(w.opened)}</li>

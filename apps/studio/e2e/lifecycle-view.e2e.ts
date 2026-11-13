@@ -46,8 +46,17 @@ test("stepper: a counterexample is walked step by step; taken transitions and th
   await expect(view.getByText("Step 0 of 4")).toBeVisible()
   await expect(view.locator("[data-current]")).toHaveCount(0)
   // Closing the finding ends the walk.
-  await view.getByRole("button", { name: /page state `done`/ }).click()
+  await view.getByRole("button", { name: "The page can show “Done” while the purchase order is still “Draft”, and nothing can finish it." }).click()
   await expect(view.getByText(/Step \d of 4/)).toBeHidden()
+})
+
+test("technical: the reader's sentence first, the code and the checker's own words under it; steps read as the definition names them", async ({ page }) => {
+  let view = await specimen(page, "lifecycle-view/stepper")
+  await expect(view.getByText("widget.lifecycle.stuck")).toHaveCount(0)
+  await expect(view.locator('[data-step="3"]')).toContainText("Reject")
+  view = await specimen(page, "lifecycle-view/technical")
+  await expect(view.getByRole("button", { name: /The page can show “Done”/ })).toBeVisible()
+  await expect(view.locator(".norn-life-technical")).toContainText("widget.lifecycle.stuck page state `done` with the object `draft`")
 })
 
 test("locale: Arabic runs right to left with Arabic digits and words", async ({ page }) => {
@@ -55,6 +64,7 @@ test("locale: Arabic runs right to left with Arabic digits and words", async ({ 
   await expect(view.locator(".norn-life")).toHaveAttribute("dir", "rtl")
   await expect(card(view, "draft").locator("[data-count]")).toHaveText("١٢")
   await expect(view.getByText("الخطوة ٤ من ٤")).toBeVisible()
+  await expect(view.getByRole("button", { name: "قد تعرض الصفحة «تم» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible()
 })
 
 test("not served: a cell without the facets route says so, never counting forever; Try again asks again", async ({ page }) => {

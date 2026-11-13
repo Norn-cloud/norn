@@ -98,6 +98,7 @@ const facets = (values: Record<string, number>, extra: Partial<FacetsAnswer> = {
 const STUCK: LifecycleFinding = {
   code: "widget.lifecycle.stuck",
   message: "page state `done` with the object `draft`: no ending of both is reachable",
+  pageState: "done",
   witness: { steps: [
     { edge: 0, moves: [{ side: "ui", label: "submit" }] },
     { edge: 3, moves: [{ side: "ui", label: "on-accepted" }, { side: "backend", label: "submit" }] },
@@ -133,7 +134,8 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   "lifecycle-view/refused": () => <LifecycleSpecimen answers={[{ status: 403, body: { code: "authz.denied" } }]} />,
   "lifecycle-view/live": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7 }), facets({ draft: 11, submitted: 8 })]} />,
   "lifecycle-view/stepper": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, rejected: 2, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 3 }} />,
-  "lifecycle-view/rtl": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 4 }} locale="ar" label={(id) => ({ draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", rejected: "مرفوض", received: "مستلم", cancelled: "ملغى", status: "الحالة", submit: "تقديم", approve: "اعتماد", reject: "رفض", revise: "مراجعة", receive: "استلام", cancel: "إلغاء", "on-accepted": "عند القبول" }[id] ?? id)} />,
+  "lifecycle-view/technical": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, rejected: 2, received: 31 })]} findings={[STUCK]} technical open={{ finding: 0, step: 4 }} />,
+  "lifecycle-view/rtl": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 4 }} locale="ar" label={(id) => ({ done: "تم", draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", rejected: "مرفوض", received: "مستلم", cancelled: "ملغى", status: "الحالة", submit: "تقديم", approve: "اعتماد", reject: "رفض", revise: "مراجعة", receive: "استلام", cancel: "إلغاء", "on-accepted": "عند القبول" }[id] ?? id)} />,
   "locale/facts": () => <OrderFacts />,
   "locale/message": () => (
     <p className="max-w-xl space-y-2">

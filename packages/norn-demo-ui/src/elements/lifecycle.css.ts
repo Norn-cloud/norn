@@ -33,6 +33,8 @@ export const LIFECYCLE_CSS = `
 .norn-life-finding[aria-current] { border-color: var(--primary, #2563eb); }
 .norn-life-finding button { font: inherit; text-align: start; border: 0; padding: 0; background: none; color: inherit; cursor: pointer; }
 .norn-life-finding button:focus-visible, .norn-life-step-controls button:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; border-radius: .25rem; }
+.norn-life-technical { margin: 0; font-size: .75rem; color: var(--muted-foreground, #666); }
+.norn-life-technical code { font-family: var(--font-mono, ui-monospace, monospace); }
 .norn-life-steps { margin: 0; padding-inline-start: 1.25rem; display: grid; gap: .25rem; font-size: .8125rem; }
 .norn-life-steps li[aria-current] { font-weight: 600; color: var(--primary, #2563eb); }
 .norn-life-side { display: inline-block; min-width: 3.25rem; font-size: .6875rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #666); }

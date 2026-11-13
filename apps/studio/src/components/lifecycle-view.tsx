@@ -7,6 +7,7 @@ import { loadChecker } from "../lib/canvas/checker.ts"
 import { scopedHostFetch, useStudioScope } from "../lib/definitions.ts"
 import { liveAnswer } from "../lib/live-reads.ts"
 import { useLocale } from "../lib/locale.tsx"
+import { useView } from "../lib/view.tsx"
 import { transport } from "../lib/transport.ts"
 
 /**
@@ -21,6 +22,7 @@ const DOCUMENT = viewDocument as unknown as LifecycleViewDocument
 
 export function LifecycleView({ concept, lifecycle }: { readonly concept: Concept; readonly lifecycle: Lifecycle }) {
   const { locale } = useLocale()
+  const { view: mode } = useView()
   const scope = useStudioScope().data ?? null
   const definitions = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
@@ -53,17 +55,22 @@ export function LifecycleView({ concept, lifecycle }: { readonly concept: Concep
       changes: (listener) => liveAnswer(path, scope, listener),
       findings,
       locale: locale === "ar" ? "ar" : "en",
-      label: (id) => field?.valueLabels?.get(id) ?? id.replaceAll("_", " "),
+      technical: mode === "technical",
+      // A state's label from the definition; a transition or page state id in words, as the definition names it.
+      label: (id) => field?.valueLabels?.get(id) ?? sentence(id),
     }
     host.replaceChildren(view)
     return () => view.remove()
     // A different type, property, scope, language or set of findings draws a fresh view.
-  }, [host, concept.name, lifecycle.property, scope?.orgId, scope?.environmentId, locale, findingsKey])
+  }, [host, concept.name, lifecycle.property, scope?.orgId, scope?.environmentId, locale, findingsKey, mode])
 
   return <div ref={setHost} data-testid="lifecycle-view" />
 }
 
-type Envelope = { readonly artifactId?: string; readonly kind?: string; readonly payload?: { readonly ux?: { readonly pages?: readonly { readonly machine?: { readonly lifecycle?: { readonly objectType?: string; readonly property?: string } } }[] } } }
+const sentence = (id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) }
+
+type PageMachine = { readonly initialStateId?: string; readonly transitions?: readonly { readonly transitionId: string; readonly target: string }[]; readonly lifecycle?: { readonly objectType?: string; readonly property?: string } }
+type Envelope = { readonly artifactId?: string; readonly kind?: string; readonly payload?: { readonly ux?: { readonly pages?: readonly { readonly machine?: PageMachine }[] } } }
 
 /** The checker's `widget.lifecycle.*` findings with a run, for widgets whose page machines act on this lifecycle. */
 function findingsFor(objectType: string, property: string, definitions: readonly unknown[] | undefined, checker: ((artifacts: readonly unknown[]) => { readonly diagnostics: { readonly diagnostics: readonly unknown[] } }) | undefined): LifecycleFinding[] {
@@ -74,7 +81,15 @@ function findingsFor(objectType: string, property: string, definitions: readonly
       .map((artifact) => artifact.artifactId),
   )
   if (acting.size === 0) return []
-  return (checker(definitions).diagnostics.diagnostics as readonly (LifecycleFinding & { readonly artifactId?: string })[]).filter(
-    (finding) => finding.code.startsWith("widget.lifecycle.") && finding.witness !== undefined && acting.has(finding.artifactId),
-  )
+  const machineOf = (artifactId: string | undefined) =>
+    (definitions as readonly Envelope[]).find((artifact) => artifact.artifactId === artifactId)?.payload?.ux?.pages?.find((page) => page.machine?.lifecycle?.objectType === objectType)?.machine
+  return (checker(definitions).diagnostics.diagnostics as readonly (LifecycleFinding & { readonly artifactId?: string })[])
+    .filter((finding) => finding.code.startsWith("widget.lifecycle.") && finding.witness !== undefined && acting.has(finding.artifactId))
+    .map((finding) => {
+      // Where the run leaves the page: the target of its last page move in the widget's own machine.
+      const machine = machineOf(finding.artifactId)
+      const lastPage = [...finding.witness.steps].reverse().flatMap((step) => step.moves).find((move) => move.side === "ui")?.label
+      const pageState = lastPage === undefined ? machine?.initialStateId : machine?.transitions?.find((transition) => transition.transitionId === lastPage)?.target
+      return pageState === undefined ? finding : { ...finding, pageState }
+    })
 }
