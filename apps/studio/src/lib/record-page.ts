@@ -1,7 +1,7 @@
 import type { ObjectVersion } from "../evidence/review.ts"
 import type { Concept, Field } from "./catalog.ts"
 import { conceptTitle } from "./catalog.ts"
-import type { LinkPage } from "./transport.ts"
+import type { LinkPage, Schemas } from "./transport.ts"
 
 /** Facts a record's title already shows; never repeated as key facts. */
 const TITLE_FIELDS = new Set(["id", "label", "display_name"])
@@ -16,12 +16,7 @@ export function keyFacts(concept: Pick<Concept, "fields">): Field[] {
 }
 
 /** The server's counts of a record's visible links by type and direction (HOST-READ-4b), as `/links` sends them on a first page. */
-export interface LinkCounts {
-  readonly groups: readonly { readonly sourceType: string; readonly link: string; readonly targetType: string; readonly direction: "out" | "in"; readonly count: number }[]
-  /** False when the server stopped counting at `bound`: each count is then a lower bound. */
-  readonly complete: boolean
-  readonly bound: number
-}
+export type LinkCounts = Schemas["NornLinkCounts"]
 
 export type CountedLinkPage = LinkPage & { readonly counts?: LinkCounts }
 

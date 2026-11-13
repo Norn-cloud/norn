@@ -276,11 +276,12 @@ fn visible_batch<E: SqlEngine>(
                     },
                 )?;
                 // A self-link counts once, as outgoing.
-                let direction = if source.id == id && reader.model().is_a(&source.object_type, object_type) {
-                    NornLinkDirection::Out
-                } else {
-                    NornLinkDirection::In
-                };
+                let direction =
+                    if source.id == id && reader.model().is_a(&source.object_type, object_type) {
+                        NornLinkDirection::Out
+                    } else {
+                        NornLinkDirection::In
+                    };
                 Ok((held, direction))
             })
             .collect::<Result<Vec<(bool, NornLinkDirection)>, norn_cell::CellError>>()
@@ -295,7 +296,12 @@ fn visible_batch<E: SqlEngine>(
 
 /// Count one visible link into the scan's groups; a link past the bound
 /// marks the counts incomplete instead. True while counting continues.
-fn count_link(scan: &mut LinkScan<'_>, visible: usize, edge: &LinkEdgeRecord, direction: NornLinkDirection) -> bool {
+fn count_link(
+    scan: &mut LinkScan<'_>,
+    visible: usize,
+    edge: &LinkEdgeRecord,
+    direction: NornLinkDirection,
+) -> bool {
     let Some((groups, complete)) = scan.counts.as_mut() else {
         return false;
     };
@@ -356,7 +362,8 @@ fn scan_links<E: SqlEngine>(
             }
             Ok((page.next_after, batch))
         })?;
-        for (edge, direction) in visible_batch(host, access, actor, (object_type, id), scan, batch)? {
+        for (edge, direction) in visible_batch(host, access, actor, (object_type, id), scan, batch)?
+        {
             visible = visible.saturating_add(1);
             if visible > MAX_QUERY_SCAN {
                 return Err(scan_bound_exceeded());
@@ -464,13 +471,15 @@ pub fn get_object_links<E: SqlEngine>(
     let counts = scan.counts.map(|(groups, complete)| NornLinkCounts {
         groups: groups
             .into_iter()
-            .map(|((direction, source_type, link, target_type), count)| NornLinkCount {
-                source_type,
-                link,
-                target_type,
-                direction,
-                count,
-            })
+            .map(
+                |((direction, source_type, link, target_type), count)| NornLinkCount {
+                    source_type,
+                    link,
+                    target_type,
+                    direction,
+                    count,
+                },
+            )
             .collect(),
         complete,
         bound: LINK_COUNT_BOUND,

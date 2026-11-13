@@ -25,7 +25,7 @@ export function subRead<T>(read: Read<unknown>, prefix: string, document: T): Re
 }
 
 /** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`), with its counts when it sends them. */
-function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts }>): Read<CountedLinkPage> {
+function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }>): Read<CountedLinkPage> {
   const { objectType, id, items, next, counts } = read.document
   return { ...read, document: { objectType, id, items, hasMore: typeof next === "string", ...counts ? { counts } : {} } }
 }
@@ -87,7 +87,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     object: async (objectType, id) => {
       const [object, links, source] = await Promise.all([
         read<ObjectRecord>(objectPath(objectType, id)),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts }>(objectPath(objectType, id, "links")),
+        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath(objectType, id, "links")),
         // 404: no mapping produced this object (or its source is not readable): there is no lineage to show.
         read<SourceLineage>(objectPath(objectType, id, "lineage")),
       ])

@@ -13,9 +13,9 @@
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
+use norn_api::object_links::LINK_COUNT_BOUND;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_routes::ObjectAccess;
-use norn_api::object_links::LINK_COUNT_BOUND;
 use norn_api::objects::{NornLinkCount, NornLinkDirection, NornObjectLinkPage};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
@@ -278,7 +278,10 @@ fn a_first_page_counts_visible_links_by_type_and_direction() {
             assert_eq!(counts.bound, LINK_COUNT_BOUND);
             assert_eq!(
                 counts.groups,
-                [related(NornLinkDirection::Out, out), related(NornLinkDirection::In, into)],
+                [
+                    related(NornLinkDirection::Out, out),
+                    related(NornLinkDirection::In, into)
+                ],
                 "{actor} {limit}"
             );
         }
@@ -322,7 +325,10 @@ fn counts_past_the_bound_are_lower_bounds() {
     let page = links(&host, "full", "a", &params(None, None)).unwrap();
     let counts = page.counts.expect("a first page counts");
     assert!(!counts.complete);
-    assert_eq!(counts.groups, [related(NornLinkDirection::Out, LINK_COUNT_BOUND)]);
+    assert_eq!(
+        counts.groups,
+        [related(NornLinkDirection::Out, LINK_COUNT_BOUND)]
+    );
     assert_eq!(page.items.len(), 50);
     assert!(page.next.is_some());
 }
