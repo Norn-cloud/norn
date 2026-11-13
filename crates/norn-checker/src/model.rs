@@ -23,7 +23,8 @@
 //! type (#1171 M4) is admitted only when that type resolves, has text
 //! properties `subject` and `model_version`, and declares every output as a
 //! property of the same type (a decimal's scale and unit, an enum's values
-//! as a superset) and the same nullability.
+//! as a superset) and the same nullability. A model never trains on
+//! personal data that is not pseudonymized ([`crate::model_privacy`]).
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
@@ -768,6 +769,9 @@ pub(crate) fn check_model_set(
             }
         }
     }
+    findings.extend(crate::model_privacy::check(
+        &models, artifacts, base, finding,
+    ));
     findings
 }
 

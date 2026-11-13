@@ -1441,6 +1441,211 @@
         ]
       }
     },
+    "/v1/guard/{id}:restore": {
+      "post": {
+        "tags": [
+          "crate::privacy_guard"
+        ],
+        "summary": "PRIVACY-GUARD-1: restore a text that uses a guard's tokens for `actor`.",
+        "description": "# Errors\nAn invalid body (400), an unknown guard (404), a denied gate (403) or a\nhost failure.",
+        "operationId": "guard_restore",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The guardId of the guarded prompt.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NornRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The text with each token restored where the reader may reveal it (each a logged reveal), else projected or kept.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornRestored"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`guard.not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/guard:prompt": {
+      "post": {
+        "tags": [
+          "crate::privacy_guard"
+        ],
+        "summary": "PRIVACY-GUARD-1: tokenize a prompt for a model call (see the module docs).",
+        "description": "# Errors\nAn invalid body (400), a denied or unreadable context record (404), or a\nhost failure. Nothing is sent anywhere: the caller sends `safePrompt`.",
+        "operationId": "guard_prompt",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NornGuardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The tokenized prompt a model may receive, its tokens (never their values) and the receipt that keeps the token map in the cell.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornGuarded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): a context record is absent or not readable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/mcp": {
       "post": {
         "tags": [
@@ -2378,6 +2583,131 @@
           },
           "503": {
             "description": "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/objects/{type}/{id}/reveal": {
+      "post": {
+        "tags": [
+          "crate::privacy"
+        ],
+        "summary": "PRIVACY-2: reveal one marked property of one readable object to `actor`.\nThe row gate (Population and Values) applies first, so an unreadable\nobject refuses like an absent one. The PDP then decides `norn.reveal` for\nevery effective marking of the property; the receipt is committed before\nthe value is returned, so no value leaves without one.",
+        "description": "# Errors\nA denied gate (403), an absent, invisible or quarantined object (404), a\nproperty that is not marked or not present (404 `object.not_found`), a\ndenied reveal (403), an invalid body (400), or a host failure.",
+        "operationId": "reveal_object_property",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The object type (concept) name; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The object identity; percent-escapes are decoded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NornRevealRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The stored value of the marked property and the ledger receipt of this reveal: who, what, when and why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornRevealed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): a malformed body, key or purpose.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, or the caller's policy does not allow `norn.reveal` for every marking on the property.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`object.not_found`): the object is absent, quarantined or not readable, or the property is not marked; these are not told apart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the object changed during the reveal (`object.snapshot_moved`, retryable) or the key was used for another reveal (`reveal.idempotency_conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7904,6 +8234,154 @@
           "The Unified Code for Units of Measure (case-sensitive codes).",
           "A QUDT unit (`unit:` local name)."
         ]
+      },
+      "NornGuardRef": {
+        "type": "object",
+        "description": "One record whose fields are context for the call.",
+        "required": [
+          "objectType",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuardRequest": {
+        "type": "object",
+        "description": "`POST /v1/guard:prompt` request body.",
+        "required": [
+          "text",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "context": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornGuardRef"
+            },
+            "description": "Records whose fields the model may use, as tokens where marked."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's key for this call: a retry replays the same receipt."
+          },
+          "purpose": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the call is for (`dashboard-assistant`, `mcp`), kept in the receipt."
+          },
+          "text": {
+            "type": "string",
+            "description": "The prompt as the person wrote it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornGuardSource": {
+        "type": "string",
+        "description": "Where a token's value came from.",
+        "enum": [
+          "field",
+          "detected"
+        ]
+      },
+      "NornGuardToken": {
+        "type": "object",
+        "description": "One placeholder token of a guarded prompt. Never its value.",
+        "required": [
+          "token",
+          "kind",
+          "label",
+          "source",
+          "revealable"
+        ],
+        "properties": {
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The field it stands for (field tokens)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Its type: `CUSTOMER`, `NAME`, `EMAIL`, `PHONE`, `CARD`, or a field's."
+          },
+          "label": {
+            "type": "string",
+            "description": "What it stands for, in words (`Email`, `Customer`)."
+          },
+          "markings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The field's markings (field tokens)."
+          },
+          "revealable": {
+            "type": "boolean",
+            "description": "Whether a restore would give this caller the value back: the PDP\nallows them `norn.reveal` on every marking (a field), or they typed\nit (a detected literal)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornGuardSource",
+            "description": "Where the value came from."
+          },
+          "token": {
+            "type": "string",
+            "description": "The token as the model reads it, e.g. `[EMAIL_1]`."
+          }
+        }
+      },
+      "NornGuarded": {
+        "type": "object",
+        "description": "A guarded prompt: what the model may receive, and the receipt that holds\nits token map in the cell.",
+        "required": [
+          "guardId",
+          "receiptHash",
+          "safePrompt",
+          "tokens",
+          "withheld"
+        ],
+        "properties": {
+          "guardId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The receipt's commit; restore with it.",
+            "minimum": 0
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt's hash."
+          },
+          "safePrompt": {
+            "type": "string",
+            "description": "The tokenized prompt: the only text a model receives."
+          },
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornGuardToken"
+            },
+            "description": "Each token, in order of first appearance."
+          },
+          "withheld": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields withheld from the model, as `type/id.property`."
+          }
+        }
       },
       "NornHistogram": {
         "type": "object",
@@ -18612,6 +19090,12 @@
           },
           {
             "$ref": "#/components/schemas/NornIrMaskPolicyOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMaskPolicyOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMaskPolicyOneOf4"
           }
         ],
         "description": "The projection applied when a principal lacks `reveal` for a marking."
@@ -18666,6 +19150,43 @@
             "type": "string",
             "enum": [
               "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMaskPolicyOneOf3": {
+        "type": "object",
+        "description": "Replace the value with a stable pseudonym such as `Customer #K3V9MQ7T2A`.\nIt is a keyed hash of the cell's secret, `subject` and the value, so\nequal values keep equal pseudonyms (joins and counts still hold) and\nit cannot be reversed without the cell.",
+        "required": [
+          "kind",
+          "subject"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pseudonym"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "description": "What the value identifies (for example `Customer`); fields that\nshare a subject share pseudonyms."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMaskPolicyOneOf4": {
+        "type": "object",
+        "description": "Leave the property out of the document altogether.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "refuse"
             ]
           }
         },
@@ -31107,6 +31628,43 @@
         },
         "additionalProperties": false
       },
+      "NornMaskMode": {
+        "type": "string",
+        "description": "How a marked property was projected for this caller.",
+        "enum": [
+          "pseudonym",
+          "redacted",
+          "null",
+          "last-n",
+          "refuse"
+        ]
+      },
+      "NornMaskedProperty": {
+        "type": "object",
+        "description": "One marked property of a document: how it was projected and whether the\ncaller may reveal it (`POST /v1/objects/{type}/{id}:reveal`).",
+        "required": [
+          "mode",
+          "markings",
+          "revealable"
+        ],
+        "properties": {
+          "markings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The property's effective markings."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/NornMaskMode",
+            "description": "The projection applied."
+          },
+          "revealable": {
+            "type": "boolean",
+            "description": "The caller's policy allows `norn.reveal` for every one of them. The\ndocument still never carries the value."
+          }
+        }
+      },
       "NornMaterialization": {
         "type": "object",
         "description": "VIEW-MAT-1: the stored result a read was served from.",
@@ -31727,6 +32285,16 @@
             "type": "string",
             "description": "The object's identity."
           },
+          "masked": {
+            "type": "object",
+            "description": "PRIVACY-1: how each marked property was projected for this caller.\nOmitted when no property is marked.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornMaskedProperty"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "objectType": {
             "type": "string",
             "description": "The concrete object type."
@@ -32025,6 +32593,16 @@
             "type": "string",
             "description": "The object's identity."
           },
+          "masked": {
+            "type": "object",
+            "description": "PRIVACY-1: how each marked property was projected for this caller.\nOmitted when no property is marked.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornMaskedProperty"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "objectType": {
             "type": "string",
             "description": "The concrete object type."
@@ -32059,7 +32637,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Properties withheld by policy on a readable row. Always present; empty\nuntil field-level policy exists, and never derived from which values a\nrow has."
+            "description": "Properties withheld by policy on a readable row (a marking that\nrefuses them, or an unavailable marking snapshot). Always present, and\nnever derived from which values a row has."
           }
         }
       },
@@ -32429,6 +33007,212 @@
           "policy": {
             "type": "string",
             "description": "`on_read`: a read that finds the inputs changed refreshes; `manual`:\nonly `POST /v1/transforms/{transform}:refresh` does."
+          }
+        }
+      },
+      "NornRestoreRequest": {
+        "type": "object",
+        "description": "`POST /v1/guard/{id}:restore` request body.",
+        "required": [
+          "text",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's key for this restore; each revealed field's receipt is\nkeyed by it."
+          },
+          "text": {
+            "type": "string",
+            "description": "Text that uses the guard's tokens: the model's reply, or the safe\nprompt itself (\"Show original\")."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornRestored": {
+        "type": "object",
+        "description": "A restored text and the reveals it logged.",
+        "required": [
+          "guardId",
+          "segments",
+          "reveals",
+          "complete"
+        ],
+        "properties": {
+          "complete": {
+            "type": "boolean",
+            "description": "Every token of the text was restored for this reader."
+          },
+          "guardId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The guard restored.",
+            "minimum": 0
+          },
+          "reveals": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "description": "The `marking.revealed` receipts this restore committed."
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornRestoredSegment"
+            },
+            "description": "The text, in pieces."
+          }
+        }
+      },
+      "NornRestoredSegment": {
+        "type": "object",
+        "description": "One piece of a restored text.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The token's type."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`restored` (the value, revealed to this reader), `projected` (its\npseudonym or mask) or `kept` (the placeholder stays)."
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain text, or what replaced the token."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The token this segment replaced; absent for plain text."
+          }
+        }
+      },
+      "NornRevealReceipt": {
+        "type": "object",
+        "description": "The receipt a reveal wrote to the ledger.",
+        "required": [
+          "commitSeq",
+          "receiptHash",
+          "revealedAt",
+          "actor",
+          "objectType",
+          "id",
+          "property",
+          "version",
+          "markings",
+          "purpose",
+          "replayed"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string",
+            "description": "Who it was revealed to."
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The ledger position of the receipt.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "markings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The markings the reveal was decided for."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "property": {
+            "type": "string",
+            "description": "The property revealed."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "The purpose given; empty when none."
+          },
+          "receiptHash": {
+            "type": "string",
+            "description": "The receipt's hash."
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "The receipt replayed an earlier reveal under the same key."
+          },
+          "revealedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the value was revealed (the commit's logical time, ms).",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The fact version revealed.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornRevealRequest": {
+        "type": "object",
+        "description": "`POST /v1/objects/{type}/{id}:reveal` request body.",
+        "required": [
+          "property",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The caller's key for this reveal: a retry with the same key replays\nthe first receipt."
+          },
+          "property": {
+            "type": "string",
+            "description": "The marked property to reveal."
+          },
+          "purpose": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the caller needs the value; kept in the receipt."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornRevealed": {
+        "type": "object",
+        "description": "A revealed value and its receipt.",
+        "required": [
+          "value",
+          "receipt"
+        ],
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/NornRevealReceipt",
+            "description": "The ledger receipt of this reveal."
+          },
+          "value": {
+            "description": "The stored value, of the property's type; decimals are exact JSON number tokens."
           }
         }
       },

@@ -273,6 +273,10 @@ impl ReadRules {
 /// change; `None` serves no action.
 pub type ActionSlot = Arc<RwLock<Option<Arc<ActionPolicy>>>>;
 
+/// The cell's reveal policy for its active definitions (PRIVACY-2), replaced
+/// when they change; `None` reveals nothing.
+pub type RevealSlot = Arc<RwLock<Option<Arc<crate::reveal::RevealPolicy>>>>;
+
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
     /// The compiled rules with no grant; each request adds its caller's.
@@ -281,6 +285,7 @@ pub struct ReadPolicy {
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
     actions: ActionSlot,
+    reveal: RevealSlot,
 }
 
 /// The physical scope as the PDP's scope key.
@@ -311,6 +316,7 @@ impl ReadPolicy {
             table,
             caller: Arc::default(),
             actions: Arc::default(),
+            reveal: Arc::default(),
         })
     }
 
@@ -319,6 +325,13 @@ impl ReadPolicy {
     #[must_use]
     pub fn action_slot(&self) -> ActionSlot {
         Arc::clone(&self.actions)
+    }
+
+    /// The slot this cell's reveal policy is installed into; empty until the
+    /// host installs one, and then nothing is revealable.
+    #[must_use]
+    pub fn reveal_slot(&self) -> RevealSlot {
+        Arc::clone(&self.reveal)
     }
 
     /// The installed action policy, if any.
@@ -561,6 +574,17 @@ impl Authorizer for ReadPolicy {
                     ),
                 )
             })
+    }
+
+    fn reveal(&self, actor: &str, marking_id: &str) -> bool {
+        let Some(caller) = self.member(actor) else {
+            return false;
+        };
+        self.reveal
+            .read()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .is_some_and(|policy| policy.reveals(&caller, marking_id))
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {

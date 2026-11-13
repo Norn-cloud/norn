@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import { Lock } from "lucide-react"
 import type { CSSProperties } from "react"
 import { FactProvenance } from "@/components/provenance"
+import { MaskedValue } from "@/components/masked-value"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
 import { member } from "../lib/exact.ts"
@@ -9,6 +10,7 @@ import { displayOf, factText } from "../lib/objects.ts"
 import { useView, type View } from "../lib/view.tsx"
 import { propertyWithheld, rowWithheld } from "../lib/records-query.ts"
 import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
+import { maskedOf } from "../lib/privacy.ts"
 
 /** One record as a page sent it, with that page's exact number texts. */
 export interface GridRow {
@@ -51,6 +53,12 @@ export const alignRight = right
 
 /** The value as plain text, for titles, copy and tests. Exact as the server sent it. */
 export function cellText(field: Field, row: GridRow): string {
+  if (isWithheld(row)) return WITHHELD
+  const masked = maskedOf(row.record, field.id)
+  if (masked !== null) {
+    const projected = row.record.values[field.id]
+    return masked.mode === "refuse" ? WITHHELD : typeof projected === "string" ? projected : projected === null || projected === undefined ? "—" : JSON.stringify(projected)
+  }
   if (fieldWithheld(row, field)) return WITHHELD
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return "—"
@@ -68,7 +76,7 @@ export function cellText(field: Field, row: GridRow): string {
 export function cellDisplay(field: Field, row: GridRow, view: View): string {
   const exact = cellText(field, row)
   const value = row.record.values[field.id]
-  return view === "technical" || fieldWithheld(row, field) || value === null || value === undefined ? exact : displayOf(field, value, exact)
+  return view === "technical" || fieldWithheld(row, field) || maskedOf(row.record, field.id) !== null || value === null || value === undefined ? exact : displayOf(field, value, exact)
 }
 
 /**
@@ -78,6 +86,9 @@ export function cellDisplay(field: Field, row: GridRow, view: View): string {
  */
 export function Cell({ field, row }: { readonly field: Field; readonly row: GridRow }) {
   const { view } = useView()
+  const masked = isWithheld(row) ? null : maskedOf(row.record, field.id)
+  // A marked property is the server's projection, never the value: a chip, and "Reveal" when allowed.
+  if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={field.id} masked={masked} projected={row.record.values[field.id]} />
   if (fieldWithheld(row, field)) return <WithheldMark />
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground" aria-label="No value">—</span>
@@ -95,6 +106,23 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
     case "integer": return <span className="tabular-nums" title={exact}>{text}</span>
     default: return <span className="block max-w-80 truncate" title={text}>{text}</span>
   }
+}
+
+/** The properties a record is named by, in the order Studio reads them. */
+const NAME_PROPERTIES = ["label", "display_name"] as const
+
+/**
+ * The Record column's name. When the naming property is marked, it is the server's projection as a
+ * chip (with "Reveal" when allowed), never a name the server did not send.
+ */
+export function RecordName({ row, fallback }: { readonly row: GridRow; readonly fallback: string }) {
+  if (!isWithheld(row)) {
+    for (const property of NAME_PROPERTIES) {
+      const masked = maskedOf(row.record, property)
+      if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={property} masked={masked} projected={row.record.values[property]} />
+    }
+  }
+  return <>{fallback}</>
 }
 
 /** The way from a fact's card to the record's full lineage. */
@@ -116,7 +144,7 @@ export function TracedCell({ field, row, live, lineage = null, variant = "glyph"
 }) {
   const { view } = useView()
   const value = row.record.values[field.id]
-  if (fieldWithheld(row, field) || value === null || value === undefined) return <Cell field={field} row={row} />
+  if (fieldWithheld(row, field) || maskedOf(row.record, field.id) !== null || value === null || value === undefined) return <Cell field={field} row={row} />
   const { objectType, id, version } = row.record
   const label = field.id.replaceAll("_", " ")
   return (

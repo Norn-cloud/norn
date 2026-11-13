@@ -27,9 +27,15 @@ pub struct NornObjectRecord {
     pub scope: String,
     /// The owner version (`+1` per write).
     pub version: u64,
-    /// Every stored property by property id; decimals are exact JSON number tokens.
+    /// Every stored property by property id; decimals are exact JSON number
+    /// tokens. A marked property holds its projection (see `masked`), never
+    /// its stored value; a refused one is absent.
     #[schema(schema_with = values_schema)]
     pub values: BTreeMap<String, RuntimeValue>,
+    /// PRIVACY-1: how each marked property was projected for this caller.
+    /// Omitted when no property is marked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub masked: BTreeMap<String, crate::privacy::NornMaskedProperty>,
 }
 
 impl From<ObjectRecord> for NornObjectRecord {
@@ -40,6 +46,18 @@ impl From<ObjectRecord> for NornObjectRecord {
             scope: record.scope,
             version: record.version,
             values: record.values,
+            masked: BTreeMap::new(),
+        }
+    }
+}
+
+impl NornObjectRecord {
+    /// A record whose values were projected by [`crate::privacy::project`].
+    #[must_use]
+    pub fn projected(record: ObjectRecord, projected: crate::privacy::Projected) -> Self {
+        Self {
+            masked: projected.masked,
+            ..record.into()
         }
     }
 }
@@ -92,10 +110,14 @@ pub struct NornQueriedRecord {
     pub values: Option<BTreeMap<String, RuntimeValue>>,
     /// The caller holds Population but not Values on this row.
     pub withheld: bool,
-    /// Properties withheld by policy on a readable row. Always present; empty
-    /// until field-level policy exists, and never derived from which values a
-    /// row has.
+    /// Properties withheld by policy on a readable row (a marking that
+    /// refuses them, or an unavailable marking snapshot). Always present, and
+    /// never derived from which values a row has.
     pub withheld_properties: Vec<String>,
+    /// PRIVACY-1: how each marked property was projected for this caller.
+    /// Omitted when no property is marked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub masked: BTreeMap<String, crate::privacy::NornMaskedProperty>,
 }
 
 /// One applied sort key.

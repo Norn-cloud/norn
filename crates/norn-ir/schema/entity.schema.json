@@ -1177,6 +1177,39 @@
           "required": [
             "kind"
           ]
+        },
+        {
+          "description": "Replace the value with a stable pseudonym such as `Customer #K3V9MQ7T2A`.\nIt is a keyed hash of the cell's secret, `subject` and the value, so\nequal values keep equal pseudonyms (joins and counts still hold) and\nit cannot be reversed without the cell.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pseudonym"
+            },
+            "subject": {
+              "description": "What the value identifies (for example `Customer`); fields that\nshare a subject share pseudonyms.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "subject"
+          ]
+        },
+        {
+          "description": "Leave the property out of the document altogether.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "refuse"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
         }
       ]
     },

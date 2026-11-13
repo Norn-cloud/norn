@@ -21,7 +21,7 @@ import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor } from "../lib/screen/call.ts"
-import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
+import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 
@@ -305,7 +305,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
                       className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
                       style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
                       onClick={() => { setActive(item.index); setOpened(row) }}>
-                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}>{nameOf(row)}</div>
+                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}><RecordName row={row} fallback={nameOf(row)} /></div>
                       {withheld
                         ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
                         : columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}

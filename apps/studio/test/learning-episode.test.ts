@@ -13,7 +13,11 @@ test("every fixture record is a served NornObjectRecord: the envelope is checked
   for (const record of fixture.records) {
     for (const key of schema.required) expect(record).toHaveProperty(key)
     if (schema.additionalProperties === false) for (const key of Object.keys(record)) expect(Object.keys(schema.properties)).toContain(key)
-    for (const [key, property] of Object.entries(schema.properties)) expect(types[property.type]!((record as unknown as Record<string, unknown>)[key])).toBe(true)
+    // An optional member (a privacy projection's `masked`) is checked only when the record has it.
+    for (const [key, property] of Object.entries(schema.properties)) {
+      if (!schema.required.includes(key) && !(key in record)) continue
+      expect(types[property.type]!((record as unknown as Record<string, unknown>)[key])).toBe(true)
+    }
   }
 })
 

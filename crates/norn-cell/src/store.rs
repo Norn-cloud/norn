@@ -101,22 +101,69 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
     let old = catalog(previous)?;
     let new = catalog(candidate)?;
     for (id, marking) in old {
-        let weakens = match new.get(&id).map(|marking| &marking.mask) {
-            None => true,
-            Some(norn_ir::MaskPolicy::LastN { count }) => match marking.mask {
-                norn_ir::MaskPolicy::LastN { count: old_count } => *count > old_count,
-                norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {} => true,
-            },
-            Some(norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {}) => false,
-        };
+        let weakens = new
+            .get(&id)
+            .is_none_or(|candidate| marking.mask.weakened_by(&candidate.mask));
         if weakens {
             return Err(CellError::DefinitionMigrationRefused(format!(
                 "install removes or weakens mask policy for `{}`; declassify the exact fact versions instead",
                 id.as_str()
             )));
         }
+        // PRIVACY-2: no rule may newly allow revealing a declared marking.
+        let (before, after) = (
+            reveal_rules(previous, id.as_str())?,
+            reveal_rules(candidate, id.as_str())?,
+        );
+        if let Some(rule) = after.difference(&before).next() {
+            return Err(CellError::DefinitionMigrationRefused(format!(
+                "install widens who may reveal `{}` (rule {rule}); reveal grants on a declared marking are never widened in place",
+                id.as_str()
+            )));
+        }
     }
     Ok(())
+}
+
+/// The `norn.reveal` rules of every `AccessIR` policy in `encoded` that can
+/// apply to `marking`, without their ids (a renamed rule is the same rule).
+fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellError> {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(encoded).map_err(CellError::Json)?;
+    let mut rules = BTreeSet::new();
+    for artifact in artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Policy)
+    {
+        let Ok(norn_ir::access::PolicyRoot::Access(access)) =
+            serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value::<norn_ir::access::PolicyRoot>)
+        else {
+            continue;
+        };
+        for rule in &access.rules {
+            let reveals = rule.resource_type.as_str() == "norn.Marking"
+                && rule.actions.iter().any(|action| action == "norn.reveal");
+            let names = rule.all_of.iter().all(|condition| match condition {
+                norn_ir::access::AccessCondition::Marking(marking_condition) => marking_condition
+                    .any_of
+                    .iter()
+                    .any(|id| id.as_str() == marking),
+                norn_ir::access::AccessCondition::Role(_)
+                | norn_ir::access::AccessCondition::Rel(_)
+                | norn_ir::access::AccessCondition::Context(_)
+                | norn_ir::access::AccessCondition::Resource(_)
+                | norn_ir::access::AccessCondition::Entitlement(_) => true,
+            });
+            if reveals && names {
+                let mut unnamed = rule.clone();
+                unnamed.rule_id.clear();
+                unnamed.actions = vec!["norn.reveal".to_owned()];
+                rules.insert(serde_json::to_string(&unnamed).map_err(CellError::Json)?);
+            }
+        }
+    }
+    Ok(rules)
 }
 
 fn preflight_source_marking_changes<E: SqlEngine>(
@@ -1504,6 +1551,51 @@ impl MarkingDeclassification {
             markings: &self.markings,
             actor: &self.actor,
             reason: &self.reason,
+        })
+        .map_err(CellError::Encoding)
+    }
+}
+
+/// The receipt of one reveal: who saw which marked property of which exact
+/// fact version, when (the commit's logical time) and why. The API commits it
+/// only after the PDP allowed `norn.reveal` for every marking on the property,
+/// and before it returns the value; the receipt never carries the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkingReveal {
+    /// The concrete object type.
+    pub object_type: String,
+    /// The object's opaque store id.
+    pub key: String,
+    /// The property revealed.
+    pub property: String,
+    /// The exact fact version whose value was revealed.
+    pub version: u64,
+    /// The markings the reveal was decided for.
+    pub markings: Vec<String>,
+    /// The authenticated actor the value was revealed to.
+    pub actor: String,
+    /// The purpose the actor gave; empty when none.
+    pub purpose: String,
+}
+
+impl MarkingReveal {
+    /// The canonical `marking.revealed` ledger event.
+    ///
+    /// # Errors
+    /// Returns a cell encoding error if the event cannot be represented.
+    pub fn ledger_event(&self) -> Result<Value, CellError> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Event<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            #[serde(flatten)]
+            reveal: &'a MarkingReveal,
+        }
+        norn_ir::runtime::encode(&Event {
+            kind: "marking.revealed",
+            reveal: self,
         })
         .map_err(CellError::Encoding)
     }
