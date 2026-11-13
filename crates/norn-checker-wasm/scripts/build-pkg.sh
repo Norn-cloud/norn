@@ -65,6 +65,18 @@ cat > "${out}/package.json" <<JSON
 JSON
 
 bg="${out}/norn_checker_wasm_bg.wasm"
+# wasm-opt -Oz after wasm-bindgen (binaryen, exact pin; NORN_WASM_OPT=0 skips it). It keeps the
+# module's behaviour: the native-vs-wasm parity suite runs on the optimized package.
+bindgen_bytes="$(wc -c < "${bg}" | tr -d ' ')"
+bindgen_gzip_bytes="$(gzip -9 -n -c "${bg}" | wc -c | tr -d ' ')"
+wasm_opt="none"
+if [[ "${NORN_WASM_OPT:-1}" != "0" ]]; then
+  npx --yes -p binaryen@132.0.0 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+    --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue \
+    "${bg}" -o "${bg}.opt"
+  mv "${bg}.opt" "${bg}"
+  wasm_opt="binaryen 132.0.0 wasm-opt -Oz"
+fi
 raw_bytes="$(wc -c < "${bg}" | tr -d ' ')"
 gzip_bytes="$(gzip -9 -n -c "${bg}" | wc -c | tr -d ' ')"
 js_bytes="$(wc -c < "${out}/norn_checker_wasm.js" | tr -d ' ')"
@@ -72,8 +84,9 @@ raw_sha256="$(sha256sum < "${wasm}" | cut -d' ' -f1)"
 bg_sha256="$(sha256sum < "${bg}" | cut -d' ' -f1)"
 js_sha256="$(sha256sum < "${out}/norn_checker_wasm.js" | cut -d' ' -f1)"
 {
-  echo "norn-checker-wasm ${version} size report (profile wasm-release: opt-level=s, lto, codegen-units=1; no wasm-opt)"
+  echo "norn-checker-wasm ${version} size report (profile wasm-release: opt-level=s, lto, codegen-units=1; wasm-opt: ${wasm_opt})"
   echo "norn_checker_wasm_bg.wasm: ${raw_bytes} bytes (gzip -9: ${gzip_bytes} bytes)"
+  echo "before wasm-opt:           ${bindgen_bytes} bytes (gzip -9: ${bindgen_gzip_bytes} bytes)"
   echo "norn_checker_wasm.js:      ${js_bytes} bytes"
   echo "raw WASM SHA-256:           ${raw_sha256}"
   echo "generated WASM SHA-256:     ${bg_sha256}"

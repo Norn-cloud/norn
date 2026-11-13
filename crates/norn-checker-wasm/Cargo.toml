@@ -12,6 +12,8 @@ path = "src/lib.rs"
 [dependencies]
 norn-checker = { path = "../norn-checker" }
 norn-expr = { path = "../norn-expr" }
+# The one evaluation entry point, shared with the ZEN-only engine package (D105).
+norn-expr-wasm = { path = "../norn-expr-wasm" }
 norn-ir = { path = "../norn-ir" }
 norn-projections = { path = "../norn-projections" }
 # Typed, deny-unknown-fields decoding of the `context` argument.

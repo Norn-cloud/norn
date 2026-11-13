@@ -14,6 +14,10 @@ interface CheckerModule {
 // A glob, so a build without it still succeeds and the canvas says the checker is absent.
 // Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the pages.
 const PACKAGE = () => import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
+// src/engine/ holds the ZEN engine alone (crates/norn-expr-wasm): the checker ABI's own
+// `evaluateExpression`, the same function from the same norn-expr (D105), without the rest of the
+// checker. Page machines load it; CI holds the two packages to identical answers (engine-parity.mjs).
+const ENGINE = () => import.meta.glob<Pick<CheckerModule, "default" | "evaluateExpression">>("../../engine/norn_expr_wasm.js")
 
 /** Load the checker; rejects when the package is absent, so an edit is never shown as clean unchecked. */
 export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Checker> {
@@ -29,9 +33,9 @@ export async function loadChecker(packages: Record<string, () => Promise<Checker
  * checker type-checked at admission evaluate in the same engine here. Rejects when the package is
  * absent, so a page never runs a machine with a different evaluator.
  */
-export async function loadEngine(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Pick<CheckerModule, "evaluateExpression">> {
+export async function loadEngine(packages: Record<string, () => Promise<Pick<CheckerModule, "default" | "evaluateExpression">>> = ENGINE()): Promise<Pick<CheckerModule, "evaluateExpression">> {
   const load = Object.values(packages)[0]
-  if (!load) throw new Error("The checker is not part of this build")
+  if (!load) throw new Error("The expression engine is not part of this build")
   const module = await load()
   // wasm-bindgen's init fetches the module and compiles it with `instantiateStreaming` (served as
   // application/wasm), so the browser compiles while it downloads and caches the compiled code.
