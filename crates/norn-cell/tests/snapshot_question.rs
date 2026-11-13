@@ -246,6 +246,50 @@ fn a_stock_known_at_an_earlier_commit_answers_as_it_did_then() {
     }
 }
 
+/// "See the records" on a semi-additive card: the weekly stock answered,
+/// then moved by a later commit, traces at its answer's frontier and clock
+/// to every member of the week it named.
+#[test]
+fn a_stock_card_traces_at_its_answers_frontier() {
+    let (mut store, plan) = question(false);
+    load(&mut store);
+    let mut context = context();
+    context.now_ms = CLOCK.checked_add(1_000_000).expect("clock");
+    let answer = store
+        .evaluate_question(&plan, context.clone(), |_| Ok(true))
+        .expect("answered");
+    let (bucket, members) = answer
+        .rows
+        .iter()
+        .find(|(_, row)| !row.members.is_empty())
+        .map(|(bucket, row)| (bucket.clone(), row.members.len()))
+        .expect("a week with members");
+    commit(
+        &mut store,
+        99,
+        "s1",
+        Some(1),
+        "2026-07-07T12:00:00Z",
+        "north",
+    );
+    let lineage = answer.lineage_ref.clone();
+    let traced = store
+        .trace_question_answered_matching(
+            &plan,
+            context,
+            answer.known_as_of,
+            &|handle| handle == lineage,
+            &bucket,
+            |_| Ok(true),
+            norn_cell::compute::lineage::LineageDisclosure {
+                values: &mut |_| Ok(true),
+                source: &mut |_| Ok(true),
+            },
+        )
+        .expect("traced at its frontier");
+    assert_eq!(traced.contributions.len(), members);
+}
+
 /// Grouped by a non-time property, the stock is read as of the window's end,
 /// and each subject is in the group its as-of version names.
 #[test]

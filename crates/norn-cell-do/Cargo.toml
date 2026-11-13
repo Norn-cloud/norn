@@ -25,10 +25,6 @@ name = "analytics_profile"
 required-features = ["duckdb"]
 
 [[test]]
-name = "analytics_trace"
-required-features = ["duckdb"]
-
-[[test]]
 name = "analytics_records"
 required-features = ["duckdb"]
 
