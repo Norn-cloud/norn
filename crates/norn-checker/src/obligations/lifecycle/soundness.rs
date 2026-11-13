@@ -6,7 +6,7 @@
 //! could not be built stays Unknown with its reason; nothing here is solver evidence.
 use super::graph::Graph;
 use crate::lifecycle_soundness::codes;
-use crate::soundness::{self, Completion, Ending, Modality, Net, NetEdge};
+use crate::soundness::{self, Completion, Ending, Net, NetEdge};
 use norn_ir::{LifecycleOutcome, RuntimeValue, TransitionTrigger};
 use std::collections::BTreeSet;
 
@@ -80,12 +80,8 @@ impl Graph {
                 .edges
                 .iter()
                 .enumerate()
-                .map(|(label, edge)| NetEdge {
-                    from: edge.from,
-                    to: edge.to,
-                    label,
-                    modality: Modality::Must,
-                    input: !timer(&edge.transition),
+                .map(|(label, edge)| {
+                    NetEdge::evaluated(edge.from, edge.to, label, !timer(&edge.transition))
                 })
                 .collect(),
         };
