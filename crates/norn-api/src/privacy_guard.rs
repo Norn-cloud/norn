@@ -603,7 +603,7 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
     };
     // Context fields first, so their tokens number from 1 in reading order.
     let mut field_tokens: BTreeMap<FieldRef, String> = BTreeMap::new();
-    for candidate in &context_fields {
+    for candidate in context_fields {
         let token = tokens.token(("field", &candidate.kind), &candidate.value, |token| {
             entry_of(candidate, token)
         });
@@ -623,7 +623,7 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
     // 1. Marked values in the text (longest first, never inside a token).
     let mut values: Vec<&Candidate> = context_fields
         .iter()
-        .chain(&scanned)
+        .chain(scanned.iter())
         .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
         .collect();
     values.sort_by(|a, b| {
@@ -638,13 +638,11 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
     };
     for candidate in values {
         for (start, end) in occurrences(text, &candidate.value) {
-            let bounded = !request
-                .text
+            let bounded = !text
                 .get(..start)
                 .and_then(|before| before.chars().last())
                 .is_some_and(char::is_alphanumeric)
-                && !request
-                    .text
+                && !text
                     .get(end..)
                     .and_then(|after| after.chars().next())
                     .is_some_and(char::is_alphanumeric);
