@@ -213,7 +213,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           {sources.length > 0 && <span className="rounded-md bg-muted px-1.5 py-0.5">Sources: {sources.join(", ")}</span>}
         </div>
       </div>
-      <Panel icon={ChartLine} label={named} action={period(question.window)}>
+      {/* A series over time is drawn; a breakdown by values is read in its table. */}
+      {grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0 ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
         <Well className="px-2 pt-4 pb-1">
           {frame ? (
           <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
@@ -232,7 +233,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           </ChartContainer>
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
-      </Panel>
+      </Panel> : null}
       <Panel icon={Rows3} label={grain ? `Every ${grain}` : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
@@ -263,7 +264,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>
               <SheetDescription>A question derived from this answer, answered by the cell.</SheetDescription>
             </SheetHeader>
-            <div className="px-4 pb-6"><AskedAnswer question={drill.question} title={`${named} by ${drill.property.replaceAll("_", " ")}`} unit={unit} declared={read} /></div>
+            <div className="px-4 pb-6"><AskedAnswer question={drill.question} title={named} unit={unit} declared={read} /></div>
           </>}
         </SheetContent>
       </Sheet>
