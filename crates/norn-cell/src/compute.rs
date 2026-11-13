@@ -361,8 +361,14 @@ impl<E: SqlEngine> CellStore<E> {
                 let Some(record) = reader.object(&context.world, grain, id)? else {
                     return Ok(false);
                 };
-                let (entries, _) =
-                    subject_contributions(&reader, plan, context, id, &record, &mut budget)?;
+                let (entries, _) = subject_contributions(
+                    &reader,
+                    plan,
+                    context,
+                    (id, &record),
+                    None,
+                    &mut budget,
+                )?;
                 Ok(!entries.is_empty())
             };
             reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
