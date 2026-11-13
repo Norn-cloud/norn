@@ -309,18 +309,89 @@ pub(crate) const EXPORT_BYTES: &str = r#"(octet_length(record) + COALESCE((
     WHERE p."commit_seq"="_norn_export_journal"."commit_seq"
 ),0))"#;
 
+/// One value's canonical body and its children's, in the value's own order
+/// (an object's members by key, an array's elements by index).
+struct Body {
+    text: String,
+    children: Vec<Self>,
+}
+
+/// Every node's canonical body, built once from its children's: Norn1 writes
+/// an object as its members sorted by NFC key, each `"key":value`, and an
+/// array as its elements in order, so a node's text is its children's texts
+/// joined. Canonicalizing each node from scratch read the record once per
+/// nesting level. Leaves, and any object Norn1 would refuse (two keys equal
+/// under NFC), are canonicalized directly.
+fn bodies(value: &Value) -> Result<Body, CellError> {
+    match value {
+        Value::Object(object) => {
+            let children = object.values().map(bodies).collect::<Result<Vec<_>, _>>()?;
+            let mut members: Vec<(String, &str, &str)> = object
+                .keys()
+                .zip(&children)
+                .map(|(key, child)| {
+                    (
+                        norn_ir::canonical::nfc(key),
+                        key.as_str(),
+                        child.text.as_str(),
+                    )
+                })
+                .collect();
+            members.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            if members
+                .windows(2)
+                .any(|pair| matches!(pair, [left, right] if left.0 == right.0))
+            {
+                let text = canonical_json(value)?;
+                return Ok(Body { text, children });
+            }
+            let mut text = String::from("{");
+            for (index, (_, key, child)) in members.iter().enumerate() {
+                if index > 0 {
+                    text.push(',');
+                }
+                text.push_str(&canonical_json(*key)?);
+                text.push(':');
+                text.push_str(child);
+            }
+            text.push('}');
+            Ok(Body { text, children })
+        }
+        Value::Array(values) => {
+            let children = values.iter().map(bodies).collect::<Result<Vec<_>, _>>()?;
+            let mut text = String::from("[");
+            for (index, child) in children.iter().enumerate() {
+                if index > 0 {
+                    text.push(',');
+                }
+                text.push_str(&child.text);
+            }
+            text.push(']');
+            Ok(Body { text, children })
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(Body {
+            text: canonical_json(value)?,
+            children: Vec::new(),
+        }),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one recursive walk carries the value, its body and the packing state"
+)]
 fn pack(
     engine: &impl SqlEngine,
     scope: &str,
     world: &str,
     value: &Value,
+    body: &Body,
     field: &str,
     path: &mut Vec<PathPart>,
     references: &mut Vec<AtPath>,
 ) -> Result<Value, CellError> {
-    let body = canonical_json(value)?;
-    if body.len() >= MIN_BYTES || field == "ddlSql" {
-        let hash = digest(scope, world, &body)?;
+    if body.text.len() >= MIN_BYTES || field == "ddlSql" {
+        let hash = digest(scope, world, &body.text)?;
         let exists = engine
             .query_optional(
                 r#"SELECT 1 FROM "_norn_payload" WHERE "hash"=?1 AND "scope"=?2 AND "world"=?3"#,
@@ -331,7 +402,7 @@ fn pack(
         if exists || matches!(field, "ddlSql" | "result" | "outcome") {
             references.push(AtPath {
                 path: path.clone(),
-                reference: store(engine, scope, world, &body)?,
+                reference: store(engine, scope, world, &body.text)?,
             });
             return Ok(Value::Null);
         }
@@ -339,11 +410,11 @@ fn pack(
     match value {
         Value::Object(object) => {
             let mut packed = BTreeMap::new();
-            for (key, value) in object {
+            for ((key, value), body) in object.iter().zip(&body.children) {
                 path.push(PathPart::Key(key.clone()));
                 packed.insert(
                     key.clone(),
-                    pack(engine, scope, world, value, key, path, references)?,
+                    pack(engine, scope, world, value, body, key, path, references)?,
                 );
                 path.pop();
             }
@@ -351,9 +422,11 @@ fn pack(
         }
         Value::Array(values) => {
             let mut packed = Vec::new();
-            for (index, value) in values.iter().enumerate() {
+            for (index, (value, body)) in values.iter().zip(&body.children).enumerate() {
                 path.push(PathPart::Index(index));
-                packed.push(pack(engine, scope, world, value, "", path, references)?);
+                packed.push(pack(
+                    engine, scope, world, value, body, "", path, references,
+                )?);
                 path.pop();
             }
             Ok(Value::Array(packed))
@@ -386,11 +459,13 @@ pub(crate) fn encode_export(
     let scope = normalized(&record.batch.scope)?;
     let world = normalized(&record.batch.world)?;
     let mut references = Vec::new();
+    let body = bodies(&value)?;
     let inline = pack(
         engine,
         &scope,
         &world,
         &value,
+        &body,
         "",
         &mut Vec::new(),
         &mut references,
@@ -849,5 +924,62 @@ mod tests {
             })
             .expect("content count");
         assert_eq!(rows, 0);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::expect_used, reason = "canonical body equivalence")]
+mod body_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn values() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            (-10_000i64..10_000, 0u32..1_000).prop_map(|(n, fraction)| {
+                Value::from_json_text(format!("{n}.{fraction:03}")).expect("decimal")
+            }),
+            "[a-zA-Z0-9 \"\\\\\u{7f}\u{e9}\u{301}\u{1f600}\n\t]{0,8}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(4, 64, 6, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::btree_map("[a-z\u{e9}\u{301}\"_]{0,4}", inner, 0..6)
+                    .prop_map(Value::Object),
+            ]
+        })
+    }
+
+    fn agrees(body: &Body, value: &Value) -> bool {
+        let direct = canonical_json(value);
+        let own = match &direct {
+            Ok(text) => *text == body.text,
+            // A value Norn1 refuses is refused by the composition too.
+            Err(_) => true,
+        };
+        own && match value {
+            Value::Object(object) => object
+                .values()
+                .zip(&body.children)
+                .all(|(value, body)| agrees(body, value)),
+            Value::Array(values) => values
+                .iter()
+                .zip(&body.children)
+                .all(|(value, body)| agrees(body, value)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        }
+    }
+
+    proptest! {
+        /// Every node's composed body is byte-for-byte its Norn1 canonical
+        /// JSON, keys needing NFC and escapes included.
+        #[test]
+        fn composed_bodies_equal_canonical_json(value in values()) {
+            match bodies(&value) {
+                Ok(body) => prop_assert!(agrees(&body, &value)),
+                Err(_) => prop_assert!(canonical_json(&value).is_err()),
+            }
+        }
     }
 }

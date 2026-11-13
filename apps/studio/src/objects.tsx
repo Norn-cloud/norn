@@ -26,7 +26,8 @@ import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
 import { readFindings, readHistory, type Evidence, type EvidenceRef } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
-import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
+import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
+import { stamp } from "./lib/format.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -161,14 +162,14 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
   const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
     <span className="text-meta tabular-nums" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>
-      version {version}{entry ? <> · commit {entry.commit} · as of <span className="font-mono text-xs">{new Date(entry.logicalTime).toISOString()}</span></> : null}
+      version {version}{entry ? <> · commit {entry.commit} · as of <time dateTime={new Date(entry.logicalTime).toISOString()} title={new Date(entry.logicalTime).toISOString()}>{stamp(entry.logicalTime)}</time></> : null}
     </span>
   )
 }
 
 /** The record's key facts, in its definition's presentation order, each opening where it came from. */
 function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
-  const fields = keyFacts(concept)
+  const fields = keyFacts(concept, reads.object.document.values)
   if (fields.length === 0) return null
   return (
     <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-node border border-node-border bg-node-border shadow-[var(--node-highlight),var(--elevation-1)] sm:grid-cols-3 xl:grid-cols-6">
@@ -184,8 +185,10 @@ function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; re
 
 /** One fact's exact text, opening its card; an empty fact is a dash with no card. */
 function FactValue({ field, reads, onLineage }: { readonly field: Concept["fields"][number]; readonly reads: ObjectReads; readonly onLineage: () => void }) {
+  const { view } = useView()
   const { objectType, id, version } = reads.object.document
-  const text = factText(field, reads.object.document, reads.object.numbers, "")
+  // One renderer for every value: grouped digits with their unit, dates and choices in words (Technical: as sent).
+  const text = factDisplay(field, reads.object.document, reads.object.numbers, "", view)
   const value = reads.object.document.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
   const label = field.label ?? field.id.replaceAll("_", " ")
