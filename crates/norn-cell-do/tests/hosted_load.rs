@@ -13,6 +13,7 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
     reason = "hosted load correspondence"
 )]
 
@@ -183,7 +184,7 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
     });
     let mut connect = Connect::new("[]", &vars.to_string()).unwrap();
     let mut quarantined = BTreeMap::<String, u64>::new();
-    let mut landed = 0_u64;
+    let (mut landed, mut total) = (0_u64, 0_u64);
     for (system, document) in dataset(directory.path()) {
         let header: serde_json::Map<String, Value> = document
             .as_object()
@@ -226,6 +227,7 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
             }
             assert_eq!(routed.response.status, 200, "{system}: {answer}");
             landed += answer["landed"].as_u64().unwrap();
+            total += u64::try_from(count).unwrap();
             for (reason, n) in answer["quarantineReasons"].as_object().unwrap() {
                 *quarantined
                     .entry(format!("{system}: {reason}"))
@@ -236,6 +238,9 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
     }
     assert!(
         quarantined.is_empty(),
-        "{landed} rows landed; quarantined: {quarantined:#?}"
+        "{landed} of {total} rows landed; quarantined: {quarantined:#?}"
     );
+    // Every generated row is a distinct source event: each lands, once.
+    assert_eq!(landed, total, "every row lands");
+    assert!(total > 2000, "the whole demo dataset loads ({total} rows)");
 }
