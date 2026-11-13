@@ -6,7 +6,7 @@
     missing_docs,
     reason = "SOURCE-AGREE-1 conformance over the three systems' mapped holdings"
 )]
-//! SOURCE-AGREE-1: ERPNext and Odoo report the north gold holding on hand,
+//! SOURCE-AGREE-1: `ERPNext` and Odoo report the north gold holding on hand,
 //! Shopify reports it available. Each later source's other basis is a warning
 //! finding recomputed from verified history; it never excludes the holding,
 //! and an answer counts it, identically on the exact and engine paths, at the
@@ -260,15 +260,15 @@ fn context() -> QueryContext {
     }
 }
 
-fn counts(subjects: u64) -> Option<SourceDisagreementCounts> {
-    Some(SourceDisagreementCounts {
+fn counts(subjects: u64) -> SourceDisagreementCounts {
+    SourceDisagreementCounts {
         groups: vec![SourceDisagreementCount {
             property: "quantity_basis".into(),
             subjects,
         }],
         complete: true,
         bound: 500,
-    })
+    }
 }
 
 /// SOURCE-AGREE-FLIP and SOURCE-AGREE-RETURN on one holding's history.
@@ -377,7 +377,7 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
     )
     .expect("count");
     assert!(expected >= 1);
-    assert_eq!(after.source_disagreements, counts(expected));
+    assert_eq!(after.source_disagreements, Some(counts(expected)));
     // The engine path counts with the same host function (exact/DuckDB parity).
     assert_eq!(
         cell.store()
@@ -414,7 +414,7 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
     let others = expected.saturating_sub(1);
     assert_eq!(
         hidden.source_disagreements,
-        if others == 0 { None } else { counts(others) },
+        (others > 0).then(|| counts(others)),
         "the hidden holding is neither counted nor implied"
     );
 }
