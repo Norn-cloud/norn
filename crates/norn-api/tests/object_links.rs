@@ -15,7 +15,8 @@ use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_routes::ObjectAccess;
-use norn_api::objects::NornObjectLinkPage;
+use norn_api::object_links::LINK_COUNT_BOUND;
+use norn_api::objects::{NornLinkCount, NornLinkDirection, NornObjectLinkPage};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
@@ -250,6 +251,80 @@ fn a_link_to_a_hidden_row_is_neither_listed_nor_counted() {
         out,
         [("a", "b"), ("a", "c"), ("a", "d")].map(|(s, t)| (s.to_owned(), t.to_owned()))
     );
+}
+
+/// One counted group of `test.Node.related` links.
+fn related(direction: NornLinkDirection, count: u64) -> NornLinkCount {
+    NornLinkCount {
+        source_type: TYPE.to_owned(),
+        link: "related".to_owned(),
+        target_type: TYPE.to_owned(),
+        direction,
+        count,
+    }
+}
+
+/// HOST-READ-4b: a first page counts the visible links by type and
+/// direction, whatever its size; a link to a hidden row is not counted, and a
+/// page after a cursor carries no counts.
+#[test]
+fn a_first_page_counts_visible_links_by_type_and_direction() {
+    let (host, _dir) = host();
+    for (actor, out, into) in [("full", 4, 3), ("few", 3, 2)] {
+        for limit in ["1", "50"] {
+            let first = links(&host, actor, "a", &params(None, Some(limit))).unwrap();
+            let counts = first.counts.expect("a first page counts");
+            assert!(counts.complete, "{actor} {limit}");
+            assert_eq!(counts.bound, LINK_COUNT_BOUND);
+            assert_eq!(
+                counts.groups,
+                [related(NornLinkDirection::Out, out), related(NornLinkDirection::In, into)],
+                "{actor} {limit}"
+            );
+        }
+    }
+    let all = pages(&host, "few", &params(None, Some("1")));
+    let later = &all[1..];
+    assert!(!later.is_empty());
+    assert!(later.iter().all(|page| page.counts.is_none()));
+    let wire = serde_json::to_value(&later[0]).unwrap();
+    assert!(wire.get("counts").is_none(), "{wire}");
+}
+
+/// HOST-READ-4b: past the bound the counts stop, say so, and every count is
+/// a lower bound; the page itself is unchanged.
+#[test]
+fn counts_past_the_bound_are_lower_bounds() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let spokes: Vec<String> = (0..=LINK_COUNT_BOUND).map(|n| format!("s{n}")).collect();
+    {
+        let mut store =
+            CellStore::open(&path, model(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: physical().key(),
+                logical_time: 1,
+                facts: std::iter::once("a")
+                    .chain(spokes.iter().map(String::as_str))
+                    .map(create)
+                    .collect(),
+                links: spokes.iter().map(|spoke| link("a", spoke)).collect(),
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model(), norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    let page = links(&host, "full", "a", &params(None, None)).unwrap();
+    let counts = page.counts.expect("a first page counts");
+    assert!(!counts.complete);
+    assert_eq!(counts.groups, [related(NornLinkDirection::Out, LINK_COUNT_BOUND)]);
+    assert_eq!(page.items.len(), 50);
+    assert!(page.next.is_some());
 }
 
 /// Links are existence-level: a caller holding Population alone sees them.
