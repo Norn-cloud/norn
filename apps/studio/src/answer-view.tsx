@@ -20,7 +20,7 @@ import type { QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
 import { AnswerProvenance } from "@/components/provenance"
 import { systemName } from "./lib/catalog.ts"
-import { bucketProvenance } from "./lib/provenance.ts"
+import { bucketProvenance, metricLabels } from "./lib/provenance.ts"
 
 /**
  * The answer view: how one answer reads, whether the question is published or
@@ -139,8 +139,10 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
+export function AnswerView({ read, title, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket }: {
   readonly read: QuestionAnswer
+  /** What the answer measures, in words, when the page that asked knows it better than the question's metric names. */
+  readonly title?: string
   readonly heading?: "h1" | "h2" | "h3"
   /** Link the headline to the published question's page. */
   readonly link?: boolean
@@ -158,7 +160,8 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
   const declared = declarations(read)
   const rows = buckets(declared, { answer, numbers: read.answer.numbers, at: "" })
   const [open, setOpen] = useState<Bucket | undefined>(() => rows.find(({ key }) => key === openBucket))
-  const provenanceOf = (bucket: Bucket) => bucketProvenance(declared, answer, bucket, engineOf(answer) ?? null)
+  const named = title ?? headline(question)
+  const provenanceOf = (bucket: Bucket) => bucketProvenance(answer, bucket, title === undefined ? metricLabels(declared) : [title], engineOf(answer) ?? null)
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
@@ -168,9 +171,9 @@ export function AnswerView({ read, heading = "h2", link = false, refusal, fetchT
     <section className="space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{headline(question)}</h1>
-            : heading === "h3" ? <h3 className="font-medium">{headline(question)}</h3>
-            : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{headline(question)}</Link> : headline(question)}</h2>}
+          {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{named}</h1>
+            : heading === "h3" ? <h3 className="font-medium">{named}</h3>
+            : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
           {read.answer.origin === "live"
             ? <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>

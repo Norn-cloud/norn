@@ -72,7 +72,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   if (asOf.length > 0) steps.push(
     <Step key="as-of" icon={Clock} title="As of">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-xs">
-        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="font-mono tabular-nums [overflow-wrap:anywhere]">{value}</dd></div>)}
+        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 truncate font-mono tabular-nums" title={value}>{value}</dd></div>)}
       </dl>
     </Step>,
   )

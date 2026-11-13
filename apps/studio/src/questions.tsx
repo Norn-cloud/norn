@@ -66,7 +66,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
           <p className="text-meta text-muted-foreground">Per {window.grain}, {window.start.slice(0, 10)} to {window.end.slice(0, 10)}: every date its records carry.</p>
           {(metric.unitPartition?.length ?? 0) > 0 && <p className="text-meta text-muted-foreground">The cell adds these up only within one {metric.unitPartition?.map((path) => path.replaceAll("_", " ")).join(" and ")}: choose one of each.</p>}
           <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={setConditions} />
-          <RunQuestion key={JSON.stringify(conditions)} question={metricQuestion(metric, window, conditions)} catalog={declarations} label="Ask the cell" />
+          <RunQuestion key={JSON.stringify(conditions)} question={metricQuestion(metric, window, conditions)} catalog={declarations} label="Ask the cell" title={what} />
         </>}
       </Well>
     </Panel>
