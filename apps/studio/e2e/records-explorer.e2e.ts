@@ -11,7 +11,7 @@ async function explorer(page: Page) {
   const cell = await objectCell(page, population(30))
   const definitions = await viewsCell(page)
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("30 records").first()).toBeVisible()
+  await expect(page.getByText("30 records", { exact: true })).toBeVisible()
   return { cell, definitions }
 }
 
@@ -28,7 +28,7 @@ test("facets: the rail counts each value; choosing one narrows the grid to it, a
   await expect(value(page, "location", "north")).toContainText("10")
   await value(page, "location", "north").click()
   await expect(value(page, "location", "north")).toHaveAttribute("aria-pressed", "true")
-  await expect(page.getByText("10 records").first()).toBeVisible()
+  await expect(page.getByText("10 records", { exact: true })).toBeVisible()
   const chips = page.getByLabel("Applied filter")
   await expect(chips).toContainText("location is north")
   // The grid asked the cell for exactly that filter.
@@ -38,13 +38,13 @@ test("facets: the rail counts each value; choosing one narrows the grid to it, a
   await expect(value(page, "location", "south")).toContainText("20")
   await chips.getByRole("button", { name: "Remove location is north" }).click()
   await expect(page.getByLabel("Applied filter")).toHaveCount(0)
-  await expect(page.getByText("30 records").first()).toBeVisible()
+  await expect(page.getByText("30 records", { exact: true })).toBeVisible()
 })
 
 test("views: save, open, update, rename and delete with undo; an opened view has nothing unapplied", async ({ page }) => {
   const { definitions } = await explorer(page)
   await value(page, "location", "north").click()
-  await expect(page.getByText("10 records").first()).toBeVisible()
+  await expect(page.getByText("10 records", { exact: true })).toBeVisible()
   // Save as view: it opens as a tab, saved on the cell as a `view` definition.
   await page.getByRole("button", { name: "Save as view" }).click()
   await page.getByLabel("View name").fill("North holdings")
@@ -54,9 +54,9 @@ test("views: save, open, update, rename and delete with undo; an opened view has
   expect([...definitions.views.values()].map(({ payload }) => (payload as { title?: string }).title)).toEqual(["North holdings"])
   // Open every record, then the view again: its filter comes back, with nothing unapplied.
   await page.getByRole("tab", { name: "All records" }).click()
-  await expect(page.getByText("30 records").first()).toBeVisible()
+  await expect(page.getByText("30 records", { exact: true })).toBeVisible()
   await tab.click()
-  await expect(page.getByText("10 records").first()).toBeVisible()
+  await expect(page.getByText("10 records", { exact: true })).toBeVisible()
   await expect(page.getByLabel("Applied filter")).toContainText("location is north")
   await expect(page.getByLabel("Unapplied changes")).toHaveCount(0)
   // Update: narrow further, then save the view as it now is.
