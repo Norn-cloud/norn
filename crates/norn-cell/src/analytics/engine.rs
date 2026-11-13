@@ -720,6 +720,10 @@ fn stage(value: &Value) -> (Sql, Sql, Sql) {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one batch: stage, close superseded versions, insert current ones"
+)]
 fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
     apply_links(conn, request)?;
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();

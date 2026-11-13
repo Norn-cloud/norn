@@ -331,7 +331,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
-            known_at: _,
+            ..
         } = prepared;
         let present: BTreeSet<&String> = response.excluded.iter().collect();
         exclusions.retain(|id, _| present.contains(id));

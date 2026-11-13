@@ -876,6 +876,7 @@ fn bulk_path_measurements() {
                             })
                             .collect(),
                     ),
+                    model: String::new(),
                     bad: false,
                 }
             })
