@@ -30,6 +30,7 @@ import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
 import { readProfile } from "./lib/profile.ts"
+import { useLiveRefresh } from "./lib/live-reads.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
 /** One metric the cell derives, asked per day or week over every date its records carry. */
@@ -179,14 +180,14 @@ function LiveQuestionsBoard() {
 
 function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
   // The live answer when the host serves one; otherwise the recording, labelled as such.
-  // A refused or unavailable live read is asked again every 30 s, so a policy change or a recovered host shows without a reload.
+  // A new commit that changes the answer, or a policy change, reaches the card when the cell sends it (UI-LIVE-1).
   const live = useQuery({
     queryKey: ["live-answer", recorded.question.document.name],
     queryFn: () => liveAnswer(recorded.question.document.name),
     retry: false,
     staleTime: 60_000,
-    refetchInterval: (query) => query.state.data?.kind === "read" ? false : 30_000,
   })
+  useLiveRefresh(`/v1/questions/${encodeURIComponent(recorded.question.document.name)}/answer`, ["live-answer", recorded.question.document.name])
   const read: QuestionAnswer = live.data?.kind === "read" ? { ...recorded, answer: live.data.read } : recorded
   return <AnswerView read={read} heading={heading} link refusal={live.data?.kind === "refused" ? live.data.refusal : undefined} />
 }

@@ -24,7 +24,25 @@ export interface Walk {
 /** Candidate payloads for firing `transition` on `event`; none means an empty payload. */
 export type PayloadFor = (transition: MachineTransition, event: MachineEvent, snapshot: Snapshot) => readonly Fields[] | undefined
 
-function messageFor(event: MachineEvent, entry: number, payload: Fields | undefined): Msg {
+const CATEGORIES = ["internal", "limit", "visibility", "conflict", "invalid", "permission", "precondition"] as const
+
+/**
+ * The refusal category a catch-all `refused` event is walked with: one that no event naming its
+ * category handles in that state, so the catch-all is the transition that fires.
+ */
+function catchAllCategory(machine: Machine, from: string): (typeof CATEGORIES)[number] {
+  const specific = new Set(
+    machine.transitions
+      .filter((transition) => transition.from === from)
+      .flatMap((transition) => {
+        const source = machine.events.find((event) => event.eventId === transition.on)?.source
+        return source?.kind === "outcome" && source.outcome === "refused" && source.category ? [source.category] : []
+      }),
+  )
+  return CATEGORIES.find((category) => !specific.has(category)) ?? "internal"
+}
+
+function messageFor(event: MachineEvent, entry: number, payload: Fields | undefined, catchAll: (typeof CATEGORIES)[number] = "precondition"): Msg {
   const withPayload = payload ? { payload } : {}
   switch (event.source.kind) {
     case "page_opened":
@@ -40,7 +58,7 @@ function messageFor(event: MachineEvent, entry: number, payload: Fields | undefi
         kind: "outcome",
         entry,
         outcome: event.source.outcome,
-        ...(event.source.category ? { category: event.source.category } : event.source.outcome === "refused" ? { category: "precondition" as const } : {}),
+        ...(event.source.category ? { category: event.source.category } : event.source.outcome === "refused" ? { category: catchAll } : {}),
         ...withPayload,
       }
   }
@@ -66,7 +84,7 @@ export function walks(machine: Machine, evaluate: Evaluate, payloadFor?: Payload
         const event = eventOf.get(transition.on)
         if (!event) throw new Error(`transition ${transition.transitionId} names undeclared event ${transition.on}`)
         for (const payload of payloadFor?.(transition, event, snapshot) ?? [undefined]) {
-          const msg = messageFor(event, snapshot.entry, payload)
+          const msg = messageFor(event, snapshot.entry, payload, catchAllCategory(machine, transition.from))
           let step
           try {
             step = update(machine, evaluate, snapshot, msg)
