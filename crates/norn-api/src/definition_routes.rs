@@ -1198,6 +1198,11 @@ fn append<E: SqlEngine>(
                 } else {
                     admitted.model
                 };
+                // DEFS-REOPEN-1: the cell must still open under the new
+                // model; a policy that cannot serve it refuses before any write.
+                let candidate: Vec<norn_ir::ObjectTypeDef> =
+                    model.object_types().cloned().collect();
+                host.authorizer.admits_model(&candidate)?;
                 (
                     model,
                     admitted.canonical_set,

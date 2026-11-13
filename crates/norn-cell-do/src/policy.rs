@@ -435,6 +435,20 @@ impl Authorizer for ReadPolicy {
         }
     }
 
+    fn admits_model(&self, object_types: &[ObjectTypeDef]) -> Result<(), Refusal> {
+        read_rules(object_types).map(|_| ()).map_err(|error| {
+            Refusal::new(
+                http::StatusCode::CONFLICT,
+                "defs.migration_refused",
+                "the candidate definitions cannot carry the cell's live data",
+                format!(
+                    "the cell's read rules do not compile for the candidate model: {}",
+                    error.0
+                ),
+            )
+        })
+    }
+
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
             && request.access.action_id == READ_ACTION

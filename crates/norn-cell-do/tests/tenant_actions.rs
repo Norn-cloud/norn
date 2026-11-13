@@ -744,3 +744,96 @@ fn a_resource_condition_never_permits() {
         "{reason}"
     );
 }
+
+/// D84: a tenant cell publishes no questions, so a named question is the
+/// base's 404 `question.not_found` on a vacant scope and a provisioned one
+/// alike, for every caller and with any query (#1297 r3 should 1).
+#[test]
+fn a_named_question_is_not_found_on_vacant_and_provisioned_cells_alike() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(
+        &directory.path().join("served.sqlite"),
+        &with_policy(&["admin"]),
+    );
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    for path in ["/v1/questions/q/answer", "/v1/questions/q/trace"] {
+        for query in [QUERY, "orgId=org_a&environmentId=prod&unknown=1"] {
+            for auth in [None, Some(user("admin")), Some(user("viewer"))] {
+                let ask = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method: "GET",
+                            path,
+                            query,
+                            authorization: auth.as_deref(),
+                            now: NOW,
+                            body: "",
+                        },
+                    )
+                };
+                let at_served = ask(&mut served);
+                let document: Value = serde_json::from_str(&at_served.body).unwrap();
+                assert_eq!(
+                    (at_served.status, document["code"].as_str()),
+                    (404, Some("question.not_found")),
+                    "{path}?{query} as {auth:?}"
+                );
+                if auth.is_none() {
+                    assert_eq!(at_served, ask(&mut vacant), "{path}?{query}");
+                }
+            }
+        }
+    }
+}
+
+/// DEFS-REOPEN-1: a flow whose run type the cell's read rules cannot serve
+/// is refused before anything is written, and the cell still reopens and
+/// serves its actions (#1297 r3 should 2).
+#[test]
+fn a_flow_the_read_rules_cannot_serve_is_refused_and_the_cell_reopens() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let mut cell = provisioned(&path, &with_policy(&["admin"]));
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("admin")), "m1").status,
+        200
+    );
+    // The run type renamed to a Cedar keyword: admissible as IR, but no
+    // read rule can name it.
+    let fixture = include_str!("fixtures/ask.flow.json").replace("ApproveRefundRun", "in");
+    let mut artifacts: Vec<Value> = serde_json::from_str(&fixture).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    }
+    let mut body = json!({ "kind": "flow", "id": "ops.approve_refund", "payload": {
+        "flow": { "id": "ops.approve_refund", "version": "1.0.0", "title": "Approve a refund",
+                  "steps": [{ "id": "ask_review", "label": "Review the refund" }] },
+        "artifacts": artifacts } });
+    let admitted = cell.call(
+        "POST",
+        "/v1/definitions:admit",
+        Some(&user("admin")),
+        &body.to_string(),
+    );
+    eprintln!("admit {} {}", admitted.status, admitted.body);
+    let digest =
+        serde_json::from_str::<Value>(&admitted.body).unwrap()["restatementSha256"].clone();
+    body["signoff"] = json!({ "restatementSha256": digest });
+    let installed = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&user("admin")),
+        &body.to_string(),
+    );
+    eprintln!("install {} {}", installed.status, installed.body);
+    assert_ne!(installed.status, 200, "{}", installed.body);
+    drop(cell);
+    let mut cell = opened(&path);
+    assert!(cell.tenant.is_provisioned());
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("admin")), "m2").status,
+        200
+    );
+    assert_eq!(cell.tenant.action_policy_error(), None);
+}

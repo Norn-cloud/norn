@@ -201,16 +201,18 @@ impl<E: SqlEngine> Serving<E> {
                 .map_err(|error| format!("{error:?}"))?;
             // The model the store serves: the admitted set's, with the
             // kernel's action types, as provisioned.
-            if let Ok(served) = norn_api::action_admission::prepare_action_model(&model)
-                && policy::recompile_reads(&self.reads, served.object_types()).is_ok()
-            {
-                self.object_types = collections(served.object_types());
-            }
+            // A read-rule failure is the operator's, retried on the next
+            // request: the cell never runs on rules stale for its model.
+            let served = norn_api::action_admission::prepare_action_model(&model)
+                .map_err(|refusal| refusal.explanation)?;
+            policy::recompile_reads(&self.reads, served.object_types()).map_err(|error| error.0)?;
+            self.object_types = collections(served.object_types());
             ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
         });
         match compiled {
             Some(Ok(policy)) => self.install_actions(policy, version, None),
-            Some(Err(reason)) => self.install_actions(None, version, Some(reason)),
+            // Not marked compiled: the next request tries again.
+            Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
             None => self.install_actions(None, version, None),
         }
     }
