@@ -409,6 +409,82 @@ mod tests {
         assert_eq!(run.len(), 2);
     }
 
+    /// UI: 0 idle --open(30)--> 1 sheet --approve(31, sync)--> 0 idle; 1 --close(32)--> 0.
+    fn sheet(open: bool) -> Net {
+        let mut edges = vec![
+            NetEdge::unguarded(1, 0, 31, true),
+            NetEdge::unguarded(1, 0, 32, true),
+        ];
+        if open {
+            edges.push(NetEdge::unguarded(0, 1, 30, true));
+        }
+        Net {
+            states: 2,
+            initial: vec![0],
+            endings: vec![Some(Ending::Resting), None],
+            edges,
+        }
+    }
+
+    /// Backend: 0 `awaiting_approval` --approve(40)--> 1 approved; optionally an unsynced
+    /// auto-approval timer 0 --(41)--> 1.
+    fn approval(auto: bool) -> Net {
+        let mut edges = vec![NetEdge::unguarded(0, 1, 40, true)];
+        if auto {
+            edges.push(NetEdge::unguarded(0, 1, 41, false));
+        }
+        Net {
+            states: 3,
+            initial: vec![0],
+            endings: vec![None, Some(Ending::Good), Some(Ending::Cancelled)],
+            edges,
+        }
+    }
+
+    /// Planted (coordinator, 2026-11-13): an idle page over a backend that waits on a UI
+    /// action is not Resting; the UI action is its only way on. Over a backend that can finish
+    /// alone, the idle page reaches an ending through interleaving.
+    #[test]
+    fn an_idle_ui_over_a_backend_awaiting_a_ui_action_is_not_resting() {
+        let sync = [Sync::Together {
+            ui: 31,
+            backend: 40,
+        }];
+        let product = compose(&sheet(true), &approval(false), &sync).expect("small");
+        let idle = product.state(0, 0).expect("initial");
+        assert_eq!(
+            product.net().endings[idle],
+            None,
+            "idle over awaiting approval"
+        );
+        let verdict = analyse(product.net());
+        assert_eq!(verdict.states[idle].completion, Completion::Must);
+        let run = witness(product.net(), product.state(0, 1).expect("approved")).expect("run");
+        let ui_moves: Vec<Option<usize>> =
+            run.iter().map(|edge| product.origins[*edge].ui).collect();
+        assert_eq!(ui_moves.len(), 2, "open the sheet, then approve");
+        assert!(ui_moves.iter().all(Option::is_some));
+        assert_eq!(
+            product.backend_labels(&approval(false)),
+            BTreeSet::from([40])
+        );
+        // Without a way to open the sheet, the idle page over awaiting approval is stuck.
+        let closed = compose(&sheet(false), &approval(false), &sync).expect("small");
+        let idle = closed.state(0, 0).expect("initial");
+        let verdict = analyse(closed.net());
+        assert!(verdict.states[idle].stuck(), "{:?}", verdict.states[idle]);
+        // A backend that can finish alone lets the idle page reach Resting by interleaving.
+        let alone = compose(&sheet(false), &approval(true), &sync).expect("small");
+        let idle = alone.state(0, 0).expect("initial");
+        let approved = alone.state(0, 1).expect("approved alone");
+        let verdict = analyse(alone.net());
+        assert_eq!(verdict.states[idle].completion, Completion::Must);
+        assert_eq!(alone.net().endings[approved], Some(Ending::Resting));
+        let run = witness(alone.net(), approved).expect("run");
+        assert_eq!(run.len(), 1);
+        assert_eq!(alone.origins[run[0]].ui, None, "the backend moved alone");
+    }
+
     #[test]
     fn product_endings_need_both_sides_ended_and_callers_only_narrow() {
         use Ending::{BreachedVisible, Cancelled, Compensated, Good, Resting};
@@ -416,6 +492,11 @@ mod tests {
         assert_eq!(product_ending(None, Some(Good)), None);
         assert_eq!(product_ending(Some(Good), Some(Resting)), Some(Good));
         assert_eq!(product_ending(Some(Resting), Some(Good)), Some(Resting));
+        assert_eq!(
+            product_ending(Some(Resting), None),
+            None,
+            "rule (1) bounds rule (4)"
+        );
         assert_eq!(product_ending(Some(Good), Some(Cancelled)), Some(Cancelled));
         assert_eq!(
             product_ending(Some(Compensated), Some(Good)),
