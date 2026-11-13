@@ -13,6 +13,10 @@ pub enum Operation {
     CallAction(String),
     /// Admit, install or retire a retained (non-kernel) definition.
     WriteDefinitions,
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -93,6 +97,16 @@ pub trait Authorizer: Send + Sync {
         _request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::ActionDenial> {
         Err(norn_kernel::ActionDenial::Invisible)
+    }
+
+    /// DEFS-REOPEN-1: whether this policy can serve a cell whose model has
+    /// `object_types`, checked before an install writes it. A model the
+    /// policy cannot serve would leave the cell unopenable after a restart.
+    ///
+    /// # Errors
+    /// The policy does not compile for the candidate model.
+    fn admits_model(&self, _object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
+        Ok(())
     }
 
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
@@ -180,6 +194,7 @@ mod tests {
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
+                Operation::ProvisionCell,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {
