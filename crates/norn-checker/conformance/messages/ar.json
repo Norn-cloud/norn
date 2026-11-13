@@ -2319,7 +2319,7 @@
       "review": "needs_review"
     },
     "widget.catalog.duplicate_entry": {
-      "message": "كتالوج الواجهة يعلن معرّف المدخل نفسه مرتين: {$detail}",
+      "message": "كتالوج أداة رسومية يعلن معرّف المدخل نفسه مرتين: {$detail}",
       "review": "needs_review"
     },
     "widget.catalog.duplicate_renderer": {
