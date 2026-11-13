@@ -102,41 +102,14 @@ pub struct Refusal {
     /// ungranted resource.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<RefusalDiagnostic>,
-    /// On `definition.signoff_mismatch` only: the host's restatement of the
-    /// caller's own admitted payload, flattened into the refusal as
-    /// `restatement` and `restatementSha256`. Absent otherwise.
+    /// What only some refusals carry, flattened into the refusal: on
+    /// `definition.signoff_mismatch`, the host's restatement of the caller's
+    /// own admitted payload (`restatement`, `restatementSha256`); on an
+    /// internal refusal, its `incidentId` (INCIDENT-1). Absent otherwise.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     #[schema(inline)]
-    pub restatement: Option<Box<RefusalRestatement>>,
-    /// INCIDENT-1: an internal refusal's incident id (served, flattened as
-    /// `incidentId`) and its cause (the operator's log only).
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    #[schema(inline)]
-    pub internal: Option<Box<Internal>>,
+    pub extra: Option<Box<RefusalExtra>>,
 }
-
-/// INCIDENT-1: what the host keeps about an internal refusal.
-#[derive(Debug, Clone, Default, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct Internal {
-    /// The id under which the host logged this refusal's cause. The caller
-    /// quotes it; the cause itself is never served.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub incident_id: Option<String>,
-    /// The error chain, for the operator's log only: never serialized.
-    #[serde(skip)]
-    #[schema(ignore)]
-    pub cause: Option<String>,
-}
-
-/// Two refusals that differ only in their cause are the same refusal.
-impl PartialEq for Internal {
-    fn eq(&self, other: &Self) -> bool {
-        self.incident_id == other.incident_id
-    }
-}
-
-impl Eq for Internal {}
 
 /// One checker finding in a refusal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -208,6 +181,34 @@ pub struct RefusalRestatement {
     pub restatement_sha256: String,
 }
 
+/// The rarely present parts of a refusal, boxed so every refusal stays small.
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalExtra {
+    /// On `definition.signoff_mismatch` only: the host's restatement.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    pub restatement: Option<RefusalRestatement>,
+    /// INCIDENT-1: the id under which the host logged this internal
+    /// refusal's cause. The caller quotes it; the cause is never served.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incident_id: Option<String>,
+    /// INCIDENT-1: the error chain, for the operator's log only: never
+    /// serialized, never compared.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub cause: Option<String>,
+}
+
+/// Two refusals that differ only in their cause are the same refusal.
+impl PartialEq for RefusalExtra {
+    fn eq(&self, other: &Self) -> bool {
+        self.restatement == other.restatement && self.incident_id == other.incident_id
+    }
+}
+
+impl Eq for RefusalExtra {}
+
 /// A location in the submitted document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -235,7 +236,9 @@ impl Refusal {
             Self::UNPROVEN_DETAIL.clone_into(&mut self.explanation);
             self.reason = None;
             self.diagnostics.clear();
-            self.restatement = None;
+            if let Some(extra) = self.extra.as_mut() {
+                extra.restatement = None;
+            }
         }
         self
     }
@@ -258,8 +261,7 @@ impl Refusal {
             message: message.into(),
             explanation: explanation.into(),
             diagnostics: Vec::new(),
-            restatement: None,
-            internal: None,
+            extra: None,
         }
     }
 
@@ -267,7 +269,7 @@ impl Refusal {
     /// internal refusal's error chain). Never served to the caller.
     #[must_use]
     pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
-        self.internal.get_or_insert_with(Box::default).cause = Some(cause.to_string());
+        self.extra.get_or_insert_with(Box::default).cause = Some(cause.to_string());
         self
     }
 

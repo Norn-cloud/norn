@@ -1558,10 +1558,10 @@ fn verify_signoff(
             "the sign-off does not match the definition",
             "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
         );
-        refusal.restatement = Some(Box::new(RefusalRestatement {
+        refusal.extra.get_or_insert_with(Box::default).restatement = Some(RefusalRestatement {
             restatement,
             restatement_sha256: recomputed,
-        }));
+        });
         return Err(refusal);
     }
     Ok(recomputed)

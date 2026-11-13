@@ -33,7 +33,7 @@ pub fn id() -> String {
 pub fn respond(mut refused: Refusal) -> Response {
     if refused.is_internal() {
         let incident = id();
-        let internal = refused.internal.get_or_insert_with(Box::default);
+        let internal = refused.extra.get_or_insert_with(Box::default);
         let cause = internal
             .cause
             .clone()
@@ -42,7 +42,7 @@ pub fn respond(mut refused: Refusal) -> Response {
             "norn incident {incident}: {} ({}): {cause}",
             refused.code, refused.status
         ));
-        if let Some(internal) = refused.internal.as_mut() {
+        if let Some(internal) = refused.extra.as_mut() {
             internal.incident_id = Some(incident);
         }
     }
