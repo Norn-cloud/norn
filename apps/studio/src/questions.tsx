@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useState } from "react"
 import { ChartLine, Clock, Plus, Rows3, Sigma, X } from "lucide-react"
@@ -169,12 +169,46 @@ function LiveQuestionsBoard() {
   const list = metrics.data.document.metrics
   if (list.length === 0) return <EmptyState icon={ChartLine}>No admitted type declares an additive measure yet, so there is nothing to add up.</EmptyState>
   const types = [...new Set(list.map(({ objectType }) => objectType))]
-  return <>{types.map((type) => (
-    <div key={type} className="space-y-3">
-      <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
-      <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} />)}</div>
-    </div>
-  ))}</>
+  return <TypeSections types={types} list={list} />
+}
+
+/**
+ * The metrics by type. A type the cell holds no readable records for does not take a card per
+ * metric: its metrics are listed together, compactly, after the types that have records.
+ */
+function TypeSections({ types, list }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[] }) {
+  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false })) })
+  const empty = (index: number) => profiles[index]?.data?.document.rows === 0
+  const held = types.filter((_, index) => !empty(index))
+  const without = types.filter((_, index) => empty(index))
+  return <>
+    {held.map((type) => (
+      <div key={type} className="space-y-3">
+        <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
+        <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} />)}</div>
+      </div>
+    ))}
+    {without.length > 0 && (
+      <Panel icon={Sigma} label="No records yet">
+        <Well className="p-1.5">
+          <ul className="divide-y divide-border/70">
+            {without.map((type) => (
+              <li key={type} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2.5 py-2 text-sm">
+                <Link to="/objects/$type" params={{ type }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(type)}</Link>
+                <span className="min-w-0 text-meta text-muted-foreground">{list.filter(({ objectType }) => objectType === type).map((metric) => metricHeading(metric)).join(" · ")}</span>
+                {(() => {
+                  const profile = profiles[types.indexOf(type)]?.data?.document
+                  const hidden = (profile?.withheldRows ?? 0) + (profile?.quarantinedRows ?? 0)
+                  return hidden > 0 && <span className="text-meta text-muted-foreground">{[profile && profile.withheldRows > 0 && `${profile.withheldRows} withheld from you`, profile && profile.quarantinedRows > 0 && `${profile.quarantinedRows} held in quarantine`].filter(Boolean).join(", ")}</span>
+                })()}
+              </li>
+            ))}
+          </ul>
+          <p className="px-2.5 pt-1 pb-1.5 text-meta text-muted-foreground">Nothing readable is loaded for these yet, so there is nothing to add up.</p>
+        </Well>
+      </Panel>
+    )}
+  </>
 }
 
 function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
