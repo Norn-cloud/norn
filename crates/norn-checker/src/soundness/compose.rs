@@ -11,7 +11,58 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Modality, Net, NetEdge};
+use super::{Ending, Modality, Net, NetEdge};
+
+/// Stable codes of composition refusals (registered, en and ar).
+pub(crate) mod codes {
+    /// A sync table names one UI edge label twice.
+    pub(crate) const SYNC_CONFLICT: &str = "lifecycle.soundness.sync_conflict";
+    /// The composed machine exceeds [`super::MAX_PRODUCT_STATES`].
+    pub(crate) const PRODUCT_LIMIT: &str = "lifecycle.soundness.product_limit";
+    /// A Quint module name is not a plain identifier.
+    pub(crate) const INVALID_MODULE_NAME: &str = "lifecycle.soundness.invalid_module_name";
+}
+
+/// Why a composition or its Quint export is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ComposeError {
+    /// [`codes::SYNC_CONFLICT`]: the UI edge label named twice.
+    SyncConflict(usize),
+    /// [`codes::PRODUCT_LIMIT`].
+    ProductLimit,
+    /// [`codes::INVALID_MODULE_NAME`].
+    InvalidModuleName,
+}
+
+impl ComposeError {
+    /// The registered diagnostic code.
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::SyncConflict(_) => codes::SYNC_CONFLICT,
+            Self::ProductLimit => codes::PRODUCT_LIMIT,
+            Self::InvalidModuleName => codes::INVALID_MODULE_NAME,
+        }
+    }
+}
+
+/// The ending of a product state (coordinator rule, 2026-11-13). Both sides must have ended or
+/// be resting; otherwise the pair has no ending, so "the UI shows Done while the backend is still
+/// pending or stuck" is never Good. A breached, cancelled or compensated side makes the pair that
+/// outcome, worst first; the pair is Good only when the UI is Good, and Resting when the UI rests.
+pub(crate) const fn product_ending(ui: Option<Ending>, backend: Option<Ending>) -> Option<Ending> {
+    match (ui, backend) {
+        (None, _) | (_, None) => None,
+        (Some(Ending::BreachedVisible), _) | (_, Some(Ending::BreachedVisible)) => {
+            Some(Ending::BreachedVisible)
+        }
+        (Some(Ending::Cancelled), _) | (_, Some(Ending::Cancelled)) => Some(Ending::Cancelled),
+        (Some(Ending::Compensated), _) | (_, Some(Ending::Compensated)) => {
+            Some(Ending::Compensated)
+        }
+        (Some(Ending::Good), Some(Ending::Good | Ending::Resting)) => Some(Ending::Good),
+        (Some(Ending::Resting), Some(Ending::Good | Ending::Resting)) => Some(Ending::Resting),
+    }
+}
 
 /// Largest product the composition builds; UI machines are tens of states, lifecycles under 20.
 pub(crate) const MAX_PRODUCT_STATES: usize = 65_536;
@@ -46,9 +97,10 @@ pub(crate) struct Origin {
 /// The reachable product of a UI net and a backend net.
 #[derive(Debug, Clone)]
 pub(crate) struct Product {
-    /// The product as a net. Each edge's `label` is its own index into [`Product::origins`].
-    /// A product state's ending is its UI state's ending; a caller may rewrite `net.endings`.
-    pub(crate) net: Net,
+    /// The product as a net, read through [`Product::net`]. Each edge's `label` is its own index
+    /// into [`Product::origins`]. Endings follow [`product_ending`]; a caller can only remove one
+    /// ([`Product::narrow_endings`]), never add or upgrade one.
+    net: Net,
     /// The (UI state, backend state) pair of each product state.
     pub(crate) pairs: Vec<(usize, usize)>,
     /// The side edges of each product edge.
@@ -57,6 +109,23 @@ pub(crate) struct Product {
 }
 
 impl Product {
+    /// The product as a net, for `analyse`, `witness` and `input_free_cycles`.
+    pub(crate) const fn net(&self) -> &Net {
+        &self.net
+    }
+
+    /// Remove the ending of every product state for which `keep(state, (ui, backend), ending)`
+    /// is false. Endings can only narrow: no state gains or changes an ending.
+    pub(crate) fn narrow_endings(&mut self, keep: impl Fn(usize, (usize, usize), Ending) -> bool) {
+        for (state, slot) in self.net.endings.iter_mut().enumerate() {
+            if let (Some(ending), Some(pair)) = (*slot, self.pairs.get(state))
+                && !keep(state, *pair, ending)
+            {
+                *slot = None;
+            }
+        }
+    }
+
     /// The product state of a pair, when that pair is reachable.
     pub(crate) fn state(&self, ui: usize, backend: usize) -> Option<usize> {
         self.index.get(&(ui, backend)).copied()
@@ -105,7 +174,7 @@ fn combine(first: Modality, second: Modality) -> Modality {
     clippy::too_many_lines,
     reason = "one breadth-first product construction"
 )]
-pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product, &'static str> {
+pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product, ComposeError> {
     let mut together: BTreeMap<usize, usize> = BTreeMap::new();
     let mut alone: BTreeSet<usize> = BTreeSet::new();
     for entry in sync {
@@ -116,7 +185,8 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
             Sync::Alone { ui } => !together.contains_key(&ui) && alone.insert(ui),
         };
         if !fresh {
-            return Err("a sync table names one UI edge label twice");
+            let (Sync::Together { ui, .. } | Sync::Alone { ui }) = *entry;
+            return Err(ComposeError::SyncConflict(ui));
         }
     }
     let synced: BTreeSet<usize> = together.values().copied().collect();
@@ -126,19 +196,22 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
         origins: Vec::new(),
         index: BTreeMap::new(),
     };
-    let intern = |product: &mut Product, pair: (usize, usize)| -> Result<usize, &'static str> {
+    let intern = |product: &mut Product, pair: (usize, usize)| -> Result<usize, ComposeError> {
         if let Some(state) = product.index.get(&pair) {
             return Ok(*state);
         }
         if product.pairs.len() >= MAX_PRODUCT_STATES {
-            return Err("the composed machine exceeds 65,536 product states");
+            return Err(ComposeError::ProductLimit);
         }
         let state = product.pairs.len();
         product.pairs.push(pair);
         product
             .net
             .endings
-            .push(ui.endings.get(pair.0).copied().flatten());
+            .push(product_ending(
+                ui.endings.get(pair.0).copied().flatten(),
+                backend.endings.get(pair.1).copied().flatten(),
+            ));
         product.index.insert(pair, state);
         Ok(state)
     };
@@ -200,7 +273,7 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
             let to = intern(&mut product, pair)?;
             let label = product.origins.len();
             product.origins.push(origin);
-            product.net.edges.push(NetEdge {
+            product.net().edges.push(NetEdge {
                 from: state,
                 to,
                 label,
@@ -220,12 +293,12 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
 ///
 /// # Errors
 /// `module` is not a plain identifier.
-pub(crate) fn quint(net: &Net, module: &str) -> Result<String, &'static str> {
+pub(crate) fn quint(net: &Net, module: &str) -> Result<String, ComposeError> {
     let mut chars = module.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        return Err("a Quint module name is a plain identifier");
+        return Err(ComposeError::InvalidModuleName);
     }
     let set = |states: Vec<usize>| -> String {
         let items: Vec<String> = states.iter().map(ToString::to_string).collect();
@@ -306,19 +379,57 @@ mod tests {
         // pay interleaves, and it is guarded on the backend, so the product edge is may.
         let paid = product.state(2, 2).expect("another actor pays");
         let into_paid = product
-            .net
+            .net()
             .edges
             .iter()
             .find(|edge| edge.from == done && edge.to == paid)
             .expect("pay");
         assert_eq!(into_paid.modality(), Modality::May);
-        let run = witness(&product.net, paid).expect("reachable");
+        let run = witness(product.net(), paid).expect("reachable");
         let sides: Vec<Origin> = run.iter().map(|edge| product.origins[*edge]).collect();
         assert_eq!(sides.len(), 3);
         assert_eq!(sides[1].ui.zip(sides[1].backend), Some((1, 0)));
         assert_eq!(product.backend_labels(&chart()), BTreeSet::from([20, 21]));
-        let verdict = analyse(&product.net);
-        assert_eq!(verdict.states[done].completion, Completion::Must);
+        // Done while the draft is only posted is no ending: completing needs the guarded pay.
+        let verdict = analyse(product.net());
+        assert_eq!(product.net().endings[done], None);
+        assert_eq!(verdict.states[done].completion, Completion::Unknown);
+        assert_eq!(product.net().endings[paid], Some(Ending::Good));
+    }
+
+    /// Planted: the page reaches Done on `accepted` while the backend sits in `posted`, which is
+    /// no ending and has no way on. The product reports it stuck instead of counting it Good.
+    #[test]
+    fn a_ui_done_over_a_backend_that_has_not_ended_is_reported() {
+        let mut stuck = chart();
+        stuck.edges.truncate(1);
+        let product = compose(&page(), &stuck, &sync()).expect("small");
+        let done = product.state(2, 1).expect("accepted posts the draft");
+        let verdict = analyse(product.net());
+        assert!(verdict.states[done].stuck(), "{:?}", verdict.states[done]);
+        assert_eq!(verdict.states[done].completion, Completion::None);
+        let run = witness(product.net(), done).expect("a shortest run to the false Done");
+        assert_eq!(run.len(), 2);
+    }
+
+    #[test]
+    fn product_endings_need_both_sides_ended_and_callers_only_narrow() {
+        use Ending::{BreachedVisible, Cancelled, Compensated, Good, Resting};
+        assert_eq!(product_ending(Some(Good), None), None);
+        assert_eq!(product_ending(None, Some(Good)), None);
+        assert_eq!(product_ending(Some(Good), Some(Resting)), Some(Good));
+        assert_eq!(product_ending(Some(Resting), Some(Good)), Some(Resting));
+        assert_eq!(product_ending(Some(Good), Some(Cancelled)), Some(Cancelled));
+        assert_eq!(product_ending(Some(Compensated), Some(Good)), Some(Compensated));
+        assert_eq!(product_ending(Some(Cancelled), Some(BreachedVisible)), Some(BreachedVisible));
+        let mut product = compose(&page(), &chart(), &sync()).expect("small");
+        let paid = product.state(2, 2).expect("paid");
+        let before = product.net().endings.clone();
+        product.narrow_endings(|state, _, _| state != paid);
+        assert_eq!(product.net().endings[paid], None);
+        for (state, ending) in product.net().endings.iter().enumerate() {
+            assert!(ending.is_none() || before[state] == *ending, "narrowing never adds");
+        }
     }
 
     #[test]
@@ -343,14 +454,16 @@ mod tests {
                 backend: 20,
             },
         ];
-        assert!(compose(&page(), &chart(), &twice).is_err());
+        let refused = compose(&page(), &chart(), &twice).expect_err("label 12 twice");
+        assert_eq!(refused, ComposeError::SyncConflict(12));
+        assert_eq!(refused.code(), "lifecycle.soundness.sync_conflict");
         let module = quint(
-            &compose(&page(), &chart(), &sync()).expect("small").net,
+            compose(&page(), &chart(), &sync()).expect("small").net(),
             "page_post",
         )
         .expect("identifier");
         assert!(module.starts_with("module page_post {"));
         assert!(module.contains("action step = any {"));
-        assert!(quint(&page(), "1bad").is_err());
+        assert_eq!(quint(&page(), "1bad"), Err(ComposeError::InvalidModuleName));
     }
 }
