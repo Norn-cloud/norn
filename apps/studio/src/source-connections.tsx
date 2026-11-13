@@ -86,7 +86,7 @@ export function SourceConnections() {
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {connections.isPending && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
-        ? <Well><EmptyState icon={Cable} title="No connections">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</EmptyState></Well>
+        ? <Well className="flex items-center gap-3 px-4 py-3 text-sm"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block font-medium">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <p role="alert" className="text-sm text-destructive">The connections could not be read. {failure(connections.error)}</p>
