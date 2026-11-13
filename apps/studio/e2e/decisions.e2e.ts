@@ -28,7 +28,13 @@ async function inbox(page: Page, options: Parameters<typeof decisionCell>[1] = {
 
 const list = (page: Page) => page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button")
 const sheet = (page: Page) => page.getByRole("dialog")
-const open = async (page: Page, text: string) => { await list(page).filter({ hasText: text }).click(); await expect(sheet(page)).toBeVisible() }
+// The sheet's machine runs once the checker engine (WASM) compiles in the page, which under the
+// full suite's load can outlast a default 5 s wait: opening waits for the machine's first state.
+const open = async (page: Page, text: string) => {
+  await list(page).filter({ hasText: text }).click()
+  await expect(sheet(page)).toBeVisible()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-state", /.+/, { timeout: 30_000 })
+}
 
 test("view: the inbox lists what waits on you, soonest deadline first, with the nav's count, risk, suggestion and countdown", async ({ page }) => {
   await inbox(page)
