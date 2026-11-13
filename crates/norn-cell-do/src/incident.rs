@@ -16,8 +16,9 @@ use crate::server::Response;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// A fresh incident id: the host's clock in milliseconds and a per-process
-/// sequence, so ids are unique within an isolate and ordered in its log.
+/// A fresh incident id: in the Worker, the host's clock in milliseconds
+/// (natively, a random number) and a per-process sequence, so ids are unique
+/// within an isolate and ordered in its log.
 #[must_use]
 pub fn id() -> String {
     format!(
@@ -101,20 +102,19 @@ mod sink {
     }
 
     pub(super) fn log(line: &str) {
-        eprintln!("{line}");
+        use std::io::Write as _;
+        // A failed write to stderr has nowhere better to go.
+        let _ignored = writeln!(std::io::stderr(), "{line}");
         RECENT.with(|recent| recent.borrow_mut().push(line.to_owned()));
     }
 
+    /// A random per-id prefix (natively there is no ambient clock to read).
     pub(super) fn now_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            })
+        getrandom::u64().unwrap_or_default()
     }
 
     /// The lines logged on this thread so far (native builds; for tests).
-    pub fn recent() -> Vec<String> {
+    pub(super) fn recent() -> Vec<String> {
         RECENT.with(|recent| recent.borrow().clone())
     }
 }
