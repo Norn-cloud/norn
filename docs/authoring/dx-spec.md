@@ -265,12 +265,12 @@ declare function law<T extends ObjectType | Interface>(
     eventually?: (self: SelfOf<T>) => boolean
     within?: { days?: number; hours?: number } | { before: (self: SelfOf<T>) => Date }  // `before`: a bare read of a timestamp property only
     severity?: "error" | "warning" | Override   // default "error"
-    unless?: ReadonlyArray<Exception<T>>        // GAP §8.1
+    unless?: { [label: string]: Exception<T> }  // CURRENT compiler (#1176 unit B); evaluation GAP §8.1
     because: string                      // rationale, required
     id?: string                          // codemod only: keep an existing law id (see below)
   },
 ): Law<T>
-type Exception<T> = { name: string; when: (self: SelfOf<T>) => boolean; because: string }
+type Exception<T> = { when: (self: SelfOf<T>) => boolean; because: string; unless?: { [label: string]: Exception<T> } }
 type Override = { override: { fixWithin: { days: number }; by: Role } }   // GAP §8.2
 ```
 
@@ -459,13 +459,15 @@ Every row names an existing IR kind; only the rows marked GAP need engine work.
 | `.owned()` | `LinkDecl` + action `createLinks` | `builder/entity.ts`, `builder/action.ts` | `entity_v2`, `action.rs` | CURRENT parts |
 | `pathEquations` | `norn.path-equations/1.0.0` extension | `builder/entity.ts` | chase EGDs | CURRENT |
 | `machine` | `LifecycleDecl` + `TransitionDecl` | `builder/entity.ts` | `entity_v2`, checker `lifecycles.rs` | CURRENT builder |
+| machine shape in `Norn.type({ lifecycles })`: `{ property, initial, states: { s: { on, after, final, resting, immutable } }, events }` | `LifecycleDecl` with `endings`, `events`, `trigger`, `mode`, `compensatedBy` (one transition per event; `NORN-MACHINE-EVENT-CONFLICT` when one event moves differently) | `compiler/definitions.ts` `machine` | `entity_v2/lifecycle.rs`; checker `lifecycle_soundness.rs` (LIFE-SOUND-1..9) | CURRENT compiler |
 | machine event | `action` (`fire_transition`) | `builder/action.ts` | `action.rs` | CURRENT builder |
 | `by: Role` | `policy` (AccessIR) | `builder/access.ts` | `access.rs` | CURRENT builder |
 | `after` | `rule` (`decide`, `transitioned` trigger + timer) | `builder/rule.ts` | `rule.rs` | CURRENT builder, PROPOSED generator |
 | `run: flow` | `rule` (`decide`, `transitioned` trigger) | `builder/rule.ts` | `rule.rs` | PROPOSED generator |
 | `law` | `law` (LawIR) | `builder/law.ts` | `verification.rs` `LawIR` | CURRENT builder |
 | lambdas | ZEN expression text | `builder/expr.ts` (needs closures, `sum`) | `norn-expr` `norn-zen/6` | PROPOSED builder ops |
-| `unless` | `LawIR.exceptions` (exception tree) | `builder/law.ts` `LawException` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT IR and admission; **GAP §8.1** evaluation |
+| `unless: { label: { when, because, unless? } }` | `LawIR.exceptions` (exception tree; labels are ids, a nested label overrides its parent, each source is its own slot) | `compiler/definitions.ts` `exceptions` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT compiler and admission; **GAP §8.1** evaluation |
+| `Norn.obligation` / `prohibition` / `permission(name, { on, when?, must \| never \| may, cite: { authority, version }, yieldsTo?, unless?, because })` | one `DeonticRule` each in the subject type's `norn.normative/1.0.0` slot (`yieldsTo` → `defeatedBy`; a permission is a defeater and grants nothing); declared in the subject's module | `compiler/definitions.ts` `norms` | `deontic.rs` declared-order admission | CURRENT compiler |
 | `severity: { override }` | `LawSeverity` + violation record | `builder/law.ts` | `verification.rs` `LawSeverity` | **GAP §8.2** |
 | `flow` (either syntax) | Run `entity` + `rule` | `builder/flow.ts`, `lower-flow.ts` | `entity_v2`, `rule.rs` | CURRENT for Effect.gen |
 | `fn` / `failure` | Function handle, tagged error | `builder/flow.ts` | `function.rs` | CURRENT |
