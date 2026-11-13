@@ -9,7 +9,7 @@ import { useLocale } from "@/lib/locale"
 import { cn } from "@/lib/utils"
 import { defineDecisionSheet, decideRequest, type NornDecisionSheet, type SheetDocument } from "../../../../packages/norn-demo-ui/src/elements/decision-sheet.ts"
 import { fetchTransport, wasmEvaluate } from "../../../../packages/norn-demo-ui/src/machine/index.ts"
-import { loadEngine } from "../lib/canvas/checker.ts"
+import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch, type Fetch } from "../lib/cell-read.ts"
 import { scopedHostFetch } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
@@ -61,7 +61,9 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
 }) {
   const { locale } = useLocale()
   const navigate = useNavigate()
-  const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => loadEngine(), staleTime: Infinity, retry: false })
+  // Loaded once per page, starting when the inbox renders, so it compiles while the person reads.
+  // The sheet draws its first state without it and takes input once it is here.
+  const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => sharedEngine(), staleTime: Infinity, retry: false })
   // A callback ref: the sheet's portal mounts its content after this component commits.
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const element = useRef<NornDecisionSheet | null>(null)
@@ -70,14 +72,14 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
 
   useEffect(() => {
     const target = host
-    if (decision === null || engine.data === undefined || target === null) return
+    if (decision === null || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
     const call = scopedHostFetch(fetcher)
     sheet.options = {
       document: DOCUMENT,
       decision,
-      evaluate: wasmEvaluate(engine.data),
+      evaluate: sharedEngine().then((loaded) => wasmEvaluate(loaded)),
       transport: fetchTransport((_, input, key) => decideRequest(decision.id, input, key), call),
       locale: locale === "ar" ? "ar" : "en",
       ...(now === undefined ? {} : { now }),
@@ -88,8 +90,8 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
     target.replaceChildren(sheet)
     element.current = sheet
     return () => { sheet.remove(); element.current = null }
-    // A new decision (or the engine arriving) mounts a fresh machine; `now` only repaints.
-  }, [decision?.id, engine.data, locale, host])
+    // A new decision mounts a fresh machine; `now` only repaints.
+  }, [decision?.id, locale, host])
 
   useEffect(() => {
     if (now !== undefined) (element.current as unknown as { setNow?: (ms: number) => void } | null)?.setNow?.(now)
@@ -98,7 +100,8 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
   const request = () => {
     const sheet = element.current
     if (sheet === null || sheet.request("close-button")) return
-    if (sheet.snapshot === null || SETTLED.has(sheet.snapshot.stateId)) onClose()
+    // Before the engine arrives nothing was chosen, so the host may close it outright.
+    if (sheet.snapshot === null || !sheet.ready || SETTLED.has(sheet.snapshot.stateId)) onClose()
   }
 
   return (
