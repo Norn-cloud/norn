@@ -32,7 +32,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/privacy/artifacts/privacy.markings.entity.json"
+    "sourcePath": "registry/privacy/artifacts/privacy.markings.entity.json"
   },
   "scope": {},
   "version": "0.1.0"

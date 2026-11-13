@@ -703,11 +703,11 @@ fn the_privacy_pack_admits_over_the_three_systems_set() {
     assert!(!serde_json::to_string(canon).unwrap().contains("pii.contact"));
     for artifact in &mut artifacts {
         if artifact.artifact_id == "canon.Party.entity" {
-            *artifact = read("registry/packs/privacy/overlays/canon.Party.entity.json");
+            *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
         }
     }
-    artifacts.push(read("registry/packs/privacy/artifacts/privacy.markings.entity.json"));
-    artifacts.push(read("registry/packs/privacy/artifacts/privacy.reveal.policy.json"));
+    artifacts.push(read("registry/privacy/artifacts/privacy.markings.entity.json"));
+    artifacts.push(read("registry/privacy/artifacts/privacy.reveal.policy.json"));
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()

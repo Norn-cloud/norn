@@ -46,7 +46,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/privacy/overlays/canon.Party.entity.json"
+    "sourcePath": "registry/privacy/overlays/canon.Party.entity.json"
   },
   "scope": {},
   "version": "0.1.0"

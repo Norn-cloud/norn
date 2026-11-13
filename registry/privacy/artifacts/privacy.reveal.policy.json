@@ -45,7 +45,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/privacy/artifacts/privacy.reveal.policy.json"
+    "sourcePath": "registry/privacy/artifacts/privacy.reveal.policy.json"
   },
   "scope": {},
   "version": "0.1.0"
