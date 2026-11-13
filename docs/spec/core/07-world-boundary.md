@@ -102,6 +102,35 @@ restart add no second conflict finding; ordinary corrections do not resolve it.
 Full cursor convergence and conflict capture for ordinary unmapped submissions
 remain follow-up cuts for this CP2 bundle bridge.
 
+**SOURCE-AGREE-1** (coordinator ruling 2026-11-13; beside FEED-CONFLICT, which
+compares one source event with itself): several sources may report one
+canonical subject, as ERPNext, Odoo and Shopify each report a holding. When
+consecutive versions of a subject change a measure's partition source (a
+`unitSource` member or a direct `currencySource` its type declares: canon's
+`unit`, `currency`, `quantity_basis`, `cost_currency`) from one reported value
+to another, and their field provenance names two different source systems,
+the subject carries a warning finding `core.observation.source_disagreement`
+naming both systems, both values and both versions. A source that reports no
+value (a mapping gap) disagrees with no one. Both reports are true facts about
+what each source says, so the finding never quarantines or excludes its
+subject. It is recomputed from verified history at each read's own frontier and
+never stored: it is open while the value at that frontier differs from the
+earlier report, so it resolves when the subject returns to it, and a later
+change by another source is a finding of its own. A read discloses a
+disagreement only where its caller may read both versions (Population, Values
+and Sources). An answer reports `sourceDisagreements`: per partition source,
+the members with an open disagreement whose two versions the reader may see, at
+the answer's knowledge frontier, counted after either engine by the same host
+function so the exact and analytics engines agree. A read examines at most 500
+candidates; past that `complete` is false and each count is a lower bound
+(HOST-READ-4b). A governed accept with a reason is the next cut; until it lands,
+a finding resolves only through the data. Named scenarios: **SOURCE-AGREE-FLIP**
+(a second source's different basis opens the finding, and the holding stays in
+stock answers, counted), **SOURCE-AGREE-RETURN** (returning to the earlier
+report resolves it), **SOURCE-AGREE-HIDDEN** (a reader who cannot read one
+version sees neither its values nor a count) and **SOURCE-AGREE-FRONTIER** (a
+flip after an answer's frontier does not change that answer).
+
 **OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
 addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry
 a page of 1..K source records. A page is only a unit of delivery. Each record
