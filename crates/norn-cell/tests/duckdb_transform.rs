@@ -334,3 +334,96 @@ fn a_normalized_key_join_refuses_the_lowering_not_the_answer() {
         Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
     ));
 }
+
+/// VIEW-AGG-1 / METRIC-UNIT-PARTITION-1 parity: quantities aggregated per
+/// unit and per currency (sums, extremes and a running sum) lower to `DuckDB`
+/// with the exact engine's rows, lineage and volumes.
+#[test]
+fn quantities_grouped_by_unit_and_currency_lower_identically() {
+    let order = json!({"name": "shop.Order", "properties": [
+        {"id": "weight", "type": {"kind": "decimal", "scale": 3,
+            "additivity": {"kind": "additive"}, "unitSource": ["weight_unit"]}},
+        {"id": "weight_unit", "type": {"kind": "enum", "values": ["kg", "lb"]}},
+        {"id": "price", "type": {"kind": "decimal", "scale": 2,
+            "additivity": {"kind": "additive"}, "currencySource": {"property": "currency"}}},
+        {"id": "currency", "type": {"kind": "enum", "values": ["USD", "EGP"]}}
+    ]});
+    let [_, customer] = types();
+    let grouped = plan_over(
+        [order.clone(), customer.clone()],
+        "a",
+        json!({
+            "order": {"op": "scan", "input": "order"},
+            "a": {"op": "aggregate", "input": "order",
+                "groupBy": [{"column": "weight_unit"}, {"column": "currency"}],
+                "measures": [{"name": "w", "fn": "sum", "column": "weight"},
+                    {"name": "heaviest", "fn": "max", "column": "weight"},
+                    {"name": "p", "fn": "sum", "column": "price"},
+                    {"name": "cheapest", "fn": "min", "column": "price"}]}
+        }),
+    );
+    let running = plan_over(
+        [order.clone(), customer.clone()],
+        "w",
+        json!({
+            "order": {"op": "scan", "input": "order"},
+            "w": {"op": "window", "input": "order", "partitionBy": ["weight_unit"],
+                "orderBy": [{"column": "id", "direction": "asc"}],
+                "columns": [{"name": "to_date", "fn": "running_sum", "column": "weight"}]}
+        }),
+    );
+    let objects: Vec<ObjectTypeDef> = [order, customer]
+        .into_iter()
+        .map(|value| serde_json::from_value(value).expect("type"))
+        .collect();
+    let mut store =
+        CellStore::open_in_memory(Model::from_definitions(&objects, &[]).expect("model"))
+            .expect("store");
+    let amount = |text: &str| V::Number(Decimal::parse(text).expect("decimal"));
+    let shipment = |key: &str, weight: &str, unit: &str, price: &str, currency: &str| {
+        put(
+            "shop.Order",
+            key,
+            vec![
+                ("weight", amount(weight)),
+                ("weight_unit", V::from(unit)),
+                ("price", amount(price)),
+                ("currency", V::from(currency)),
+            ],
+        )
+    };
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: 1_792_972_800_000,
+            writes: vec![
+                shipment("o1", "1.500", "kg", "10.00", "USD"),
+                shipment("o2", "2.250", "lb", "5.50", "EGP"),
+                shipment("o3", "0.750", "kg", "3.25", "USD"),
+                shipment("o4", "4.000", "lb", "7.00", "USD"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("commit");
+    for plan in [&grouped, &running] {
+        same(
+            store.evaluate_transform(plan, WORLD, SCOPE, |_| Ok(RowAccess::Read)),
+            store.evaluate_transform_duckdb(plan, WORLD, SCOPE, |_| Ok(RowAccess::Read)),
+        );
+    }
+    // Kilograms in dollars are summed apart from pounds in either currency.
+    let exact = store
+        .evaluate_transform(&grouped, WORLD, SCOPE, |_| Ok(RowAccess::Read))
+        .expect("exact");
+    let kg_usd = exact
+        .rows
+        .iter()
+        .find(|row| {
+            row.values["weight_unit"] == V::from("kg") && row.values["currency"] == V::from("USD")
+        })
+        .expect("kg in USD");
+    assert_eq!(kg_usd.values["w"], amount("2.250"));
+    assert_eq!(kg_usd.values["p"], amount("13.25"));
+    assert_eq!(exact.rows.len(), 3);
+}
