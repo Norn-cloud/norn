@@ -119,11 +119,11 @@ fn host_with(artifacts: &[ArtifactEnvelope]) -> DevHost<norn_cell::engine::Nativ
     }
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("governing laws");
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
-            RuntimeValue::from_json(serde_json::to_value(&artifacts).expect("set"))
+            RuntimeValue::from_json(serde_json::to_value(artifacts).expect("set"))
                 .expect("value")
                 .canonical_json()
                 .expect("canonical"),
