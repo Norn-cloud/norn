@@ -108,6 +108,19 @@ impl<E: SqlEngine> DevHost<E> {
         self.cell.lock().map_err(Refusal::host)
     }
 
+    /// The active definitions version alone (no set is read), or `None` for
+    /// a cell with nothing installed: cheap enough to check per request.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn active_definitions_version(&self) -> Result<Option<u64>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .active_definitions_version()
+            .map_err(Refusal::host)
+    }
+
     /// The active definitions revision, read under the definition epoch, or
     /// `None` for a cell with nothing installed. Never writes.
     /// # Errors

@@ -48,8 +48,9 @@ function stage(gatewayClient = false) {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
   }
-  const auth = createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, ...gatewayClient ? { gateway: { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) } } : {} })
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, ...gatewayClient ? { gateway: { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) } } : {} })
   const calls: Request[] = []
   let answer: (request: Request) => Response = () => Response.json({})
   const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -248,7 +249,7 @@ test("the Worker routes /api/connectors/ through the server-side actor", async (
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_workspace_provisioning.sql"))
-  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY }
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY }
   const response = await worker.fetch(new Request(`${ORIGIN}/api/connectors/status`) as Parameters<typeof worker.fetch>[0], env)
   expect([response.status, ((await response.json()) as { code: string }).code]).toEqual([401, "connectors.sign_in"])
 })
@@ -303,7 +304,7 @@ test("an unreachable gateway, a malformed path and a third-party sign-in are typ
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_workspace_provisioning.sql"))
-  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
   for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
     const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
     expect(response.status).toBe(403)
@@ -394,7 +395,7 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
   for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql"]) db.exec(migration(file))
-  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32), NORN_HOST: standInHost(liveCell().host) }
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32), NORN_HOST: standInHost(liveCell().host) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
   const cookie = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ")
@@ -469,7 +470,7 @@ test("the cell scope is the organization's declared environment, or null", async
   const db = new Database(":memory:")
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_workspace_provisioning.sql"))
-  const auth = createAuth({ database: db, secret: "t".repeat(40), baseURL: ORIGIN })
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: "t".repeat(40), baseURL: ORIGIN })
   const add = (id: string, metadata: string | null) => db.query("INSERT INTO organization (id, name, slug, createdAt, metadata) VALUES (?, ?, ?, ?, ?)").run(id, id, id, Date.now(), metadata)
   add("org_demo", '{"environmentId":"analytics"}')
   add("org_none", null)

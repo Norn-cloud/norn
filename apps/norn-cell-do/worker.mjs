@@ -5,8 +5,12 @@ import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 initSync({ module });
 
-// Published cells, as [orgId, environmentId].
-const PUBLISHED = [["org_demo", "dev"], ["org_demo", "analytics"]];
+// The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
+const DEMO = ["org_demo", "dev"];
+// A scope part a cell can be named by. Anything else is routed to the demo cell, whose scope
+// admission answers the same opaque denial as any other failed read.
+const ORG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // CellScope::key: `%` and `/` escaped in each part.
 const escape = (part) => part.replaceAll("%", "%25").replaceAll("/", "%2F");
 const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
@@ -15,8 +19,22 @@ const CELL_HEADER = "x-norn-cell";
 const JWKS_TIMEOUT_MS = 5000;
 // Same spacing as the Rust side's JWKS_RETRY_SECS: a failed cold open is not retried sooner.
 const OPEN_RETRY_MS = 60_000;
-/** The largest submission a cell accepts (an ad-hoc QuestionIR), in UTF-16 units. */
+/** The largest submission a cell accepts (an ad-hoc QuestionIR), in bytes. */
 const MAX_BODY = 65536;
+const PROVISION_PATH = "/v1/cell:provision";
+/** The largest provisioning submission (a tenant's artifact set), in bytes; the cell checks the same bound. This is read before the cell authorizes the caller. */
+const MAX_PROVISION_BODY = 1048576;
+// The environments a tenant cell may exist in: pinned configuration (NORN_TENANT_ENVIRONMENTS,
+// comma-separated), never taken from a request. An organization has at most one cell per
+// declared environment; a scope naming any other environment never reaches a cell of its own.
+const DEFAULT_ENVIRONMENTS = "dev,prod";
+const environments = (env) => (env.NORN_TENANT_ENVIRONMENTS ?? DEFAULT_ENVIRONMENTS).split(",").map((e) => e.trim()).filter((e) => ENVIRONMENT.test(e));
+const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics");
+// The last JWKS document this isolate fetched and when. A cold open reuses one younger than
+// OPEN_RETRY_MS, so opening many cells (any caller can name a scope) costs the issuer one fetch a
+// minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
+// bounds count from the fetch, and every refresh fetches anew.
+let lastJwks = null;
 
 export class Cell {
   constructor(ctx, env) {
@@ -27,12 +45,18 @@ export class Cell {
     // The last failed cold open and when it failed (see open()).
     this.openFailure = null;
   }
-  /** The pinned JWKS document. The URL is configuration, never taken from a token. */
-  async jwks() {
+  /** The pinned JWKS document and when it was fetched. The URL is configuration, never taken from a token. `reuse` accepts this isolate's last document while it is younger than OPEN_RETRY_MS (cold opens only). */
+  async jwks(reuse) {
+    if (reuse && lastJwks !== null && lastJwks.url === this.env.NORN_HOST_JWKS_URL) {
+      // A clock that moved backwards (negative age) never reuses.
+      const age = Date.now() - lastJwks.at;
+      if (age >= 0 && age < OPEN_RETRY_MS) return lastJwks;
+    }
     // Never follow a redirect: anything but 200 from the pinned URL fails.
     const response = await fetch(this.env.NORN_HOST_JWKS_URL, { redirect: "manual", signal: AbortSignal.timeout(JWKS_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
-    return response.text();
+    lastJwks = { url: this.env.NORN_HOST_JWKS_URL, text: await response.text(), at: Date.now() };
+    return lastJwks;
   }
   open(request) {
     // A failed open is cached for OPEN_RETRY_MS and refused at once with the same
@@ -44,14 +68,15 @@ export class Cell {
       if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
       this.openFailure = null;
     }
-    // One opening per object; provisioning and dispatch are synchronous Wasm.
+    // One opening per object; seeding, provisioning and dispatch are synchronous Wasm. A scope
+    // nobody provisioned opens vacant: the cell reads its storage and writes nothing.
     this.opening ??= (async () => {
       const [org, env] = JSON.parse(request.headers.get(CELL_HEADER));
       const issuer = this.env.NORN_HOST_ISSUER;
-      const jwks = issuer === undefined ? undefined : await this.jwks();
+      const jwks = issuer === undefined ? undefined : await this.jwks(true);
       // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
       // analytics cell refuses to open without one of at least 32 bytes.
-      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks, this.env.NORN_LINEAGE_KEY, Date.now());
+      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, jwks?.at ?? Date.now());
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -67,7 +92,8 @@ export class Cell {
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
     try {
-      this.cell.replaceJwks(await this.jwks(), Date.now());
+      const jwks = await this.jwks(false);
+      this.cell.replaceJwks(jwks.text, jwks.at);
       return true;
     } catch (error) {
       console.error(`JWKS refresh failed: ${error}`);
@@ -75,10 +101,11 @@ export class Cell {
     }
   }
   async fetch(request) {
-    // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
-    const body = request.method === "POST" ? await readBounded(request, MAX_BODY) : undefined;
+    // A submission (an ad-hoc question, a definition, a provisioning set) is read once, bounded, before the cell sees it.
+    const limit = new URL(request.url).pathname === PROVISION_PATH ? MAX_PROVISION_BODY : MAX_BODY;
+    const body = request.method === "POST" ? await readBounded(request, limit) : undefined;
     if (body === null) {
-      return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
+      return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
     await this.open(request);
     // Keys at their maximum age are refetched before serving, whether or not any
@@ -87,6 +114,12 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    // The operator sees why a cell serves no action; a caller only ever sees the opaque denial.
+    const policyError = reply.policyError ?? null;
+    if (policyError !== this.policyError) {
+      if (policyError !== null) console.error(`action policy not installed: ${policyError}`);
+      this.policyError = policyError;
+    }
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
 }
@@ -123,10 +156,15 @@ export default {
     const headers = cors(request, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     const url = new URL(request.url);
-    const asked = [url.searchParams.get("orgId"), url.searchParams.get("environmentId")];
-    // An unpublished or missing scope still reaches a cell, whose scope
-    // admission returns the same opaque denial as any other failed read.
-    const cell = PUBLISHED.find(([org, e]) => org === asked[0] && e === asked[1]) ?? PUBLISHED[0];
+    const orgs = url.searchParams.getAll("orgId");
+    const asks = url.searchParams.getAll("environmentId");
+    // Each well-formed scope in a declared environment has its own cell, named by its key; whether
+    // that cell is provisioned is the cell's to say. A missing, repeated, malformed or undeclared
+    // scope still reaches a cell (the demo one), whose scope admission returns the same opaque
+    // denial as any other failed read.
+    const asked = [orgs[0], asks[0]];
+    const named = orgs.length === 1 && asks.length === 1 && ORG.test(asked[0]) && ENVIRONMENT.test(asked[1]) && (isDemo(asked) || environments(env).includes(asked[1]));
+    const cell = named ? asked : DEMO;
     const forwarded = new Request(request);
     forwarded.headers.set(CELL_HEADER, JSON.stringify(cell));
     const response = await env.CELLS.get(env.CELLS.idFromName(key(cell))).fetch(forwarded);

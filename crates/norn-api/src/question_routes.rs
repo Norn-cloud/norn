@@ -469,6 +469,13 @@ fn allowed<E: SqlEngine>(
 /// never describe an ungranted resource. A question naming an undeclared
 /// metric reads, for this purpose, every declared metric (D62).
 pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
+    /// Whether this runtime answers questions. A runtime that only keys
+    /// receipt handles (a tenant cell with no published questions) answers
+    /// none: a definition that names a question is then refused as
+    /// unavailable, as on a cell with no runtime at all.
+    fn publishes_questions(&self) -> bool {
+        true
+    }
     /// The cell's declared metric definitions; a question may name only these.
     fn definitions(&self) -> &[MetricDefinition];
     /// The effective catalog a question is admitted against.

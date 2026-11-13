@@ -19,9 +19,10 @@ function stage(host?: (request: Request) => Response) {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...host === undefined ? {} : { NORN_HOST: { fetch: async (request: Request) => { seen.push(request); return host(request) } } as unknown as Fetcher },
   }
-  return { env, db, seen, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
+  return { env, db, seen, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
 }
 
 let address = 0

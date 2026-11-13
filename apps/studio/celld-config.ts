@@ -1,5 +1,6 @@
 import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { clientIpHeader, type ClientIpHeader } from "./worker/client-ip.ts"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
 // declares on Cloudflare, written as the wrangler.json `celld deploy` reads (#728, D55).
@@ -25,6 +26,8 @@ export interface CelldStudio {
   readonly agent?: { readonly gatewayUrl: string; readonly gatewayToken: string }
   /** The tool gateway Connections uses (#772) and Studio's OAuth client there; without it Connections says none is configured. */
   readonly toolGateway?: { readonly url: string; readonly clientId: string; readonly clientSecret: string }
+  /** The header the stage's edge sets to the client's address: required, never defaulted (#1328). */
+  readonly clientIpHeader: ClientIpHeader
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -58,8 +61,13 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const toolDeclared = [toolUrl, toolClient, toolSecret].some((value) => value !== undefined)
   if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
   if (toolUrl !== undefined && !isHttpsOrigin(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
+  // Required and validated here: a celld stage has no Cloudflare in front by default, so a
+  // defaulted cf-connecting-ip would be a header the client writes, and its guesses unlimited.
+  if (env.STUDIO_CLIENT_IP_HEADER === undefined) throw new Error("STUDIO_CLIENT_IP_HEADER is required on celld: the header this stage's edge sets to the client's address (x-real-ip behind Traefik, cf-connecting-ip behind Cloudflare)")
+  const ipHeader = clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)
   return {
     stage, build, authUrl, authSecret,
+    clientIpHeader: ipHeader,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
@@ -70,7 +78,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
 /** The wrangler.json for one stage, binding for binding the Cloudflare deploy's. */
 export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
-  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build }
+  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build, STUDIO_CLIENT_IP_HEADER: studio.clientIpHeader }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
