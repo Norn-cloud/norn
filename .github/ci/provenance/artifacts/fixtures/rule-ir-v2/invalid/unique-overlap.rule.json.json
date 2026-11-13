@@ -1,7 +1,7 @@
 {
-  "sha256": "2a9bcfc0dc40b54b19e06bc3cc44b3f0c868d18416c4f3f7d57e58c7a694068a",
+  "sha256": "0ebb4107e23cf853bda3aa625739cadba6bae477eca0fba7ca99b5bd8e4ecac7",
   "origin": "authored",
-  "category": "code",
+  "category": "synthetic-fixture",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],

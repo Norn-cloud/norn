@@ -8,8 +8,6 @@ pub mod ivm;
 pub mod lineage;
 /// VIEW-MAT-1: a materialized transform's stored result.
 pub mod materialize;
-#[cfg(feature = "duckdb")]
-mod olap;
 /// VIEW-ENGINE-1: admitted transforms lowered to embedded `DuckDB`.
 #[cfg(feature = "duckdb")]
 mod olap_transform;
@@ -291,10 +289,6 @@ fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
 ) -> Result<(), CellError> {
-    // METRIC-SNAPSHOT-ASOF-1: a snapshot reads every stored version at the head.
-    if plan.as_of() && cutoff.is_some() {
-        return Err(refused(UNSUPPORTED_ENGINE));
-    }
     if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
         let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
         if !asof_matches(plan, point.recorded_at.as_millis()) {
@@ -367,8 +361,14 @@ impl<E: SqlEngine> CellStore<E> {
                 let Some(record) = reader.object(&context.world, grain, id)? else {
                     return Ok(false);
                 };
-                let (entries, _) =
-                    subject_contributions(&reader, plan, context, id, &record, &mut budget)?;
+                let (entries, _) = subject_contributions(
+                    &reader,
+                    plan,
+                    context,
+                    (id, &record),
+                    None,
+                    &mut budget,
+                )?;
                 Ok(!entries.is_empty())
             };
             reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
@@ -490,8 +490,14 @@ impl<E: SqlEngine> CellStore<E> {
                 )? {
                     continue;
                 }
-                let (entries, timeless) =
-                    subject_contributions(&reader, plan, &context, &id, &record, &mut budget)?;
+                let (entries, timeless) = subject_contributions(
+                    &reader,
+                    plan,
+                    &context,
+                    (&id, &record),
+                    cutoff,
+                    &mut budget,
+                )?;
                 unlinked = unlinked.saturating_add(u64::from(timeless));
                 if !entries.is_empty() {
                     contributions.insert(id, entries);
@@ -625,8 +631,8 @@ fn subject_contributions<E: SqlEngine>(
     reader: &crate::read::StoreReader<'_, E>,
     plan: &QuestionPlan,
     context: &QueryContext,
-    id: &str,
-    record: &ObjectRecord,
+    (id, record): (&str, &ObjectRecord),
+    cutoff: Option<crate::KnowledgeCutoff>,
     budget: &mut DecodeBudget,
 ) -> Result<(Vec<(u64, Contribution)>, bool), CellError> {
     if let Some(link) = plan.time_link() {
@@ -674,7 +680,14 @@ fn subject_contributions<E: SqlEngine>(
         ));
     }
     let versions = reader
-        .object_versions_with_budget(&context.world, plan.grain().as_str(), id, budget)?
+        // METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the versions known then.
+        .object_versions_with_budget(
+            &context.world,
+            plan.grain().as_str(),
+            id,
+            cutoff.map(|c| c.frontier),
+            budget,
+        )?
         .ok_or_else(|| refused("core.compute.bound_exceeded"))?
         .into_iter()
         .map(|version| (version.version, version.values))

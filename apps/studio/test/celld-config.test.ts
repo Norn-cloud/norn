@@ -34,6 +34,7 @@ test("production, weak secrets, email and half an assistant refuse before anythi
   expect(() => celldStudio({ ...BASE, BETTER_AUTH_URL: "https://demo.norn.cloud/x" })).toThrow("https origin")
   expect(() => celldStudio({ ...BASE, BETTER_AUTH_SECRET: "short" })).toThrow("32 characters")
   expect(() => celldStudio({ ...BASE, EMAIL_FROM: "a@b.c" })).toThrow("Email Service")
+  expect(() => celldStudio({ ...BASE, STUDIO_CLIENT_IP_HEADER: "x-forwarded-for" })).toThrow("STUDIO_CLIENT_IP_HEADER")
   expect(() => celldStudio({ ...BASE, AI_GATEWAY_URL: "https://gw" })).toThrow("together")
   expect(() => celldStudio({ ...BASE, NORN_HOST_SERVICE: "Norn_Cell" })).toThrow("script name")
 })
@@ -91,4 +92,9 @@ test("STUDIO_MCP=on serves /mcp and OAuth discovery from the Worker; anything el
   expect((config.assets as { run_worker_first: string[] }).run_worker_first).toEqual(["/api/*", "/mcp", "/.well-known/*"])
   expect((celldConfig(celldStudio(BASE)).vars as Record<string, string>).STUDIO_MCP).toBeUndefined()
   expect(() => celldStudio({ ...BASE, STUDIO_MCP: "yes" })).toThrow(/STUDIO_MCP/)
+})
+
+test("a stage behind Traefik names the header its edge sets", () => {
+  expect(celldConfig(celldStudio({ ...BASE, STUDIO_CLIENT_IP_HEADER: "x-real-ip" })).vars).toMatchObject({ STUDIO_CLIENT_IP_HEADER: "x-real-ip" })
+  expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("STUDIO_CLIENT_IP_HEADER")
 })
