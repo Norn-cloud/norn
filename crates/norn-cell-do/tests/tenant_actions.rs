@@ -786,3 +786,45 @@ fn a_named_question_is_not_found_on_vacant_and_provisioned_cells_alike() {
         }
     }
 }
+
+/// D84: a tenant cell publishes no questions, so an ad-hoc question is the
+/// base's 403 whatever its body (malformed included), on a vacant scope and
+/// a provisioned one alike (#1297 r4 should 1).
+#[test]
+fn an_ad_hoc_question_is_the_base_refusal_on_a_tenant_cell() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(
+        &directory.path().join("served.sqlite"),
+        &with_policy(&["admin"]),
+    );
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    for path in ["/v1/questions:evaluate", "/v1/questions:trace"] {
+        for body in ["not json", "{}", r#"{"question":{"name":"q"}}"#] {
+            for auth in [None, Some(user("admin")), Some(user("viewer"))] {
+                let ask = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method: "POST",
+                            path,
+                            query: QUERY,
+                            authorization: auth.as_deref(),
+                            now: NOW,
+                            body,
+                        },
+                    )
+                };
+                let at_served = ask(&mut served);
+                let document: Value = serde_json::from_str(&at_served.body).unwrap();
+                assert_eq!(
+                    (at_served.status, document["code"].as_str()),
+                    (403, Some("authz.denied")),
+                    "{path} {body} as {auth:?}"
+                );
+                if auth.is_none() {
+                    assert_eq!(at_served, ask(&mut vacant), "{path} {body}");
+                }
+            }
+        }
+    }
+}

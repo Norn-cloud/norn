@@ -2235,4 +2235,14 @@ fn the_read_policy_admits_only_models_its_rules_compile_for() {
     let types: Vec<norn_ir::ObjectTypeDef> = opened.store.model().object_types().cloned().collect();
     let policy = ReadPolicy::compile(types.iter(), &scope, &DEMO_GRANTS).unwrap();
     assert!(policy.admits_model(&types).is_ok());
+    // The same type twice: its read rule would be declared twice, so the
+    // rules do not compile and the candidate is refused.
+    let mut doubled = types.clone();
+    doubled.push(types[0].clone());
+    let refused = policy.admits_model(&doubled).unwrap_err();
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (409, "defs.migration_refused"),
+        "{refused:?}"
+    );
 }
