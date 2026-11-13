@@ -26,7 +26,7 @@ import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
 import { readFindings, readHistory, type Evidence, type EvidenceRef } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
-import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
+import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -184,8 +184,10 @@ function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; re
 
 /** One fact's exact text, opening its card; an empty fact is a dash with no card. */
 function FactValue({ field, reads, onLineage }: { readonly field: Concept["fields"][number]; readonly reads: ObjectReads; readonly onLineage: () => void }) {
+  const { view } = useView()
   const { objectType, id, version } = reads.object.document
-  const text = factText(field, reads.object.document, reads.object.numbers, "")
+  // One renderer for every value: grouped digits with their unit, dates and choices in words (Technical: as sent).
+  const text = factDisplay(field, reads.object.document, reads.object.numbers, "", view)
   const value = reads.object.document.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
   const label = field.label ?? field.id.replaceAll("_", " ")
