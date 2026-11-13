@@ -918,6 +918,14 @@
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
       "review": "needs_review"
     },
+    "law.example.mismatch": {
+      "message": "حكم مثال القانون يختلف عن المتوقع: {$detail}",
+      "review": "needs_review"
+    },
+    "law.example.unsupported": {
+      "message": "لا يمكن تقييم مثال القانون على قيمة واحدة: {$detail}",
+      "review": "needs_review"
+    },
     "law.exception.cycle": {
       "message": "سلسلة تجاوزات استثناء القانون لا تصل إلى قانونها أبدًا",
       "review": "needs_review"
@@ -2362,6 +2370,14 @@
       "message": "الفرع {$statementId} من المحوّل {$nodeId} ليس له حافة خارجة، فالحدث الذي يسلكه لا يصل إلى أي عقدة",
       "review": "needs_review"
     },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "صفّان في جدول قرار فريد يطابقان المدخل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "لا يستطيع المدقق إثبات أن صفوف جدول القرار الفريد منفصلة، لذا يُرفض: {$detail}",
+      "review": "needs_review"
+    },
     "rule.validation.jdm_unknown_column": {
       "message": "الصف {$rowId} فيه خلية لـ {$columnId}، وهو ليس عمودًا في الجدول",
       "review": "needs_review"
@@ -2502,6 +2518,42 @@
       "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
       "review": "needs_review"
     },
+    "widget.catalog.duplicate_entry": {
+      "message": "كتالوج أداة رسومية يعلن معرّف المدخل نفسه مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.duplicate_renderer": {
+      "message": "مدخلا كتالوج يعرضان نوع الحقل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.event_payload_mismatch": {
+      "message": "حمولة حدث صفحة تختلف عن حدث الكتالوج الذي يطلقه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.invalid_prop": {
+      "message": "خاصية مكوّن كتالوج لا تُترجم أو لا تطابق نوعها المعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.island_machine": {
+      "message": "جزيرة معتمة تعلن ترسيمة تفاعل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unbound_prop": {
+      "message": "خاصية مطلوبة لمكوّن كتالوج غير مربوطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_entry": {
+      "message": "صفحة تضع مكوّن كتالوج غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_event": {
+      "message": "حدث صفحة من مكوّن كتالوج لا يسمّي أحد أحداثه المعلنة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_prop": {
+      "message": "مكوّن كتالوج يُعطى خاصية لا يعلنها مدخله: {$detail}",
+      "review": "needs_review"
+    },
     "widget.interaction.control_missing_for_transition": {
       "message": "عنصر تنقل معلَن أو ربط إجراء ليس له عنصر تحكم يقدّمه: {$detail}",
       "review": "needs_review"
@@ -2538,6 +2590,38 @@
       "message": "صفحة في التطبيق ليس لها عنصر تحكم يصل إليها من صفحة الدخول: {$detail}",
       "review": "needs_review"
     },
+    "widget.lifecycle.assumption_violated": {
+      "message": "حالة في الصفحة تظهر بينما الكائن في حالة دورة حياة لا تفترضها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.completion_unknown": {
+      "message": "حالة في الصفحة مع حالة الكائن لا تصلان إلى نهاية لكليهما إلا عبر انتقالات مشروطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.stuck": {
+      "message": "حالة في الصفحة مع حالة الكائن لا تصلان معًا إلى نهاية لكليهما: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.sync_not_accepted": {
+      "message": "انتقال في الصفحة مزامَن مع انتقال في دورة الحياة ليس النتيجة المقبولة لاستدعاء إجراء: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.sync_unfired": {
+      "message": "الإجراء وراء انتقال الصفحة المزامَن لا يستطيع إطلاق انتقال دورة الحياة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.uncovered_transition": {
+      "message": "انتقال في دورة الحياة تطلقه الصفحة لا يأخذه أي تشغيل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.unknown_lifecycle": {
+      "message": "ترسيمة الصفحة تسمّي دورة حياة لا يعلنها نوع الكائن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.unknown_reference": {
+      "message": "مزامنة أو افتراض دورة الحياة في ترسيمة الصفحة يسمّي حالة أو انتقالًا غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
     "widget.machine.absorbing_state": {
       "message": "حالة غير نهائية في ترسيمة الصفحة ليس لها مخرج: {$detail}",
       "review": "needs_review"
@@ -2548,6 +2632,14 @@
     },
     "widget.machine.cancel_outside_pending": {
       "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.completion_unknown": {
+      "message": "لا يمكن الوصول إلى حالة خاملة أو نهائية من حالة في ترسيمة الصفحة إلا عبر انتقالات مشروطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.component_guard_outside_catalog": {
+      "message": "انتقال في ترسيمة صفحة يترك شرطه لشيفرة مكوّن: {$detail}",
       "review": "needs_review"
     },
     "widget.machine.control_without_event": {

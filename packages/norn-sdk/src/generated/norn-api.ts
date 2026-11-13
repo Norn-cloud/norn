@@ -500,6 +500,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/objects/{type}:facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HOST-READ-7: the exact value counts of `object_type`'s categorical
+         *     properties over the caller's authorized snapshot, narrowed by a filter.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared type (404), an invalid filter
+         *     or a property that is not a declared text, choice or yes/no property (400
+         *     `query.invalid`, every violation at its pointer), a commit while the
+         *     snapshot was read (409 `object.snapshot_moved`, retryable), or a host failure.
+         */
+        get: operations["get_object_facets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/objects/{type}:profile": {
         parameters: {
             query?: never;
@@ -1878,6 +1903,8 @@ export interface components {
             severity: components["schemas"]["NornIrDiagnosticSeverity"];
             span: components["schemas"]["NornCheckerDiagnosticSpan"] | null;
             tier: components["schemas"]["NornCheckerTier"] | null;
+            /** @description A run that shows the finding, when the check found one; absent otherwise (D84: additive). */
+            witness?: components["schemas"]["NornCheckerWitness"];
         };
         /** @description A JSON pointer and optional source-text range for a checker finding. */
         NornCheckerDiagnosticSpan: {
@@ -1929,6 +1956,36 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /**
+         * @description A shortest run that shows a checker finding: the edge path, and at each step which machine
+         *     moved and by which transition.
+         */
+        NornCheckerWitness: {
+            /** @description The steps, from an initial state. */
+            steps: components["schemas"]["NornCheckerWitnessStep"][];
+        };
+        /** @description One side's move in a checker witness step. */
+        NornCheckerWitnessMove: {
+            /** @description The transition id it took. */
+            label: string;
+            /** @description Which machine moved. */
+            side: components["schemas"]["NornCheckerWitnessSide"];
+        };
+        /**
+         * @description The machine a witness move belongs to.
+         * @enum {string}
+         */
+        NornCheckerWitnessSide: "ui" | "backend";
+        /** @description One step of a checker witness. */
+        NornCheckerWitnessStep: {
+            /**
+             * Format: int64
+             * @description The edge of the checked (composed) machine this step took.
+             */
+            edge: number;
+            /** @description The sides that moved, each by its own transition. */
+            moves: components["schemas"]["NornCheckerWitnessMove"][];
+        };
         /** @description Where a column's value comes from: one stored property of one input. */
         NornColumnOrigin: {
             /** @description The input alias. */
@@ -2060,6 +2117,36 @@ export interface components {
             id: string;
             sha256: string;
             version: number;
+        };
+        /** @description One property's values and how many counted rows hold each. */
+        NornFacet: {
+            /**
+             * Format: int64
+             * @description Counted rows without a value.
+             */
+            nulls: number;
+            /**
+             * Format: int64
+             * @description Counted rows holding a value not listed.
+             */
+            otherRows: number;
+            /** @description The property id. */
+            property: string;
+            /**
+             * @description Its values, most rows first (ties in value order), at most
+             *     [`MAX_FACET_VALUES`].
+             */
+            values: components["schemas"]["NornFacetValue"][];
+        };
+        /** @description One value and the counted rows that hold it. */
+        NornFacetValue: {
+            /**
+             * Format: int64
+             * @description Counted rows holding it.
+             */
+            count: number;
+            /** @description A stored value: text or a boolean. */
+            value: unknown;
         };
         /**
          * GuaranteesDocument
@@ -5221,11 +5308,10 @@ export interface components {
         /**
          * @description JDM hit policy shared by decision tables and switch nodes.
          *
-         *     DMN policies other than `first` and `collect` translate or are rejected at
-         *     DMN ingress (T3-DEC-4); they have no JDM representation.
-         * @enum {string}
+         *     DMN policies other than `first`, `collect` and `unique` translate or are
+         *     rejected at DMN ingress (T3-DEC-4); they have no JDM representation.
          */
-        NornIrJdmHitPolicy: "first" | "collect";
+        NornIrJdmHitPolicy: ("first" | "collect") | "unique";
         /**
          * @description One JDM node, internally tagged by its JDM `type`.
          *
@@ -5345,11 +5431,8 @@ export interface components {
         };
         /** @description Switch-node content (`SwitchNodeContent`). */
         NornIrJdmSwitchContent: {
-            /**
-             * @description Absent means `first` (the `zen-engine` default).
-             * @enum {string}
-             */
-            hitPolicy?: "first" | "collect";
+            /** @description Absent means `first` (the `zen-engine` default). */
+            hitPolicy?: components["schemas"]["NornIrJdmHitPolicy"];
             statements: components["schemas"]["NornIrJdmSwitchStatement"][];
         };
         /** @description One switch branch; edges leave the switch with `sourceHandle` = `id`. */
@@ -9746,8 +9829,65 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
+        /**
+         * @description One catalog component (UI-CATALOG-1): custom UI in any framework, joined
+         *     to Norn only through these typed contracts. A renderer is an
+         *     implementation of the catalog.
+         */
+        NornIrWidgetCatalogEntry: {
+            /** @description Accessibility behaviours the component implements. */
+            behaviors?: components["schemas"]["NornIrWidgetBehavior"][];
+            /**
+             * @description Density tier the component is drawn at.
+             * @enum {string}
+             */
+            density?: "scan" | "read" | "focus";
+            /** @description Stable entry id. */
+            entryId: string;
+            /** @description Declared output events: the only things the component can say. */
+            events?: components["schemas"]["NornIrWidgetCatalogEvent"][];
+            /**
+             * @description The framework the implementation is written in (informational, for
+             *     renderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...
+             */
+            framework?: string;
+            /** @description Human-readable name. */
+            label: components["schemas"]["NornIrLocaleText"];
+            /** @description The component's own interaction machine; an opaque island has none. */
+            machine?: components["schemas"]["NornIrWidgetMachine"];
+            /** @description Typed props: the only data the component receives. */
+            props?: components["schemas"]["NornIrWidgetMachineField"][];
+            /**
+             * @description The field type this component renders everywhere it appears (one
+             *     renderer per field type: grid, record, inspector and tooltips alike).
+             * @enum {string}
+             */
+            renders?: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+            /**
+             * @description Trust ladder position.
+             * @enum {string}
+             */
+            trust: "native" | "contract_checked" | "opaque_island";
+        };
+        /** @description One declared output event of a catalog component. */
+        NornIrWidgetCatalogEvent: {
+            /** @description Event name, unique within the entry. */
+            eventId: string;
+            /** @description Typed payload members. */
+            payload?: components["schemas"]["NornIrWidgetMachineField"][];
+        };
+        /**
+         * @description A catalog component named by a page: an entry of this contract's
+         *     catalog, or of a pinned widget artifact's.
+         */
+        NornIrWidgetCatalogRef: {
+            /** @description The entry id. */
+            entryId: string;
+            /** @description The widget artifact whose catalog holds the entry; omitted, this one. */
+            widget?: components["schemas"]["NornIrArtifactRef"];
+        };
         /** @description Supported page components. */
-        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"] | components["schemas"]["NornIrWidgetComponentOneOf10"];
+        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"] | components["schemas"]["NornIrWidgetComponentOneOf10"] | components["schemas"]["NornIrWidgetComponentOneOf11"];
         /** @description A named section or tab with explicit field inclusion and order. */
         NornIrWidgetComponentOneOf0: {
             /** @enum {string} */
@@ -9767,8 +9907,19 @@ export interface components {
              */
             selection: "none" | "single" | "multiple";
         };
-        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        /**
+         * @description A control whose only effect is to raise the page machine's `user`
+         *     events that name this node (UI-MACHINE-1). A `choice` or `text`
+         *     control sends its value as the event payload member `value`.
+         */
         NornIrWidgetComponentOneOf10: {
+            input: components["schemas"]["NornIrWidgetControlInput"];
+            /** @enum {string} */
+            kind: "control";
+            label: components["schemas"]["NornIrLocaleText"];
+        };
+        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        NornIrWidgetComponentOneOf11: {
             /** @enum {string} */
             kind: "composition";
             pageId: string;
@@ -9840,15 +9991,18 @@ export interface components {
             kind: "navigation";
         };
         /**
-         * @description A control whose only effect is to raise the page machine's `user`
-         *     events that name this node (UI-MACHINE-1). A `choice` or `text`
-         *     control sends its value as the event payload member `value`.
+         * @description An instance of a catalog component (UI-CATALOG-1): its props bound by
+         *     ZEN expressions over the page machine's `input.fields`, its declared
+         *     events raised as the page machine's `user` events that name this node.
          */
         NornIrWidgetComponentOneOf9: {
-            input: components["schemas"]["NornIrWidgetControlInput"];
+            entry: components["schemas"]["NornIrWidgetCatalogRef"];
             /** @enum {string} */
-            kind: "control";
-            label: components["schemas"]["NornIrLocaleText"];
+            kind: "catalog";
+            props?: components["schemas"]["NornIrWidgetComponentOneOf9PropertyProps"];
+        };
+        NornIrWidgetComponentOneOf9PropertyProps: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /**
          * @description Confirmation interaction.
@@ -9951,6 +10105,11 @@ export interface components {
             /** @description Required, entity-marked runtime-key parameter. */
             parameterId: string;
         };
+        /**
+         * @description Density tiers (scan lists, read records, focus canvases), as named tokens.
+         * @enum {string}
+         */
+        NornIrWidgetDensity: "scan" | "read" | "focus";
         /**
          * @description Closed dismissal methods supported by a dialog component.
          * @enum {string}
@@ -10171,6 +10330,20 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetLayout: "table" | "detail" | "kanban" | "form" | "dashboard";
+        /** @description The lifecycle states one page state may be shown in. */
+        NornIrWidgetLifecycleAssumption: {
+            /** @description The lifecycle states it may be shown in. */
+            lifecycleStates: string[];
+            /** @description The page state. */
+            stateId: string;
+        };
+        /** @description One page transition that fires with one lifecycle transition. */
+        NornIrWidgetLifecycleSync: {
+            /** @description The lifecycle transition it fires. */
+            lifecycleTransition: string;
+            /** @description The page transition (an `accepted` outcome). */
+            transitionId: string;
+        };
         /**
          * @description A page's interaction statechart (UI-MACHINE-1).
          *
@@ -10187,6 +10360,12 @@ export interface components {
             fields: components["schemas"]["NornIrWidgetMachineField"][];
             /** @description State the page opens in; it must have the `idle` role. */
             initialStateId: string;
+            /**
+             * @description The backend lifecycle the page acts on (UI-LIFECYCLE-1, #1236). With it the checker
+             *     composes the page with that lifecycle: a page never shows an ending the object has not
+             *     reached, and never sits in a state its assumptions about the object rule out.
+             */
+            lifecycle?: components["schemas"]["NornIrWidgetMachineLifecycle"] | null;
             /**
              * @description Version of the machine contract.
              * @enum {string}
@@ -10266,8 +10445,12 @@ export interface components {
             /** @enum {string} */
             kind: "page_opened";
         };
-        /** @description A person used the control at `node_id` in this page's tree. */
+        /**
+         * @description A person used the control at `node_id` in this page's tree. For a
+         *     catalog component node, `emits` names the entry event it raises.
+         */
         NornIrWidgetMachineEventSourceOneOf1: {
+            emits?: string;
             /** @enum {string} */
             kind: "user";
             nodeId: string;
@@ -10313,6 +10496,24 @@ export interface components {
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
         };
+        /** @description The backend lifecycle a page machine runs against, and how the two move together. */
+        NornIrWidgetMachineLifecycle: {
+            /**
+             * @description The lifecycle states each page state may be shown in. A state without an entry assumes
+             *     nothing.
+             */
+            assumes?: components["schemas"]["NornIrWidgetLifecycleAssumption"][];
+            /** @description The object type whose lifecycle the page acts on. */
+            objectType: string;
+            /** @description The lifecycle's property. */
+            property: string;
+            /**
+             * @description Page transitions that fire together with a lifecycle transition: an `accepted` outcome of
+             *     a call that fires it. A lifecycle transition named here never fires without the page; every
+             *     other one (another actor, a timer, an event) may fire at any time.
+             */
+            syncs?: components["schemas"]["NornIrWidgetLifecycleSync"][];
+        };
         /** @description One declared state. */
         NornIrWidgetMachineState: {
             /** @description The call or read a `pending` state waits for. */
@@ -10334,6 +10535,13 @@ export interface components {
         /** @description One declared transition. */
         NornIrWidgetMachineTransition: {
             assign?: components["schemas"]["NornIrWidgetMachineTransitionPropertyAssign"];
+            /**
+             * @description A guard the catalog component's own code decides (a Foldkit `when` or
+             *     `otherwise` edge), named for reviewers. The checker treats the
+             *     transition as possibly disabled (May); the host accepts it only with
+             *     the target the component reports. Catalog entry machines only.
+             */
+            componentGuard?: string;
             /** @description Effects run when the transition fires, in order. */
             effects?: components["schemas"]["NornIrWidgetMachineEffect"][];
             /** @description Source state. */
@@ -10646,6 +10854,11 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetStateRole: "idle" | "pending" | "error" | "terminal";
+        /**
+         * @description Where a catalog component stands on the trust ladder (UI-CATALOG-1).
+         * @enum {string}
+         */
+        NornIrWidgetTrust: "native" | "contract_checked" | "opaque_island";
         /** @description The typed UX contract nested in a legacy `widget` payload. */
         NornIrWidgetUx: {
             /** @description Typed Norn action calls available to placements and forms. */
@@ -10654,6 +10867,11 @@ export interface components {
             actionPlacements: components["schemas"]["NornIrWidgetActionPlacement"][];
             /** @description Optional application shell that composes pages and navigation. */
             app?: components["schemas"]["NornIrWidgetApp"];
+            /**
+             * @description Catalog components this contract declares (UI-CATALOG-1): custom UI written in any
+             *     framework, each with a typed props contract, declared events and its machine.
+             */
+            catalog?: components["schemas"]["NornIrWidgetCatalogEntry"][];
             /** @description Exact object reads used by pages, fields, and actions. */
             dataBindings: components["schemas"]["NornIrWidgetDataBinding"][];
             /** @description Field presentation keyed by stable field ids and property references. */
@@ -10730,7 +10948,7 @@ export interface components {
              * @description Semantic kind of the view.
              * @enum {string}
              */
-            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage" | "lifecycle";
             /** @description The domain concept the view presents. */
             subject: components["schemas"]["NornIrWidgetViewSubject"];
         };
@@ -10738,7 +10956,7 @@ export interface components {
          * @description Closed semantic view kinds.
          * @enum {string}
          */
-        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage" | "lifecycle";
         /** @description One render state of a widget. */
         NornIrWidgetViewState: {
             kind: components["schemas"]["NornIrWidgetViewStateKind"];
@@ -11091,6 +11309,43 @@ export interface components {
             contributions: components["schemas"]["NornNumericContribution"][];
             /** @description Revalidated exact result at its original frontier. */
             result: components["schemas"]["NornQueryResult"];
+        };
+        /** @description The exact value counts of a concept's categorical properties. */
+        NornObjectFacets: {
+            /**
+             * @description One facet per property asked for, in the order asked (the order the
+             *     cell's model lists the type's properties when none was named).
+             */
+            facets: components["schemas"]["NornFacet"][];
+            /**
+             * @description True when the scan bound was reached: every count (`rows`, each value,
+             *     `otherRows`, `nulls`) is exact over the rows scanned, and so at most the
+             *     true count.
+             */
+            lowerBound: boolean;
+            /** @description The concept counted; rows may be of its subtypes. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Rows held back by source disputes or open quarantining findings.
+             */
+            quarantinedRows: number;
+            /**
+             * Format: int64
+             * @description Rows counted: readable, not held back, and matching the filter.
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description The visible-row scan bound.
+             */
+            scanLimit: number;
+            /**
+             * Format: int64
+             * @description Rows the caller may know exist but whose values are withheld; none is
+             *     counted, and none matches a filter.
+             */
+            withheldRows: number;
         };
         /** @description An object's quality findings (OBS-EVIDENCE-1), open and resolved. */
         NornObjectFindings: {
@@ -13769,6 +14024,90 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_object_facets: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /**
+                 * @description The properties to count, comma separated: each a text, choice or
+                 *     yes/no property of the type. Every such property when absent.
+                 * @example status,unit
+                 */
+                properties?: string;
+                /**
+                 * @description The grid query's filter (`{"all":[clause, ...]}`), with its rules: the
+                 *     facets count the rows a page with this filter lists.
+                 */
+                filter?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The concept to count. */
+                type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The value counts over the caller's authorized snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornObjectFacets"];
+                };
+            };
+            /** @description The request was refused as invalid (`query.invalid`): the filter does not hold, or a property is not a declared text, choice or yes/no property, with every violation as a diagnostic. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The snapshot moved while it was read; retry. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -57,7 +57,15 @@ export interface ExplainResult {
   readonly diagnostics: ReadonlyArray<DiagnosticV2>
 }
 
+/** LAW-EXAMPLE-1: the checker's verdict of one law on one subject value. */
+export type LawVerdict =
+  | { readonly ok: true; readonly verdict: "not_applicable" | "holds" | "violated" }
+  | { readonly ok: true; readonly verdict: "excepted"; readonly applied: ReadonlyArray<string> }
+  | { readonly ok: false; readonly code: string; readonly error: string }
+
 export interface CheckerAbi {
+  /** `evaluateLaw(law, subject)` (LAW-EXAMPLE-1), absent from a package built before it existed. */
+  readonly evaluateLaw?: (law: unknown, subject: unknown) => LawVerdict
   /** `checkArtifactSet(artifacts, context)`; the context defaults to an empty base layer. */
   readonly checkArtifactSet: (artifacts: ReadonlyArray<unknown>, context?: unknown) => CheckResult
   /** `explainArtifactSet` (#517), absent from a package built before it existed. */
@@ -68,6 +76,7 @@ export interface CheckerAbi {
 interface WasmModule {
   readonly initSync: (options: { module: Uint8Array }) => unknown
   readonly checkArtifactSet: (artifactsJson: string, contextJson: string) => string
+  readonly evaluateLaw?: (lawJson: string, subjectJson: string) => string
   readonly explainArtifactSet?: (artifactsJson: string, contextJson: string, kind: string, id: string, optionsJson: string) => string
   readonly version: () => string
 }
@@ -98,7 +107,11 @@ export async function loadChecker(dir: string | undefined = checkerPackageDir())
   const abi = (await import(pathToFileURL(js).href)) as WasmModule
   abi.initSync({ module: readFileSync(wasm) })
   const explain = abi.explainArtifactSet?.bind(abi)
+  const evaluateLaw = abi.evaluateLaw?.bind(abi)
   return {
+    ...(evaluateLaw ? {
+      evaluateLaw: (law: unknown, subject: unknown) => JSON.parse(evaluateLaw(JSON.stringify(law), JSON.stringify(subject))) as LawVerdict,
+    } : {}),
     checkArtifactSet: (artifacts, context = null) =>
       JSON.parse(abi.checkArtifactSet(JSON.stringify(artifacts), JSON.stringify(context))) as CheckResult,
     ...(explain ? {

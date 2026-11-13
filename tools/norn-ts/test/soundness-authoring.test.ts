@@ -237,3 +237,105 @@ export const big = Norn.obligation("big", { on: Sale, must: (s) => s.reported, c
     if (!result.ok) expect(result.diagnostics.map((d) => d.code)).toContain("NORN-FLOW-MODULE")
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+// TABLE-UNIQUE-1: a unique table's rows must be proved disjoint by the checker.
+const table = (rows: string, input = `Schema.Struct({ tier: Schema.Literals(["a", "b", "c"]), vip: Schema.Boolean })`, hit = "unique") => `import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Tier = Norn.decision({ id: "shop.rule.tier", title: "Tier", version: "0.1.0", contract: "sub_decision", scopeRequired: ["orgId", "environmentId"], hit: "${hit}",
+  input: ${input}, output: Schema.Struct({ r: Schema.String }) }, [
+${rows}
+])
+`
+const tableOf = (list: Artifact[]): Record<string, any> =>
+  (list[0]!.payload.graph.nodes as Array<Record<string, any>>).find((n) => n.type === "decisionTableNode")!.content
+const DISJOINT = `  { when: (i) => i.tier === "a", then: (i) => ({ r: "x" }) },
+  { when: (i) => i.tier === "b", then: (i) => ({ r: "y" }) },
+  { when: (i) => i.tier === "c", then: (i) => ({ r: "z" }) },`
+
+test("a unique table's rows stand alone and are admitted when disjoint", () => {
+  const list = artifacts(table(DISJOINT))
+  const content = tableOf(list)
+  expect(content.hitPolicy).toBe("unique")
+  expect(content.rules.map((r: Record<string, string>) => r.condition)).toEqual(["tier == 'a'", "tier == 'b'", "tier == 'c'"])
+  if (!checker) return
+  expect(codes(list)).toEqual([])
+}, 30_000)
+
+test("overlapping unique rows are refused with a witness; an undecidable table is Unknown, refused", () => {
+  if (!checker) return
+  const overlapping = checker.checkArtifactSet(artifacts(table(`  { when: (i) => i.tier === "a", then: (i) => ({ r: "x" }) },
+  { when: (i) => i.vip, then: (i) => ({ r: "y" }) },`))).diagnostics.diagnostics as ReadonlyArray<{ readonly code: string; readonly message: string }>
+  const overlap = overlapping.find((d) => d.code === "rule.validation.jdm_unique_overlap")
+  expect(overlap?.message ?? JSON.stringify(overlapping)).toContain("row_0")
+  expect(overlap?.message ?? "").toContain("\"vip\":true")
+  // The same rows under first are ordered, not refused.
+  expect(codes(artifacts(table(`  { when: (i) => i.tier === "a", then: (i) => ({ r: "x" }) },
+  { when: (i) => i.vip, then: (i) => ({ r: "y" }) },`, undefined, "first"))).map(([code]) => code)).not.toContain("rule.validation.jdm_unique_overlap")
+  const unbounded = codes(artifacts(table(`  { when: (i) => i.amount > 100, then: (i) => ({ r: "x" }) },
+  { when: (i) => i.amount <= 100, then: (i) => ({ r: "y" }) },`, `Schema.Struct({ amount: Schema.Int })`))).map(([code]) => code)
+  expect(unbounded).toContain("rule.validation.jdm_unique_unproved")
+}, 30_000)
+
+test("a decision callback cannot be unique: its branches are ordered", () => {
+  const callback = compile(`import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Tier = Norn.decision({ id: "shop.rule.tier", title: "Tier", version: "0.1.0", contract: "sub_decision", scopeRequired: ["orgId", "environmentId"], hit: "unique",
+  input: Schema.Struct({ vip: Schema.Boolean }), output: Schema.Struct({ r: Schema.String }) }, (i) => i.vip ? { r: "x" } : { r: "y" })
+`)
+  expect(callback.ok).toBe(false)
+})
+
+// LAW-EXAMPLE-1: examples run with the checker's law semantics.
+const EXAMPLES = `
+export const vipOverLimit = Norn.example("vip over limit is excepted", {
+  of: creditLimit,
+  given: { order_id: "o1", total: 900, credit_limit: 500, prepaid: false, tier: "vip", status: "confirmed" },
+  expect: { excepted: ["vip"] },
+})
+export const hugeVip = Norn.example("a huge vip order is not excepted", {
+  of: creditLimit,
+  given: { order_id: "o2", total: 2000000, credit_limit: 500, prepaid: false, tier: "vip", status: "confirmed" },
+  expect: "violated",
+})
+export const draftIgnored = Norn.example("a draft is not governed", {
+  of: creditLimit,
+  given: { order_id: "o3", total: 900, credit_limit: 500, prepaid: false, tier: "standard", status: "draft" },
+  expect: "not_applicable",
+})
+`
+
+test("examples compile to the law they name and pass with the checker's verdicts", async () => {
+  const result = compile(SOURCE + EXAMPLES)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.examples.map((e) => [e.name, e.artifactId, e.pointer])).toEqual([
+    ["vip over limit is excepted", "shop.Order.credit_limit.law", "/payload"],
+    ["a huge vip order is not excepted", "shop.Order.credit_limit.law", "/payload"],
+    ["a draft is not governed", "shop.Order.credit_limit.law", "/payload"],
+  ])
+  if (!checker) return
+  const { runExamples } = await import("../src/examples.ts")
+  expect(runExamples(checker, result.artifacts, result.examples)).toEqual([])
+  // A planted wrong expectation is reported with the checker's code and the example's line.
+  const wrong = compile(SOURCE + EXAMPLES.replace(`expect: "violated",`, `expect: "holds",`))
+  if (!wrong.ok) throw new Error(JSON.stringify(wrong.diagnostics))
+  const failed = runExamples(checker, wrong.artifacts, wrong.examples)
+  expect(failed.map((d) => d.code)).toEqual(["law.example.mismatch"])
+  expect(failed[0]!.message).toContain("expected holds, the checker says violated")
+  expect(failed[0]!.source?.line).toBeGreaterThan(0)
+}, 30_000)
+
+test("an example of a norm reads the norm's slot in its subject's artifact", async () => {
+  const source = NORMS + `
+export const exemptCash = Norn.example("exempt cash is permitted", { of: regulatorExemption, given: { cash: true, large: false, exempt: true, reported: false }, expect: "holds" })
+export const unreported = Norn.example("a large sale is reported", { of: reportLarge, given: { cash: false, large: true, exempt: false, reported: false }, expect: "violated" })
+`
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.examples.map((e) => e.pointer)).toEqual([
+    "/payload/extensions/norn.normative~11.0.0/0/law",
+    "/payload/extensions/norn.normative~11.0.0/2/law",
+  ])
+  if (!checker) return
+  const { runExamples } = await import("../src/examples.ts")
+  expect(runExamples(checker, result.artifacts, result.examples)).toEqual([])
+}, 30_000)

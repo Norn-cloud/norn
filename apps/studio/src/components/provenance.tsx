@@ -10,6 +10,8 @@ import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { factProvenance, versionShown, type ValueProvenance } from "@/lib/provenance"
 import type { SourceLineage } from "@/lib/transport"
 import { cn } from "@/lib/utils"
+import { useView } from "@/lib/view"
+import { readableTime } from "@/lib/format"
 import { readHistory } from "../evidence/review.ts"
 
 /** One link in the chain, in its kind's icon; receipt and time steps have no kind and use their own. */
@@ -28,6 +30,7 @@ const Line = ({ children }: { readonly children: ReactNode }) => <div className=
 
 /** The chain for one value: source, transform, receipt and times, each step only when the server sent it. */
 export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProvenance }) {
+  const { view } = useView()
   const { sources, transform, receipt, digests, asOf } = provenance
   const steps: ReactNode[] = []
   if (sources.length === 1 && sources[0]?.record !== null) {
@@ -73,7 +76,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   if (asOf.length > 0) steps.push(
     <Step key="as-of" icon={Clock} title="As of">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-xs">
-        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 font-mono tabular-nums [overflow-wrap:anywhere]">{value}</dd></div>)}
+        {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className={cn("min-w-0 tabular-nums [overflow-wrap:anywhere]", view === "technical" && "font-mono")} title={value}>{view === "technical" ? value : readableTime(value)}</dd></div>)}
       </dl>
     </Step>,
   )

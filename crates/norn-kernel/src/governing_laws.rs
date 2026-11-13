@@ -32,7 +32,7 @@ pub enum LawEvaluationError {
     LinkFanOutExceeded {
         /// The written target, as `type/key`.
         target: String,
-        /// The bound ([`crate::commit_check::MAX_LINK_LAW_SUBJECTS`]).
+        /// The bound (`commit_check::MAX_LINK_LAW_SUBJECTS`, crate-private).
         limit: usize,
     },
 }

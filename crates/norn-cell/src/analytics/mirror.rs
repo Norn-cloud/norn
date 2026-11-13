@@ -8,8 +8,11 @@ use norn_checker::metric::compute::contribution::instant_key;
 use norn_ir::RuntimeValue;
 
 use super::lower::table_schema;
+use norn_projections::sqlite_ddl::{SOURCE_COLUMN, TARGET_COLUMN, WORLD_COLUMN, quote_identifier};
+
 use super::{
-    Column, ColumnKind, FrontierRequest, MirrorRow, SyncRequest, TableSchema, TenantId, Value,
+    Column, ColumnKind, FrontierRequest, LinkEdge, MirrorRow, SyncRequest, TableSchema, TenantId,
+    Value,
 };
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::read::{to_i64, to_u64};
@@ -96,6 +99,7 @@ impl<E: SqlEngine> CellStore<E> {
             tenant: tenant.clone(),
             world: world.to_owned(),
             tables: self.analytics_tables()?,
+            links: self.analytics_links(),
         })
     }
 
@@ -196,6 +200,7 @@ impl<E: SqlEngine> CellStore<E> {
                     bad,
                 });
             }
+            let links = self.analytics_link_edges(world, after, through, head)?;
             Ok(MirrorBatch {
                 request: SyncRequest {
                     tenant: tenant.clone(),
@@ -203,9 +208,90 @@ impl<E: SqlEngine> CellStore<E> {
                     after,
                     through,
                     rows: out,
+                    links,
                 },
                 complete,
             })
         })
+    }
+
+    /// Every link table of the model, by name.
+    pub(crate) fn analytics_links(&self) -> Vec<String> {
+        self.model()
+            .schema()
+            .link_tables
+            .iter()
+            .map(|table| table.table.clone())
+            .collect()
+    }
+
+    /// METRIC-GRAIN-LINK-1: every link edge the commits in `(after, through]`
+    /// changed, as it stands now. An edge changed again since keeps the
+    /// cell's verified `head` as its commit, so an answer through the link at
+    /// an earlier frontier refuses rather than read a later edge.
+    fn analytics_link_edges(
+        &self,
+        world: &str,
+        after: u64,
+        through: u64,
+        head: u64,
+    ) -> Result<Vec<LinkEdge>, CellError> {
+        const PAGE: usize = 512;
+        let reader = self.read();
+        let model = self.model();
+        let mut edges = Vec::new();
+        let mut cursor = after;
+        while cursor < through {
+            let receipts = reader.receipts_after(cursor, PAGE)?;
+            let Some(last) = receipts.last().map(|r| r.body.commit_seq) else {
+                break;
+            };
+            for receipt in receipts.iter().filter(|r| r.body.commit_seq <= through) {
+                if receipt.body.world != world {
+                    continue;
+                }
+                for row in &receipt.body.linked {
+                    let (_, table) = model.link(&row.object_type, &row.link)?;
+                    let live = self
+                        .conn
+                        .query_optional(
+                            &format!(
+                                "SELECT 1 FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
+                                quote_identifier(&table.table),
+                                quote_identifier(WORLD_COLUMN),
+                                quote_identifier(SOURCE_COLUMN),
+                                quote_identifier(TARGET_COLUMN),
+                            ),
+                            params![world, row.source.as_str(), row.target.as_str()],
+                            |found| found.get::<i64>(0),
+                        )?
+                        .is_some();
+                    let now = reader.link_version(
+                        world,
+                        &row.object_type,
+                        &row.link,
+                        &row.source,
+                        &row.target_type,
+                        &row.target,
+                    )?;
+                    edges.push(LinkEdge {
+                        table: table.table.clone(),
+                        source: row.source.clone(),
+                        target: row.target.clone(),
+                        live,
+                        commit_seq: if now == row.version {
+                            receipt.body.commit_seq
+                        } else {
+                            head
+                        },
+                    });
+                }
+            }
+            if last >= through || last <= cursor {
+                break;
+            }
+            cursor = last;
+        }
+        Ok(edges)
     }
 }

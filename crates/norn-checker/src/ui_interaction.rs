@@ -117,6 +117,7 @@ pub(crate) fn check(
     derive(&Facts::extract(ux, nullable_inputs, composed))
         .into_iter()
         .map(|finding| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(finding.code),
             severity: DiagnosticSeverity::Error,
             message: finding.message,
@@ -555,9 +556,12 @@ impl Facts {
                 self.interactive.insert(id.to_owned());
                 self.add_label(id, context.effective(node, label));
             }
+            // A catalog component names itself through its entry's label; its own contract is
+            // checked by `ui_catalog`.
             WidgetComponent::List { .. }
             | WidgetComponent::Detail { .. }
-            | WidgetComponent::Composition { .. } => {}
+            | WidgetComponent::Composition { .. }
+            | WidgetComponent::Catalog { .. } => {}
         }
     }
 

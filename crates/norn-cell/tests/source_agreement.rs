@@ -43,6 +43,7 @@ fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
         "packs/erpnext",
         "packs/shopify",
         "packs/odoo",
+        "packs/sources",
     ] {
         for file in
             fs::read_dir(root().join(format!("registry/{dir}/artifacts"))).expect("artifacts")
@@ -206,6 +207,42 @@ fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
     cell.process_mapping_bundle(&id).expect("process");
     id
 }
+/// A steward's review of finding `id`, as `source.agreement.accept` or
+/// `reopen` writes it.
+fn review(cell: &mut Cell, id: &str, status: &str, expected: u64) {
+    norn_kernel::CellHost::commit(
+        cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: norn_kernel::FactKey::new("source.AgreementReview", id),
+                expected: norn_kernel::FactVersion(expected),
+                mutation: norn_kernel::FactMutation::Put {
+                    values: BTreeMap::from([
+                        ("id".to_owned(), RuntimeValue::from(id)),
+                        ("status".to_owned(), RuntimeValue::from(status)),
+                        (
+                            "reason".to_owned(),
+                            RuntimeValue::from("Shopify counts what is free to sell"),
+                        ),
+                        ("reviewed_by".to_owned(), RuntimeValue::from("steward")),
+                    ]),
+                },
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("review");
+}
+
+fn north_status(cell: &Cell, index: usize) -> DataQualityFindingStatus {
+    cell.store()
+        .read()
+        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+        .expect("history")[index]
+        .finding
+        .status
+}
+
 fn load(cell: &mut Cell, system: &str) {
     for row in fixture(system)["snapshot"].as_array().expect("rows") {
         capture(cell, system, row, "snapshot");
@@ -318,6 +355,15 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
             .iter()
             .all(|f| !matches!(f.outcome, DataQualityOutcome::SourceDisagreement { .. }))
     );
+    // A steward accepts it with a reason: acknowledged; reopened, open again.
+    let id = finding.id.clone();
+    review(&mut cell, &id, "accepted", 0);
+    assert_eq!(
+        north_status(&cell, 0),
+        DataQualityFindingStatus::Acknowledged
+    );
+    review(&mut cell, &id, "reopened", 1);
+    assert_eq!(north_status(&cell, 0), DataQualityFindingStatus::Open);
     load(&mut cell, "odoo");
     let returned = cell
         .store()
@@ -417,4 +463,87 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
         (others > 0).then(|| counts(others)),
         "the hidden holding is neither counted nor implied"
     );
+    // An accepted disagreement is acknowledged and no longer counted.
+    let north = cell
+        .store()
+        .read()
+        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+        .expect("history")
+        .remove(0)
+        .finding
+        .id;
+    review(&mut cell, &north, "accepted", 0);
+    assert_eq!(
+        cell.store()
+            .evaluate_question(&plan, context(), |_| Ok(true))
+            .expect("after the review")
+            .source_disagreements,
+        (others > 0).then(|| counts(others))
+    );
+}
+
+/// SOURCE-AGREE-1 parity on the real analytics engine (D102): `DuckDB` answers
+/// the stock question itself, the host then counts disagreements as
+/// `EngineQuestions` does, and the whole envelope equals the exact engine's
+/// (only the engine label differs, as QUERY-ENGINE-1 requires).
+#[cfg(feature = "duckdb")]
+#[test]
+fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_does() {
+    use norn_cell::analytics::TenantId;
+    use norn_cell::analytics::engine::{Engine, Settings};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("engine.sqlite"));
+    load(&mut cell, "erpnext");
+    load(&mut cell, "shopify");
+    let plan = stock_plan();
+    let store = cell.store();
+    let exact = store
+        .evaluate_question(&plan, context(), |_| Ok(true))
+        .expect("the exact engine answers");
+    assert!(exact.source_disagreements.is_some(), "{exact:#?}");
+    let engine_directory = tempfile::tempdir().expect("engine directory");
+    let engine = Engine::new(Settings {
+        root: engine_directory.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("engine");
+    let tenant = TenantId::of_scope("org_demo/dev");
+    // ANALYTICS-FRONTIER-1: bring the mirror to the cell's verified head.
+    let mut frontier = engine
+        .frontier(
+            &store
+                .analytics_frontier(&tenant, MAIN_WORLD)
+                .expect("tables"),
+        )
+        .expect("frontier")
+        .frontier;
+    loop {
+        let batch = store
+            .analytics_delta(&tenant, MAIN_WORLD, frontier, 64)
+            .expect("delta");
+        frontier = engine.sync(&batch.request).expect("sync").frontier;
+        if batch.complete {
+            break;
+        }
+    }
+    let prepared = store
+        .analytics_prepare(&plan, context(), &tenant)
+        .expect("prepared");
+    let response = engine.evaluate(&prepared.request).expect("DuckDB answers");
+    let mut answered = store
+        .analytics_answer(prepared, response)
+        .expect("the engine's answer");
+    // What EngineQuestions does after the engine (norn-api analytics_routes).
+    answered.source_disagreements = store
+        .answer_source_disagreements(
+            &plan,
+            &answered.context.clone(),
+            answered.known_as_of,
+            &mut |_| Ok(true),
+        )
+        .expect("host counts");
+    assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
+    answered.engine = norn_cell::compute::Engine::Cell;
+    assert_eq!(answered, exact);
 }

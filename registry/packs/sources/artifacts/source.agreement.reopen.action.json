@@ -1,0 +1,103 @@
+{
+  "artifactId": "source.agreement.reopen.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reopen a source disagreement",
+  "namespace": "source",
+  "payload": {
+    "access": {
+      "artifactId": "source.agreement.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "source.agreement.reopen",
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "reviewed_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "source.AgreementReview.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "source.AgreementReview",
+      "writeMode": {
+        "kind": "upsert"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The accepted disagreement finding to reopen.",
+          "title": "Finding",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the acceptance no longer holds, kept with the review.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "type": "string"
+        },
+        "status": {
+          "description": "Reopened: the disagreement needs attention again.",
+          "enum": [
+            "reopened"
+          ],
+          "title": "Decision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.reason != ''"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reopen a source disagreement",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "source.AgreementReview"
+      },
+      {
+        "change": "created",
+        "entityKind": "source.AgreementReview"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.agreement.reopen.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

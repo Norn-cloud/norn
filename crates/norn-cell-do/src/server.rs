@@ -25,6 +25,7 @@ use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
 use norn_api::host::DevHost;
+use norn_api::object_facets::{ObjectFacetParams, get_object_facets};
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_profile::get_object_profile;
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
@@ -139,6 +140,8 @@ routes! {
     Objects => ("GET", "/v1/objects/{type}"),
     /// `GET /v1/objects/{type}:profile`.
     ObjectProfile => ("GET", "/v1/objects/{type}:profile"),
+    /// `GET /v1/objects/{type}:facets`.
+    ObjectFacets => ("GET", "/v1/objects/{type}:facets"),
     /// `GET /v1/objects/{type}/{id}`.
     Object => ("GET", "/v1/objects/{type}/{id}"),
     /// `GET /v1/objects/{type}/{id}/links`.
@@ -279,6 +282,7 @@ impl Route {
         if let Some((kind, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
             return Some(match (id, leaf) {
                 (None, _) if kind.ends_with(":profile") => Self::ObjectProfile,
+                (None, _) if kind.ends_with(":facets") => Self::ObjectFacets,
                 (None, _) if kind.ends_with(":quarantined") => Self::ObjectsQuarantined,
                 (None, _) if kind.ends_with(":export") => Self::ObjectExport,
                 (None, _) => Self::Objects,
@@ -989,6 +993,32 @@ fn profiled<E: SqlEngine>(
     )?)
 }
 
+/// HOST-READ-7: `GET /v1/objects/{type}:facets`, scoped by the query string.
+fn faceted<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    object_type: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "properties", "filter"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectFacetParams {
+        properties: fields.remove("properties"),
+        filter: fields.remove("filter"),
+    };
+    document_json(&get_object_facets(
+        host,
+        &scope,
+        actor,
+        object_type,
+        &params,
+        &CellObjectAccess,
+    )?)
+}
+
 /// HOST-READ-6: `GET /v1/objects/{type}:quarantined`, scoped by the query string.
 fn quarantined<E: SqlEngine>(
     host: Option<&DevHost<E>>,
@@ -1109,6 +1139,9 @@ fn objects<E: SqlEngine>(
     let object_type = decoded(object_type)?;
     if let (None, Some(kind)) = (id, object_type.strip_suffix(":profile")) {
         return profiled(cell(host)?, actor, kind, query);
+    }
+    if let (None, Some(kind)) = (id, object_type.strip_suffix(":facets")) {
+        return faceted(cell(host)?, actor, kind, query);
     }
     if let (Some(id), Some("links")) = (id, leaf) {
         let mut fields = parse(
@@ -1385,6 +1418,58 @@ pub fn analytics<E: SqlEngine>(
             .filter(|kind| !kind.is_empty() && !kind.contains('/'))
     };
     let (export, profile) = (leaf(":export"), leaf(":profile"));
+    // A loaded dataset's records live only in the engine (D102); every other
+    // type's grid is the cell's own.
+    let records = leaf("")
+        .filter(|kind| request.method == "GET" && !kind.contains(':'))
+        .filter(|kind| {
+            decoded(kind).is_ok_and(|kind| {
+                norn_api::analytics_routes::serves_records(host, &kind).unwrap_or(false)
+            })
+        });
+    if let Some(kind) = records {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        return Some(respond(engine_records(
+            host,
+            actor.as_deref(),
+            transport,
+            kind,
+            request.query,
+        )));
+    }
+    // One dataset row by identity; a row's links, history and findings stay
+    // the cell's, which has none for it.
+    let row = request
+        .path
+        .strip_prefix("/v1/objects/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(kind, id)| {
+            request.method == "GET"
+                && !kind.is_empty()
+                && !id.is_empty()
+                && !id.contains('/')
+                && !kind.contains(':')
+                && decoded(kind).is_ok_and(|kind| {
+                    norn_api::analytics_routes::serves_records(host, &kind).unwrap_or(false)
+                })
+        });
+    if let Some((kind, id)) = row {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        let answer = scope_of(request.query).and_then(|scope| {
+            let (kind, id) = (decoded(kind)?, decoded(id)?);
+            document_json(&norn_api::analytics_routes::record_object(
+                host,
+                &scope,
+                actor.as_deref(),
+                (&kind, &id),
+                &CellObjectAccess,
+                transport,
+            )?)
+        });
+        return Some(respond(answer));
+    }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }
@@ -1431,6 +1516,44 @@ fn scope_of(query: &str) -> Result<ScopeQuery, Refusal> {
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     })
+}
+
+fn engine_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    kind: &str,
+    query: &str,
+) -> Result<String, Refusal> {
+    // The native grid's bounds: the cursor has its own.
+    let mut fields = parse_within(
+        query,
+        &["orgId", "environmentId", "limit", "sort", "filter", "after"],
+        MAX_OBJECT_QUERY_BYTES.saturating_add(MAX_CURSOR_BYTES),
+    )?;
+    let cursor_bytes = fields.get("after").map_or(0, String::len);
+    if query.len().saturating_sub(cursor_bytes) > MAX_OBJECT_QUERY_BYTES {
+        return Err(Refusal::invalid("the query string exceeds the host bound"));
+    }
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let params = ObjectQueryParams {
+        limit: fields.remove("limit"),
+        sort: fields.remove("sort"),
+        filter: fields.remove("filter"),
+        after: fields.remove("after"),
+    };
+    document_json(&norn_api::analytics_routes::page_objects(
+        host,
+        &scope,
+        actor,
+        &decoded(kind)?,
+        &params,
+        &CellObjectAccess,
+        transport,
+    )?)
 }
 
 fn engine_profile<E: SqlEngine>(

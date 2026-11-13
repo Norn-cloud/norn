@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unique_unproved",
+  "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -22,8 +22,9 @@ use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MirrorRow, ProfileRequest, ProfileResponse, Source,
-    SyncRequest, TableSchema, TenantId, Test, Value, hex,
+    MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
+    PageResponse, PageRow, ProfileRequest, ProfileResponse, Source, SyncRequest, TIME_LINK_COLUMN,
+    TableSchema, TenantId, Test, TimeLink, Value, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -41,6 +42,8 @@ fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
 }
 
 const UNSUPPORTED: &str = "core.compute.unsupported_engine";
+/// The most rows one records page returns.
+pub const MAX_PAGE_ROWS: u32 = 200;
 /// The columns every exported row carries itself; no property is exported
 /// under these names.
 pub const EXPORT_RESERVED: [&str; 2] = ["id", "version"];
@@ -78,6 +81,11 @@ fn mirror_table(name: &str) -> String {
 
 fn dataset_table(name: &str) -> String {
     ident(&format!("d:{name}"))
+}
+
+/// The mirrored edges of one link table (METRIC-GRAIN-LINK-1).
+fn link_table(name: &str) -> String {
+    ident(&format!("k:{name}"))
 }
 
 fn quarantine_table(name: &str) -> String {
@@ -190,12 +198,12 @@ impl Engine {
     /// An engine failure.
     pub fn frontier(&self, request: &FrontierRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
-            let mut stale = false;
+            let mut stale = meta(conn, "links")?.unwrap_or_default() != request.links.join("\n");
             for table in &request.tables {
                 stale |= meta(conn, &format!("pin:{}", table.name))?.as_deref() != Some(&table.pin);
             }
             if stale {
-                reset_mirror(conn, &request.tables)?;
+                reset_mirror(conn, &request.tables, &request.links)?;
             }
             let frontier = meta(conn, &format!("frontier:{}", request.world))?
                 .and_then(|v| v.parse().ok())
@@ -269,18 +277,32 @@ impl Engine {
                 return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
             }
             let excluded = scope.excluded_present(conn)?;
+            if let Some(link) = &request.query.time_link {
+                check_link(conn, &scope, link)?;
+            }
             let projection = Projection::build(&request.query, &scope)?;
+            if let Some(untimed) = &projection.untimed
+                && query_u64(conn, untimed)? > 0
+            {
+                return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
+            }
             let answered = projection.materialize(conn).and_then(|()| {
                 if query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE refuse"))? > 0 {
                     return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));
                 }
-                projection.buckets(conn, population <= request.inline_members)
+                let unlinked = query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE ul"))?;
+                Ok((
+                    projection.buckets(conn, population <= request.inline_members)?,
+                    unlinked,
+                ))
             });
             let _dropped = conn.execute_batch("DROP TABLE IF EXISTS \":p\"");
+            let (buckets, unlinked) = answered?;
             Ok(EvaluateResponse {
                 population,
                 excluded,
-                buckets: answered?,
+                buckets,
+                unlinked,
             })
         })
     }
@@ -341,6 +363,104 @@ impl Engine {
                     Err(error)
                 }
             }
+        })
+    }
+
+    /// One records page of a source (HOST-READ-3 on the engine): the rows
+    /// every clause holds for, ordered by the keys (absent values last in
+    /// either direction) then identity, from `offset`; and how many match.
+    /// Text compares by bytes, numbers exactly, instants by their ordering key.
+    ///
+    /// # Errors
+    /// An unknown column, a comparison its kind does not take, or a stale source.
+    pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
+        self.with(&request.tenant, |conn| {
+            let scope = Scope::new(conn, &request.source)?;
+            let mut conditions = vec![scope.population.clone()];
+            if !request.ids.is_empty() {
+                conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
+            }
+            for clause in &request.filters {
+                conditions.push(page_clause(scope.column(&clause.column)?, clause)?);
+            }
+            let matches = Frag::join(&conditions, " AND ");
+            let mut order = Vec::new();
+            for key in &request.sort {
+                let column = scope.column(&key.column)?;
+                let direction = if key.descending { "DESC" } else { "ASC" };
+                let keys = match column.kind {
+                    ColumnKind::Timestamp | ColumnKind::Date => {
+                        vec![derived(&column.id, "t"), derived(&column.id, "n")]
+                    }
+                    ColumnKind::Text
+                    | ColumnKind::Integer
+                    | ColumnKind::Decimal { .. }
+                    | ColumnKind::Boolean => vec![ident(&column.id)],
+                    ColumnKind::Opaque => {
+                        return Err(refusal(UNSUPPORTED, format!("{} has no order", column.id)));
+                    }
+                };
+                order.extend(
+                    keys.into_iter()
+                        .map(|key| format!("{key} {direction} NULLS LAST")),
+                );
+            }
+            order.push(format!("{} ASC", ident(":id")));
+            let count = Frag::fmt(
+                &format!("SELECT count(*) FROM {} WHERE {{}}", scope.table),
+                &[&matches],
+            );
+            let total: u64 = db(db(conn.prepare(&count.text))?
+                .query_row(params_from_iter(count.params), |row| row.get(0)))?;
+            let mut select = vec![ident(":id"), ident(":v")];
+            for column in &scope.columns {
+                select.push(format!("CAST({} AS VARCHAR)", ident(&column.id)));
+                if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+                    select.push(derived(&column.id, "t"));
+                    select.push(derived(&column.id, "n"));
+                } else {
+                    select.push("CAST(NULL AS BIGINT)".to_owned());
+                    select.push("CAST(NULL AS INTEGER)".to_owned());
+                }
+            }
+            let page = Frag::fmt(
+                &format!(
+                    "SELECT {} FROM {} WHERE {{}} ORDER BY {} LIMIT {{}} OFFSET {{}}",
+                    select.join(", "),
+                    scope.table,
+                    order.join(", ")
+                ),
+                &[
+                    &matches,
+                    &Frag::bind("?", Sql::UInt(request.limit.min(MAX_PAGE_ROWS))),
+                    &Frag::bind("?", Sql::UBigInt(request.offset)),
+                ],
+            );
+            let mut statement = db(conn.prepare(&page.text))?;
+            let rows = db(statement.query_map(params_from_iter(page.params), |row| {
+                let mut values = BTreeMap::new();
+                for (i, column) in scope.columns.iter().enumerate() {
+                    let at = i.saturating_mul(3).saturating_add(2);
+                    let value = present(
+                        column.kind,
+                        row.get(at)?,
+                        row.get(at.saturating_add(1))?,
+                        row.get(at.saturating_add(2))?,
+                    );
+                    if let Some(value) = value {
+                        values.insert(column.id.clone(), value);
+                    }
+                }
+                Ok(PageRow {
+                    id: row.get(0)?,
+                    version: row.get(1)?,
+                    values,
+                })
+            }))?;
+            Ok(PageResponse {
+                total,
+                rows: db(rows.collect())?,
+            })
         })
     }
 
@@ -456,11 +576,11 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
-fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
+fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> Outcome<()> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
     let reset = (|| {
         let mut statement = db(conn.prepare(
-            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%'",
+            "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%' OR table_name LIKE 'k:%'",
         ))?;
         let names: Vec<String> =
             db(db(statement.query_map([], |row| row.get(0)))?.collect::<Result<_, _>>())?;
@@ -502,6 +622,13 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema]) -> Outcome<()> {
                 &schema_text(table)?,
             )?;
         }
+        for link in links {
+            db(conn.execute_batch(&format!(
+                "CREATE TABLE {} (\":w\" VARCHAR, \":s\" VARCHAR, \":t\" VARCHAR, \":live\" BOOLEAN, \":c\" UBIGINT, PRIMARY KEY (\":w\", \":s\", \":t\"))",
+                link_table(link)
+            )))?;
+        }
+        set_meta(conn, "links", &links.join("\n"))?;
         Ok(())
     })();
     match reset {
@@ -522,6 +649,46 @@ fn schema_of(conn: &Connection, key: &str) -> Outcome<TableSchema> {
     serde_json::from_str(&text).map_err(|e| refusal("analytics.engine", e.to_string()))
 }
 
+/// METRIC-GRAIN-LINK-1: each changed edge's state after its last change, in
+/// commit order.
+fn apply_links(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
+    if request.links.is_empty() {
+        return Ok(());
+    }
+    let known = meta(conn, "links")?.unwrap_or_default();
+    let known: std::collections::BTreeSet<&str> = known.split('\n').collect();
+    for edge in &request.links {
+        if !known.contains(edge.table.as_str()) {
+            return Err(refusal(
+                UNSUPPORTED,
+                format!("no link table {}", edge.table),
+            ));
+        }
+        // An edge changed again since carries the cell's head, past the batch;
+        // none is older than the batch.
+        if edge.commit_seq <= request.after {
+            return Err(refusal(
+                "analytics.frontier_moved",
+                "an edge outside the batch",
+            ));
+        }
+        db(conn.execute(
+            &format!(
+                "INSERT OR REPLACE INTO {} VALUES (?, ?, ?, ?, ?)",
+                link_table(&edge.table)
+            ),
+            duckdb::params![
+                request.world,
+                edge.source,
+                edge.target,
+                edge.live,
+                edge.commit_seq
+            ],
+        ))?;
+    }
+    Ok(())
+}
+
 /// Encode one stored value for the all-text staging table.
 fn stage(value: &Value) -> (Sql, Sql, Sql) {
     match value {
@@ -539,6 +706,7 @@ fn stage(value: &Value) -> (Sql, Sql, Sql) {
 }
 
 fn apply_sync(conn: &Connection, request: &SyncRequest) -> Outcome<()> {
+    apply_links(conn, request)?;
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {
         if row.commit_seq <= request.after || row.commit_seq > request.through {
@@ -699,7 +867,11 @@ struct Scope {
     all: Frag,
     /// The rows a question reads.
     population: Frag,
+    /// Every version known at the frontier, superseded ones included (mirror only).
+    versions: Option<Frag>,
     excluded: Vec<String>,
+    /// The mirror's world and the frontier read (mirror only).
+    at: Option<(String, u64)>,
 }
 
 impl Scope {
@@ -732,12 +904,18 @@ impl Scope {
                 } else {
                     Frag::fmt("({} AND \":id\" NOT IN ({}))", &[&all, &id_list(excluded)])
                 };
+                let versions = Frag::fmt(
+                    "(\":w\" = {} AND \":from\" <= {})",
+                    &[&Frag::bind("?", Sql::Text(world.clone())), &at],
+                );
                 Ok(Self {
                     table: mirror_table(table),
                     columns: schema.columns,
                     all,
                     population,
+                    versions: Some(versions),
                     excluded: excluded.clone(),
+                    at: Some((world.clone(), *frontier)),
                 })
             }
             Source::Dataset { table, load } => {
@@ -750,7 +928,9 @@ impl Scope {
                     columns: schema.columns,
                     all: Frag::raw("TRUE"),
                     population: Frag::raw("TRUE"),
+                    versions: None,
                     excluded: Vec::new(),
+                    at: None,
                 })
             }
         }
@@ -804,6 +984,8 @@ fn query_u64(conn: &Connection, sql: &Frag) -> Outcome<u64> {
 /// would refuse on reaching it.
 struct Projection {
     sql: Frag,
+    /// A snapshot's versions without their valid time, which refuse the question.
+    untimed: Option<Frag>,
     arity: usize,
     /// One per dimension, in the question's order (`g{i}`, `r{i}`).
     groups: Vec<GroupKind>,
@@ -836,6 +1018,68 @@ impl Projection {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1: per period, each current subject's last version
+/// known at the frontier whose valid time is before the period's end (ties
+/// to the later version), with the period's label as `":label"`; and the
+/// count query of those subjects' versions that have no valid time.
+fn as_of_versions(scope: &Scope, as_of: &super::AsOf) -> Outcome<(Frag, Frag)> {
+    let versions = scope
+        .versions
+        .as_ref()
+        .ok_or_else(|| refusal(UNSUPPORTED, "a snapshot over a dataset"))?;
+    let column = scope.column(&as_of.column)?;
+    if !matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+        return Err(refusal(UNSUPPORTED, "a snapshot's time is not an instant"));
+    }
+    if as_of.periods.is_empty() {
+        return Err(refusal(UNSUPPORTED, "a snapshot without periods"));
+    }
+    let periods = Frag::join(
+        &as_of
+            .periods
+            .iter()
+            .enumerate()
+            .map(|(index, (label, (secs, nanos)))| {
+                Frag::fmt(
+                    &format!("(CAST({{}} AS VARCHAR), {{}}, {{}}, {index})"),
+                    &[
+                        &label.as_ref().map_or_else(
+                            || Frag::raw("NULL"),
+                            |label| Frag::bind("?", Sql::Text(label.clone())),
+                        ),
+                        &Frag::bind("?", Sql::BigInt(*secs)),
+                        &Frag::bind("?", Sql::BigInt(i64::from(*nanos))),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>(),
+        ", ",
+    );
+    let (t, n) = (derived(&as_of.column, "t"), derived(&as_of.column, "n"));
+    let table = &scope.table;
+    let subjects = Frag::fmt(
+        &format!("\":id\" IN (SELECT \":id\" FROM {table} WHERE {{}})"),
+        &[&scope.population],
+    );
+    let pick = Frag::fmt(
+        &format!(
+            "SELECT b.\":label\", v.* FROM (VALUES {{}}) AS b(\":label\", \":et\", \":en\", \":pi\") \
+             JOIN (SELECT * FROM {table} WHERE {{}} AND {{}}) AS v \
+             ON (v.{t} < b.\":et\" OR (v.{t} = b.\":et\" AND v.{n} < b.\":en\")) \
+             QUALIFY row_number() OVER (PARTITION BY b.\":pi\", v.\":id\" ORDER BY v.{t} DESC, v.{n} DESC, v.\":v\" DESC) = 1"
+        ),
+        &[&periods, versions, &subjects],
+    );
+    let untimed = Frag::fmt(
+        &format!(
+            "SELECT count(*) FROM {table} WHERE {{}} AND {{}} AND {} IS NULL",
+            ident(&as_of.column)
+        ),
+        &[versions, &subjects],
+    );
+    Ok((pick, untimed))
 }
 
 /// The first day of `grain`'s UTC period holding the instant `t` (seconds),
@@ -924,6 +1168,191 @@ fn filters_sql(scope: &Scope, filters: &[Filter]) -> Outcome<Condition> {
     Ok(Condition { holds, refuse })
 }
 
+/// METRIC-GRAIN-LINK-1: a linked time reads a mirrored link and an instant of
+/// its target, at a frontier no edge of the link changed after (the mirror
+/// keeps each edge's latest state).
+fn check_link(conn: &Connection, scope: &Scope, link: &TimeLink) -> Outcome<()> {
+    let Some((world, frontier)) = &scope.at else {
+        return Err(refusal(UNSUPPORTED, "a linked time over a dataset"));
+    };
+    let known = meta(conn, "links")?.unwrap_or_default();
+    if !known.split('\n').any(|name| name == link.link) {
+        return Err(refusal(UNSUPPORTED, format!("no link table {}", link.link)));
+    }
+    let target = schema_of(conn, &format!("schema:{}", link.target))?;
+    if !target.columns.iter().any(|column| {
+        column.id == link.column && matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date)
+    }) {
+        return Err(refusal(UNSUPPORTED, "a linked time that is not an instant"));
+    }
+    let later = query_u64(
+        conn,
+        &Frag::fmt(
+            &format!(
+                "SELECT count(*) FROM {} WHERE \":w\" = {{}} AND \":c\" > {{}}",
+                link_table(&link.link)
+            ),
+            &[
+                &Frag::bind("?", Sql::Text(world.clone())),
+                &Frag::bind("?", Sql::UBigInt(*frontier)),
+            ],
+        ),
+    )?;
+    if later > 0 {
+        return Err(refusal(STALE, "a link changed after the answer's frontier"));
+    }
+    Ok(())
+}
+
+/// METRIC-GRAIN-LINK-1: the question's rows with their linked object's time
+/// as of the frontier: `":lk"` when exactly one live edge reaches an object
+/// current then, `":lm"` when more than one edge does, and the time as
+/// `":link"` with its ordering key.
+fn linked_rows(scope: &Scope, link: &TimeLink, rows: &Frag) -> Outcome<Frag> {
+    let Some((world, frontier)) = &scope.at else {
+        return Err(refusal(UNSUPPORTED, "a linked time over a dataset"));
+    };
+    let c = ident(&link.column);
+    let (t, n) = (derived(&link.column, "t"), derived(&link.column, "n"));
+    let world = Frag::bind("?", Sql::Text(world.clone()));
+    let at = Frag::bind("?", Sql::UBigInt(*frontier));
+    Ok(Frag::fmt(
+        &format!(
+            "SELECT b.*, (e.\":n\" = 1 AND tg.\":id\" IS NOT NULL) AS \":lk\", coalesce(e.\":n\", 0) > 1 AS \":lm\", \
+             tg.{c} AS \":link\", tg.{t} AS \":link:t\", tg.{n} AS \":link:n\" \
+             FROM ({{}}) AS b \
+             LEFT JOIN (SELECT \":s\", count(*) AS \":n\", min(\":t\") AS \":tg\" FROM {} WHERE \":w\" = {{}} AND \":live\" GROUP BY \":s\") AS e ON e.\":s\" = b.\":id\" \
+             LEFT JOIN (SELECT \":id\", {c}, {t}, {n} FROM {} WHERE \":w\" = {{}} AND \":from\" <= {{}} AND (\":to\" IS NULL OR \":to\" > {{}})) AS tg ON tg.\":id\" = e.\":tg\"",
+            link_table(&link.link),
+            mirror_table(&link.target),
+        ),
+        &[rows, &world, &world, &at, &at],
+    ))
+}
+
+/// One records clause over `column`: every comparison but `empty` needs a
+/// present value; a timestamp or date is present when it has its key.
+/// One operand compared with `op` (`=`, `<>`, `<`, `<=`, `>`, `>=`) as
+/// `column` compares: text by bytes, numbers exactly, instants by key.
+fn page_compare(column: &Column, operand: &PageOperand, op: &str) -> Outcome<Frag> {
+    let invalid = || {
+        refusal(
+            "analytics.invalid",
+            format!("{} does not compare as asked", column.id),
+        )
+    };
+    let c = ident(&column.id);
+    match (column.kind, operand) {
+        (ColumnKind::Text | ColumnKind::Opaque, PageOperand::Text(text)) => {
+            Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Text(text.clone())))
+        }
+        (ColumnKind::Integer | ColumnKind::Decimal { .. }, PageOperand::Number(text)) => {
+            let decimal = norn_ir::Decimal::parse(text).map_err(|_unparsed| invalid())?;
+            let canonical = decimal.canonical();
+            let scale = canonical.split_once('.').map_or(0, |(_, f)| f.len());
+            let digits = canonical.bytes().filter(u8::is_ascii_digit).count();
+            if digits > 38 {
+                return Err(invalid());
+            }
+            Ok(Frag::bind(
+                &format!("{c} {op} CAST(? AS DECIMAL(38,{scale}))"),
+                Sql::Text(canonical),
+            ))
+        }
+        (ColumnKind::Boolean, PageOperand::Bool(flag)) => {
+            Ok(Frag::bind(&format!("{c} {op} ?"), Sql::Boolean(*flag)))
+        }
+        (ColumnKind::Timestamp | ColumnKind::Date, PageOperand::Instant { secs, nanos }) => {
+            let t = derived(&column.id, "t");
+            let n = derived(&column.id, "n");
+            let secs = Frag::bind("?", Sql::BigInt(*secs));
+            let nanos = Frag::bind("?", Sql::BigInt(i64::from(*nanos)));
+            let (strict, last) = match op {
+                "=" => {
+                    return Ok(Frag::fmt(
+                        &format!("({t} = {{}} AND {n} = {{}})"),
+                        &[&secs, &nanos],
+                    ));
+                }
+                "<>" => {
+                    return Ok(Frag::fmt(
+                        &format!("NOT ({t} = {{}} AND {n} = {{}})"),
+                        &[&secs, &nanos],
+                    ));
+                }
+                "<" | "<=" => ("<", op),
+                _ => (">", op),
+            };
+            Ok(Frag::fmt(
+                &format!("({t} {strict} {{}} OR ({t} = {{}} AND {n} {last} {{}}))"),
+                &[&secs, &secs, &nanos],
+            ))
+        }
+        _ => Err(invalid()),
+    }
+}
+
+fn page_clause(column: &Column, clause: &PageClause) -> Outcome<Frag> {
+    let invalid = || {
+        refusal(
+            "analytics.invalid",
+            format!("{} does not compare as asked", column.id),
+        )
+    };
+    let temporal = matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date);
+    let c = ident(&column.id);
+    let held = if temporal {
+        format!("{} IS NOT NULL", derived(&column.id, "t"))
+    } else {
+        format!("{c} IS NOT NULL")
+    };
+    let compare = |operand: &PageOperand, op: &str| page_compare(column, operand, op);
+    let one = || match clause.operands.as_slice() {
+        [operand] => Ok(operand),
+        _ => Err(invalid()),
+    };
+    let test = match clause.op {
+        PageOp::Empty => return Ok(Frag::raw(format!("NOT ({held})"))),
+        PageOp::Present => return Ok(Frag::raw(held)),
+        PageOp::Eq => compare(one()?, "=")?,
+        PageOp::Ne => compare(one()?, "<>")?,
+        PageOp::Lt => compare(one()?, "<")?,
+        PageOp::Lte => compare(one()?, "<=")?,
+        PageOp::Gt => compare(one()?, ">")?,
+        PageOp::Gte => compare(one()?, ">=")?,
+        PageOp::Between => match clause.operands.as_slice() {
+            [low, high] => Frag::fmt(
+                "({} AND {})",
+                &[&compare(low, ">=")?, &compare(high, "<=")?],
+            ),
+            _ => return Err(invalid()),
+        },
+        PageOp::In => {
+            if clause.operands.is_empty() {
+                return Err(invalid());
+            }
+            let each = clause
+                .operands
+                .iter()
+                .map(|operand| compare(operand, "="))
+                .collect::<Outcome<Vec<_>>>()?;
+            Frag::fmt("({})", &[&Frag::join(&each, " OR ")])
+        }
+        PageOp::Contains | PageOp::Prefix => match (column.kind, one()?) {
+            (ColumnKind::Text, PageOperand::Text(text)) => {
+                let function = if clause.op == PageOp::Contains {
+                    "contains"
+                } else {
+                    "starts_with"
+                };
+                Frag::bind(&format!("{function}({c}, ?)"), Sql::Text(text.clone()))
+            }
+            _ => return Err(invalid()),
+        },
+    };
+    Ok(Frag::fmt(&format!("({held} AND {{}})"), &[&test]))
+}
+
 fn instant_bound(column: &str, (secs, nanos): (i64, u32), op: &str) -> Frag {
     let t = derived(column, "t");
     let n = derived(column, "n");
@@ -943,48 +1372,84 @@ impl Projection {
     )]
     fn build(query: &Lowered, scope: &Scope) -> Outcome<Self> {
         let window = &query.window;
-        if !matches!(
-            scope.column(&window.column)?.kind,
-            ColumnKind::Timestamp | ColumnKind::Date
-        ) {
+        let linked = query.time_link.is_some();
+        if !(linked && window.column == TIME_LINK_COLUMN
+            || matches!(
+                scope.column(&window.column)?.kind,
+                ColumnKind::Timestamp | ColumnKind::Date
+            ))
+        {
             return Err(refusal(UNSUPPORTED, "the window is not on an instant"));
         }
         let time = Frag::raw(ident(&window.column));
         let question = filters_sql(scope, &query.filters)?;
-        // The base layer evaluates the question's filters once per row.
-        let base = Frag::fmt(
-            &format!(
-                "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
-                scope.table
-            ),
-            &[&question.holds, &question.refuse, &scope.population],
-        );
         let q = Frag::raw("\":q\"");
-        let reach = Frag::fmt(
-            "({} AND {} IS NOT NULL AND {} AND {})",
-            &[
-                &q,
-                &time,
-                &instant_bound(&window.column, window.start, ">="),
-                &instant_bound(&window.column, window.end, "<"),
-            ],
-        );
+        let (base, reach, mut refusals, untimed) = if let Some(as_of) = &query.as_of {
+            let (pick, untimed) = as_of_versions(scope, as_of)?;
+            // Each picked version is read whatever its own instant: no window.
+            let base = Frag::fmt(
+                "SELECT *, {} AS \":q\", {} AS \":qr\" FROM ({}) AS pk",
+                &[&question.holds, &question.refuse, &pick],
+            );
+            (base, q, vec![Frag::raw("\":qr\"")], Some(untimed))
+        } else {
+            // The base layer evaluates the question's filters once per row.
+            let rows = Frag::fmt(
+                &format!(
+                    "SELECT *, {{}} AS \":q\", {{}} AS \":qr\" FROM {} WHERE {{}}",
+                    scope.table
+                ),
+                &[&question.holds, &question.refuse, &scope.population],
+            );
+            let base = match &query.time_link {
+                Some(link) => linked_rows(scope, link, &rows)?,
+                None => rows,
+            };
+            let reach = Frag::fmt(
+                "({} AND {} IS NOT NULL AND {} AND {})",
+                &[
+                    &q,
+                    &time,
+                    &instant_bound(&window.column, window.start, ">="),
+                    &instant_bound(&window.column, window.end, "<"),
+                ],
+            );
+            let refusals = if linked {
+                // A linked object without its time, or more than one, refuses
+                // as the exact engine does; no link is no time (`unlinked`).
+                vec![
+                    Frag::raw("\":qr\""),
+                    Frag::fmt("({} AND \":lk\" AND {} IS NULL)", &[&q, &time]),
+                    Frag::raw("\":lm\""),
+                ]
+            } else {
+                vec![
+                    Frag::raw("\":qr\""),
+                    Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
+                ]
+            };
+            (base, reach, refusals, None)
+        };
         let mut select = vec![
             Frag::raw(format!("{} AS id", ident(":id"))),
             Frag::raw(format!("{} AS v", ident(":v"))),
         ];
-        let mut refusals = vec![
-            Frag::raw("\":qr\""),
-            Frag::fmt("({} AND {} IS NULL)", &[&q, &time]),
-        ];
         let mut groups = Vec::new();
         for (i, dimension) in query.dimensions.iter().enumerate() {
             let (group, representative, kind) = match dimension {
+                // A snapshot's time grouping is the period it was read as of.
+                super::Dimension::Period { .. } if query.as_of.is_some() => (
+                    "\":label\"".to_owned(),
+                    "\":label\"".to_owned(),
+                    GroupKind::Text,
+                ),
                 super::Dimension::Period { column, grain } => {
-                    if !matches!(
-                        scope.column(column)?.kind,
-                        ColumnKind::Timestamp | ColumnKind::Date
-                    ) {
+                    if !(linked && column == TIME_LINK_COLUMN
+                        || matches!(
+                            scope.column(column)?.kind,
+                            ColumnKind::Timestamp | ColumnKind::Date
+                        ))
+                    {
                         return Err(refusal(
                             UNSUPPORTED,
                             "a period of a value that is not an instant",
@@ -1018,10 +1483,18 @@ impl Projection {
             select.push(Frag::raw(format!("{representative} AS r{i}")));
             groups.push(kind);
         }
+        let mut counted = Vec::new();
         for (k, operand) in query.operands.iter().enumerate() {
             let column = scope.column(&operand.column)?;
             let c = ident(&operand.column);
             let own = filters_sql(scope, &operand.filters)?;
+            if linked {
+                // A row with no linked object counts as unlinked when some
+                // operand's own filters hold; one that refuses refuses.
+                let none = Frag::raw("(\":q\" AND NOT \":lk\" AND NOT \":lm\")");
+                refusals.push(Frag::fmt("({} AND {})", &[&none, &own.refuse]));
+                counted.push(Frag::fmt("({} AND {})", &[&none, &own.holds]));
+            }
             let (coefficient, valid) = match column.kind {
                 ColumnKind::Integer => (
                     format!("CAST({c} * 1000000 AS HUGEINT)"),
@@ -1063,6 +1536,12 @@ impl Projection {
                 &[&pass],
             ));
         }
+        // METRIC-GRAIN-LINK-1: skipped and counted, never bucketed.
+        select.push(if counted.is_empty() {
+            Frag::raw("FALSE AS ul")
+        } else {
+            Frag::fmt("({}) AS ul", &[&Frag::join(&counted, " OR ")])
+        });
         let arity = query.operands.len();
         let contributes = (0..arity)
             .map(|k| format!("a{k} IS NOT NULL OR n{k} = 1"))
@@ -1078,7 +1557,12 @@ impl Projection {
                 &base,
             ],
         );
-        Ok(Self { sql, arity, groups })
+        Ok(Self {
+            sql,
+            untimed,
+            arity,
+            groups,
+        })
     }
 
     /// The bucket's key from its representatives, read from `index` on.
@@ -1162,8 +1646,10 @@ impl Projection {
             out
         });
         let dims = self.groups.len();
+        // Without a grouping the aggregate still answers one row; an empty
+        // contribution set is no bucket, as the exact engine answers it.
         let group_by = if dims == 0 {
-            String::new()
+            " HAVING count(*) > 0".to_owned()
         } else {
             format!(" GROUP BY {}", self.group_by())
         };

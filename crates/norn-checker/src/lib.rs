@@ -105,6 +105,7 @@ mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod explain;
 pub mod law_enrollment;
+pub mod law_examples;
 pub mod law_exceptions;
 pub mod naming_series;
 pub mod norm_precedence;
@@ -167,7 +168,9 @@ pub mod source_schema;
 pub mod tool_ports;
 pub mod transform;
 pub mod typed_roots;
+pub mod ui_catalog;
 pub mod ui_interaction;
+pub mod ui_lifecycle;
 pub mod ui_machine;
 pub mod ui_view;
 pub mod verification;
@@ -184,7 +187,8 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
+    DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
+    diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,

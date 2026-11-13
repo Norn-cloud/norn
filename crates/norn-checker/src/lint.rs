@@ -156,6 +156,7 @@ fn finding(
     let severity = crate::codes::lookup(code)
         .map_or(DiagnosticSeverity::Error, |entry| entry.severity.clone());
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity,
         message,

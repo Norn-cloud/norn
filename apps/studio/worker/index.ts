@@ -1,6 +1,7 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
+import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
@@ -27,6 +28,8 @@ export interface Env {
   readonly NORN_HOST?: Fetcher
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
+  /** The header the edge sets to the client's address (client-ip.ts); unset on Cloudflare. */
+  readonly STUDIO_CLIENT_IP_HEADER?: string
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
   readonly TOOL_GATEWAY_URL?: string
   readonly TOOL_GATEWAY_CLIENT_ID?: string
@@ -77,7 +80,7 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
