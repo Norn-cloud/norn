@@ -506,6 +506,106 @@
         }
       ]
     },
+    "WidgetCatalogEntry": {
+      "description": "One catalog component (UI-CATALOG-1): custom UI in any framework, joined\nto Norn only through these typed contracts. A renderer is an\nimplementation of the catalog.",
+      "type": "object",
+      "properties": {
+        "behaviors": {
+          "description": "Accessibility behaviours the component implements.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetBehavior"
+          }
+        },
+        "density": {
+          "description": "Density tier the component is drawn at.",
+          "$ref": "#/$defs/WidgetDensity"
+        },
+        "entryId": {
+          "description": "Stable entry id.",
+          "type": "string"
+        },
+        "events": {
+          "description": "Declared output events: the only things the component can say.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetCatalogEvent"
+          }
+        },
+        "framework": {
+          "description": "The framework the implementation is written in (informational, for\nrenderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...",
+          "type": "string"
+        },
+        "label": {
+          "description": "Human-readable name.",
+          "$ref": "#/$defs/LocaleText"
+        },
+        "machine": {
+          "description": "The component's own interaction machine; an opaque island has none.",
+          "$ref": "#/$defs/WidgetMachine"
+        },
+        "props": {
+          "description": "Typed props: the only data the component receives.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineField"
+          }
+        },
+        "renders": {
+          "description": "The field type this component renders everywhere it appears (one\nrenderer per field type: grid, record, inspector and tooltips alike).",
+          "$ref": "#/$defs/WidgetValueType"
+        },
+        "trust": {
+          "description": "Trust ladder position.",
+          "$ref": "#/$defs/WidgetTrust"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entryId",
+        "label",
+        "trust"
+      ]
+    },
+    "WidgetCatalogEvent": {
+      "description": "One declared output event of a catalog component.",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "description": "Event name, unique within the entry.",
+          "type": "string"
+        },
+        "payload": {
+          "description": "Typed payload members.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetMachineField"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "eventId"
+      ]
+    },
+    "WidgetCatalogRef": {
+      "description": "A catalog component named by a page: an entry of this contract's\ncatalog, or of a pinned widget artifact's.",
+      "type": "object",
+      "properties": {
+        "entryId": {
+          "description": "The entry id.",
+          "type": "string"
+        },
+        "widget": {
+          "description": "The widget artifact whose catalog holds the entry; omitted, this one.",
+          "$ref": "#/$defs/ArtifactRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entryId"
+      ]
+    },
     "WidgetComponent": {
       "description": "Supported page components.",
       "oneOf": [
@@ -732,6 +832,30 @@
           "required": [
             "kind",
             "itemId"
+          ]
+        },
+        {
+          "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.",
+          "type": "object",
+          "properties": {
+            "entry": {
+              "$ref": "#/$defs/WidgetCatalogRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "catalog"
+            },
+            "props": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "entry"
           ]
         },
         {
@@ -1026,6 +1150,26 @@
             "pageId",
             "parameterId"
           ]
+        }
+      ]
+    },
+    "WidgetDensity": {
+      "description": "Density tiers (scan lists, read records, focus canvases), as named tokens.",
+      "oneOf": [
+        {
+          "description": "Lists and grids: 32 px rows, 13 px tabular figures.",
+          "type": "string",
+          "const": "scan"
+        },
+        {
+          "description": "Record pages: 28 px key-value rows.",
+          "type": "string",
+          "const": "read"
+        },
+        {
+          "description": "Canvases and editors with a 320 px inspector.",
+          "type": "string",
+          "const": "focus"
         }
       ]
     },
@@ -1901,9 +2045,12 @@
           ]
         },
         {
-          "description": "A person used the control at `node_id` in this page's tree.",
+          "description": "A person used the control at `node_id` in this page's tree. For a\ncatalog component node, `emits` names the entry event it raises.",
           "type": "object",
           "properties": {
+            "emits": {
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "const": "user"
@@ -2043,6 +2190,10 @@
           "additionalProperties": {
             "$ref": "#/$defs/ZenExpression"
           }
+        },
+        "componentGuard": {
+          "description": "A guard the catalog component's own code decides (a Foldkit `when` or\n`otherwise` edge), named for reviewers. The checker treats the\ntransition as possibly disabled (May); the host accepts it only with\nthe target the component reports. Catalog entry machines only.",
+          "type": "string"
         },
         "effects": {
           "description": "Effects run when the transition fires, in order.",
@@ -2829,6 +2980,26 @@
         }
       ]
     },
+    "WidgetTrust": {
+      "description": "Where a catalog component stands on the trust ladder (UI-CATALOG-1).",
+      "oneOf": [
+        {
+          "description": "Drawn by a Norn renderer from the ontology.",
+          "type": "string",
+          "const": "native"
+        },
+        {
+          "description": "Custom code whose declared machine the runtime enforces: an event or\nstate the contract does not declare is refused and logged.",
+          "type": "string",
+          "const": "contract_checked"
+        },
+        {
+          "description": "Rich content (canvas, map, 3-D, video) whose pixels and internal render\nstate are opaque; only its typed inputs and declared output events take\npart in the checked machine.",
+          "type": "string",
+          "const": "opaque_island"
+        }
+      ]
+    },
     "WidgetUx": {
       "description": "The typed UX contract nested in a legacy `widget` payload.",
       "type": "object",
@@ -2850,6 +3021,13 @@
         "app": {
           "description": "Optional application shell that composes pages and navigation.",
           "$ref": "#/$defs/WidgetApp"
+        },
+        "catalog": {
+          "description": "Catalog components this contract declares (UI-CATALOG-1): custom UI written in any\nframework, each with a typed props contract, declared events and its machine.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetCatalogEntry"
+          }
         },
         "dataBindings": {
           "description": "Exact object reads used by pages, fields, and actions.",
@@ -3082,6 +3260,11 @@
           "description": "Where one object's values came from.",
           "type": "string",
           "const": "lineage"
+        },
+        {
+          "description": "An object type's lifecycle as a statechart, with the server's live\nper-state counts and the checker's counterexamples to step through.",
+          "type": "string",
+          "const": "lifecycle"
         }
       ]
     },

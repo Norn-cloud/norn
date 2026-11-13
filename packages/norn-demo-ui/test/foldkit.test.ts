@@ -86,10 +86,10 @@ test("the host runs the compiled machine: guarded edges need the target the comp
   })
   // The component runs its own `transition` and reports where it went.
   let model = tile.initial
-  const send = (message: ReturnType<(typeof TileMessage)[keyof typeof TileMessage]> | never, payload: Record<string, unknown> = {}) => {
-    const next = tile.transition(model, message as never)
-    model = next.model as typeof model
-    host.receive({ type: "emit", eventId: (message as { _tag: string })._tag, payload, to: model._tag })
+  const send = (message: typeof TileMessage.Type, payload: Record<string, unknown> = {}) => {
+    const next = tile.transition(model, message)
+    model = next.model
+    host.receive({ type: "emit", eventId: message._tag, payload, to: model._tag })
   }
   send(TileMessage.ClickedExpand())
   send(TileMessage.ChoseCompare({ period: "month" }), { period: "month" })

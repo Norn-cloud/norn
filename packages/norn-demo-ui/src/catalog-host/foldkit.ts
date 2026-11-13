@@ -24,10 +24,12 @@ export interface FoldkitMachine {
 
 type SchemaLike = { readonly ast?: { readonly _tag?: string; readonly encoding?: unknown }; readonly fields?: Readonly<Record<string, SchemaLike>> }
 
-/** A Foldkit Message union (`defineMessageUnion`): its members are tagged struct constructors. */
-export interface FoldkitMessages {
-  readonly members?: readonly (SchemaLike & { readonly fields?: Readonly<Record<string, SchemaLike>> })[]
-}
+/**
+ * A Foldkit Message union (`defineMessageUnion`). Its runtime `members` are the tagged struct
+ * constructors, but its public type does not list them, so the union is taken as any object and its
+ * members are read through `SchemaLike`.
+ */
+export type FoldkitMessages = object
 
 export interface CompileOptions {
   /** The component's Message union, for event payload types. */
@@ -61,7 +63,8 @@ function tagOf(member: SchemaLike): string | null {
 
 /** The payload a message tag carries, as declared by the union; empty when no union is given. */
 function payloadOf(messages: FoldkitMessages | undefined, tag: string): MachineField[] {
-  const member = messages?.members?.find((candidate) => tagOf(candidate) === tag)
+  const members = (messages as { readonly members?: readonly SchemaLike[] } | undefined)?.members
+  const member = members?.find((candidate) => tagOf(candidate) === tag)
   if (!member?.fields) return []
   return Object.entries(member.fields)
     .filter(([name]) => name !== "_tag")
