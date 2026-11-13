@@ -692,22 +692,32 @@ fn the_privacy_pack_admits_over_the_three_systems_set() {
         serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
     };
     let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
-        &std::fs::read_to_string(root.join("fixtures/demo/explorer/three-systems.definitions.json"))
-            .unwrap(),
+        &std::fs::read_to_string(
+            root.join("fixtures/demo/explorer/three-systems.definitions.json"),
+        )
+        .unwrap(),
     )
     .unwrap();
     let canon = artifacts
         .iter()
         .find(|artifact| artifact.artifact_id == "canon.Party.entity")
         .unwrap();
-    assert!(!serde_json::to_string(canon).unwrap().contains("pii.contact"));
+    assert!(
+        !serde_json::to_string(canon)
+            .unwrap()
+            .contains("pii.contact")
+    );
     for artifact in &mut artifacts {
         if artifact.artifact_id == "canon.Party.entity" {
             *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
         }
     }
-    artifacts.push(read("registry/privacy/artifacts/privacy.markings.entity.json"));
-    artifacts.push(read("registry/privacy/artifacts/privacy.reveal.policy.json"));
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.markings.entity.json",
+    ));
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.reveal.policy.json",
+    ));
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()

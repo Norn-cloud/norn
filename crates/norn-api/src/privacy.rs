@@ -507,11 +507,12 @@ pub struct NornRevealed {
 }
 
 fn revealed_value_schema() -> utoipa::openapi::schema::Schema {
-    let mut schema = utoipa::openapi::schema::Object::with_type(
-        utoipa::openapi::schema::SchemaType::AnyValue,
+    let mut schema =
+        utoipa::openapi::schema::Object::with_type(utoipa::openapi::schema::SchemaType::AnyValue);
+    schema.description = Some(
+        "The stored value, of the property's type; decimals are exact JSON number tokens."
+            .to_owned(),
     );
-    schema.description =
-        Some("The stored value, of the property's type; decimals are exact JSON number tokens.".to_owned());
     utoipa::openapi::schema::Schema::Object(schema)
 }
 
