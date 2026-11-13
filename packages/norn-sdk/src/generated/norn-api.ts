@@ -11821,7 +11821,12 @@ export interface components {
             operators: string[];
         };
         /** @description A refused request. */
-        Refusal: ((({
+        Refusal: ({
+            /**
+             * @description INCIDENT-1: the id under which the host logged this internal
+             *     refusal's cause. The caller quotes it; the cause is never served.
+             */
+            incidentId?: string;
             /**
              * @description The plain-words restatement the host recomputed. Present, with its
              *     digest, only on `definition.signoff_mismatch`.
@@ -11830,12 +11835,6 @@ export interface components {
             /** @description Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes. */
             restatementSha256?: string;
         } | null) & {
-            /**
-             * @description INCIDENT-1: the id under which the host logged this internal
-             *     refusal's cause. The caller quotes it; the cause is never served.
-             */
-            incidentId?: string | null;
-        }) | null) & {
             /** @description What the caller can do about it (the discriminant SDKs switch on). */
             category: components["schemas"]["RefusalCategory"];
             /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */

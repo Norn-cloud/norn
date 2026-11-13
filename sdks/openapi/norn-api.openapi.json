@@ -32498,43 +32498,22 @@
           {
             "oneOf": [
               {
-                "allOf": [
-                  {
-                    "oneOf": [
-                      {
-                        "type": "object",
-                        "description": "The words a signer can sign: what the host reads the submission as.",
-                        "properties": {
-                          "restatement": {
-                            "type": "string",
-                            "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
-                          },
-                          "restatementSha256": {
-                            "type": "string",
-                            "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
-                          }
-                        }
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "description": "On `definition.signoff_mismatch` only: the host's restatement."
+                "type": "object",
+                "description": "The rarely present parts of a refusal, boxed so every refusal stays small.\nIts fields sit flat in the refusal, exactly where the restatement always\ndid, so the wire shape only gains `incidentId` (D84).",
+                "properties": {
+                  "incidentId": {
+                    "type": "string",
+                    "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."
                   },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "incidentId": {
-                        "type": [
-                          "string",
-                          "null"
-                        ],
-                        "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."
-                      }
-                    }
+                  "restatement": {
+                    "type": "string",
+                    "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+                  },
+                  "restatementSha256": {
+                    "type": "string",
+                    "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
                   }
-                ],
-                "description": "The rarely present parts of a refusal, boxed so every refusal stays small."
+                }
               },
               {
                 "type": "null"
