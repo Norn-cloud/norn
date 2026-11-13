@@ -615,9 +615,14 @@ impl Page<'_> {
     }
 
     /// The steps of a product run, each as the page's and the object's transitions it took.
-    fn steps(&self, ui: &Net, backend: &Backend<'_>, product: &Product, run: &[usize]) -> Vec<String> {
-        run
-            .iter()
+    fn steps(
+        &self,
+        ui: &Net,
+        backend: &Backend<'_>,
+        product: &Product,
+        run: &[usize],
+    ) -> Vec<String> {
+        run.iter()
             .filter_map(|edge| product.net().edges.get(*edge))
             .filter_map(|edge| product.origins.get(edge.label))
             .map(|origin| {

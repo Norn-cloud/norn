@@ -117,6 +117,7 @@ pub(crate) fn check(
     derive(&Facts::extract(ux, nullable_inputs, composed))
         .into_iter()
         .map(|finding| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(finding.code),
             severity: DiagnosticSeverity::Error,
             message: finding.message,

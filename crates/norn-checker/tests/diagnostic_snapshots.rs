@@ -240,6 +240,7 @@ fn check_invalid_corpus(dir: &str, snapshot_dir: &str) -> std::collections::BTre
 #[test]
 fn json_output_carries_every_key_even_when_absent() {
     let document = diagnostics_to_json(&[norn_checker::Diagnostic {
+        witness: None,
         code: norn_checker::DiagnosticCode::new(codes::IR_REQUIRED_FIELD),
         severity: norn_checker::DiagnosticSeverity::Error,
         message: "namespace is required".to_owned(),

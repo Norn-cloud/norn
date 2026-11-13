@@ -6832,6 +6832,7 @@ fn binding_record_dependencies(binding: &WidgetDataBinding, index: usize) -> Vec
 
 fn finding(owner: &ArtifactEnvelope, path: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(CODE),
         severity: DiagnosticSeverity::Error,
         message: message.into(),

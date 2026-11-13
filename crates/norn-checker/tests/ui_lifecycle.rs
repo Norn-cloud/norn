@@ -257,7 +257,10 @@ fn a_page_state_shown_where_its_assumption_does_not_hold_is_reported_with_its_ru
     let mut messages: Vec<String> = found
         .iter()
         .map(|finding| {
-            assert_eq!(finding["code"], "widget.lifecycle.assumption_violated", "{finding:#}");
+            assert_eq!(
+                finding["code"], "widget.lifecycle.assumption_violated",
+                "{finding:#}"
+            );
             assert!(
                 finding["witness"]["steps"]
                     .as_array()
@@ -269,15 +272,25 @@ fn a_page_state_shown_where_its_assumption_does_not_hold_is_reported_with_its_ru
         .collect();
     messages.sort_unstable();
     let shown = |page: &str, object: &str| {
-        format!("page state `{page}` is shown while the object is `{object}`, which it does not assume")
+        format!(
+            "page state `{page}` is shown while the object is `{object}`, which it does not assume"
+        )
     };
-    let pairs = [("done", "cancelled"), ("done", "draft"), ("done", "rejected"), ("open", "cancelled")];
+    let pairs = [
+        ("done", "cancelled"),
+        ("done", "draft"),
+        ("done", "rejected"),
+        ("open", "cancelled"),
+    ];
     assert_eq!(messages.len(), pairs.len(), "{messages:#?}");
     for ((page, object), message) in pairs.iter().zip(&messages) {
         assert!(message.starts_with(&shown(page, object)), "{messages:#?}");
     }
     assert!(
-        messages.contains(&format!("{}; shortest run: object cancel", shown("open", "cancelled"))),
+        messages.contains(&format!(
+            "{}; shortest run: object cancel",
+            shown("open", "cancelled")
+        )),
         "{messages:#?}"
     );
 }

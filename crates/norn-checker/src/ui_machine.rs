@@ -158,6 +158,7 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
     findings
         .into_iter()
         .map(|finding| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(finding.code),
             severity: if INFO.contains(&finding.code) {
                 DiagnosticSeverity::Info
