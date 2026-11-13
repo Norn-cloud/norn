@@ -1022,6 +1022,8 @@ export interface components {
             severity: components["schemas"]["NornIrDiagnosticSeverity"];
             span: components["schemas"]["NornCheckerDiagnosticSpan"] | null;
             tier: components["schemas"]["NornCheckerTier"] | null;
+            /** @description A run that shows the finding, when the check found one; absent otherwise (D84: additive). */
+            witness?: components["schemas"]["NornCheckerWitness"];
         };
         /** @description A JSON pointer and optional source-text range for a checker finding. */
         NornCheckerDiagnosticSpan: {
@@ -1073,6 +1075,36 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /**
+         * @description A shortest run that shows a checker finding: the edge path, and at each step which machine
+         *     moved and by which transition.
+         */
+        NornCheckerWitness: {
+            /** @description The steps, from an initial state. */
+            steps: components["schemas"]["NornCheckerWitnessStep"][];
+        };
+        /** @description One side's move in a checker witness step. */
+        NornCheckerWitnessMove: {
+            /** @description The transition id it took. */
+            label: string;
+            /** @description Which machine moved. */
+            side: components["schemas"]["NornCheckerWitnessSide"];
+        };
+        /**
+         * @description The machine a witness move belongs to.
+         * @enum {string}
+         */
+        NornCheckerWitnessSide: "ui" | "backend";
+        /** @description One step of a checker witness. */
+        NornCheckerWitnessStep: {
+            /**
+             * Format: int64
+             * @description The edge of the checked (composed) machine this step took.
+             */
+            edge: number;
+            /** @description The sides that moved, each by its own transition. */
+            moves: components["schemas"]["NornCheckerWitnessMove"][];
+        };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
             /**
@@ -8875,6 +8907,20 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetLayout: "table" | "detail" | "kanban" | "form" | "dashboard";
+        /** @description The lifecycle states one page state may be shown in. */
+        NornIrWidgetLifecycleAssumption: {
+            /** @description The lifecycle states it may be shown in. */
+            lifecycleStates: string[];
+            /** @description The page state. */
+            stateId: string;
+        };
+        /** @description One page transition that fires with one lifecycle transition. */
+        NornIrWidgetLifecycleSync: {
+            /** @description The lifecycle transition it fires. */
+            lifecycleTransition: string;
+            /** @description The page transition (an `accepted` outcome). */
+            transitionId: string;
+        };
         /**
          * @description A page's interaction statechart (UI-MACHINE-1).
          *
@@ -8891,6 +8937,12 @@ export interface components {
             fields: components["schemas"]["NornIrWidgetMachineField"][];
             /** @description State the page opens in; it must have the `idle` role. */
             initialStateId: string;
+            /**
+             * @description The backend lifecycle the page acts on (UI-LIFECYCLE-1, #1236). With it the checker
+             *     composes the page with that lifecycle: a page never shows an ending the object has not
+             *     reached, and never sits in a state its assumptions about the object rule out.
+             */
+            lifecycle?: components["schemas"]["NornIrWidgetMachineLifecycle"] | null;
             /**
              * @description Version of the machine contract.
              * @enum {string}
@@ -9020,6 +9072,24 @@ export interface components {
              * @enum {string}
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+        };
+        /** @description The backend lifecycle a page machine runs against, and how the two move together. */
+        NornIrWidgetMachineLifecycle: {
+            /**
+             * @description The lifecycle states each page state may be shown in. A state without an entry assumes
+             *     nothing.
+             */
+            assumes?: components["schemas"]["NornIrWidgetLifecycleAssumption"][];
+            /** @description The object type whose lifecycle the page acts on. */
+            objectType: string;
+            /** @description The lifecycle's property. */
+            property: string;
+            /**
+             * @description Page transitions that fire together with a lifecycle transition: an `accepted` outcome of
+             *     a call that fires it. A lifecycle transition named here never fires without the page; every
+             *     other one (another actor, a timer, an event) may fire at any time.
+             */
+            syncs?: components["schemas"]["NornIrWidgetLifecycleSync"][];
         };
         /** @description One declared state. */
         NornIrWidgetMachineState: {
