@@ -303,7 +303,10 @@ property tests run both at the same frontier.
   own clock, in the exact engine's historical envelope: findings exclude as
   they stood then, disputed members are counted as known then, and a
   version committed under another model refuses as the exact engine refuses
-  it. A loaded dataset has no history and refuses (named scenario
+  it. The mirror keeps no deletions: where the version known at the cutoff
+  is a deletion committed under another model, the exact engine refuses and
+  this engine answers without the deleted row. A loaded dataset has no
+  history and refuses (named scenario
   `answers_known_at_every_earlier_commit_match_the_exact_engine`).
 - **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
   identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
