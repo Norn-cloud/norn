@@ -505,7 +505,7 @@ fn retained_privacy_documents_are_the_servers_own() {
 
 mod erased {
     /// A document retained as pretty JSON.
-    pub trait Doc {
+    pub(crate) trait Doc {
         fn text(&self) -> String;
     }
     impl<T: serde::Serialize> Doc for T {
