@@ -101,6 +101,10 @@ fn combine(first: Modality, second: Modality) -> Modality {
 ///
 /// # Errors
 /// The product exceeds [`MAX_PRODUCT_STATES`], or a sync entry names one UI label twice.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one breadth-first product construction"
+)]
 pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product, &'static str> {
     let mut together: BTreeMap<usize, usize> = BTreeMap::new();
     let mut alone: BTreeSet<usize> = BTreeSet::new();
@@ -286,7 +290,10 @@ mod tests {
 
     fn sync() -> Vec<Sync> {
         vec![
-            Sync::Together { ui: 11, backend: 20 },
+            Sync::Together {
+                ui: 11,
+                backend: 20,
+            },
             Sync::Alone { ui: 12 },
         ]
     }
@@ -329,10 +336,19 @@ mod tests {
 
     #[test]
     fn a_sync_table_names_each_ui_label_once_and_products_are_bounded() {
-        let twice = [Sync::Alone { ui: 12 }, Sync::Together { ui: 12, backend: 20 }];
+        let twice = [
+            Sync::Alone { ui: 12 },
+            Sync::Together {
+                ui: 12,
+                backend: 20,
+            },
+        ];
         assert!(compose(&page(), &chart(), &twice).is_err());
-        let module = quint(&compose(&page(), &chart(), &sync()).expect("small").net, "page_post")
-            .expect("identifier");
+        let module = quint(
+            &compose(&page(), &chart(), &sync()).expect("small").net,
+            "page_post",
+        )
+        .expect("identifier");
         assert!(module.starts_with("module page_post {"));
         assert!(module.contains("action step = any {"));
         assert!(quint(&page(), "1bad").is_err());
