@@ -1754,7 +1754,7 @@ class DefinitionCompiler {
           ...(guards ? { guards: this.list(guards).map((e) => this.zen(e, "self")) } : {}),
           ...(fields.has("guardRefusalCode") ? { guardRefusalCode: this.string(fields.get("guardRefusalCode")!) } : {}),
           ...(declared.has(event) ? { trigger: { kind: "event" as const, event } } : {}),
-          ...(modeValue ? { mode: modeValue } : {}),
+          ...(modeValue ? { mode: modeValue as "fact" | "request" } : {}),
           ...(compensatedBy ? { compensatedBy: this.string(compensatedBy) } : {}),
         }, moveInput)
       }
@@ -1838,7 +1838,7 @@ class DefinitionCompiler {
       ...(guards ? { guards: this.list(guards).map((e) => this.zen(e, "self")) } : {}),
       ...(after ? { trigger: { kind: "timer" as const, millis: this.durationMillis(after) } } : {}),
       ...(on ? { trigger: { kind: "event" as const, event: this.string(on) } } : {}),
-      ...(modeValue ? { mode: modeValue } : {}),
+      ...(modeValue ? { mode: modeValue as "fact" | "request" } : {}),
       ...(compensatedBy ? { compensatedBy: this.string(compensatedBy) } : {}),
     }
   }
