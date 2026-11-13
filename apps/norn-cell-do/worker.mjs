@@ -204,29 +204,47 @@ export class Cell {
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
+    // The runtime's clock stands still inside a synchronous call, so each step
+    // is timed across a timer turn: cellMs is the cell's own work (mapping and
+    // the commit's statements); fetchMs is each request, including any wait for
+    // the previous step's writes to become durable before the request may leave.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
     const started = Date.now();
+    let cellMs = 0;
     let fetchMs = 0;
+    let maxCellMs = 0;
+    let maxFetchMs = 0;
     let fetches = 0;
-    let yields = 0;
-    let step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+    let steps = 0;
+    const timed = async (response) => {
+      const before = Date.now();
+      const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before));
+      // SYNC-YIELD-1: the timer turn also lets requests waiting on this cell run between pages.
+      await tick();
+      const spent = Date.now() - before;
+      cellMs += spent;
+      maxCellMs = Math.max(maxCellMs, spent);
+      steps += 1;
+      return next;
+    };
+    let step = await timed(undefined);
     while (step.request || step.continue) {
       if (step.continue) {
-        // SYNC-YIELD-1: let the requests waiting on this cell run between mapped pages.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        yields += 1;
-        step = JSON.parse(this.cell.syncStep(id, undefined, undefined, Date.now()));
+        step = await timed(undefined);
         continue;
       }
       const sent = Date.now();
-      const { status, bytes } = await perform(step.request);
-      fetchMs += Date.now() - sent;
+      const response = await perform(step.request);
+      const spent = Date.now() - sent;
+      fetchMs += spent;
+      maxFetchMs = Math.max(maxFetchMs, spent);
       fetches += 1;
-      step = JSON.parse(this.cell.syncStep(id, status, bytes, Date.now()));
+      step = await timed(response);
     }
     // Counts and times only: what a run cost, never what it read or carried.
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
-    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, fetches, yields, wallMs, fetchMs, cellMs: wallMs - fetchMs }));
+    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs }));
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {

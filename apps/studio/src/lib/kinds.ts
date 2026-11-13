@@ -1,7 +1,7 @@
-import { ArrowRightLeft, Box, ChartLine, Database, Scale, ShieldCheck, Workflow, type LucideIcon } from "lucide-react"
+import { ArrowRightLeft, Blend, Box, ChartLine, Database, Scale, ShieldCheck, Workflow, type LucideIcon } from "lucide-react"
 
 /** The kinds of Norn artefact Studio shows. Each keeps one icon everywhere; all are neutral grey (foreground when active), so colour stays for meaning. */
-export type Kind = "source" | "mapping" | "objectType" | "question" | "workflow" | "guarantee" | "policy"
+export type Kind = "source" | "mapping" | "objectType" | "transform" | "question" | "workflow" | "guarantee" | "policy"
 
 export interface KindStyle {
   readonly label: string
@@ -19,6 +19,7 @@ export const KINDS: Readonly<Record<Kind, KindStyle>> = {
   source: { label: "Source", icon: Database, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
   mapping: { label: "Mapping", icon: ArrowRightLeft, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
   objectType: { label: "Object type", icon: Box, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
+  transform: { label: "Transform", icon: Blend, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
   question: { label: "Question", icon: ChartLine, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
   workflow: { label: "Workflow", icon: Workflow, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
   guarantee: { label: "Guarantee", icon: ShieldCheck, text: "text-muted-foreground", fill: "bg-muted", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },

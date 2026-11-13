@@ -276,7 +276,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Canvas</h1>
+        <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
         <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">

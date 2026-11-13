@@ -1041,9 +1041,14 @@ fn validate_view_calc(
                             ));
                     }
                 },
+                // ViewIR v1: the strict typed root reports a malformed plan
+                // (`derived.validation.invalid_payload`), and the plan's
+                // operators are typed against the whole artifact set
+                // (`transform::check_transform_set`).
+                Some(JsonValue::String(k)) if k == "relational" => {}
                 _ => {
                     diagnostics.push(kind_invalid(
-                        "payload.calc.kind must be \"field_projection\"",
+                        "payload.calc.kind must be \"field_projection\" or \"relational\"",
                         "payload.calc.kind",
                         artifact_id,
                         code,

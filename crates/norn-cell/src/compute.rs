@@ -9,6 +9,8 @@ pub mod lineage;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
+/// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
+pub mod transform;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -18,7 +20,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{
     QuestionPlan, UNSUPPORTED_ENGINE, arithmetic as math,
-    contribution::{Contribution, as_of, project},
+    contribution::{Contribution, Linked, as_of, project, project_linked},
 };
 use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
 use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
@@ -233,6 +235,10 @@ pub struct QueryResult {
     pub context: QueryContext,
     /// DATA-QUARANTINE: engine-resolved identity → durable finding ID.
     pub exclusions: BTreeMap<String, String>,
+    /// METRIC-GRAIN-LINK-1: rows that would count but whose optional time
+    /// link is absent, so they have no time: skipped, never bucketed.
+    #[serde(default, skip_serializing_if = "crate::store::is_zero")]
+    pub unlinked: u64,
 }
 
 #[derive(Serialize)]
@@ -402,6 +408,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
+            let mut unlinked = 0u64;
             let mut members = BTreeSet::new();
             let mut finding_members = BTreeSet::new();
             for id in ids {
@@ -441,15 +448,16 @@ impl<E: SqlEngine> CellStore<E> {
                 )? {
                     continue;
                 }
-                let entries =
+                let (entries, timeless) =
                     subject_contributions(&reader, plan, &context, &id, &record, &mut budget)?;
+                unlinked = unlinked.saturating_add(u64::from(timeless));
                 if !entries.is_empty() {
                     contributions.insert(id, entries);
                 }
             }
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
-            let result = materialize(
+            let mut result = materialize(
                 plan,
                 (context, exclusions),
                 revision,
@@ -457,6 +465,7 @@ impl<E: SqlEngine> CellStore<E> {
                 definition_pin,
                 &contributions,
             )?;
+            result.unlinked = unlinked;
             consume(
                 Snapshot {
                     historical_receipt,
@@ -557,8 +566,10 @@ fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
         .unwrap_or_default()
 }
 
-/// One root identity's contributions: its current row's, or, for a snapshot
-/// sum, one per bucket from every stored version (METRIC-SNAPSHOT-ASOF-1).
+/// One root identity's contributions: its current row's, one per bucket from
+/// every stored version for a snapshot sum (METRIC-SNAPSHOT-ASOF-1), or its
+/// row's at its linked object's time (METRIC-GRAIN-LINK-1); `true` when the
+/// row would count but its optional time link is absent.
 fn subject_contributions<E: SqlEngine>(
     reader: &crate::read::StoreReader<'_, E>,
     plan: &QuestionPlan,
@@ -566,12 +577,50 @@ fn subject_contributions<E: SqlEngine>(
     id: &str,
     record: &ObjectRecord,
     budget: &mut DecodeBudget,
-) -> Result<Vec<(u64, Contribution)>, CellError> {
+) -> Result<(Vec<(u64, Contribution)>, bool), CellError> {
+    if let Some(link) = plan.time_link() {
+        let targets = match reader.link_targets_with_budget(
+            &context.world,
+            plan.grain().as_str(),
+            link.link.as_str(),
+            id,
+            budget,
+        )? {
+            crate::reactive::BudgetedLinksRead::Complete(targets) => targets,
+            crate::reactive::BudgetedLinksRead::Exhausted => {
+                return Err(refused("core.compute.bound_exceeded"));
+            }
+        };
+        let linked = match targets.as_slice() {
+            [] => None,
+            [target] => match reader.object_with_budget(
+                &context.world,
+                link.target_type.as_str(),
+                target,
+                budget,
+            )? {
+                BudgetedRead::Found(linked) => Some(linked),
+                BudgetedRead::Missing => None,
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            },
+            _ => return Err(refused(UNSUPPORTED_ENGINE)),
+        };
+        let projected = project_linked(plan, &record.values, linked.as_ref().map(|l| &l.values))
+            .map_err(refused)?;
+        return Ok(match projected {
+            Linked::Contribution(value) => (vec![(record.version, value)], false),
+            Linked::Excluded => (Vec::new(), false),
+            Linked::Unlinked => (Vec::new(), true),
+        });
+    }
     if !plan.as_of() {
-        return Ok(project(plan, &record.values)
-            .map_err(refused)?
-            .map(|value| vec![(record.version, value)])
-            .unwrap_or_default());
+        return Ok((
+            project(plan, &record.values)
+                .map_err(refused)?
+                .map(|value| vec![(record.version, value)])
+                .unwrap_or_default(),
+            false,
+        ));
     }
     let versions = reader
         .object_versions_with_budget(&context.world, plan.grain().as_str(), id, budget)?
@@ -579,7 +628,7 @@ fn subject_contributions<E: SqlEngine>(
         .into_iter()
         .map(|version| (version.version, version.values))
         .collect::<Vec<_>>();
-    as_of(plan, &versions).map_err(refused)
+    Ok((as_of(plan, &versions).map_err(refused)?, false))
 }
 
 /// Every `(root identity, versioned contribution)` pair.
@@ -729,6 +778,7 @@ pub(crate) fn finish(
             Freshness::Exact
         },
         complete,
+        unlinked: 0,
         context,
         exclusions,
     })

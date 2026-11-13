@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.grain_dropped",
+  "message": "a relational view's projection drops or changes a column that identifies its rows",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
