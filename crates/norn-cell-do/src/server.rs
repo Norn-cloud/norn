@@ -353,13 +353,20 @@ pub fn handle_all<E: SqlEngine>(
 /// is absent.
 #[must_use]
 pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
-    respond(route::<E>(
-        None,
-        None,
-        &DefinitionKinds::default(),
-        None,
-        request,
-    ))
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
 }
 
 pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
@@ -418,7 +425,10 @@ fn route<E: SqlEngine>(
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
-        ad_hoc_question(host, questions, actor, method, path, query, body)
+        // A runtime that publishes no questions answers no ad-hoc question
+        // either: the base's answer, whatever the body (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        ad_hoc_question(host, published, actor, method, path, query, body)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -427,7 +437,11 @@ fn route<E: SqlEngine>(
             "this host's read routes take GET",
         ))
     } else {
-        match (question, questions) {
+        // A runtime that publishes no questions (a tenant's receipt handles)
+        // has no named question to answer: the base's 404, never a refusal
+        // that depends on the caller (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        match (question, published) {
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
