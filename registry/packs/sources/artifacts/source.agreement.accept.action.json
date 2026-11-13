@@ -1,0 +1,103 @@
+{
+  "artifactId": "source.agreement.accept.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Accept a source disagreement",
+  "namespace": "source",
+  "payload": {
+    "access": {
+      "artifactId": "source.agreement.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "source.agreement.accept",
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "reviewed_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "source.AgreementReview.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "source.AgreementReview",
+      "writeMode": {
+        "kind": "upsert"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The disagreement finding to accept, as the record's findings name it.",
+          "title": "Finding",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the disagreement is expected, kept with the review.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "type": "string"
+        },
+        "status": {
+          "description": "Accepted: both sources' reports stand.",
+          "enum": [
+            "accepted"
+          ],
+          "title": "Decision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.reason != ''"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Accept a source disagreement",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "source.AgreementReview"
+      },
+      {
+        "change": "created",
+        "entityKind": "source.AgreementReview"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.agreement.accept.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

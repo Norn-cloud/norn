@@ -517,7 +517,7 @@
   },
   {
     "code": "core.observation.source_disagreement",
-    "fix": "Correct the source that reports the wrong value; the finding resolves when the record returns to the earlier report."
+    "fix": "Correct the source that reports the wrong value, or accept the disagreement with a reason (source.agreement.accept); the finding resolves when the record returns to the earlier report."
   },
   {
     "code": "core.projection.publication_guard",
