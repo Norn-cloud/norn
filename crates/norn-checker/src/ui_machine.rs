@@ -16,13 +16,15 @@
 //! - guards, assignments and request members type-check against the field record and the event
 //!   payload.
 //!
-//! What this establishes is **structural**, like the lifecycle checks: a guarded transition can be
-//! disabled at run time, so coverage counts only unguarded transitions, and reachability treats
-//! every guard as satisfiable (an over-approximation). Guarded reachability is a model-checking
-//! question for the obligations path, not this pass. The laws read the document only and add no
-//! client-side authority.
+//! What this establishes is **structural**, like the lifecycle checks, and it runs on the same core
+//! (`soundness`, LIFE-SOUND-1): an `idle` state is a resting ending, a `terminal` one a good ending,
+//! and a guarded transition (the page's guard or a catalog component's) is **may**. Reachability
+//! counts may edges (an over-approximation, so nothing unreachable is missed); option to complete
+//! counts only unguarded ones, so a state that settles only through guards is reported Unknown
+//! (`completion_unknown`, information), never passed. Coverage likewise counts only unguarded
+//! transitions. The laws read the document only and add no client-side authority.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_ir::{
@@ -32,6 +34,7 @@ use norn_ir::{
     WidgetRefusalCategory, WidgetStateRole, WidgetUx, WidgetValueType,
 };
 
+use crate::soundness::{self, Completion, Ending, Net, NetEdge};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
 const DUPLICATE_ID: &str = "widget.machine.duplicate_id";
@@ -43,6 +46,7 @@ const INITIAL_NOT_IDLE: &str = "widget.machine.initial_not_idle";
 const UNREACHABLE_STATE: &str = "widget.machine.unreachable_state";
 const ABSORBING_STATE: &str = "widget.machine.absorbing_state";
 const TRAP_REGION: &str = "widget.machine.trap_region";
+const COMPLETION_UNKNOWN: &str = "widget.machine.completion_unknown";
 const TERMINAL_HAS_TRANSITION: &str = "widget.machine.terminal_has_transition";
 const PENDING_WITHOUT_AWAIT: &str = "widget.machine.pending_without_await";
 const PENDING_WITHOUT_DEADLINE: &str = "widget.machine.pending_without_deadline";
@@ -61,7 +65,7 @@ const CONTROL_WITHOUT_EVENT: &str = "widget.machine.control_without_event";
 const COMPONENT_GUARD_OUTSIDE_CATALOG: &str = "widget.machine.component_guard_outside_catalog";
 
 /// Every code these laws can emit.
-pub const CODES: [&str; 25] = [
+pub const CODES: [&str; 26] = [
     DUPLICATE_ID,
     UNKNOWN_REFERENCE,
     INVALID_EVENT,
@@ -71,6 +75,7 @@ pub const CODES: [&str; 25] = [
     UNREACHABLE_STATE,
     ABSORBING_STATE,
     TRAP_REGION,
+    COMPLETION_UNKNOWN,
     TERMINAL_HAS_TRANSITION,
     PENDING_WITHOUT_AWAIT,
     PENDING_WITHOUT_DEADLINE,
@@ -105,9 +110,6 @@ type OutcomeValue = (WidgetCallOutcome, Option<WidgetRefusalCategory>);
 /// Outcome value to the unguarded transitions that take it: `(index, specific)`.
 type Covered = BTreeMap<OutcomeValue, Vec<(usize, bool)>>;
 
-/// State graph keyed by state id.
-type Graph<'m> = BTreeMap<&'m str, BTreeSet<&'m str>>;
-
 /// The field record and the event payload an expression sees.
 pub(crate) type Env<'e> = (&'e BTreeMap<String, Type>, &'e BTreeMap<String, Type>);
 
@@ -116,6 +118,10 @@ struct Finding {
     pointer: String,
     message: String,
 }
+
+/// Codes reported as information, not errors: an Unknown verdict is never a pass, but the guards
+/// that decide it are the server's to evaluate, not this pass's.
+const INFO: [&str; 1] = [COMPLETION_UNKNOWN];
 
 /// Check the declared machine of every page in one widget's UX contract.
 #[must_use]
@@ -152,8 +158,13 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
     findings
         .into_iter()
         .map(|finding| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(finding.code),
-            severity: DiagnosticSeverity::Error,
+            severity: if INFO.contains(&finding.code) {
+                DiagnosticSeverity::Info
+            } else {
+                DiagnosticSeverity::Error
+            },
             message: finding.message,
             span: Some(Span::pointer(finding.pointer)),
             artifact_id: Some(owner.artifact_id.clone()),
@@ -314,46 +325,6 @@ fn collect_nodes<'n>(node: &'n WidgetNode, out: &mut BTreeMap<&'n str, &'n Widge
     }
 }
 
-/// Every state reachable from `seeds` along `graph`, the seeds included.
-fn reachable<'m>(seeds: impl IntoIterator<Item = &'m str>, graph: &Graph<'m>) -> BTreeSet<&'m str> {
-    let mut seen: BTreeSet<&'m str> = BTreeSet::new();
-    let mut queue: VecDeque<&'m str> = VecDeque::new();
-    for seed in seeds {
-        if seen.insert(seed) {
-            queue.push_back(seed);
-        }
-    }
-    while let Some(state) = queue.pop_front() {
-        for next in graph.get(state).into_iter().flatten() {
-            if seen.insert(next) {
-                queue.push_back(next);
-            }
-        }
-    }
-    seen
-}
-
-/// States that lie on a cycle of `graph`: a state is on one when its successors reach it again.
-fn on_cycle<'m>(graph: &Graph<'m>) -> BTreeSet<&'m str> {
-    graph
-        .iter()
-        .filter(|(state, successors)| {
-            reachable(successors.iter().copied(), graph).contains(**state)
-        })
-        .map(|(state, _)| *state)
-        .collect()
-}
-
-fn reverse<'m>(graph: &Graph<'m>) -> Graph<'m> {
-    let mut reversed: Graph<'m> = BTreeMap::new();
-    for (from, targets) in graph {
-        for target in targets {
-            reversed.entry(target).or_default().insert(from);
-        }
-    }
-    reversed
-}
-
 pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
     ZenTypeEnv::input_only_with_records(
         BTreeMap::from([
@@ -373,10 +344,55 @@ pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
 }
 
 /// Per-transition facts gathered for the graph laws.
+/// A page machine as a [`Net`] (LIFE-SOUND-1's core, shared with the backend lifecycles): states
+/// by declaration index, an `idle` state a resting ending and a `terminal` one a good ending, and
+/// one edge per transition between declared states (its label is the transition's index), may when
+/// a guard (the page's or a catalog component's) decides it. Transitions that name an undeclared
+/// state or event, or leave a terminal state, are reported by the laws and left out.
+pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
+    let index = |id: &str| machine.states.iter().position(|state| state.state_id == id);
+    let edges = machine
+        .transitions
+        .iter()
+        .enumerate()
+        .filter_map(|(label, transition)| {
+            let from = index(&transition.from)?;
+            let to = index(&transition.target)?;
+            let event = machine
+                .events
+                .iter()
+                .find(|event| event.event_id == transition.on)?;
+            if machine.states.get(from)?.role == WidgetStateRole::Terminal {
+                return None;
+            }
+            let input = !matches!(event.source, WidgetMachineEventSource::Timer { .. });
+            Some(
+                if transition.guard.is_some() || transition.component_guard.is_some() {
+                    NetEdge::guarded(from, to, label, input)
+                } else {
+                    NetEdge::unguarded(from, to, label, input)
+                },
+            )
+        })
+        .collect();
+    Net {
+        states: machine.states.len(),
+        initial: index(&machine.initial_state_id).into_iter().collect(),
+        endings: machine
+            .states
+            .iter()
+            .map(|state| match state.role {
+                WidgetStateRole::Idle => Some(Ending::Resting),
+                WidgetStateRole::Terminal => Some(Ending::Good),
+                WidgetStateRole::Pending | WidgetStateRole::Error => None,
+            })
+            .collect(),
+        edges,
+    }
+}
+
 #[derive(Default)]
 struct Facts<'m> {
-    edges: Graph<'m>,
-    timer_edges: Graph<'m>,
     /// States with an exit a person or a timer drives.
     recovers: BTreeSet<&'m str>,
     /// Pending states that offer a cancel.
@@ -847,14 +863,9 @@ impl<'m> MachineChecker<'m> {
                 );
                 continue;
             }
-            facts.edges.entry(from).or_default().insert(target);
             let outcome = outcome_of(event);
             match &event.source {
-                WidgetMachineEventSource::Timer { .. } => {
-                    facts.timer_edges.entry(from).or_default().insert(target);
-                    facts.recovers.insert(from);
-                }
-                WidgetMachineEventSource::User { .. } => {
+                WidgetMachineEventSource::Timer { .. } | WidgetMachineEventSource::User { .. } => {
                     facts.recovers.insert(from);
                 }
                 WidgetMachineEventSource::PageOpened if from != machine.initial_state_id => {
@@ -1048,78 +1059,70 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
+    /// Option to complete, reachability and timer cycles over [`page_net`].
     fn check_graph(&mut self, facts: &Facts<'m>) {
         let machine = self.machine;
         let base = self.base;
-        if self.state(&machine.initial_state_id).is_some() {
-            let seen = reachable([machine.initial_state_id.as_str()], &facts.edges);
-            for (index, state) in machine.states.iter().enumerate() {
-                if !seen.contains(state.state_id.as_str()) {
-                    self.push(
-                        UNREACHABLE_STATE,
-                        format!("{base}/states/{index}"),
-                        format!(
-                            "state `{}` is unreachable from the initial state",
-                            state.state_id
-                        ),
-                    );
-                }
-            }
-        }
-        let settled = reachable(
-            machine
-                .states
-                .iter()
-                .filter(|state| {
-                    matches!(
-                        state.role,
-                        WidgetStateRole::Idle | WidgetStateRole::Terminal
-                    )
-                })
-                .map(|state| state.state_id.as_str()),
-            &reverse(&facts.edges),
-        );
+        let net = page_net(machine);
+        let verdict = soundness::analyse(&net);
+        let seeded = !net.initial.is_empty();
+        let cycles = soundness::input_free_cycles(&net);
         for (index, state) in machine.states.iter().enumerate() {
+            let id = state.state_id.as_str();
+            let pointer = format!("{base}/states/{index}");
+            let Some(found) = verdict.states.get(index) else {
+                continue;
+            };
+            if seeded && !found.reachable {
+                self.push(
+                    UNREACHABLE_STATE,
+                    pointer.clone(),
+                    format!("state `{id}` is unreachable from the initial state"),
+                );
+            }
+            if cycles.get(index).copied().unwrap_or(false) {
+                self.push(
+                    INPUT_FREE_CYCLE,
+                    pointer.clone(),
+                    format!("state `{id}` is on a cycle that runs on timers alone"),
+                );
+            }
             if state.role == WidgetStateRole::Terminal {
                 continue;
             }
-            let id = state.state_id.as_str();
-            let pointer = format!("{base}/states/{index}");
-            let exits = facts
-                .edges
-                .get(id)
-                .is_some_and(|targets| targets.iter().any(|target| *target != id));
-            if !exits {
+            if found.deadlock {
                 self.push(
                     ABSORBING_STATE,
                     pointer,
                     format!("non-terminal state `{id}` has no exit"),
                 );
-            } else if !settled.contains(id) {
-                self.push(
+                continue;
+            }
+            match found.completion {
+                Completion::None => self.push(
                     TRAP_REGION,
                     pointer,
                     format!("no idle or terminal state is reachable from `{id}`"),
-                );
-            } else if state.role == WidgetStateRole::Error && !facts.recovers.contains(id) {
-                self.push(
-                    ERROR_WITHOUT_RECOVERY,
+                ),
+                Completion::Unknown => self.push(
+                    COMPLETION_UNKNOWN,
                     pointer,
-                    format!("error state `{id}` has no transition a person or a timer drives"),
-                );
+                    format!(
+                        "an idle or terminal state is reachable from `{id}` only through guarded transitions"
+                    ),
+                ),
+                Completion::Must => {
+                    if state.role == WidgetStateRole::Error && !facts.recovers.contains(id) {
+                        self.push(
+                            ERROR_WITHOUT_RECOVERY,
+                            pointer,
+                            format!(
+                                "error state `{id}` has no transition a person or a timer drives"
+                            ),
+                        );
+                    }
+                }
             }
-        }
-        for id in on_cycle(&facts.timer_edges) {
-            let index = machine
-                .states
-                .iter()
-                .position(|state| state.state_id == id)
-                .unwrap_or_default();
-            self.push(
-                INPUT_FREE_CYCLE,
-                format!("{base}/states/{index}"),
-                format!("state `{id}` is on a cycle that runs on timers alone"),
-            );
         }
     }
 }
@@ -1127,17 +1130,6 @@ impl<'m> MachineChecker<'m> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_cycle_needs_two_states_or_a_self_loop() {
-        let graph: Graph<'_> = BTreeMap::from([
-            ("a", BTreeSet::from(["b"])),
-            ("b", BTreeSet::from(["a"])),
-            ("c", BTreeSet::from(["c"])),
-            ("d", BTreeSet::from(["a"])),
-        ]);
-        assert_eq!(on_cycle(&graph), BTreeSet::from(["a", "b", "c"]));
-    }
 
     #[test]
     fn refused_without_category_matches_every_category() {

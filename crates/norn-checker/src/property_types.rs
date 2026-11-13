@@ -840,6 +840,7 @@ pub(crate) fn span_at(base: &[&str], segments: &[&str]) -> Span {
 
 pub(crate) fn error(code: &str, message: String, at: Span) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

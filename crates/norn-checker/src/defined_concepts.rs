@@ -69,6 +69,7 @@ pub(crate) fn check_cycles(
                 .filter(|(_, _, candidate)| *candidate)
                 .min_by_key(|(artifact, _, _)| (&artifact.artifact_id, &artifact.version))?;
             Some(Diagnostic {
+                witness: None,
                 code: DiagnosticCode::new("core.graph.cycle"),
                 severity: DiagnosticSeverity::Error,
                 message: "classification dependencies must be acyclic".into(),
@@ -94,6 +95,7 @@ pub(crate) fn check_admission(
             qualify(artifact, &root, &pool, context.registry)
                 .err()
                 .map(|message| Diagnostic {
+                    witness: None,
                     code: DiagnosticCode::new("core.graph.incomplete_classification"),
                     severity: DiagnosticSeverity::Error,
                     message: message.into(),

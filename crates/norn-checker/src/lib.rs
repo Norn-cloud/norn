@@ -72,6 +72,7 @@ pub mod interfaces;
 pub mod jdm_profile;
 pub mod labels;
 pub mod layout;
+pub mod lifecycle_soundness;
 pub mod lifecycle_writes;
 pub mod lifecycles;
 pub mod lint;
@@ -94,6 +95,7 @@ pub mod metric_interchange;
     clippy::large_futures
 )]
 pub mod posting;
+mod soundness;
 pub mod table_analysis;
 pub mod tool_effect;
 mod unit_admission;
@@ -164,6 +166,7 @@ pub mod tool_ports;
 pub mod typed_roots;
 pub mod ui_catalog;
 pub mod ui_interaction;
+pub mod ui_lifecycle;
 pub mod ui_machine;
 pub mod ui_view;
 pub mod verification;
@@ -180,7 +183,8 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
+    DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
+    diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,

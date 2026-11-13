@@ -3519,6 +3519,10 @@
                 "type": "null"
               }
             ]
+          },
+          "witness": {
+            "$ref": "#/components/schemas/NornCheckerWitness",
+            "description": "A run that shows the finding, when the check found one; absent otherwise (D84: additive)."
           }
         }
       },
@@ -3669,6 +3673,71 @@
           "T6",
           "T7"
         ]
+      },
+      "NornCheckerWitness": {
+        "type": "object",
+        "description": "A shortest run that shows a checker finding: the edge path, and at each step which machine\nmoved and by which transition.",
+        "required": [
+          "steps"
+        ],
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornCheckerWitnessStep"
+            },
+            "description": "The steps, from an initial state."
+          }
+        }
+      },
+      "NornCheckerWitnessMove": {
+        "type": "object",
+        "description": "One side's move in a checker witness step.",
+        "required": [
+          "side",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The transition id it took."
+          },
+          "side": {
+            "$ref": "#/components/schemas/NornCheckerWitnessSide",
+            "description": "Which machine moved."
+          }
+        }
+      },
+      "NornCheckerWitnessSide": {
+        "type": "string",
+        "description": "The machine a witness move belongs to.",
+        "enum": [
+          "ui",
+          "backend"
+        ]
+      },
+      "NornCheckerWitnessStep": {
+        "type": "object",
+        "description": "One step of a checker witness.",
+        "required": [
+          "edge",
+          "moves"
+        ],
+        "properties": {
+          "edge": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The edge of the checked (composed) machine this step took.",
+            "minimum": 0
+          },
+          "moves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornCheckerWitnessMove"
+            },
+            "description": "The sides that moved, each by its own transition."
+          }
+        }
       },
       "NornDefinitionsCatalog": {
         "type": "object",
@@ -13857,6 +13926,20 @@
           "description": {
             "type": "string"
           },
+          "endings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleEnding"
+            },
+            "description": "LIFE-SOUND-1: the declared endings and their outcomes. A run is sound\nwhen it can always reach one. A non-`resting` ending is a terminal\nstate; a `resting` ending is a non-terminal state a perpetual object\nmay stay in (an account, an item). A terminal state with no entry here\nis an unclassified ending. Omitted when empty."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleEvent"
+            },
+            "description": "LIFE-SOUND-6: the external event kinds an object of this lifecycle can\nreceive (connector observations, provider results, counterparty\ncancellations). Every reachable non-terminal state handles each one by\nan event-triggered transition or an explicit `ignoredIn` entry.\nOmitted when empty."
+          },
           "immutable": {
             "type": "array",
             "items": {
@@ -13900,6 +13983,82 @@
         },
         "additionalProperties": false
       },
+      "NornIrLifecycleEnding": {
+        "type": "object",
+        "description": "One declared ending of a lifecycle.",
+        "required": [
+          "state",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "description": "What ending in it means.",
+            "enum": [
+              "completed",
+              "compensated",
+              "cancelled",
+              "breached_visible",
+              "resting"
+            ],
+            "x-enumDescriptions": [
+              "The run did what it was for.",
+              "The run was undone and every dispatched effect was compensated.",
+              "The run was abandoned before any uncompensated effect.",
+              "An obligation was breached and the breach is visible (a remedy owed).",
+              "A non-terminal state a perpetual object may rest in indefinitely."
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "The state; listed once."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLifecycleEvent": {
+        "type": "object",
+        "description": "An external event kind a lifecycle receives (LIFE-SOUND-6).",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The event id, same grammar as a transition id; unique per lifecycle."
+          },
+          "ignoredIn": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycleIgnore"
+            },
+            "description": "States in which the event is deliberately ignored, each with a reason.\nOmitted when empty."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLifecycleIgnore": {
+        "type": "object",
+        "description": "States in which an external event is ignored on purpose.",
+        "required": [
+          "states",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why ignoring it there is correct; non-blank."
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The states; non-empty."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLifecycleMap": {
         "type": "object",
         "description": "One lifecycle observation rule of a lifecycle property.\n\nExactly one of `state` and `transition` is required. `state` names the\nobserved target state directly. `transition` is the legacy form: the\ndeclared transition id is resolved to its destination state before the\nsnapshot is handed to the kernel.",
@@ -13926,6 +14085,24 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrLifecycleOutcome": {
+        "type": "string",
+        "description": "How a lifecycle run ended (LIFE-SOUND-1).",
+        "enum": [
+          "completed",
+          "compensated",
+          "cancelled",
+          "breached_visible",
+          "resting"
+        ],
+        "x-enumDescriptions": [
+          "The run did what it was for.",
+          "The run was undone and every dispatched effect was compensated.",
+          "The run was abandoned before any uncompensated effect.",
+          "An obligation was breached and the breach is visible (a remedy owed).",
+          "A non-terminal state a perpetual object may rest in indefinitely."
+        ]
       },
       "NornIrLifecyclePathProperty": {
         "type": "object",
@@ -21792,6 +21969,10 @@
           "to"
         ],
         "properties": {
+          "compensatedBy": {
+            "type": "string",
+            "description": "LIFE-SOUND-8: this transition dispatches an irreversible external\neffect, and the named transition compensates it. A run that dispatched\nit may end `cancelled`, `compensated` or `breached_visible` only after\nthe compensating transition. Omitted when the transition dispatches none."
+          },
           "description": {
             "type": "string"
           },
@@ -21818,9 +21999,25 @@
             "description": "Unique id within the lifecycle (`submit`, `cancel`).",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
+          "mode": {
+            "type": "string",
+            "description": "LIFE-SOUND-5: fact or request. Omitted: a request, unless a trigger\nmakes it a fact.",
+            "enum": [
+              "request",
+              "fact"
+            ],
+            "x-enumDescriptions": [
+              "A request: laws and guards may refuse it. The default.",
+              "A fact (an observation, an offline sale, a count, a provider result):\nnever refused. It commits, commits with a variance or shortfall, or is\nquarantined. A fact transition carries no guard."
+            ]
+          },
           "to": {
             "type": "string",
             "description": "The target state."
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/NornIrTransitionTrigger",
+            "description": "LIFE-SOUND-3: a timer or external event that fires this transition.\nOmitted: an action fires it."
           }
         },
         "additionalProperties": false
@@ -21829,6 +22026,18 @@
         "type": "string",
         "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrTransitionMode": {
+        "type": "string",
+        "description": "Whether a transition records a fact or asks for a change (LIFE-SOUND-5).",
+        "enum": [
+          "request",
+          "fact"
+        ],
+        "x-enumDescriptions": [
+          "A request: laws and guards may refuse it. The default.",
+          "A fact (an observation, an offline sale, a count, a provider result):\nnever refused. It commits, commits with a variance or shortfall, or is\nquarantined. A fact transition carries no guard."
+        ]
       },
       "NornIrTransitionRow": {
         "type": "object",
@@ -21858,6 +22067,59 @@
           },
           "to": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrTransitionTrigger": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrTransitionTriggerOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrTransitionTriggerOneOf1"
+          }
+        ],
+        "description": "What fires a transition (LIFE-SOUND-3). Omitted: an action fires it."
+      },
+      "NornIrTransitionTriggerOneOf0": {
+        "type": "object",
+        "description": "The cell clock: the transition fires once the object has been in a\nsource state for `millis`. A deadline; always a fact.",
+        "required": [
+          "kind",
+          "millis"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "timer"
+            ]
+          },
+          "millis": {
+            "type": "string",
+            "description": "Positive canonical unsigned milliseconds, bounded by u64."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrTransitionTriggerOneOf1": {
+        "type": "object",
+        "description": "A declared external event of the lifecycle. Always a fact.",
+        "required": [
+          "kind",
+          "event"
+        ],
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "The [`LifecycleEvent`] id."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "event"
+            ]
           }
         },
         "additionalProperties": false
@@ -24005,6 +24267,47 @@
           "dashboard"
         ]
       },
+      "NornIrWidgetLifecycleAssumption": {
+        "type": "object",
+        "description": "The lifecycle states one page state may be shown in.",
+        "required": [
+          "stateId",
+          "lifecycleStates"
+        ],
+        "properties": {
+          "lifecycleStates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The lifecycle states it may be shown in."
+          },
+          "stateId": {
+            "type": "string",
+            "description": "The page state."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetLifecycleSync": {
+        "type": "object",
+        "description": "One page transition that fires with one lifecycle transition.",
+        "required": [
+          "transitionId",
+          "lifecycleTransition"
+        ],
+        "properties": {
+          "lifecycleTransition": {
+            "type": "string",
+            "description": "The lifecycle transition it fires."
+          },
+          "transitionId": {
+            "type": "string",
+            "description": "The page transition (an `accepted` outcome)."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrWidgetMachine": {
         "type": "object",
         "description": "A page's interaction statechart (UI-MACHINE-1).\n\nClient state is the typed `fields` record, changed only by the `assign`\nof a transition that a declared event fires. Effects are closed: call a\ndeclared action binding, read a declared data binding, call a declared\nhost operation, cancel the awaited call, or navigate. The machine grants\nno authority: the server decides every call and read it names.",
@@ -24034,6 +24337,17 @@
           "initialStateId": {
             "type": "string",
             "description": "State the page opens in; it must have the `idle` role."
+          },
+          "lifecycle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrWidgetMachineLifecycle"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The backend lifecycle the page acts on (UI-LIFECYCLE-1, #1236). With it the checker\ncomposes the page with that lifecycle: a page never shows an ending the object has not\nreached, and never sits in a state its assumptions about the object rule out."
           },
           "machineVersion": {
             "type": "string",
@@ -24424,6 +24738,39 @@
               "Elapsed duration.",
               "Opaque JSON value; it cannot be inspected by ZEN."
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMachineLifecycle": {
+        "type": "object",
+        "description": "The backend lifecycle a page machine runs against, and how the two move together.",
+        "required": [
+          "objectType",
+          "property"
+        ],
+        "properties": {
+          "assumes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetLifecycleAssumption"
+            },
+            "description": "The lifecycle states each page state may be shown in. A state without an entry assumes\nnothing."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type whose lifecycle the page acts on."
+          },
+          "property": {
+            "type": "string",
+            "description": "The lifecycle's property."
+          },
+          "syncs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetLifecycleSync"
+            },
+            "description": "Page transitions that fire together with a lifecycle transition: an `accepted` outcome of\na call that fires it. A lifecycle transition named here never fires without the page; every\nother one (another actor, a timer, an event) may fire at any time."
           }
         },
         "additionalProperties": false

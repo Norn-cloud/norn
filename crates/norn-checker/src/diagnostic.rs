@@ -225,6 +225,60 @@ pub struct Diagnostic {
     pub artifact_id: Option<String>,
     /// Suggested remediation class.
     pub remediation: Option<DiagnosticRemediation>,
+    /// A run that shows the finding, when the check found one (a composition's counterexample).
+    pub witness: Option<DiagnosticWitness>,
+}
+
+/// A shortest run that shows a finding: the edge path the check walked, and at each step which
+/// machine moved and by which transition. Hosts step through it; nothing is parsed from the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticWitness {
+    /// The steps, from an initial state.
+    pub steps: Vec<WitnessStep>,
+}
+
+/// One step of a [`DiagnosticWitness`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessStep {
+    /// The edge of the checked (composed) machine this step took.
+    pub edge: usize,
+    /// The sides that moved, each by its own transition: one, or both when they fire together.
+    pub moves: Vec<WitnessMove>,
+}
+
+/// One side's move in a [`WitnessStep`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessMove {
+    /// Which machine moved.
+    pub side: WitnessSide,
+    /// The transition id it took.
+    pub label: String,
+}
+
+/// The machine a [`WitnessMove`] belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WitnessSide {
+    /// The page's interaction machine.
+    Ui,
+    /// The backend lifecycle.
+    Backend,
+}
+
+impl DiagnosticWitness {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "steps": self.steps.iter().map(|step| serde_json::json!({
+                "edge": step.edge,
+                "moves": step.moves.iter().map(|step| serde_json::json!({
+                    "side": match step.side {
+                        WitnessSide::Ui => "ui",
+                        WitnessSide::Backend => "backend",
+                    },
+                    "label": step.label,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })
+    }
 }
 
 impl Diagnostic {
@@ -242,6 +296,7 @@ impl Diagnostic {
             span: legacy.path.as_deref().map(Span::from_legacy_path),
             artifact_id: legacy.artifact_id,
             remediation: legacy.remediation,
+            witness: None,
         }
     }
 
@@ -339,6 +394,12 @@ impl Diagnostic {
             "artifactId": self.artifact_id,
             "remediation": remediation,
         });
+        // Additive (D84): present only on a finding that has a run.
+        if let Some(witness) = &self.witness
+            && let Some(object) = output.as_object_mut()
+        {
+            object.insert("witness".to_owned(), witness.to_json());
+        }
         if let Some(evidence) = self.structural_evidence()
             && let Some(object) = output.as_object_mut()
         {

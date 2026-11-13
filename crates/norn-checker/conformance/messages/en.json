@@ -923,6 +923,60 @@
     "ledger.validation.too_many_diagnostics": {
       "message": "ledger validation stopped at its diagnostic count or byte limit"
     },
+    "lifecycle.soundness.cancellation_dead_end": {
+      "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {$detail}"
+    },
+    "lifecycle.soundness.compensation_not_closed": {
+      "message": "a lifecycle run can end cancelled, compensated or breached without compensating a dispatched effect: {$detail}"
+    },
+    "lifecycle.soundness.completion_unknown": {
+      "message": "a lifecycle ending is reachable from a state only through a guarded transition: {$detail}"
+    },
+    "lifecycle.soundness.deadline_without_remedy": {
+      "message": "a lifecycle timer leads to a state from which no ending is reachable: {$detail}"
+    },
+    "lifecycle.soundness.fact_guarded": {
+      "message": "a fact transition has a guard, so it could be refused: {$detail}"
+    },
+    "lifecycle.soundness.fact_refused": {
+      "message": "a governing law refuses a fact transition: {$detail}"
+    },
+    "lifecycle.soundness.invalid_ending": {
+      "message": "a lifecycle ending is malformed: {$detail}"
+    },
+    "lifecycle.soundness.invalid_event": {
+      "message": "a lifecycle external event is malformed: {$detail}"
+    },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "a generated Quint module name is not a plain identifier: {$detail}"
+    },
+    "lifecycle.soundness.invalid_trigger": {
+      "message": "a lifecycle transition trigger or compensation is invalid: {$detail}"
+    },
+    "lifecycle.soundness.law_blocked_exit": {
+      "message": "governing laws refuse every exit of a reachable lifecycle state: {$detail}"
+    },
+    "lifecycle.soundness.no_ending": {
+      "message": "a lifecycle declares no terminal or resting state: {$detail}"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "the composed UI and lifecycle machine exceeds its state bound: {$detail}"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "a UI and lifecycle sync table names one UI edge twice: {$detail}"
+    },
+    "lifecycle.soundness.timer_cycle": {
+      "message": "a lifecycle cycle fires on timers alone: {$detail}"
+    },
+    "lifecycle.soundness.trap": {
+      "message": "no lifecycle ending is reachable from a reachable state: {$detail}"
+    },
+    "lifecycle.soundness.unhandled_event": {
+      "message": "a reachable lifecycle state neither handles nor ignores a declared event: {$detail}"
+    },
+    "lifecycle.soundness.wait_without_deadline": {
+      "message": "a lifecycle state only waits on external events and has no deadline: {$detail}"
+    },
     "lifecycle.validation.dead_end_state": {
       "message": "state {$state} has no outgoing transition; declare one or list it as terminal"
     },
@@ -1793,6 +1847,30 @@
     "widget.interaction.unreachable_page": {
       "message": "an app page has no control that reaches it from the entry page: {$detail}"
     },
+    "widget.lifecycle.assumption_violated": {
+      "message": "a page state is shown while the object is in a lifecycle state it does not assume: {$detail}"
+    },
+    "widget.lifecycle.completion_unknown": {
+      "message": "a page state and an object state reach an ending of both only through guarded transitions: {$detail}"
+    },
+    "widget.lifecycle.stuck": {
+      "message": "a page state and an object state together reach no ending of both: {$detail}"
+    },
+    "widget.lifecycle.sync_not_accepted": {
+      "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {$detail}"
+    },
+    "widget.lifecycle.sync_unfired": {
+      "message": "the action behind a synced page transition cannot fire its lifecycle transition: {$detail}"
+    },
+    "widget.lifecycle.uncovered_transition": {
+      "message": "a lifecycle transition the page fires is taken by no run: {$detail}"
+    },
+    "widget.lifecycle.unknown_lifecycle": {
+      "message": "a page machine names a lifecycle the object type does not declare: {$detail}"
+    },
+    "widget.lifecycle.unknown_reference": {
+      "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {$detail}"
+    },
     "widget.machine.absorbing_state": {
       "message": "a non-terminal page machine state has no exit: {$detail}"
     },
@@ -1801,6 +1879,9 @@
     },
     "widget.machine.cancel_outside_pending": {
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
+    },
+    "widget.machine.completion_unknown": {
+      "message": "an idle or terminal state is reachable from a page machine state only through guarded transitions: {$detail}"
     },
     "widget.machine.component_guard_outside_catalog": {
       "message": "a page machine transition leaves its guard to component code: {$detail}"

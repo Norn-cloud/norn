@@ -65,6 +65,7 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
     findings
         .into_iter()
         .map(|(code, pointer, message)| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(code),
             severity: DiagnosticSeverity::Error,
             message,

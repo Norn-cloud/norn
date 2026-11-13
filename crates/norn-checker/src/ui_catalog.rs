@@ -125,6 +125,7 @@ pub(crate) fn check(
     findings
         .into_iter()
         .map(|finding| Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(finding.code),
             severity: DiagnosticSeverity::Error,
             message: finding.message,

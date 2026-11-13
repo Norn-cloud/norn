@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.timer_cycle",
+  "message": "a lifecycle cycle fires on timers alone: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

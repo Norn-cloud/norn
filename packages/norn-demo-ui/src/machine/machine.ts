@@ -77,6 +77,18 @@ export interface Machine {
   readonly events: readonly MachineEvent[]
   readonly states: readonly MachineState[]
   readonly transitions: readonly MachineTransition[]
+  /**
+   * The backend lifecycle the page acts on (UI-LIFECYCLE-1). The checker composes the two; the
+   * runtime never reads it, since the server decides every lifecycle move.
+   */
+  readonly lifecycle?: MachineLifecycle
+}
+
+export interface MachineLifecycle {
+  readonly objectType: string
+  readonly property: string
+  readonly syncs?: readonly { readonly transitionId: string; readonly lifecycleTransition: string }[]
+  readonly assumes?: readonly { readonly stateId: string; readonly lifecycleStates: readonly string[] }[]
 }
 
 /** Evaluates one ZEN expression over `input.fields` and `input.event` (the checker's own engine). */

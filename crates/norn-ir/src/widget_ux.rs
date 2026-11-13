@@ -441,6 +441,54 @@ pub struct WidgetMachine {
     pub states: Vec<WidgetMachineState>,
     /// Declared transitions.
     pub transitions: Vec<WidgetMachineTransition>,
+    /// The backend lifecycle the page acts on (UI-LIFECYCLE-1, #1236). With it the checker
+    /// composes the page with that lifecycle: a page never shows an ending the object has not
+    /// reached, and never sits in a state its assumptions about the object rule out.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lifecycle: Option<WidgetMachineLifecycle>,
+}
+
+/// The backend lifecycle a page machine runs against, and how the two move together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetMachineLifecycle {
+    /// The object type whose lifecycle the page acts on.
+    pub object_type: String,
+    /// The lifecycle's property.
+    pub property: String,
+    /// Page transitions that fire together with a lifecycle transition: an `accepted` outcome of
+    /// a call that fires it. A lifecycle transition named here never fires without the page; every
+    /// other one (another actor, a timer, an event) may fire at any time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub syncs: Vec<WidgetLifecycleSync>,
+    /// The lifecycle states each page state may be shown in. A state without an entry assumes
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assumes: Vec<WidgetLifecycleAssumption>,
+}
+
+/// One page transition that fires with one lifecycle transition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetLifecycleSync {
+    /// The page transition (an `accepted` outcome).
+    pub transition_id: String,
+    /// The lifecycle transition it fires.
+    pub lifecycle_transition: String,
+}
+
+/// The lifecycle states one page state may be shown in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetLifecycleAssumption {
+    /// The page state.
+    pub state_id: String,
+    /// The lifecycle states it may be shown in.
+    pub lifecycle_states: Vec<String>,
 }
 
 /// One typed client-state field, or one typed member of an event payload.

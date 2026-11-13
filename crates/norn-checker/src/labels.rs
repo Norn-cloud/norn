@@ -513,6 +513,7 @@ fn missing_labels(
             }
             let owner = owner.or_else(|| candidates.first().map(|(artifact, _)| *artifact));
             Some(Diagnostic {
+                witness: None,
                 code: DiagnosticCode::new(MISSING_LABEL),
                 severity: DiagnosticSeverity::Warning,
                 message: format!(
@@ -539,6 +540,7 @@ fn finding(
     artifact: &ArtifactEnvelope,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,
