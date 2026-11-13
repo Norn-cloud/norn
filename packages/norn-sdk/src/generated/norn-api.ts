@@ -834,8 +834,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * VIEW-SQL-1: lower a SQL query to a transform and admit it against the
-         *     installed definitions. Nothing is installed and no SQL runs.
+         * VIEW-SQL-1: lower a SQL query to a transform and admit it as installing
+         *     it would: the installed set re-admitted whole with it added, on the base
+         *     the installed receipt records. Nothing is installed and no SQL runs.
          * @description # Errors
          *     A denied definitions read (the opaque 403), no installed definitions
          *     (404 `defs.version_not_found`) or a host failure. A query the dialect or
@@ -1937,7 +1938,10 @@ export interface components {
         };
         /** @description What a SQL transform lowers to, and whether the checker admits it. */
         NornCompiledTransform: {
-            /** @description The checker admits the lowered plan against the installed definitions. */
+            /**
+             * @description Installing the lowered transform over the installed definitions would
+             *     be admitted.
+             */
             admitted: boolean;
             /** @description The `derived` artifact the query declares, as an artifact envelope; null when refused. */
             artifact: {
@@ -3867,6 +3871,15 @@ export interface components {
             detail: string;
             /** @enum {string} */
             kind: "identity_projection_isolation";
+        } | {
+            /** @description The earlier version's source and value. */
+            earlier: components["schemas"]["NornIrSourceClaim"];
+            /** @enum {string} */
+            kind: "source_disagreement";
+            /** @description The later version's source and value. */
+            later: components["schemas"]["NornIrSourceClaim"];
+            /** @description The partition-source property the sources disagree on. */
+            property: string;
         };
         /** @description A stable reference to the constraint or rule that produced a finding. */
         NornIrDataQualityRuleRef: {
@@ -4869,6 +4882,11 @@ export interface components {
              * @enum {string}
              */
             grain?: "day" | "week" | "month" | "quarter" | "year";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
         };
         /**
          * @description Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so
@@ -6425,6 +6443,11 @@ export interface components {
              * @enum {string}
              */
             fn: "sum" | "count" | "count_distinct" | "min" | "max";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
         };
@@ -7427,6 +7450,11 @@ export interface components {
              *     column through with its full contract.
              */
             expression: string;
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
         };
@@ -8978,6 +9006,18 @@ export interface components {
             sha256: string;
             /** @description The source schema's artifact `version`. */
             version: string;
+        };
+        /**
+         * @description SOURCE-AGREE-1: what one source reported for a partition source, and the
+         *     version that recorded it.
+         */
+        NornIrSourceClaim: {
+            /** @description The version that recorded it (its commit). */
+            fact: components["schemas"]["NornIrFactRef"];
+            /** @description The reporting source system (`SourceRecordRef::system`). */
+            system: string;
+            /** @description The reported code, or `None` for null. */
+            value?: string;
         };
         /** @description One declared or inferred constraint. */
         NornIrSourceConstraint: {
@@ -10768,6 +10808,11 @@ export interface components {
              * @enum {string}
              */
             fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
             /**
@@ -11417,6 +11462,18 @@ export interface components {
                     [key: string]: string;
                 };
             };
+            /**
+             * @description SOURCE-AGREE-1: members two sources disagree on, by partition source,
+             *     at this answer's frontier and visible to its reader. They are never
+             *     excluded. Absent when no member is disputed.
+             */
+            sourceDisagreements?: components["schemas"]["NornSourceDisagreements"];
+            /**
+             * Format: int64
+             * @description METRIC-GRAIN-LINK-1: rows that would count but whose optional time link
+             *     is absent, so they have no time; skipped, never bucketed. Absent when zero.
+             */
+            unlinked?: number;
             /** @description Watermarks for required dependencies: source → partition → watermark. */
             watermarks: {
                 [key: string]: {
@@ -11514,6 +11571,34 @@ export interface components {
             /** @description The property sorted on. */
             property: string;
         };
+        /** @description The disputed members of one partition source. */
+        NornSourceDisagreementGroup: {
+            /** @description The partition-source property, such as `quantity_basis`. */
+            property: string;
+            /**
+             * Format: int64
+             * @description Members with an open disagreement on it.
+             */
+            subjects: number;
+        };
+        /**
+         * @description SOURCE-AGREE-1: the members of an answer two sources disagree on, counted
+         *     as HOST-READ-4b counts links.
+         */
+        NornSourceDisagreements: {
+            /**
+             * Format: int64
+             * @description The most subjects one read examines.
+             */
+            bound: number;
+            /**
+             * @description True when every candidate was examined; false when the read stopped at
+             *     `bound` subjects, and each count is then a lower bound.
+             */
+            complete: boolean;
+            /** @description One entry per partition source with at least one disputed member. */
+            groups: components["schemas"]["NornSourceDisagreementGroup"][];
+        };
         /** @description One typed column of a transform's row (VIEW-TYPE-1). */
         NornTransformColumn: {
             /**
@@ -11528,6 +11613,11 @@ export interface components {
             currencyFrom: string | null;
             /** @description The object type whose ids the column holds, if any. */
             identity: string | null;
+            /**
+             * @description What readers call the column, as its definition labels it; null when
+             *     the definition names it only by `name`.
+             */
+            label: string | null;
             /** @description Effective markings of the origins. */
             markings: string[];
             /** @description The column name. */

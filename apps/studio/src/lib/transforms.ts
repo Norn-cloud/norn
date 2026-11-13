@@ -8,6 +8,7 @@ import type { Read } from "./exact.ts"
 import { cellRead } from "./live-transport.ts"
 import { day } from "./format.ts"
 import { atScale } from "./objects.ts"
+import type { View } from "./view.ts"
 import type { Artifact } from "./transport.ts"
 
 /** One typed column of a transform's row. */
@@ -23,7 +24,13 @@ export interface TransformColumn {
   readonly currencyFrom?: string | null
   /** The columns of the same row whose values are this quantity's unit (METRIC-UNIT-PARTITION-1). */
   readonly unitFrom?: readonly string[]
+  /** What readers call the column, as its definition labels it; absent or null when it has only its name. */
+  readonly label?: string | null
 }
+
+/** A column's heading: its definition's label for Business readers, its name (the id queries use) for Technical. */
+export const columnTitle = (column: Pick<TransformColumn, "name" | "label">, view: View) =>
+  view === "business" ? (column.label ?? column.name) : column.name
 
 export interface TransformRow {
   readonly rowId: string
@@ -236,6 +243,29 @@ export const useTransformPlan = (id: string) =>
     queryFn: () => cellRead<TransformPlan>(path(id, "plan"), "Transform plans are"),
     retry: false,
   })
+
+/** One checker finding on a checked query: the registered code is the contract, the message says it. */
+export interface TransformDiagnostic {
+  readonly code: string
+  readonly severity: string
+  readonly message: string
+  readonly law?: string
+  readonly span: { readonly pointer: string } | null
+}
+
+/** A query in the transform dialect as the cell's checker sees it: the admitted plan, or why not. */
+export interface CompiledTransform {
+  readonly admitted: boolean
+  readonly plan: TransformPlan | null
+  readonly diagnostics: readonly TransformDiagnostic[]
+}
+
+/** The request Studio sends to check a query: the query is lowered and typed, never run or installed. */
+export const checkRequest = (sql: string) => ({ id: "studio.checked_query", title: "Checked query", version: "0.1.0", sql })
+
+/** Check a query in the transform dialect (VIEW-SQL-1) against the cell's installed definitions. */
+export const checkQuery = (sql: string) =>
+  cellRead<CompiledTransform>("/v1/transforms:compile", "Query checks are", { method: "POST", body: JSON.stringify(checkRequest(sql)) })
 
 /** The declared scale of a `decimal<N>` column type, as the plan names it. */
 export function scaleOf(type: string): number | undefined {

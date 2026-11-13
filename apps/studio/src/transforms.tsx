@@ -1,10 +1,12 @@
 import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Link, useParams } from "@tanstack/react-router"
-import { Blend, GitBranch, ListTree, Rows3 } from "lucide-react"
+import { useMutation } from "@tanstack/react-query"
+import { Blend, FileCheck2, GitBranch, ListTree, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -12,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { member, type Read } from "@/lib/exact"
 import { NotServed } from "@/lib/live-transport"
 import { groupDigits } from "@/lib/format"
-import { describeStep, exactValue, grainsOf, nodeDeclaration, nodeDefinition, periodOf, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
+import { checkQuery, columnTitle, describeStep, exactValue, grainsOf, nodeDeclaration, nodeDefinition, periodOf, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
 import { cn } from "@/lib/utils"
 import { useView, type View } from "@/lib/view"
 import { useCatalog } from "./sources.tsx"
@@ -53,18 +55,63 @@ export function TransformsPage() {
           </Table>
         </TableCard>
       )}
+      {read.data && <CheckQuery reads={transforms[0]?.inputs[0]} />}
     </div>
   )
 }
 
-/** A column's contract in one line: its type, whether it may be null, and how it may be aggregated. */
-/** A column's contract in words: `decimal<2> · additive`. */
+/**
+ * Check a query in the transform dialect (VIEW-SQL-1) against the installed definitions: the
+ * cell's checker lowers and types it and says why it refuses one. Nothing runs, nothing installs.
+ */
+function CheckQuery({ reads }: { readonly reads: string | undefined }) {
+  const { view } = useView()
+  const [sql, setSql] = useState("")
+  const check = useMutation({ mutationFn: checkQuery })
+  const result = check.data?.document
+  const plan = result?.plan ?? undefined
+  const output = plan?.nodes.find((node) => node.id === plan.output)
+  return (
+    <Panel icon={FileCheck2} label="Check a query">
+      <div className="space-y-3 px-2.5 pb-2.5">
+        <p className="text-sm text-muted-foreground">Write a query in the transform dialect. The cell's checker types it against the installed definitions, as it would a transform, and says why it refuses one. Nothing runs and nothing is installed.</p>
+        <Textarea aria-label="Query" rows={3} spellCheck={false} value={sql} placeholder={`SELECT t.id FROM "${reads ?? "namespace.Type"}" t`} className="font-mono text-xs" onChange={(event) => { setSql(event.target.value); check.reset() }} />
+        <div className="flex gap-2">
+          <Button size="sm" disabled={sql.trim() === "" || check.isPending} onClick={() => check.mutate(sql)}>{check.isPending ? "Checking…" : "Check"}</Button>
+          <Button size="sm" variant="ghost" disabled={sql === ""} onClick={() => { setSql(""); check.reset() }}>Clear</Button>
+        </div>
+        {check.isError && <ReadError error={check.error} />}
+        {result && !result.admitted && (
+          <Well className="space-y-1.5 border-destructive/40 px-3 py-2 text-sm">
+            <p role="status" className="font-medium text-destructive">Refused</p>
+            <ul aria-label="Why the query is refused" className="space-y-1.5">
+              {result.diagnostics.map((finding, at) => (
+                <li key={`${finding.code}/${at}`}>
+                  <p>{finding.message}</p>
+                  {view === "technical" && <p className="font-mono text-meta text-muted-foreground">{finding.code}{finding.span === null ? "" : ` at ${finding.span.pointer}`}</p>}
+                </li>
+              ))}
+            </ul>
+          </Well>
+        )}
+        {result?.admitted && output && (
+          <div className="space-y-2">
+            <p role="status" className="text-sm"><span className="font-medium">Admitted</span> <span className="text-muted-foreground">· one row per {output.grain.length === 0 ? "query" : output.grain.join(", ")}</span></p>
+            <ColumnList label="Columns of the checked query" node={output} view={view} />
+          </div>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+/** A column's contract in one line: its type, whether it may be null, and how it may be aggregated (`decimal<2> · additive`). */
 const contract = (column: TransformColumn) =>
   `${column.type}${column.nullable ? "?" : ""}${column.additivity === "undeclared" ? "" : ` · ${column.additivity.replaceAll("_", " ")}`}`
 
-/** A column header: its name, and its contract on a second line (Technical) or in the tooltip (Business). */
+/** A column header: its label and its contract in the tooltip (Business), or its name and contract on a second line (Technical). */
 function ColumnHead({ column, view }: { readonly column: TransformColumn; readonly view: View }) {
-  if (view === "business") return <span title={contract(column)}>{column.name}</span>
+  if (view === "business") return <span title={contract(column)}>{columnTitle(column, view)}</span>
   return (
     <div className="space-y-0.5">
       <div>{column.name}</div>
@@ -191,6 +238,7 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
 
 /** The lineage tab: the input records one row derives from, each a link to its record page. */
 function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string | undefined }) {
+  const { view } = useView()
   const lineage = useTransformLineage(id, rowId)
   const plan = useTransformPlan(id)
   const planDocument = plan.data?.document
@@ -207,7 +255,7 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
     <div className="space-y-3">
       <Well className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-sm">
         {Object.entries(document.values).map(([name, value]) => (
-          <span key={name}><span className="text-muted-foreground">{name}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
+          <span key={name}><span className="text-muted-foreground">{columnTitle(output?.columns.find((column) => column.name === name) ?? { name }, view)}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
         ))}
       </Well>
       <TableCard>
@@ -226,6 +274,27 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
         </Table>
       </TableCard>
     </div>
+  )
+}
+
+/** A node's columns: each one's title, contract and where it comes from. */
+function ColumnList({ label, node, view }: { readonly label: string; readonly node: TransformNode; readonly view: View }) {
+  return (
+    <ul aria-label={label} className="divide-y rounded-md border text-sm">
+      {node.columns.map((column) => (
+        <li key={column.name} className="space-y-0.5 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{columnTitle(column, view)}</span>
+            {node.grain.includes(column.name) && <Badge variant="outline">grain</Badge>}
+            <span className="ms-auto font-mono text-meta text-muted-foreground">{contract(column)}</span>
+          </div>
+          <div className="break-words font-mono text-meta text-muted-foreground">
+            {column.origins.length === 0 ? "computed here" : `from ${column.origins.map(({ input, property }) => `${input}.${property}`).join(", ")}`}
+            {column.currencyFrom ? ` · per ${column.currencyFrom}` : ""}
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -385,20 +454,7 @@ function PlanTab({ id }: { readonly id: string }) {
                   <pre aria-label={`Definition of ${focus.id}`} className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap">{definition}</pre>
                 </Well>
               )}
-              <ul aria-label={`Columns of ${focus.id}`} className="divide-y rounded-md border text-sm">
-                {focus.columns.map((column) => (
-                  <li key={column.name} className="space-y-0.5 px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{column.name}</span>
-                      {focus.grain.includes(column.name) && <Badge variant="outline">grain</Badge>}
-                      <span className="ms-auto font-mono text-meta text-muted-foreground">{contract(column)}</span>
-                    </div>
-                    <div className="break-words font-mono text-meta text-muted-foreground">
-                      {column.origins.length === 0 ? "computed here" : `from ${column.origins.map(({ input, property }) => `${input}.${property}`).join(", ")}`}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <ColumnList label={`Columns of ${focus.id}`} node={focus} view={view} />
             </div>
           </Panel>
         )}
