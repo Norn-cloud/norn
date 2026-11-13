@@ -1,3 +1,5 @@
+import { Chip } from "@/components/chip"
+import { useView } from "@/lib/view"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { FileSearch, PencilLine, ScanText } from "lucide-react"
@@ -77,6 +79,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
     retry: false,
     staleTime: 4 * 60_000,
   })
+  const { view } = useView()
   const [aspect, setAspect] = useState<number | null>(null)
   const [whole, setWhole] = useState(false)
   const { x, y, w, h } = evidence.box
@@ -84,8 +87,9 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
   // The crop window keeps the box's own proportions on the page.
   const cropAspect = aspect === null ? 4 : (Number(w) * aspect) / Number(h)
   return (
-    <figure className={cn("space-y-2", className)}>
-      <div className="overflow-hidden rounded-md border bg-white">
+    <figure className={cn("space-y-2 rounded-lg border border-border bg-card p-3", className)}>
+      {/* The scanned page shows only when the cell serves it; otherwise the read value stands alone. */}
+      {(scan.data || scan.isPending) && <div className="overflow-hidden rounded-md border bg-white">
         {scan.data && !whole && (
           <div className="relative w-full" style={{ aspectRatio: String(cropAspect) }}>
             <img
@@ -104,16 +108,21 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
           </div>
         )}
         {scan.isPending && <div className="flex h-16 items-center justify-center text-meta text-muted-foreground">Reading the scanned page…</div>}
-        {scan.isError && <div className="flex items-center gap-2 p-3 text-meta text-muted-foreground"><FileSearch aria-hidden className="size-4" />{pageProblem(scan.error)}</div>}
-      </div>
-      <figcaption className="space-y-1 text-meta text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-x-2">
-          <ScanText aria-hidden className="size-3.5" />
-          <span>Read as <span className="font-mono text-foreground">“{evidence.text}”</span> for <code>{evidence.subjectProperty}</code></span>
-          {scan.data && <button type="button" className="underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
+      </div>}
+      <figcaption className="space-y-2 text-meta text-muted-foreground">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="sr-only">Read as</span>
+          <span className="font-mono text-section font-semibold text-foreground tabular-nums">{evidence.text}</span>
+          <Chip tone="blue" icon={ScanText}>{evidence.subjectProperty.replaceAll("_", " ")}</Chip>
+          {scan.data && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
         </div>
-        <div>{evidence.extractor} {evidence.extractorVersion} · page {evidence.page} · {confidence}</div>
-        <div className="flex flex-wrap items-center gap-x-1">Document <CopyId value={evidence.documentDigest} short={12} /> <span className="truncate font-mono">{evidence.documentUri}</span></div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Chip tone={evidence.confidenceBp === null ? "gray" : evidence.confidenceBp >= 9000 ? "green" : "amber"} dot title="The extractor's own confidence in this read">{confidence}</Chip>
+          <Chip tone="gray">page {evidence.page}</Chip>
+          <Chip tone="gray" title="The extractor that read it">{evidence.extractor} {evidence.extractorVersion}</Chip>
+          {scan.isError && <span className="inline-flex items-center gap-1" title={pageProblem(scan.error)}><FileSearch aria-hidden className="size-3.5" />no page image</span>}
+        </div>
+        {view === "technical" && <div className="flex flex-wrap items-center gap-x-1">Document <CopyId value={evidence.documentDigest} short={12} /> <span className="truncate font-mono">{evidence.documentUri}</span></div>}
         {subject && <Correction evidence={evidence} subject={subject} />}
         {actionFor?.(evidence)}
       </figcaption>
