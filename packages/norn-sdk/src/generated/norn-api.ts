@@ -8284,8 +8284,65 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
+        /**
+         * @description One catalog component (UI-CATALOG-1): custom UI in any framework, joined
+         *     to Norn only through these typed contracts. A renderer is an
+         *     implementation of the catalog.
+         */
+        NornIrWidgetCatalogEntry: {
+            /** @description Accessibility behaviours the component implements. */
+            behaviors?: components["schemas"]["NornIrWidgetBehavior"][];
+            /**
+             * @description Density tier the component is drawn at.
+             * @enum {string}
+             */
+            density?: "scan" | "read" | "focus";
+            /** @description Stable entry id. */
+            entryId: string;
+            /** @description Declared output events: the only things the component can say. */
+            events?: components["schemas"]["NornIrWidgetCatalogEvent"][];
+            /**
+             * @description The framework the implementation is written in (informational, for
+             *     renderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...
+             */
+            framework?: string;
+            /** @description Human-readable name. */
+            label: components["schemas"]["NornIrLocaleText"];
+            /** @description The component's own interaction machine; an opaque island has none. */
+            machine?: components["schemas"]["NornIrWidgetMachine"];
+            /** @description Typed props: the only data the component receives. */
+            props?: components["schemas"]["NornIrWidgetMachineField"][];
+            /**
+             * @description The field type this component renders everywhere it appears (one
+             *     renderer per field type: grid, record, inspector and tooltips alike).
+             * @enum {string}
+             */
+            renders?: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+            /**
+             * @description Trust ladder position.
+             * @enum {string}
+             */
+            trust: "native" | "contract_checked" | "opaque_island";
+        };
+        /** @description One declared output event of a catalog component. */
+        NornIrWidgetCatalogEvent: {
+            /** @description Event name, unique within the entry. */
+            eventId: string;
+            /** @description Typed payload members. */
+            payload?: components["schemas"]["NornIrWidgetMachineField"][];
+        };
+        /**
+         * @description A catalog component named by a page: an entry of this contract's
+         *     catalog, or of a pinned widget artifact's.
+         */
+        NornIrWidgetCatalogRef: {
+            /** @description The entry id. */
+            entryId: string;
+            /** @description The widget artifact whose catalog holds the entry; omitted, this one. */
+            widget?: components["schemas"]["NornIrArtifactRef"];
+        };
         /** @description Supported page components. */
-        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"];
+        NornIrWidgetComponent: components["schemas"]["NornIrWidgetComponentOneOf0"] | components["schemas"]["NornIrWidgetComponentOneOf1"] | components["schemas"]["NornIrWidgetComponentOneOf2"] | components["schemas"]["NornIrWidgetComponentOneOf3"] | components["schemas"]["NornIrWidgetComponentOneOf4"] | components["schemas"]["NornIrWidgetComponentOneOf5"] | components["schemas"]["NornIrWidgetComponentOneOf6"] | components["schemas"]["NornIrWidgetComponentOneOf7"] | components["schemas"]["NornIrWidgetComponentOneOf8"] | components["schemas"]["NornIrWidgetComponentOneOf9"] | components["schemas"]["NornIrWidgetComponentOneOf10"] | components["schemas"]["NornIrWidgetComponentOneOf11"];
         /** @description A named section or tab with explicit field inclusion and order. */
         NornIrWidgetComponentOneOf0: {
             /** @enum {string} */
@@ -8304,6 +8361,24 @@ export interface components {
              * @enum {string}
              */
             selection: "none" | "single" | "multiple";
+        };
+        /**
+         * @description A control whose only effect is to raise the page machine's `user`
+         *     events that name this node (UI-MACHINE-1). A `choice` or `text`
+         *     control sends its value as the event payload member `value`.
+         */
+        NornIrWidgetComponentOneOf10: {
+            input: components["schemas"]["NornIrWidgetControlInput"];
+            /** @enum {string} */
+            kind: "control";
+            label: components["schemas"]["NornIrLocaleText"];
+        };
+        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        NornIrWidgetComponentOneOf11: {
+            /** @enum {string} */
+            kind: "composition";
+            pageId: string;
+            widget: components["schemas"]["NornIrArtifactRef"];
         };
         /** @description One object detail view. */
         NornIrWidgetComponentOneOf2: {
@@ -8370,12 +8445,19 @@ export interface components {
             /** @enum {string} */
             kind: "navigation";
         };
-        /** @description An exact page of a pinned widget artifact composed as a baseline. */
+        /**
+         * @description An instance of a catalog component (UI-CATALOG-1): its props bound by
+         *     ZEN expressions over the page machine's `input.fields`, its declared
+         *     events raised as the page machine's `user` events that name this node.
+         */
         NornIrWidgetComponentOneOf9: {
+            entry: components["schemas"]["NornIrWidgetCatalogRef"];
             /** @enum {string} */
-            kind: "composition";
-            pageId: string;
-            widget: components["schemas"]["NornIrArtifactRef"];
+            kind: "catalog";
+            props?: components["schemas"]["NornIrWidgetComponentOneOf9PropertyProps"];
+        };
+        NornIrWidgetComponentOneOf9PropertyProps: {
+            [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /**
          * @description Confirmation interaction.
@@ -8404,6 +8486,11 @@ export interface components {
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
         };
+        /**
+         * @description What a person does with a [`WidgetComponent::Control`].
+         * @enum {string}
+         */
+        NornIrWidgetControlInput: "trigger" | "choice" | "text";
         /** @description One exact object binding and its bounded query. */
         NornIrWidgetDataBinding: {
             /** @description Stable binding id. */
@@ -8473,6 +8560,11 @@ export interface components {
             /** @description Required, entity-marked runtime-key parameter. */
             parameterId: string;
         };
+        /**
+         * @description Density tiers (scan lists, read records, focus canvases), as named tokens.
+         * @enum {string}
+         */
+        NornIrWidgetDensity: "scan" | "read" | "focus";
         /**
          * @description Closed dismissal methods supported by a dialog component.
          * @enum {string}
@@ -8788,8 +8880,12 @@ export interface components {
             /** @enum {string} */
             kind: "page_opened";
         };
-        /** @description A person used the control at `node_id` in this page's tree. */
+        /**
+         * @description A person used the control at `node_id` in this page's tree. For a
+         *     catalog component node, `emits` names the entry event it raises.
+         */
         NornIrWidgetMachineEventSourceOneOf1: {
+            emits?: string;
             /** @enum {string} */
             kind: "user";
             nodeId: string;
@@ -8856,6 +8952,13 @@ export interface components {
         /** @description One declared transition. */
         NornIrWidgetMachineTransition: {
             assign?: components["schemas"]["NornIrWidgetMachineTransitionPropertyAssign"];
+            /**
+             * @description A guard the catalog component's own code decides (a Foldkit `when` or
+             *     `otherwise` edge), named for reviewers. The checker treats the
+             *     transition as possibly disabled (May); the host accepts it only with
+             *     the target the component reports. Catalog entry machines only.
+             */
+            componentGuard?: string;
             /** @description Effects run when the transition fires, in order. */
             effects?: components["schemas"]["NornIrWidgetMachineEffect"][];
             /** @description Source state. */
@@ -9168,6 +9271,11 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetStateRole: "idle" | "pending" | "error" | "terminal";
+        /**
+         * @description Where a catalog component stands on the trust ladder (UI-CATALOG-1).
+         * @enum {string}
+         */
+        NornIrWidgetTrust: "native" | "contract_checked" | "opaque_island";
         /** @description The typed UX contract nested in a legacy `widget` payload. */
         NornIrWidgetUx: {
             /** @description Typed Norn action calls available to placements and forms. */
@@ -9176,6 +9284,11 @@ export interface components {
             actionPlacements: components["schemas"]["NornIrWidgetActionPlacement"][];
             /** @description Optional application shell that composes pages and navigation. */
             app?: components["schemas"]["NornIrWidgetApp"];
+            /**
+             * @description Catalog components this contract declares (UI-CATALOG-1): custom UI written in any
+             *     framework, each with a typed props contract, declared events and its machine.
+             */
+            catalog?: components["schemas"]["NornIrWidgetCatalogEntry"][];
             /** @description Exact object reads used by pages, fields, and actions. */
             dataBindings: components["schemas"]["NornIrWidgetDataBinding"][];
             /** @description Field presentation keyed by stable field ids and property references. */
@@ -9252,7 +9365,7 @@ export interface components {
              * @description Semantic kind of the view.
              * @enum {string}
              */
-            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+            kind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage" | "lifecycle";
             /** @description The domain concept the view presents. */
             subject: components["schemas"]["NornIrWidgetViewSubject"];
         };
@@ -9260,7 +9373,7 @@ export interface components {
          * @description Closed semantic view kinds.
          * @enum {string}
          */
-        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage";
+        NornIrWidgetViewKind: "collection" | "record" | "form" | "question" | "dashboard" | "run" | "decision_inbox" | "lineage" | "lifecycle";
         /** @description One render state of a widget. */
         NornIrWidgetViewState: {
             kind: components["schemas"]["NornIrWidgetViewStateKind"];

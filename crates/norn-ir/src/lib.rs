@@ -234,8 +234,9 @@ pub use widget::{
 pub use widget_ux::{
     ArtifactRef as WidgetArtifactRef, LocaleText, PropertyRef, WIDGET_UX_V1_VERSION,
     WidgetActionConfirmation, WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity,
-    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetComponent, WidgetConfirmationStrength,
-    WidgetConflictBehavior, WidgetContextParam, WidgetDataBinding, WidgetDataQuery,
+    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetCatalogEntry, WidgetCatalogEvent,
+    WidgetCatalogRef, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
+    WidgetContextParam, WidgetControlInput, WidgetDataBinding, WidgetDataQuery, WidgetDensity,
     WidgetDismissalMethod, WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl,
     WidgetFieldFormat, WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter,
     WidgetFilterOperator, WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit,
@@ -245,7 +246,7 @@ pub use widget_ux::{
     WidgetOutcomeState, WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds,
     WidgetPageRef, WidgetRefusalCategory, WidgetRoute, WidgetRouteParameter, WidgetSection,
     WidgetSectionKind, WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection,
-    WidgetStateRole, WidgetUx, WidgetUxActionBinding, WidgetValueType,
+    WidgetStateRole, WidgetTrust, WidgetUx, WidgetUxActionBinding, WidgetValueType,
     WidgetVersionConflictBinding, WidgetView, WidgetViewKind, WidgetViewSubject, ZenCondition,
 };
 

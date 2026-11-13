@@ -57,7 +57,7 @@ withEngine("update", () => {
 
 withEngine("walks", () => {
   test("every transition has a walk, and replaying it fires exactly that path", () => {
-    const all = walks(machine, (_, event) => (event.source.kind === "outcome" && event.source.outcome === "refused" ? { code: "law.refused", retryable: false } : undefined))
+    const all = walks(machine, evaluate, (_, event) => (event.source.kind === "outcome" && event.source.outcome === "refused" ? [{ code: "law.refused", retryable: false }] : undefined))
     expect(all.map((walk) => walk.transitionId)).toEqual(machine.transitions.map((transition) => transition.transitionId))
     for (const walk of all) {
       let snapshot = init(machine).snapshot

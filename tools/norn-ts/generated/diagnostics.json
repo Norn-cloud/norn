@@ -4633,6 +4633,78 @@
       "no_fix": null
     },
     {
+      "code": "widget.catalog.duplicate_entry",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a widget's catalog declares one entry id twice: {detail}",
+      "fix": "Give every catalog entry its own id.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.duplicate_renderer",
+      "tier": "T2",
+      "severity": "error",
+      "message": "two catalog entries render the same field type: {detail}",
+      "fix": "Keep one renderer per field type, so every screen draws that type the same way.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.event_payload_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page event's payload differs from the catalog event it raises: {detail}",
+      "fix": "Declare the page event's payload exactly as the entry's event declares it.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.invalid_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component's prop does not compile or does not fit its declared type: {detail}",
+      "fix": "Write the prop as ZEN over input.fields with the prop's declared type.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.island_machine",
+      "tier": "T2",
+      "severity": "error",
+      "message": "an opaque island declares an interaction machine: {detail}",
+      "fix": "Remove the machine: an island joins the checked machine only through its typed props and declared events.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unbound_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component's required prop is not bound: {detail}",
+      "fix": "Bind every required prop to a ZEN expression over the page machine's fields.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_entry",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page places a catalog component that is not declared: {detail}",
+      "fix": "Declare the entry in this widget's catalog, or pin the widget artifact whose catalog holds it.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page event from a catalog component does not name one of its declared events: {detail}",
+      "fix": "Set emits to an event the entry declares; only catalog components emit named events.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.catalog.unknown_prop",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a catalog component is given a prop its entry does not declare: {detail}",
+      "fix": "Bind only the props the entry declares, or declare the prop on the entry.",
+      "no_fix": null
+    },
+    {
       "code": "widget.interaction.control_missing_for_transition",
       "tier": "T2",
       "severity": "error",
@@ -4726,6 +4798,22 @@
       "severity": "error",
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {detail}",
       "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.component_guard_outside_catalog",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine transition leaves its guard to component code: {detail}",
+      "fix": "Write the guard as a ZEN expression; only a catalog entry's machine may name a component guard.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.control_without_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page control raises no event of the page machine: {detail}",
+      "fix": "Declare a user event that names the control, or remove the control.",
       "no_fix": null
     },
     {

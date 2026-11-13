@@ -1739,6 +1739,33 @@
     "source_schema.validation.unknown_field": {
       "message": "dataset {$dataset} has no field {$field}"
     },
+    "widget.catalog.duplicate_entry": {
+      "message": "a widget's catalog declares one entry id twice: {$detail}"
+    },
+    "widget.catalog.duplicate_renderer": {
+      "message": "two catalog entries render the same field type: {$detail}"
+    },
+    "widget.catalog.event_payload_mismatch": {
+      "message": "a page event's payload differs from the catalog event it raises: {$detail}"
+    },
+    "widget.catalog.invalid_prop": {
+      "message": "a catalog component's prop does not compile or does not fit its declared type: {$detail}"
+    },
+    "widget.catalog.island_machine": {
+      "message": "an opaque island declares an interaction machine: {$detail}"
+    },
+    "widget.catalog.unbound_prop": {
+      "message": "a catalog component's required prop is not bound: {$detail}"
+    },
+    "widget.catalog.unknown_entry": {
+      "message": "a page places a catalog component that is not declared: {$detail}"
+    },
+    "widget.catalog.unknown_event": {
+      "message": "a page event from a catalog component does not name one of its declared events: {$detail}"
+    },
+    "widget.catalog.unknown_prop": {
+      "message": "a catalog component is given a prop its entry does not declare: {$detail}"
+    },
     "widget.interaction.control_missing_for_transition": {
       "message": "a declared navigation item or action binding has no control that offers it: {$detail}"
     },
@@ -1774,6 +1801,12 @@
     },
     "widget.machine.cancel_outside_pending": {
       "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
+    },
+    "widget.machine.component_guard_outside_catalog": {
+      "message": "a page machine transition leaves its guard to component code: {$detail}"
+    },
+    "widget.machine.control_without_event": {
+      "message": "a page control raises no event of the page machine: {$detail}"
     },
     "widget.machine.duplicate_id": {
       "message": "a page machine declares one field, event, state or transition id twice: {$detail}"

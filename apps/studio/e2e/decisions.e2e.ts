@@ -28,7 +28,39 @@ async function inbox(page: Page, options: Parameters<typeof decisionCell>[1] = {
 
 const list = (page: Page) => page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button")
 const sheet = (page: Page) => page.getByRole("dialog")
-const open = async (page: Page, text: string) => { await list(page).filter({ hasText: text }).click(); await expect(sheet(page)).toBeVisible() }
+// The sheet draws its first state at once and takes input once its expression engine is here.
+const open = async (page: Page, text: string) => {
+  await list(page).filter({ hasText: text }).click()
+  await expect(sheet(page)).toBeVisible()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+}
+
+test("open: on a cold page the sheet shows its first state at once, without waiting for the expression engine", async ({ page }) => {
+  await inbox(page)
+  await expect(list(page).first()).toBeVisible()
+  // Timed in the page: from the click to the sheet's first state, and to the engine taking input.
+  await page.evaluate(() => {
+    const marks: Record<string, number> = {}
+    ;(window as unknown as { marks: typeof marks }).marks = marks
+    document.addEventListener("click", () => { marks.click ??= performance.now() }, { capture: true })
+    new MutationObserver(() => {
+      const sheet = document.querySelector("norn-decision-sheet .norn-sheet")
+      if (sheet?.hasAttribute("data-state")) marks.state ??= performance.now()
+      if (sheet?.getAttribute("data-engine") === "ready") marks.ready ??= performance.now()
+    }).observe(document.body, { subtree: true, childList: true, attributes: true })
+  })
+  await list(page).filter({ hasText: "Recount it?" }).click()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-state", "choosing", { timeout: 1_000 })
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+  const marks = await page.evaluate(() => (window as unknown as { marks: Record<string, number> }).marks)
+  const firstState = Math.round(marks.state! - marks.click!)
+  const ready = Math.round(marks.ready! - marks.click!)
+  // performance.now() counts from navigation, so `marks.ready` is also when the engine arrived in the page.
+  console.log(`sheet timing: click → first state ${firstState} ms; click → engine ready ${ready} ms; engine ready ${Math.round(marks.ready!)} ms after navigation`)
+  test.info().annotations.push({ type: "timing", description: `first state ${firstState} ms; engine ready ${ready} ms` })
+  // The bound that keeps the sheet from waiting on the engine again: its first state never waits for a compile.
+  expect(firstState).toBeLessThan(1_000)
+})
 
 test("view: the inbox lists what waits on you, soonest deadline first, with the nav's count, risk, suggestion and countdown", async ({ page }) => {
   await inbox(page)
@@ -108,15 +140,35 @@ test("the race: another decider got there first; the sheet says who and when, an
   await expect(list(page)).toHaveCount(2)
 })
 
-test("validate: the cell's refusals read where they point: a law at the top, a note at the note", async ({ page }) => {
-  await inbox(page)
+test("validate: a law refuses a choice; it reads under that option with the server's next step, is no longer offered, and the other choice still decides", async ({ page }) => {
+  const cell = await inbox(page)
   await open(page, "Refund 1,240.00 USD")
-  await sheet(page).getByLabel("Reject").check()
+  await sheet(page).getByLabel("Approve").check()
   await sheet(page).getByLabel(/^Note/).fill("x".repeat(501))
-  await sheet(page).getByRole("button", { name: "Decide: Reject" }).click()
-  // The refusal order puts the law (403) before the note (422): the law reads first.
-  await expect(sheet(page).getByRole("alert").first()).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
+  await sheet(page).getByRole("button", { name: "Decide: Approve" }).click()
+  await sheet(page).getByRole("button", { name: "Yes, approve" }).click()
+  // The refusal order puts the law (403) before the note (422): the law reads first, under the option it refuses.
+  const approve = sheet(page).locator('[data-option="approve"]')
+  await expect(approve.getByRole("status")).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
+  await expect(approve.getByRole("status")).toContainText("A finance manager can approve it from their inbox")
+  await expect(approve.locator("ui-radio")).toHaveAttribute("disabled", "")
+  // The refused choice is cleared: nothing is picked, and Decide waits for another option.
+  await expect(approve.getByRole("radio")).not.toBeChecked()
+  await expect(sheet(page).getByRole("button", { name: "Decide", exact: true })).toBeDisabled()
   await shoot(page, "refused")
+  // A host's keys pick through the machine, as a click does: the refused option and an unknown one are not picked.
+  const choose = (option: string) => page.locator("norn-decision-sheet").evaluate((element, id) => (element as HTMLElement & { choose(id: string): boolean }).choose(id), option)
+  expect(await choose("approve")).toBe(false)
+  expect(await choose("nope")).toBe(false)
+  await expect(sheet(page).getByRole("button", { name: "Decide", exact: true })).toBeDisabled()
+  expect(await choose("reject")).toBe(true)
+  await expect(sheet(page).locator('[data-option="reject"]').getByRole("radio")).toBeChecked()
+  await expect(sheet(page).getByRole("button", { name: "Decide: Reject" })).toBeEnabled()
+  await sheet(page).getByLabel(/^Note/).fill("Short delivery confirmed.")
+  await sheet(page).getByLabel("Reject").check()
+  await sheet(page).getByRole("button", { name: "Decide: Reject" }).click()
+  await expect(sheet(page).getByRole("status")).toHaveText("Decided: Reject · by you")
+  expect(cell.calls.map((c) => JSON.parse(c.body).choice)).toEqual(["approve", "reject"])
 })
 
 test("validate: a note the cell refuses lands on the note field", async ({ page }) => {
@@ -147,7 +199,7 @@ test("reopen: leaving with a choice asks first; an outage retries with the same 
   await open(page, "Recount it?")
   await sheet(page).getByLabel("Recount").check()
   await page.keyboard.press("Escape")
-  await expect(page.getByRole("dialog", { name: "Leave without deciding?" })).toBeVisible()
+  await expect(sheet(page).getByRole("alertdialog", { name: "Leave without deciding?" })).toBeVisible()
   await page.getByRole("button", { name: "Keep deciding" }).click()
   await expect(sheet(page).getByLabel("Recount")).toBeChecked()
   cell.failNext()
@@ -179,9 +231,9 @@ test("run view: a waiting run links to its decision; Run again starts a new run 
   await expect(page.getByText("There is no such run you can read.")).toBeVisible()
 })
 
-test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again with plain 200s", async ({ page }) => {
+test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again when the cell says it changed", async ({ page }) => {
   await session(page)
-  await decisionCell(page, { legacy: true })
+  const cell = await decisionCell(page, { legacy: true })
   let reads = 0
   page.on("request", (request) => { if (request.url().includes("/api/host/v1/runs/run_restock_7")) reads += 1 })
   await page.goto("/runs/run_restock_7")
@@ -193,6 +245,10 @@ test("run view, first cut: without steps the run shows its state, flow and gener
   await expect(page.getByRole("list", { name: "Steps" })).toHaveCount(0)
   await expect(page.getByText("In progress")).toBeVisible()
   await shoot(page, "run-first-cut")
+  // Nothing polls (UI-LIVE-1): a commit that changes the run is announced on the live socket and read once.
+  await page.waitForTimeout(3_000)
+  expect(reads).toBe(1)
+  cell.runs.get("run_restock_7")!.steps.find((s) => s.status === "waiting")!.status = "running"
   await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(1)
 })
 
@@ -204,7 +260,7 @@ test("run view, first cut: a run the cell calls terminal reads as ended and is n
   await page.goto("/runs/run_count_3")
   await expect(page.getByText("Ended", { exact: true })).toBeVisible()
   await expect(page.getByText("Live")).toHaveCount(0)
-  await page.waitForTimeout(7_000) // longer than the 5 s beat of a run still in progress
+  await page.waitForTimeout(7_000) // an ended run is not watched: no socket subscription, no read
   expect(reads).toBe(1)
 })
 
