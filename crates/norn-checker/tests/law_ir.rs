@@ -779,6 +779,12 @@ proptest::proptest! {
     }
 }
 fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
+    diagnostics(values, base)
+        .into_iter()
+        .map(|d| d.code.as_str().to_owned())
+        .collect()
+}
+fn diagnostics(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
     let pool: Vec<ArtifactEnvelope> = values
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("envelope"))
@@ -791,9 +797,6 @@ fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
             tenant: None,
         },
     )
-    .into_iter()
-    .map(|d| d.code.as_str().to_owned())
-    .collect()
 }
 #[test]
 fn erpnext_laws_admit_through_the_shared_set_checker() {
@@ -875,9 +878,17 @@ fn law_link_reads_admit_one_to_one_hop_only() {
             None => payload.remove("condition"),
         };
         law["payload"]["response"]["expression"] = json!(expression);
-        run(vec![law], &base)
+        diagnostics(vec![law], &base)
     };
-    let refused = |found: &[String], code: &str| found.iter().any(|found| found == code);
+    let refused = |found: &[norn_checker::Diagnostic], code: &str| {
+        found.iter().any(|found| found.code.as_str() == code)
+    };
+    let says = |found: &[norn_checker::Diagnostic], words: &[&str]| {
+        found.iter().any(|found| {
+            found.code.as_str() == codes::UNKNOWN_BINDING
+                && words.iter().all(|word| found.message.contains(word))
+        })
+    };
     let admitted = check(Some("self.order != null"), "self.order.paid == true");
     assert!(
         !refused(&admitted, codes::UNKNOWN_BINDING) && !refused(&admitted, codes::PREDICATE_TYPE),
@@ -886,14 +897,32 @@ fn law_link_reads_admit_one_to_one_hop_only() {
     // Unguarded, the target may be absent.
     let unguarded = check(Some("self.status == 'approved'"), "self.order.paid == true");
     assert!(refused(&unguarded, codes::PREDICATE_TYPE), "{unguarded:?}");
-    // A to-many link and a second hop refuse admission.
-    let many = check(None, "len(self.requests) == 0");
-    assert!(refused(&many, codes::UNKNOWN_BINDING), "{many:?}");
+    // A to-many link and a second hop refuse admission, each saying what to do.
+    // Before LAW-LINK-1 the kernel never bound links into a law's `self`, so a
+    // to-many read was admitted yet evaluated on an absent list; reading every
+    // target is LAW-LINK-1's to-many extension, which the refusal names.
+    for expression in [
+        "len(self.requests) == 0",
+        "all(self.requests as r, r.status == 'accepted')",
+        "sum(map(self.requests as r, 1)) > 0",
+    ] {
+        let many = check(None, expression);
+        assert!(
+            says(
+                &many,
+                &["`self.requests` is a to-many link", "to-many extension"]
+            ),
+            "{expression}: {many:?}"
+        );
+    }
     let second = check(
         Some("self.order != null"),
         "self.order.ticket.status == 'accepted'",
     );
-    assert!(refused(&second, codes::UNKNOWN_BINDING), "{second:?}");
+    assert!(
+        says(&second, &["`self.order.ticket` is a second hop"]),
+        "{second:?}"
+    );
 }
 
 #[test]

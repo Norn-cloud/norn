@@ -542,6 +542,17 @@
         }
       },
       {
+        "dataset": "Field Evidence",
+        "name": "row",
+        "nativeType": "Reference",
+        "ordinal": 15,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "reference"
+        }
+      },
+      {
         "dataset": "Journal Entry",
         "name": "name",
         "nativeType": "Text",

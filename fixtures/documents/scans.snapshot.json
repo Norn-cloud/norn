@@ -76,8 +76,7 @@
       "name": "SCAN-INV-0041~lines.1.amount",
       "page": 1,
       "parent": "SCAN-INV-0041",
-      "text": "18.50"
-     },
+      "text": "18.50", "row": "SCAN-INV-0041~line-1"},
      {
       "bbox_h": 0.0300,
       "bbox_w": 0.1400,
@@ -93,8 +92,7 @@
       "name": "SCAN-INV-0041~lines.2.amount",
       "page": 1,
       "parent": "SCAN-INV-0041",
-      "text": "12.00"
-     }
+      "text": "12.00", "row": "SCAN-INV-0041~line-2"}
     ],
     "extractor": "tesseract",
     "extractor_version": "5.3.4+norn-extractor/0.1.0",
@@ -164,8 +162,7 @@
       "name": "SCAN-INV-0042~lines.1.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
-      "text": "30.00"
-     },
+      "text": "30.00", "row": "SCAN-INV-0042~line-1"},
      {
       "bbox_h": 0.0300,
       "bbox_w": 0.1400,
@@ -181,8 +178,7 @@
       "name": "SCAN-INV-0042~lines.2.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
-      "text": "40.00"
-     },
+      "text": "40.00", "row": "SCAN-INV-0042~line-2"},
      {
       "bbox_h": 0.0300,
       "bbox_w": 0.1400,
@@ -198,8 +194,7 @@
       "name": "SCAN-INV-0042~lines.3.amount",
       "page": 1,
       "parent": "SCAN-INV-0042",
-      "text": "2.00"
-     }
+      "text": "2.00", "row": "SCAN-INV-0042~line-3"}
     ],
     "extractor": "legacy-ocr",
     "extractor_version": "4.2 (synthetic export)",
@@ -276,8 +271,7 @@
       "name": "SCAN-INV-0043~lines.1.amount",
       "page": 1,
       "parent": "SCAN-INV-0043",
-      "text": "720"
-     }
+      "text": "720", "row": "SCAN-INV-0043~line-1"}
     ],
     "extractor": "legacy-ocr",
     "extractor_version": "4.2 (synthetic export)",

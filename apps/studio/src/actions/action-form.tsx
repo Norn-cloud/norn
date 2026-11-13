@@ -12,6 +12,7 @@ import {
 } from "../lib/actions.ts"
 import type { Phase } from "../lib/screen/call.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
+import { LawRefusal } from "./law-refusal.tsx"
 
 const newKey = newIdempotencyKey
 
@@ -116,7 +117,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
-      {phase.kind === "refused" && (
+      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={Object.keys((action.inputSchema as { properties?: Record<string, unknown> } | null)?.properties ?? {})} technical={technical} />}
+      {phase.kind === "refused" && !(phase.reason !== undefined && phase.code === "core.laws.violated") && (
         <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span>
           {phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>}

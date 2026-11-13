@@ -116,27 +116,30 @@ test("law exceptions never pass through a statement or render from two homes", (
 // forms (`crates/norn-expr/README.md`) and the Rust checker admits them in laws.
 describe("closures, sum and day helpers", () => {
   const line = S.record({ amount: S.integer, sku: S.text() })
-  const entry = S.record({ status: S.text(["draft", "posted"]), issue_date: S.text(), due_date: S.text(), lines: S.array(line) })
-  const lineType = E.objectType({ name: "books.JournalLine", title: "Journal line", version: "0.1.0", properties: [E.property("amount", E.integer), E.property("sku", E.text())] })
+  const entry = S.record({ status: S.text(["draft", "posted"]), issue_date: S.text(), due_date: S.text(), debit: S.integer, credit: S.integer, debit_sku: S.text(), credit_sku: S.text(), lines: S.array(line) })
+  // The kernel binds a law's `self` to the subject's own properties, so the admitted laws iterate a list built from
+  // them. Reading a to-many link's targets is LAW-LINK-1's to-many extension; until then the checker refuses it.
   const entryType = E.objectType({
     name: "books.JournalEntry", title: "Journal entry", version: "0.1.0",
-    properties: [E.property("status", E.enumeration("draft", "posted")), E.property("issue_date", E.date), E.property("due_date", E.date)],
-    links: [{ id: "lines", target: lineType.name, cardinality: { to: "many", from: "one" }, inverse: "entry" }],
+    properties: [E.property("status", E.enumeration("draft", "posted")), E.property("issue_date", E.date), E.property("due_date", E.date), E.property("debit", E.integer), E.property("credit", E.integer), E.property("debit_sku", E.text()), E.property("credit_sku", E.text())],
   })
   const self = (...path: string[]) => X.ref("self", ...path)
+  const lines = X.list(X.record({ amount: self("debit"), sku: self("debit_sku") }), X.record({ amount: self("credit"), sku: self("credit_sku") }))
+  const LINES = "[{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}]"
   const cases: ReadonlyArray<readonly [string, X.Expr, string]> = [
-    ["balanced", X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0)), "sum(map(self.lines as l, l.amount)) == 0"],
-    ["no_zero_lines", X.all(self("lines"), "l", (l) => X.ne(X.ref("l", "amount"), X.lit(0))), "all(self.lines as l, l.amount != 0)"],
-    ["has_sku", X.some(self("lines"), "l", (l) => X.call("startsWith", X.ref("l", "sku"), X.lit("SKU-"))), "some(self.lines as l, startsWith(l.sku, 'SKU-'))"],
-    ["none_negative", X.none(self("lines"), "l", X.lt(X.ref("l", "amount"), X.lit(0))), "none(self.lines as l, l.amount < 0)"],
-    ["one_big", X.one(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(1000))), "one(self.lines as l, l.amount > 1000)"],
-    ["few_lines", X.le(X.count(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), "count(self.lines as l, l.amount > 0) <= 50"],
-    ["filtered", X.ge(X.call("len", X.filter(self("lines"), "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), "len(filter(self.lines as l, l.amount > 0)) >= 1"],
-    // Nested closures bind distinct aliases; the inner list is a literal, as two nested to-many closures exceed the cost bound.
-    ["nested", X.all(self("lines"), "a", (a) => X.some(X.list(X.lit("SKU-"), X.lit("SVC-")), "p", (p) => X.call("startsWith", X.ref("a", "sku"), p))), "all(self.lines as a, some(['SKU-', 'SVC-'] as p, startsWith(a.sku, p)))"],
+    ["balanced", X.eq(X.sum(X.map(lines, "l", (l) => X.ref("l", "amount"))), X.lit(0)), `sum(map(${LINES} as l, l.amount)) == 0`],
+    ["no_zero_lines", X.all(lines, "l", (l) => X.ne(X.ref("l", "amount"), X.lit(0))), `all(${LINES} as l, l.amount != 0)`],
+    ["has_sku", X.some(lines, "l", (l) => X.call("startsWith", X.ref("l", "sku"), X.lit("SKU-"))), `some(${LINES} as l, startsWith(l.sku, 'SKU-'))`],
+    ["none_negative", X.none(lines, "l", X.lt(X.ref("l", "amount"), X.lit(0))), `none(${LINES} as l, l.amount < 0)`],
+    ["one_big", X.one(lines, "l", X.gt(X.ref("l", "amount"), X.lit(1000))), `one(${LINES} as l, l.amount > 1000)`],
+    ["few_lines", X.le(X.count(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), `count(${LINES} as l, l.amount > 0) <= 50`],
+    ["filtered", X.ge(X.call("len", X.filter(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), `len(filter(${LINES} as l, l.amount > 0)) >= 1`],
+    // Nested closures bind distinct aliases. A string read through a built list is costed at its largest single
+    // value (`norn-expr` cost.rs), so the inner body compares amounts; a nested string test would exceed the budget.
+    ["nested", X.all(lines, "a", (a) => X.some(X.list(X.lit(0), X.lit(1)), "p", (p) => X.gt(X.ref("a", "amount"), p))), `all(${LINES} as a, some([0, 1] as p, a.amount > p))`],
     ["terms", X.le(X.daysBetween(self("issue_date"), self("due_date")), X.lit(30)), "days_between(date(self.issue_date), date(self.due_date)) <= 30"],
     ["due_by", X.ge(X.addDays(self("issue_date"), X.lit(30)), X.call("date", self("due_date"))), "add_days(date(self.issue_date), 30) >= date(self.due_date)"],
-    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "amount"))), X.lit(0))), "(self.status != 'posted') or (sum(map(self.lines as l, l.amount)) == 0)"],
+    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(lines, "l", (l) => X.ref("l", "amount"))), X.lit(0))), `(self.status != 'posted') or (sum(map(${LINES} as l, l.amount)) == 0)`],
   ]
 
   test("render the norn-zen/6 closure, sum and day forms", () => {
@@ -163,7 +166,7 @@ describe("closures, sum and day helpers", () => {
 
   test("the Rust checker admits every rendered law", () => {
     if (!checker) return
-    const entities = [lineType, entryType].map((def) => { const r = E.lowerEntity(def, options); if (!r.ok) throw new Error(JSON.stringify(r.diagnostics)); return r.artifact })
+    const entities = [entryType].map((def) => { const r = E.lowerEntity(def, options); if (!r.ok) throw new Error(JSON.stringify(r.diagnostics)); return r.artifact })
     const laws = cases.map(([name, expression]) => L.lowerLaw(L.law({
       id: `books.JournalEntry.${name}.law`, title: name, version: "0.1.0",
       law: { lawVersion: "0.1", id: `books.JournalEntry.${name}`, owner: "books", severity: "error", rationale: name, provenance: { source: "authoring_sdk" }, scope: { root: { kind: "app", id: "books" }, objectTypes: ["books.JournalEntry"] }, subject: "books.JournalEntry", modality: { kind: "always" }, response: { kind: "predicate", expression: L.zenPredicate(expression, entry) } },
@@ -181,7 +184,7 @@ test("typed lambdas in laws and guards compile to norn-zen/6 and are admitted", 
   const byId = new Map(compiled.artifacts.map((a) => [(a as { artifactId: string }).artifactId, a as { payload: Record<string, any> }]))
   const law = byId.get("books.JournalEntry.balanced.law")!.payload
   expect(law.condition).toBe("self.status == 'posted'")
-  expect(law.response.expression).toBe("(((sum(map(self.lines as l, l.amount)) == 0) and all(self.lines as l, l.amount != 0)) and (not some(self.lines as l, startsWith(l.sku, 'VOID-') and some(['A', 'B'] as p, endsWith(l.sku, p))))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
+  expect(law.response.expression).toBe("(((sum(map([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount)) == 0) and all([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount != 0)) and (not some([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, startsWith(l.sku, 'VOID-') and some([1, 2] as p, l.amount == p)))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
   const guard = byId.get("books.JournalEntry.entity")!.payload.objectType.lifecycles[0].transitions[0].guards[0]
   expect(guard).toBe("(count(self.lines as l, l.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
   // Each lambda maps back to its source line.
@@ -205,16 +208,16 @@ describe("law v2", () => {
     const law = laws().get("books.Invoice.lines_add_up.law")!
     expect(law.payload).toEqual({
       lawVersion: "0.1", id: "books.Invoice.lines_add_up", owner: "books", severity: "error",
-      rationale: "An issued invoice totals its lines.",
+      rationale: "An issued invoice totals its net and tax.",
       provenance: { source: "authoring_sdk", sourcePath: source },
       scope: { root: { kind: "entity", id: "books.Invoice" }, objectTypes: ["books.Invoice"] },
       subject: "books.Invoice",
       condition: "self.status != 'draft'",
       modality: { kind: "always" },
-      response: { kind: "predicate", expression: "(sum(map(self.lines as l, l.amount)) == self.total) and all(self.lines as l, l.amount > 0)" },
+      response: { kind: "predicate", expression: "(sum(map([{amount: self.net}, {amount: self.tax}] as l, l.amount)) == self.total) and all([{amount: self.net}, {amount: self.tax}] as l, l.amount > 0)" },
     })
     expect(law.dependencies).toEqual([{ artifactId: "books.Invoice.entity", kind: "entity", version: "0.1.0", required: true }])
-    expect(law.name).toBe("An issued invoice totals its lines.")
+    expect(law.name).toBe("An issued invoice totals its net and tax.")
     expect(law.version).toBe("0.1.0")
   })
 

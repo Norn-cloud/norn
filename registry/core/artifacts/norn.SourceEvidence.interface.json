@@ -19,6 +19,24 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "subject_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "subject_key",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
           "id": "document_uri",
           "type": {
             "kind": "text"
