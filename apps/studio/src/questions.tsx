@@ -1,7 +1,8 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useState } from "react"
-import { ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
+import { CalendarRange, ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
+import { FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -72,8 +73,10 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         )}
         {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
-          <p className="text-meta text-muted-foreground">Per {window.grain}, {day(window.start)} – {day(Date.parse(window.end) - 86_400_000)}: every date its records carry.</p>
-          <Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} />
+          <div className="flex flex-wrap items-start gap-2">
+            <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title="Every date its records carry.">{day(window.start)} – {day(Date.parse(window.end) - 86_400_000)}</FactChip>
+            <div className="min-w-0 flex-1"><Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} /></div>
+          </div>
           {sources.length === 0
             ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} />
             : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} />}
@@ -115,7 +118,7 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
     <div className="space-y-4">
       {groups.length === 0 ? <EmptyState icon={Sigma}>No records in this window match.</EmptyState> : (
         <div className="space-y-2">
-          <p className="text-meta text-muted-foreground">{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${window.grain}.`}</p>
+          <p className={groups.length === 1 ? "sr-only" : "text-meta text-muted-foreground"}>{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${window.grain}.`}</p>
           <TableCard><Table>
             <TableHeader><TableRow><TableHead>Unit</TableHead><TableHead className="text-right">{title}</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
             <TableBody>
