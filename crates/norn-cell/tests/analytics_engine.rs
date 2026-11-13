@@ -74,7 +74,14 @@ fn ask(
     let prepared = store
         .analytics_prepare(plan, context, &tenant())
         .map_err(|e| code(&e))?;
-    let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+    // An engine fault keeps its detail: it never equals a Core 03 refusal.
+    let response = engine.evaluate(&prepared.request).map_err(|r| {
+        if r.code == "analytics.engine" {
+            format!("{}: {}", r.code, r.detail)
+        } else {
+            r.code
+        }
+    })?;
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
