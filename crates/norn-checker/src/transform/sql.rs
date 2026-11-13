@@ -914,7 +914,7 @@ impl Scope {
             Ex::Column(alias, column) => {
                 zen_column(&self.column(alias.as_deref(), column, at)?, at)?
             }
-            Ex::Number(number) => number.clone(),
+            Ex::Number(number) => zen_number(number),
             Ex::Text(text) => zen_text(text, at)?,
             Ex::Bool(flag) => flag.to_string(),
             Ex::Null => "null".to_owned(),
@@ -969,6 +969,19 @@ struct Lowering<'c> {
     nodes: Map<String, Value>,
     inputs: Vec<(String, String)>,
     counter: usize,
+}
+
+/// A SQL number's ZEN literal: the same value as plain decimal text, without
+/// the leading zeros SQL allows and ZEN does not (`007.50` is `7.50`).
+fn zen_number(number: &str) -> String {
+    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    let whole = whole.trim_start_matches('0');
+    let whole = if whole.is_empty() { "0" } else { whole };
+    if fraction.is_empty() {
+        whole.to_owned()
+    } else {
+        format!("{whole}.{fraction}")
+    }
 }
 
 /// The ZEN path of one row column, as the engine's own ZEN parser reads it:
