@@ -899,3 +899,149 @@ fn materialization_is_declared_and_checked() {
         );
     }
 }
+
+/// One shipment type whose `weight` is in the unit `weight_unit` names and
+/// whose `price` is in the currency `currency` names, and a view over it.
+fn shipments(nodes: Value, output: &str) -> Vec<ArtifactEnvelope> {
+    let shipment = entity(
+        "shop.Shipment",
+        json!({"properties": [
+            {"id": "lane", "type": {"kind": "text"}},
+            {"id": "weight", "type": {"kind": "decimal", "scale": 3,
+                "additivity": {"kind": "additive"}, "unitSource": ["weight_unit"]}},
+            {"id": "weight_unit", "type": {"kind": "enum", "values": [{"value": "kg"}, {"value": "lb"}]}},
+            {"id": "price", "type": money()},
+            {"id": "currency", "type": {"kind": "enum", "values": [{"value": "USD"}, {"value": "EGP"}]}},
+            {"id": "fee", "type": {"kind": "decimal", "scale": 2, "additivity": {"kind": "additive"},
+                "currencySource": {"property": "fee_currency"}}},
+            {"id": "fee_currency", "type": {"kind": "enum", "values": [{"value": "USD"}]}}
+        ]}),
+    );
+    let view = artifact(
+        "shop.shipped",
+        "derived",
+        json!([{"artifactId": "shop.Shipment", "kind": "entity", "version": "0.1.0", "required": true}]),
+        json!({
+            "viewVersion": "0.1", "viewId": "shop.shipped",
+            "inputs": [{"artifactId": "shop.Shipment", "kind": "entity", "version": "0.1.0", "alias": "s"}],
+            "calc": {"kind": "relational", "nodes": nodes, "output": output},
+            "outputSchema": {}, "maintenance": "recompute_on_read"
+        }),
+    );
+    envelopes(vec![shipment, view])
+}
+
+#[test]
+fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
+    let scan = json!({"op": "scan", "input": "s"});
+    let by = |keys: Value, measures: Value| json!({"s": scan, "a": {"op": "aggregate", "input": "s", "groupBy": keys, "measures": measures}});
+    let refused = |nodes: Value, code: &str| {
+        let found = findings_of(&shipments(nodes, "a"));
+        assert!(
+            found.iter().any(|finding| finding.code == code),
+            "expected {code}, found {found:#?}"
+        );
+    };
+    // Summing, or taking the extreme of, weights in kg and lb mixes units.
+    for function in ["sum", "min", "max"] {
+        refused(
+            by(
+                json!([{"column": "lane"}]),
+                json!([{"name": "w", "fn": function, "column": "weight"}]),
+            ),
+            "metric.validation.mixed_unit",
+        );
+        refused(
+            by(
+                json!([{"column": "lane"}]),
+                json!([{"name": "p", "fn": function, "column": "price"}]),
+            ),
+            "metric.validation.mixed_currency",
+        );
+    }
+    // Counting rows carries no unit; counting distinct amounts does: 10 USD
+    // and 10 EGP are one number but two amounts.
+    let counted = shipments(
+        by(
+            json!([{"column": "lane"}]),
+            json!([{"name": "n", "fn": "count"}]),
+        ),
+        "a",
+    );
+    let found = findings_of(&counted);
+    assert!(found.is_empty(), "{found:#?}");
+    refused(
+        by(
+            json!([{"column": "lane"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "weight"}]),
+        ),
+        "metric.validation.mixed_unit",
+    );
+    refused(
+        by(
+            json!([{"column": "lane"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "price"}]),
+        ),
+        "metric.validation.mixed_currency",
+    );
+    let distinct = shipments(
+        by(
+            json!([{"column": "currency"}]),
+            json!([{"name": "d", "fn": "count_distinct", "column": "price"}]),
+        ),
+        "a",
+    );
+    let found = findings_of(&distinct);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan =
+        admit(distinct.last().expect("view"), &distinct, &BTreeSet::new()).expect("admitted");
+    // The count is a number of amounts, not an amount: it carries no source.
+    assert_eq!(plan.output_schema().column("d").expect("d").currency, None);
+    // Grouped by its unit and currency, each quantity is admitted, and its
+    // output column still names where its unit and currency come from.
+    let pool = shipments(
+        by(
+            json!([{"column": "weight_unit"}, {"column": "currency"}]),
+            json!([{"name": "w", "fn": "sum", "column": "weight"},
+                {"name": "heaviest", "fn": "max", "column": "weight"},
+                {"name": "p", "fn": "sum", "column": "price"},
+                {"name": "f", "fn": "sum", "column": "fee"}]),
+        ),
+        "a",
+    );
+    let found = findings_of(&pool);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
+    let schema = plan.output_schema();
+    let column = |name: &str| schema.column(name).expect("column");
+    for name in ["w", "heaviest"] {
+        let units: Vec<&str> = column(name)
+            .units
+            .iter()
+            .map(|unit| unit.property.as_str())
+            .collect();
+        assert_eq!(units, ["weight_unit"], "{name}");
+    }
+    assert_eq!(
+        column("p").currency.as_ref().map(|c| c.property.as_str()),
+        Some("currency")
+    );
+    // A one-value currency enum is one currency: `fee` needs no partition.
+    assert_eq!(column("f").currency, None);
+    // A running sum is partitioned the same way.
+    let window = |partition: Value| {
+        shipments(
+            json!({"s": scan, "w": {"op": "window", "input": "s", "partitionBy": partition,
+                "orderBy": [{"column": "id", "direction": "asc"}],
+                "columns": [{"name": "to_date", "fn": "running_sum", "column": "weight"}]}}),
+            "w",
+        )
+    };
+    assert!(
+        findings_of(&window(json!(["lane"])))
+            .iter()
+            .any(|finding| finding.code == "metric.validation.mixed_unit")
+    );
+    let found = findings_of(&window(json!(["weight_unit"])));
+    assert!(found.is_empty(), "{found:#?}");
+}

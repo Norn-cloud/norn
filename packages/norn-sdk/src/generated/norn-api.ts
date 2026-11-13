@@ -11521,6 +11521,11 @@ export interface components {
              *     `non_additive` or `ratio`.
              */
             additivity: string;
+            /**
+             * @description The column of the same row holding this quantity's currency
+             *     (VIEW-AGG-1): null when it has none or the row does not carry it.
+             */
+            currencyFrom: string | null;
             /** @description The object type whose ids the column holds, if any. */
             identity: string | null;
             /** @description Effective markings of the origins. */
@@ -11533,6 +11538,12 @@ export interface components {
             origins: components["schemas"]["NornColumnOrigin"][];
             /** @description The value type, as the checker names it (`decimal`, `text`, …). */
             type: string;
+            /**
+             * @description The columns of the same row whose values together are this
+             *     quantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;
+             *     empty when it has none or the row does not carry them.
+             */
+            unitFrom: string[];
         };
         /** @description One declared input. */
         NornTransformInput: {

@@ -78,6 +78,14 @@ pub struct NornTransformColumn {
     pub origins: Vec<NornColumnOrigin>,
     /// Effective markings of the origins.
     pub markings: Vec<String>,
+    /// The column of the same row holding this quantity's currency
+    /// (VIEW-AGG-1): null when it has none or the row does not carry it.
+    #[schema(required = true, nullable = true)]
+    pub currency_from: Option<String>,
+    /// The columns of the same row whose values together are this
+    /// quantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;
+    /// empty when it has none or the row does not carry them.
+    pub unit_from: Vec<String>,
 }
 
 /// One output row.
@@ -411,7 +419,14 @@ fn additivity(value: &PropertyAdditivity) -> &'static str {
     }
 }
 
-fn column(column: &Column) -> NornTransformColumn {
+fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
+    let holding = |source: &norn_checker::transform::Origin| {
+        schema
+            .columns
+            .iter()
+            .find(|candidate| candidate.exact.as_ref() == Some(source))
+            .map(|candidate| candidate.name.clone())
+    };
     let (nullable, inner) = column.describe();
     NornTransformColumn {
         name: column.name.clone(),
@@ -428,11 +443,17 @@ fn column(column: &Column) -> NornTransformColumn {
             })
             .collect(),
         markings: column.markings.iter().cloned().collect(),
+        currency_from: column.currency.as_ref().and_then(holding),
+        unit_from: column.units.iter().filter_map(holding).collect(),
     }
 }
 
 fn columns(schema: &NodeSchema) -> Vec<NornTransformColumn> {
-    schema.columns.iter().map(column).collect()
+    schema
+        .columns
+        .iter()
+        .map(|item| column(item, schema))
+        .collect()
 }
 
 fn parse_limit(limit: Option<&str>) -> Result<usize, Refusal> {
