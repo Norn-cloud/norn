@@ -108,15 +108,25 @@ test("the race: another decider got there first; the sheet says who and when, an
   await expect(list(page)).toHaveCount(2)
 })
 
-test("validate: the cell's refusals read where they point: a law at the top, a note at the note", async ({ page }) => {
-  await inbox(page)
+test("validate: a law refuses a choice; it reads under that option with the server's next step, is no longer offered, and the other choice still decides", async ({ page }) => {
+  const cell = await inbox(page)
   await open(page, "Refund 1,240.00 USD")
-  await sheet(page).getByLabel("Reject").check()
+  await sheet(page).getByLabel("Approve").check()
   await sheet(page).getByLabel(/^Note/).fill("x".repeat(501))
-  await sheet(page).getByRole("button", { name: "Decide: Reject" }).click()
-  // The refusal order puts the law (403) before the note (422): the law reads first.
-  await expect(sheet(page).getByRole("alert").first()).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
+  await sheet(page).getByRole("button", { name: "Decide: Approve" }).click()
+  await sheet(page).getByRole("button", { name: "Yes, approve" }).click()
+  // The refusal order puts the law (403) before the note (422): the law reads first, under the option it refuses.
+  const approve = sheet(page).locator('[data-option="approve"]')
+  await expect(approve.getByRole("alert")).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
+  await expect(approve.getByRole("alert")).toContainText("A finance manager can approve it from their inbox")
+  await expect(approve.locator("ui-radio")).toHaveAttribute("disabled", "")
+  await expect(sheet(page).getByRole("button", { name: "Decide: Approve" })).toBeDisabled()
   await shoot(page, "refused")
+  await sheet(page).getByLabel(/^Note/).fill("Short delivery confirmed.")
+  await sheet(page).getByLabel("Reject").check()
+  await sheet(page).getByRole("button", { name: "Decide: Reject" }).click()
+  await expect(sheet(page).getByRole("status")).toHaveText("Decided: Reject · by you")
+  expect(cell.calls.map((c) => JSON.parse(c.body).choice)).toEqual(["approve", "reject"])
 })
 
 test("validate: a note the cell refuses lands on the note field", async ({ page }) => {
