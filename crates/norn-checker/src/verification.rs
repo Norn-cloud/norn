@@ -1406,12 +1406,15 @@ fn link_reads(
         let Ok(paths) = norn_expr::expression_read_paths(source, "self") else {
             continue;
         };
+        // One finding per distinct reason, however often the source repeats a read.
+        let mut said = BTreeSet::new();
         for message in paths
             .iter()
             .filter_map(|path| link_read_refusal(path, record, env))
-            .collect::<BTreeSet<_>>()
         {
-            out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
+            if said.insert(message.clone()) {
+                out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
+            }
         }
     }
 }
