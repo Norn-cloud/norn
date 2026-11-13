@@ -101,8 +101,9 @@ export const Holding = Norn.type({
   name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource, StockValuation],
   properties: Schema.Struct({
     // A holding is a stock: summable across holdings at one instant, never over time. Every canon
-    // quantity is held in `unit` or, for money, `currency` (METRIC-UNIT-PARTITION-1).
-    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" }, unitSource: ["unit", "currency"] }),
+    // quantity is held in `unit` or, for money, `currency` (METRIC-UNIT-PARTITION-1); a holding's is
+    // also on its `quantity_basis`, since on-hand and available quantities never add (THREE-SYSTEMS).
+    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" }, unitSource: ["unit", "currency", "quantity_basis"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
     // When the source observed this balance (valid time; METRIC-SNAPSHOT-ASOF-1 orders a holding's versions by it).

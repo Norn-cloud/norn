@@ -583,7 +583,15 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
             .iter()
             .map(|path| path.property.as_str())
             .collect();
+        let holding = candidate
+            .definition
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .is_some_and(|params| params.semantic_model.0 == "canon.Holding");
         let expected: &[&str] = match candidate.definition.type_params.expr.as_deref() {
+            // On-hand and available holdings never add (THREE-SYSTEMS.md).
+            Some("quantity") if holding => &["unit", "currency", "quantity_basis"],
             Some("quantity") => &["unit", "currency"],
             Some("amount") => &["currency"],
             // A stock's cost is held per its currency source.
