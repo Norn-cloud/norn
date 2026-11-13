@@ -67,6 +67,10 @@ pub struct Reply {
     /// retry interval has passed); the host refetches, then retries once.
     #[wasm_bindgen(js_name = refreshJwks)]
     pub refresh_jwks: bool,
+    /// Why the cell's definitions installed no action policy, for the
+    /// operator's log only; never part of the reply.
+    #[wasm_bindgen(js_name = policyError)]
+    pub policy_error: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -117,6 +121,7 @@ impl NornCell {
                 scope.clone(),
                 &DEMO_GRANTS,
                 Box::new(move || Ok(WorkersEngine::new(storage.clone()))),
+                lineage_key.as_deref(),
             )
         })
         .map_err(rejected)?;
@@ -195,6 +200,7 @@ impl NornCell {
             body: body.as_deref().unwrap_or_default(),
         };
         let response = self.tenant.handle(self.principals.resolver(), &request);
+        let policy_error = self.tenant.action_policy_error().map(str::to_owned);
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
             #[cfg(feature = "fixtures")]
@@ -204,6 +210,7 @@ impl NornCell {
             status: response.status,
             body: response.body,
             refresh_jwks,
+            policy_error,
         }
     }
 }
