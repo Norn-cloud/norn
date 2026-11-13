@@ -9,7 +9,7 @@ import { session } from "./object-cell.ts"
 
 const fixture = JSON.parse(readFileSync(new URL("../test/fixtures/transforms.json", import.meta.url), "utf8")) as {
   readonly catalog: unknown
-  readonly rows: { readonly rows: readonly { readonly rowId: string }[] }
+  readonly rows: { readonly rows: readonly { readonly rowId: string }[]; readonly nodeRows?: Readonly<Record<string, number>> }
   readonly lineage: Readonly<Record<string, unknown>>
   readonly plan: unknown
 }
@@ -86,8 +86,25 @@ test("view: the plan draws every admitted operator and the output's column linea
   await page.getByRole("tab", { name: "Plan" }).click()
   await expect(page.getByText("Definition graph")).toBeVisible()
   for (const op of ["scan", "filter", "join", "project", "aggregate", "window"]) await expect(page.getByText(op, { exact: true }).first()).toBeVisible()
+  // The output is selected first: its columns and their lineage.
+  await expect(page.getByRole("heading", { name: "Node ranked" })).toBeVisible()
   await expect(page.getByRole("cell", { name: "order.amount" }).first()).toBeVisible()
   await shoot(page, "plan")
+  // Selecting in the list selects in the graph and shows the node's definition.
+  const nodes = page.getByRole("table", { name: "Plan nodes" })
+  await nodes.getByRole("button", { name: "weekly", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Node weekly" })).toBeVisible()
+  await expect(page.getByLabel("Definition of weekly")).toContainText("groupBy")
+  await expect(page.locator("[data-node=weekly][data-selected]")).toBeVisible()
+  // Selecting in the graph selects in the list.
+  await page.locator("[data-node=joined]").click()
+  await expect(nodes.getByRole("row", { selected: true })).toContainText("joined")
+  // The volume lens shows the rows each node produced, as the cell reports them.
+  const volumes = fixture.rows.nodeRows ?? {}
+  await page.getByRole("radio", { name: "volume" }).click()
+  await expect(page.locator("[data-node=order]")).toContainText(new Intl.NumberFormat("en").format(volumes["order"] ?? -1))
+  await expect(nodes.getByRole("row", { name: /^ranked/ })).toContainText(new Intl.NumberFormat("en").format(volumes["ranked"] ?? -1))
+  await shoot(page, "plan-volume")
 })
 
 test("view: a cell without the transform routes says so instead of showing nothing", async ({ page }) => {

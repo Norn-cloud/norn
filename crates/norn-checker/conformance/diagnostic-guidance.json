@@ -588,6 +588,10 @@
     "fix": "Set `outputSchema` to `{}`; the admitted plan publishes the inferred columns."
   },
   {
+    "code": "derived.validation.sql_unsupported",
+    "fix": "Write the query in the transform dialect: SELECT, FROM, declared JOINs, WHERE, GROUP BY with SUM/COUNT/MIN/MAX, DATE_TRUNC, window functions and UNION ALL."
+  },
+  {
     "code": "derived.validation.type_mismatch",
     "fix": "Make predicates Boolean, keep group and order keys scalar, and give each operator a column of the type it reads."
   },

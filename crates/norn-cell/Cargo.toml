@@ -25,6 +25,10 @@ required-features = ["duckdb", "native"]
 name = "analytics_engine"
 required-features = ["duckdb", "native"]
 
+[[test]]
+name = "duckdb_transform"
+required-features = ["duckdb", "native"]
+
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]

@@ -817,8 +817,21 @@ fn validate_derived_payload(
         }
     }
 
-    // maintenance: required; only "recompute_on_read" is supported; "incremental" is rejected.
-    validate_view_maintenance(payload.get("maintenance"), diagnostics, artifact_id, CODE);
+    // maintenance: required; "recompute_on_read", or "materialized" for a
+    // relational calc (VIEW-MAT-1); "incremental" is rejected.
+    let relational = payload
+        .get("calc")
+        .and_then(|calc| calc.as_object())
+        .and_then(|calc| calc.get("kind"))
+        .and_then(|kind| kind.as_string())
+        .is_some_and(|kind| kind == "relational");
+    validate_view_maintenance(
+        payload.get("maintenance"),
+        relational,
+        diagnostics,
+        artifact_id,
+        CODE,
+    );
 
     // scopeRequired: optional; when present, the same fail-closed scope
     // dimensions as every other kind (T1-IR-2).
@@ -1069,6 +1082,7 @@ fn validate_view_calc(
 
 fn validate_view_maintenance(
     value: Option<&JsonValue>,
+    relational: bool,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
     code: &str,
@@ -1083,6 +1097,7 @@ fn validate_view_maintenance(
             ));
         }
         Some(JsonValue::String(m)) if m == "recompute_on_read" => {}
+        Some(JsonValue::String(m)) if m == "materialized" && relational => {}
         Some(JsonValue::String(m)) if m == "incremental" => {
             diagnostics.push(Diagnostic {
                 code: "derived.validation.incremental_not_supported".to_string(),
@@ -1097,7 +1112,7 @@ fn validate_view_maintenance(
         }
         _ => {
             diagnostics.push(kind_invalid(
-                "payload.maintenance must be \"recompute_on_read\"",
+                "payload.maintenance must be \"recompute_on_read\", or \"materialized\" for a relational calc",
                 "payload.maintenance",
                 artifact_id,
                 code,
