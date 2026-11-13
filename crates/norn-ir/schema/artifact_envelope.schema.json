@@ -3693,6 +3693,9 @@
             "$ref": "#/$defs/JsonValue"
           }
         },
+        "refresh": {
+          "$ref": "#/$defs/ViewRefresh"
+        },
         "scopeRequired": {
           "type": "array",
           "items": {
@@ -9765,6 +9768,21 @@
         }
       ]
     },
+    "RefreshPolicy": {
+      "description": "VIEW-MAT-1: when a materialized transform's stored result is refreshed.",
+      "oneOf": [
+        {
+          "description": "A read that finds the inputs changed refreshes, unless the stored\nresult is younger than `maxAgeMs`.",
+          "type": "string",
+          "const": "on_read"
+        },
+        {
+          "description": "Only `POST /v1/transforms/{transform}:refresh` refreshes.",
+          "type": "string",
+          "const": "manual"
+        }
+      ]
+    },
     "RelCondition": {
       "description": "Directional `rel(from, role)`.",
       "type": "object",
@@ -12147,7 +12165,7 @@
       ]
     },
     "ViewMaintenance": {
-      "description": "Maintenance strategy. Only `recompute_on_read` is supported in v0.\n`incremental` is reserved for a future IVM phase and MUST be rejected at extraction.",
+      "description": "Maintenance strategy. `recompute_on_read` evaluates on every read;\n`materialized` (VIEW-MAT-1, relational calcs only) keeps one stored result\nrefreshed by the payload's `refresh`. `incremental` is reserved for a\nfuture IVM phase and MUST be rejected at extraction.",
       "oneOf": [
         {
           "type": "string",
@@ -12159,6 +12177,11 @@
           "description": "Reserved — not implemented. The checker rejects artifacts carrying this value.",
           "type": "string",
           "const": "incremental"
+        },
+        {
+          "description": "VIEW-MAT-1: the cell stores the result with its frontier.",
+          "type": "string",
+          "const": "materialized"
         }
       ]
     },
@@ -12419,6 +12442,24 @@
             "keep"
           ]
         }
+      ]
+    },
+    "ViewRefresh": {
+      "description": "VIEW-MAT-1: a materialized transform's refresh policy.",
+      "type": "object",
+      "properties": {
+        "maxAgeMs": {
+          "description": "`on_read` only: a stored result younger than this is served (labelled\nstale) instead of refreshed.",
+          "$ref": "#/$defs/WholeNumber"
+        },
+        "policy": {
+          "description": "When the stored result is refreshed.",
+          "$ref": "#/$defs/RefreshPolicy"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "policy"
       ]
     },
     "WholeNumber": {

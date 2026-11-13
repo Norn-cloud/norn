@@ -2374,6 +2374,122 @@
           }
         ]
       }
+    },
+    "/v1/transforms/{transform}:refresh": {
+      "post": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "VIEW-MAT-1: recompute and store a materialized transform's result. Only\na reader who may read every input row refreshes; the stored result is\nthen served to such readers until the inputs change.",
+        "description": "# Errors\nA denied gate, or a reader who may not read every input row (the same\nopaque 403), an undeclared transform (404), a transform that is not\nmaterialized (400), a bound (413), a stale or failed evaluation (422) or\na host failure.",
+        "operationId": "refresh_transform",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored result now: its frontier and refresh time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornMaterialization"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): the transform is evaluated on every read, not materialized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied on the transform or any object type it reads, or an input row this reader may not read, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`core.compute.bound_exceeded`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -9500,6 +9616,9 @@
           },
           "outputSchema": {
             "$ref": "#/components/schemas/NornIrDerivedPayloadPropertyOutputSchema"
+          },
+          "refresh": {
+            "$ref": "#/components/schemas/NornIrViewRefresh"
           },
           "scopeRequired": {
             "type": "array",
@@ -18628,6 +18747,18 @@
           "No values are kept."
         ]
       },
+      "NornIrRefreshPolicy": {
+        "type": "string",
+        "description": "VIEW-MAT-1: when a materialized transform's stored result is refreshed.",
+        "enum": [
+          "on_read",
+          "manual"
+        ],
+        "x-enumDescriptions": [
+          "A read that finds the inputs changed refreshes, unless the stored\nresult is younger than `maxAgeMs`.",
+          "Only `POST /v1/transforms/{transform}:refresh` refreshes."
+        ]
+      },
       "NornIrRefusalReason": {
         "type": "object",
         "title": "RefusalReason",
@@ -22833,14 +22964,16 @@
       },
       "NornIrViewMaintenance": {
         "type": "string",
-        "description": "Maintenance strategy. Only `recompute_on_read` is supported in v0.\n`incremental` is reserved for a future IVM phase and MUST be rejected at extraction.",
+        "description": "Maintenance strategy. `recompute_on_read` evaluates on every read;\n`materialized` (VIEW-MAT-1, relational calcs only) keeps one stored result\nrefreshed by the payload's `refresh`. `incremental` is reserved for a\nfuture IVM phase and MUST be rejected at extraction.",
         "enum": [
           "recompute_on_read",
-          "incremental"
+          "incremental",
+          "materialized"
         ],
         "x-enumDescriptions": [
           null,
-          "Reserved — not implemented. The checker rejects artifacts carrying this value."
+          "Reserved — not implemented. The checker rejects artifacts carrying this value.",
+          "VIEW-MAT-1: the cell stores the result with its frontier."
         ]
       },
       "NornIrViewNode": {
@@ -23154,6 +23287,35 @@
               "$ref": "#/components/schemas/NornIrOrderKey"
             },
             "description": "Order keys; with the key they must cover the input grain."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewRefresh": {
+        "type": "object",
+        "description": "VIEW-MAT-1: a materialized transform's refresh policy.",
+        "required": [
+          "policy"
+        ],
+        "properties": {
+          "maxAgeMs": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "`on_read` only: a stored result younger than this is served (labelled\nstale) instead of refreshed.",
+            "maximum": 9007199254740992,
+            "minimum": 0
+          },
+          "policy": {
+            "type": "string",
+            "description": "When the stored result is refreshed.",
+            "enum": [
+              "on_read",
+              "manual"
+            ],
+            "x-enumDescriptions": [
+              "A read that finds the inputs changed refreshes, unless the stored\nresult is younger than `maxAgeMs`.",
+              "Only `POST /v1/transforms/{transform}:refresh` refreshes."
+            ]
           }
         },
         "additionalProperties": false
@@ -26055,6 +26217,33 @@
         },
         "additionalProperties": false
       },
+      "NornMaterialization": {
+        "type": "object",
+        "description": "VIEW-MAT-1: the stored result a read was served from.",
+        "required": [
+          "frontier",
+          "refreshedAtMs",
+          "stale"
+        ],
+        "properties": {
+          "frontier": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits in the cell when the stored result was computed: its frontier.",
+            "minimum": 0
+          },
+          "refreshedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was computed, in milliseconds since the Unix epoch.",
+            "minimum": 0
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "The inputs changed since: the rows are the frontier's, not the\ncurrent snapshot's."
+          }
+        }
+      },
       "NornNumericContribution": {
         "type": "object",
         "description": "One original numeric member; enrichment does not enter this list.",
@@ -26743,6 +26932,29 @@
         ],
         "description": "Current or authenticated historical answer, matching the native service envelope."
       },
+      "NornRefresh": {
+        "type": "object",
+        "description": "VIEW-MAT-1: when a materialized transform's stored result is refreshed.",
+        "required": [
+          "policy",
+          "maxAgeMs"
+        ],
+        "properties": {
+          "maxAgeMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`on_read` only: a stored result younger than this is served,\nlabelled stale, instead of refreshed.",
+            "minimum": 0
+          },
+          "policy": {
+            "type": "string",
+            "description": "`on_read`: a read that finds the inputs changed refreshes; `manual`:\nonly `POST /v1/transforms/{transform}:refresh` does."
+          }
+        }
+      },
       "NornSortDirection": {
         "type": "string",
         "description": "A sort direction.",
@@ -26856,6 +27068,7 @@
           "transform",
           "rowId",
           "commits",
+          "materialization",
           "values",
           "members"
         ],
@@ -26863,8 +27076,19 @@
           "commits": {
             "type": "integer",
             "format": "int64",
-            "description": "Commits in the cell when the row was read.",
+            "description": "Commits in the cell at the snapshot the row was computed from.",
             "minimum": 0
+          },
+          "materialization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornMaterialization",
+                "description": "VIEW-MAT-1: the stored result the row comes from; null when evaluated\nlive for this read."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "members": {
             "type": "array",
@@ -26968,6 +27192,7 @@
           "version",
           "engine",
           "commits",
+          "materialization",
           "columns",
           "grain",
           "rows",
@@ -26988,7 +27213,7 @@
           "commits": {
             "type": "integer",
             "format": "int64",
-            "description": "Commits in the cell when the rows were read.",
+            "description": "Commits in the cell at the snapshot the rows were computed from: now,\nor a stored result's frontier.",
             "minimum": 0
           },
           "complete": {
@@ -27011,6 +27236,17 @@
               "type": "string"
             },
             "description": "The columns that identify a row."
+          },
+          "materialization": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornMaterialization",
+                "description": "VIEW-MAT-1: the stored result these rows come from; null when they\nwere evaluated live for this read."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "nextAfter": {
             "type": [
@@ -27063,7 +27299,8 @@
           "viewId",
           "inputs",
           "nodes",
-          "output"
+          "output",
+          "refresh"
         ],
         "properties": {
           "inputs": {
@@ -27083,6 +27320,17 @@
           "output": {
             "type": "string",
             "description": "The output node."
+          },
+          "refresh": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornRefresh",
+                "description": "VIEW-MAT-1: how the stored result refreshes; null when the transform\nis evaluated on every read."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "transform": {
             "type": "string",

@@ -838,6 +838,68 @@ fn days_between(from: &str, to: &str) -> u32 {
     n
 }
 
+/// The ontology and a one-scan view whose payload carries `upkeep`
+/// (`maintenance` and `refresh`).
+fn upkept(upkeep: Value) -> Vec<ArtifactEnvelope> {
+    let mut documents = ontology();
+    let mut transform = view(
+        with(json!({"order": {"op": "scan", "input": "order"}})),
+        "order",
+    );
+    for (key, value) in upkeep.as_object().expect("upkeep") {
+        transform["payload"][key] = value.clone();
+    }
+    documents.push(transform);
+    envelopes(documents)
+}
+
+#[test]
+fn materialization_is_declared_and_checked() {
+    use norn_checker::transform::Materialization;
+    let plan_of = |upkeep: Value| {
+        let pool = upkept(upkeep);
+        let found = findings_of(&pool);
+        assert!(found.is_empty(), "{found:#?}");
+        admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted")
+    };
+    assert_eq!(
+        plan_of(json!({"maintenance": "recompute_on_read"})).materialization,
+        None
+    );
+    assert_eq!(
+        plan_of(json!({"maintenance": "materialized"})).materialization,
+        Some(Materialization::OnRead { max_age_ms: None })
+    );
+    assert_eq!(
+        plan_of(json!({"maintenance": "materialized",
+            "refresh": {"policy": "on_read", "maxAgeMs": 60_000}}))
+        .materialization,
+        Some(Materialization::OnRead {
+            max_age_ms: Some(60_000)
+        })
+    );
+    assert_eq!(
+        plan_of(json!({"maintenance": "materialized", "refresh": {"policy": "manual"}}))
+            .materialization,
+        Some(Materialization::Manual)
+    );
+    for refused in [
+        json!({"maintenance": "recompute_on_read", "refresh": {"policy": "manual"}}),
+        json!({"maintenance": "materialized", "refresh": {"policy": "manual", "maxAgeMs": 1}}),
+        json!({"maintenance": "incremental"}),
+    ] {
+        let pool = upkept(refused.clone());
+        let found = findings_of(&pool);
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.code == codes::INVALID_PLAN
+                    || finding.code == "derived.validation.incremental_not_supported"),
+            "{refused}: {found:#?}"
+        );
+    }
+}
+
 #[test]
 fn admission_refuses_an_expression_every_evaluation_would_refuse() {
     // VAL-EXACT-1: comparing money with a bare number refuses when the
