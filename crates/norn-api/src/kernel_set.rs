@@ -40,7 +40,10 @@ fn invalid(context: &str) -> impl Fn(&dyn std::fmt::Display) -> KernelRefusal + 
 /// interface source records carry. A tenant never defines them, and a cell
 /// without them refuses every linked row at mapping time, so they are the
 /// host's, beside `core.` and `std.`.
-pub const CELL_OWNED: [&str; 2] = ["norn.ObservedLinkClaim.entity", "norn.SourceEvidence.interface"];
+pub const CELL_OWNED: [&str; 2] = [
+    "norn.ObservedLinkClaim.entity",
+    "norn.SourceEvidence.interface",
+];
 
 /// Whether `artifact_id` names a trusted-base artifact: one in a reserved
 /// namespace (`core.`, `std.`) or a cell-owned type ([`CELL_OWNED`]). Only

@@ -313,9 +313,11 @@ fn linked_rows_land_on_a_tenant_that_submitted_no_cell_owned_type() {
     let tenant = full();
     assert!(tenant.iter().all(|text| {
         let id = serde_json::from_str::<Value>(text).unwrap()["artifactId"].clone();
-        !norn_api::kernel_set::CELL_OWNED.iter().any(|owned| id == *owned)
+        !norn_api::kernel_set::CELL_OWNED
+            .iter()
+            .any(|owned| id == *owned)
     }));
-    let mut cell = provisioned(&file(&directory, "a"), &scope, &tenant);
+    let cell = provisioned(&file(&directory, "a"), &scope, &tenant);
     let export: Value = serde_json::from_str(include_str!(
         "../../../registry/packs/erpnext/synthetic.json"
     ))
@@ -351,7 +353,10 @@ fn linked_rows_land_on_a_tenant_that_submitted_no_cell_owned_type() {
         now: NOW,
         body: &body,
     };
-    let host = cell.tenant.serving_host().expect("a provisioned cell serves");
+    let host = cell
+        .tenant
+        .serving_host()
+        .expect("a provisioned cell serves");
     let routed = connect
         .route(Some(host), &cell.tokens, &request, NOW)
         .expect("a connect route");
