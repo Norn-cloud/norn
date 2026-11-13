@@ -282,7 +282,8 @@ fn past_the_scan_bound_every_count_is_a_lower_bound_of_the_truth() {
         .unwrap();
         assert!(scanned.lower_bound, "bound {bound}");
         assert_eq!(scanned.scan_limit, u64::try_from(bound).unwrap());
-        assert!(scanned.rows <= all.rows && scanned.rows <= u64::try_from(bound).unwrap());
+        // The scan reads whole batches, so it may read past the bound; what it read, it counts exactly.
+        assert!(scanned.rows <= all.rows);
         for facet in &scanned.facets {
             let (values, nulls, other) = read(&scanned, &facet.property);
             let (truth, true_nulls, true_other) = read(&all, &facet.property);
