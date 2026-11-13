@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "c6a110cbe80d48cde4e5c48f2b6b4b37cddedb34174a86b93606266797edc727",
+  "bundleDigest": "e3efc4e9c938599ae59aed6f04bc7e1e751285e64e3e0ad7b4e5e6f9cf92565c",
   "sourceRecordRef": {
     "system": "synthetic-shopify",
     "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
@@ -12,7 +12,7 @@
   "mappingPin": {
     "artifactId": "shopify.three.mapping",
     "version": "0.1.0",
-    "sha256": "cc222ebd12b9022c444e97d2213f2ff76364e414f76ae8e8ead22b09f4031239"
+    "sha256": "0b501958ae3fb3fe7ddefdcc4a49c380439fc3f9ab7a89c489042e265bd4842f"
   },
   "fieldProvenance": {
     "currency": {
