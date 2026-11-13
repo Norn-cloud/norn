@@ -621,11 +621,26 @@ fn a_policy_compile_failure_is_reported_to_the_operator() {
     );
     assert!(!denied.body.contains(reason.as_deref().unwrap_or_default()));
     // The failure is the policy's, so it is settled for this definitions
-    // version: later requests do not recompile it (#1297 r4 nit).
+    // version: a second request does not recompile it (#1297 r4 nit).
     let settled = cell.tenant.action_policy_version();
+    let compiles = cell.tenant.action_policy_compiles();
     assert!(settled.is_some());
     assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "n"), denied);
     assert_eq!(cell.tenant.action_policy_version(), settled);
+    assert_eq!(cell.tenant.action_policy_compiles(), compiles);
+    // A new definitions version compiles again, once, and still refuses.
+    install_flow(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "o"), denied);
+    let moved = cell.tenant.action_policy_version();
+    assert!(moved.is_some() && moved != settled, "{settled:?} -> {moved:?}");
+    assert_eq!(cell.tenant.action_policy_compiles(), compiles + 1);
+    assert!(
+        cell.tenant
+            .action_policy_error()
+            .is_some_and(|reason| reason.contains("authz.access.rule_duplicate")),
+        "{:?}",
+        cell.tenant.action_policy_error()
+    );
 }
 
 /// A dashboard tile's question, as Studio saves one: any `QuestionIR`.

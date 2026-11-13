@@ -139,6 +139,8 @@ struct Serving<E: SqlEngine> {
     compiled: Option<u64>,
     /// Why the active definitions installed no action policy, if they failed.
     policy_error: Option<String>,
+    /// How many times the action policy was compiled, for the operator.
+    policy_compiles: u64,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -167,6 +169,7 @@ impl<E: SqlEngine> Serving<E> {
             reads,
             compiled: None,
             policy_error: None,
+            policy_compiles: 0,
         })
     }
 
@@ -209,6 +212,7 @@ impl<E: SqlEngine> Serving<E> {
             self.object_types = collections(served.object_types());
             // The policy itself is the version's: a policy that does not
             // compile fails the same way on every retry.
+            self.policy_compiles += 1;
             Ok(ActionPolicy::compile(&model, &artifacts, self.host.scope())
                 .map_err(|error| error.0))
         });
@@ -339,6 +343,16 @@ impl<E: SqlEngine> Tenant<E> {
         match &self.state {
             State::Serving(serving) => serving.compiled,
             State::Vacant => None,
+        }
+    }
+
+    /// How many times the cell compiled its action policy since it opened:
+    /// once per definitions version, unless a read failed and was retried.
+    #[must_use]
+    pub fn action_policy_compiles(&self) -> u64 {
+        match &self.state {
+            State::Serving(serving) => serving.policy_compiles,
+            State::Vacant => 0,
         }
     }
 
