@@ -707,7 +707,20 @@ fn tile_question() -> Value {
 #[test]
 fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
     let directory = tempfile::tempdir().unwrap();
-    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    // A concept with no additive amount derives no metric: the cell publishes
+    // no questions, and its receipt handles answer none.
+    let note = json!({
+        "irVersion": "0.1", "artifactId": "shop.Note.entity", "kind": "entity",
+        "namespace": "shop", "name": "Note", "version": "0.1.0", "lifecycle": "active",
+        "scope": { "orgId": "org_a", "environmentId": "prod" },
+        "dependencies": [], "provenance": { "source": "system", "sourcePath": "tests/tenant_actions.rs" },
+        "payload": { "entityVersion": "2.0", "objectType": { "name": "shop.Note", "properties": [
+            { "id": "text", "type": { "kind": "text" } }
+        ] } }
+    });
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &[note]);
+    let metrics = cell.call("GET", "/v1/questions:metrics", Some(&user("admin")), "");
+    assert!(!metrics.body.contains("shop.Note"), "{}", metrics.body);
     let dashboard = json!({ "kind": "dashboard", "id": "studio.dashboard.melts", "payload": {
         "title": "Melts", "tiles": [{ "id": "t1", "title": "Loss", "question": tile_question(),
             "view": { "kind": "chart", "chart": "line" }, "layout": { "x": 0, "y": 0, "w": 6, "h": 4 } }] } });
@@ -730,12 +743,9 @@ fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
                 json!(true),
                 "{case} {path}: {document}"
             );
-            // The finding is the question runtime's, never an authorization
-            // refusal: unavailable on a cell with no question runtime, or
-            // the checker's own finding where the cell derives metrics.
-            assert!(
-                codes.contains(&"definition.question_unavailable")
-                    || codes.contains(&"metric.validation.unknown_metric"),
+            assert_eq!(
+                codes,
+                vec!["definition.question_unavailable"],
                 "{case} {path}: {document}"
             );
         }
@@ -903,10 +913,13 @@ fn a_tenant_cell_answers_and_installs_its_derived_questions() {
     );
     let document: Value = serde_json::from_str(&unknown.body).unwrap();
     assert_eq!(unknown.status, 422, "{document}");
-    assert!(
-        document["diagnostics"]
-            .as_array()
-            .is_some_and(|found| !found.is_empty()),
+    let codes: Vec<&str> = document["diagnostics"]
+        .as_array()
+        .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        codes,
+        vec!["metric.validation.unknown_metric"],
         "{document}"
     );
 }
