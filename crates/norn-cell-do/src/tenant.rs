@@ -115,6 +115,16 @@ impl<E: SqlEngine> AdHocQuestions<E> for ReceiptHandles {
     fn max_buckets(&self) -> usize {
         0
     }
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<E>(self, question, max_rows)
+    }
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// The smallest lineage key a cell's receipt handles are keyed with, in bytes.
@@ -131,6 +141,8 @@ struct Serving<E: SqlEngine> {
     actions: ActionSlot,
     /// The definitions version the installed action policy was compiled from.
     compiled: Option<u64>,
+    /// Why the active definitions installed no action policy, if they failed.
+    policy_error: Option<String>,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -160,28 +172,49 @@ impl<E: SqlEngine> Serving<E> {
             object_types,
             actions,
             compiled: None,
+            policy_error: None,
         })
     }
 
     /// Install the action policy of the active definitions when they changed
     /// since it was compiled. A policy that does not compile, or definitions
-    /// that cannot be read, install none: the cell then serves no action.
+    /// that cannot be read, install none: the cell then serves no action, and
+    /// the reason is kept for the operator ([`Tenant::action_policy_error`]).
     fn refresh_actions(&mut self) {
-        let active = self.host.active_definitions().ok().flatten();
+        let active = match self.host.active_definitions() {
+            Ok(active) => active,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
         let version = active.as_ref().map(|set| set.version);
         if version == self.compiled && version.is_some() {
             return;
         }
-        let policy = active.and_then(|set| {
-            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set).ok()?;
-            let model = norn_api::kernel_set::kernel_model(&artifacts).ok()?;
-            ActionPolicy::compile(&model, &artifacts, self.host.scope())
-                .ok()
-                .flatten()
+        let compiled = active.map(|set| {
+            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set)?;
+            let model = norn_api::kernel_set::kernel_model(&artifacts)
+                .map_err(|error| format!("{error:?}"))?;
+            ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
         });
+        match compiled {
+            Some(Ok(policy)) => self.install_actions(policy, version, None),
+            Some(Err(reason)) => self.install_actions(None, version, Some(reason)),
+            None => self.install_actions(None, version, None),
+        }
+    }
+
+    fn install_actions(
+        &mut self,
+        policy: Option<ActionPolicy>,
+        version: Option<u64>,
+        error: Option<String>,
+    ) {
         if let Ok(mut slot) = self.actions.write() {
             *slot = policy.map(Arc::new);
             self.compiled = version;
+            self.policy_error = error;
         }
     }
 }
@@ -189,6 +222,9 @@ impl<E: SqlEngine> Serving<E> {
 enum State<E: SqlEngine> {
     Vacant,
     Serving(Box<Serving<E>>),
+    /// A provisioned cell this host cannot open, and why: served as refusals
+    /// (never a retried open on every request) until an operator restores it.
+    Unopenable(String),
 }
 
 /// The cell of one scope: vacant, or provisioned and served.
@@ -224,7 +260,9 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
-        let state = reopen(engine, &scope, table, &caller)?;
+        // A stored cell that does not open is kept as a refusal state: every
+        // request answers at once instead of retrying the open (and queueing).
+        let state = reopen(engine, &scope, table, &caller)?.unwrap_or_else(State::Unopenable);
         let derived = handle_key
             .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
             .map(|questions| questions.with_label("tenant"));
@@ -301,7 +339,27 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn serving_host(&self) -> Option<&DevHost<E>> {
         match &self.state {
             State::Serving(serving) => Some(&serving.host),
-            State::Vacant => None,
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// Why the cell's active definitions installed no action policy, as of
+    /// the last request: for the operator's log, never for a caller (every
+    /// refused call answers the one opaque action denial).
+    #[must_use]
+    pub fn action_policy_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Serving(serving) => serving.policy_error.as_deref(),
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// Why the scope's stored cell does not open, for the operator's log.
+    #[must_use]
+    pub fn open_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Unopenable(reason) => Some(reason),
+            State::Vacant | State::Serving(_) => None,
         }
     }
 
@@ -351,7 +409,7 @@ impl<E: SqlEngine> Tenant<E> {
             (State::Serving(serving), Some(engine)) => {
                 server::analytics(&serving.host, principals, engine, uploads, request)
             }
-            (State::Serving(_) | State::Vacant, _) => None,
+            (State::Serving(_) | State::Vacant | State::Unopenable(_), _) => None,
         }
     }
 
@@ -419,26 +477,42 @@ impl<E: SqlEngine> Tenant<E> {
                     .or(questions);
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
-            State::Vacant => self.vacant(principals, request),
+            State::Vacant => self.vacant(principals, request, None),
+            State::Unopenable(reason) => self.vacant(principals, request, Some(reason)),
         }
     }
 
-    /// A request to a scope with no cell.
-    fn vacant(&self, principals: &dyn PrincipalResolver, request: &Request<'_>) -> Response {
-        let member = {
+    /// A request to a scope with no cell, or with one this host cannot open
+    /// (`unopenable`). Only a verified member of the organization learns
+    /// which: anyone else is answered exactly as for a scope with no cell.
+    fn vacant(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        unopenable: Option<&str>,
+    ) -> Response {
+        let caller = {
             // The verified principal lives exactly as long as this decision.
             let _request = RequestScope::new(principals);
             principals
                 .resolve(request.authorization, request.now)
-                .is_some_and(|subject| {
+                .and_then(|subject| {
                     self.caller
                         .current()
                         .filter(|caller| caller.subject_id == subject)
-                        .is_some_and(|caller| !self.table.capabilities(&caller.roles).is_empty())
+                        .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
                 })
         };
-        if member && self.names_this_scope(request.query) {
-            server::respond(Err(provision::not_provisioned()))
+        if let Some(caller) = caller.filter(|_| self.names_this_scope(request.query)) {
+            let refusal = match unopenable {
+                None => provision::not_provisioned(),
+                Some(reason) => provision::unopenable(
+                    self.table
+                        .writes_definitions(&caller.roles)
+                        .then_some(reason),
+                ),
+            };
+            server::respond(Err(refusal))
         } else if request.path == "/v1/access" {
             server::access_outside::<E>(principals, request)
         } else {
@@ -508,6 +582,16 @@ impl<E: SqlEngine> Tenant<E> {
                 &scope,
                 actor,
             )?,
+            // Its owner is told; provisioning never overwrites a stored cell.
+            State::Unopenable(reason) => {
+                provision::authorize(
+                    &Provisioners::new(self.table, Arc::clone(&self.caller)),
+                    &self.scope,
+                    &scope,
+                    actor,
+                )?;
+                return Err(provision::unopenable(Some(reason)));
+            }
         }
         let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
         if matches!(self.state, State::Vacant) {
@@ -522,8 +606,9 @@ impl<E: SqlEngine> Tenant<E> {
             {
                 // Provisioned since this host last looked (a reply it lost):
                 // serve it and answer from its first revision.
-                self.state =
-                    reopen(engine, &self.scope, self.table, &self.caller).map_err(Refusal::host)?;
+                self.state = reopen(engine, &self.scope, self.table, &self.caller)
+                    .map_err(Refusal::host)?
+                    .map_err(Refusal::host)?;
             } else {
                 let (store, receipt) = provision::provision_cell(
                     engine,
@@ -567,32 +652,52 @@ fn handles(key: Option<&[u8]>) -> Result<Option<ReceiptHandles>, SeedError> {
 
 /// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with
 /// the model rebuilt from the retained set; vacant when it holds none.
+///
+/// The inner `Err` is a stored cell this host cannot open (its definitions do
+/// not read, or its layout is not the one they rebuild): the caller serves it
+/// as a refusal state.
+///
+/// # Errors
+/// The engine's definitions cannot be read, or the store is bound to
+/// another scope: never served, and never told apart from a vacant scope.
 fn reopen<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
     table: &'static GrantTable,
     caller: &Arc<CallerSlot>,
-) -> Result<State<E>, SeedError> {
+) -> Result<Result<State<E>, String>, SeedError> {
     let fail =
         |context: &str, error: &dyn std::fmt::Display| SeedError(format!("{context}: {error}"));
     let Some(active) =
         CellStore::read_active_definitions(&engine).map_err(|e| fail("definitions", &e))?
     else {
-        return Ok(State::Vacant);
+        return Ok(Ok(State::Vacant));
     };
-    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
-        .map_err(|e| fail("active definitions", &e))?;
-    let model = norn_api::kernel_set::kernel_model(&artifacts)
-        .map_err(|refusal| SeedError(format!("active definitions: {refusal:?}")))?;
-    // As provisioned: the kernel's action types are part of the model.
-    let model = norn_api::action_admission::prepare_action_model(&model)
-        .map_err(|refusal| SeedError(format!("action model: {}", refusal.code)))?;
-    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
-    // A store bound to another scope is never served under this one.
+    // A store bound to another scope is never served under this one; its
+    // binding is read before its layout is trusted.
+    match CellStore::read_binding(&engine, "scope").map_err(|e| fail("scope", &e))? {
+        Some(bound) if bound != scope.key() => {
+            return Err(SeedError(format!("scope: the store is bound to {bound}")));
+        }
+        Some(_) | None => {}
+    }
+    let opened = (|| {
+        let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        // The serving model every install path checks against (DEFS-REOPEN-1):
+        // the kernel's action types are part of it, as provisioned.
+        let model = norn_api::kernel_set::serving_model(&artifacts)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
+    })();
+    let mut store = match opened {
+        Ok(store) => store,
+        Err(reason) => return Ok(Err(reason)),
+    };
     store
         .bind("scope", &scope.key())
         .map_err(|e| fail("scope", &e))?;
-    Ok(State::Serving(Box::new(Serving::from_store(
+    Ok(Ok(State::Serving(Box::new(Serving::from_store(
         store, scope, table, caller, None,
-    )?)))
+    )?))))
 }

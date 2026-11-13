@@ -72,7 +72,10 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
 }
 
 fn host() -> DevHost<norn_cell::engine::NativeEngine> {
-    let artifacts = artifacts();
+    host_with(&artifacts())
+}
+
+fn host_with(artifacts: &[ArtifactEnvelope]) -> DevHost<norn_cell::engine::NativeEngine> {
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()
@@ -116,11 +119,11 @@ fn host() -> DevHost<norn_cell::engine::NativeEngine> {
     }
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("governing laws");
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
-            RuntimeValue::from_json(serde_json::to_value(&artifacts).expect("set"))
+            RuntimeValue::from_json(serde_json::to_value(artifacts).expect("set"))
                 .expect("value")
                 .canonical_json()
                 .expect("canonical"),
@@ -983,6 +986,42 @@ fn a_completed_upload_is_kept_in_the_cell_and_read_back() {
         replaced.sha256
     );
     assert_eq!(kept_upload(&host, "u00.ffff").expect("read"), None);
+
+    // A cell whose definitions predate source.Upload gets the cell's sources
+    // pack through the governed install on its first record, then keeps it.
+    let older = host_with(
+        &artifacts()
+            .into_iter()
+            .filter(|a| {
+                !matches!(
+                    a.artifact_id.as_str(),
+                    "source.Upload.entity" | "norn.connect.source" | "norn.connect.mapping"
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(kept_upload(&older, &kept.upload_id).expect("read"), None);
+    let before = older
+        .active_definitions()
+        .expect("read")
+        .expect("active")
+        .version;
+    keep_upload(&older, &kept, EXTRACTED_AT_MS).expect("pack installed, record kept");
+    assert!(
+        older
+            .active_definitions()
+            .expect("read")
+            .expect("active")
+            .version
+            > before
+    );
+    assert_eq!(
+        kept_upload(&older, &kept.upload_id)
+            .expect("read")
+            .expect("the record")
+            .sha256,
+        kept.sha256
+    );
 }
 
 /// SYNC-LEASE-1: a claimed run the host stops stepping (its fetch loop died)
@@ -1058,4 +1097,40 @@ fn a_host_page_size_sets_every_feeds_page() {
         }
         other @ (Step::Continue | Step::Done(_)) => panic!("expected a request, got {other:?}"),
     }
+}
+
+/// SYNC-YIELD-2: a host paces a sync's steps; a step maps at most the rows
+/// it was given and says how many it mapped, and the rest follow in later
+/// steps.
+#[test]
+fn a_paced_sync_maps_at_most_its_rows_per_step() {
+    let host = host();
+    let mut sources = sources();
+    let mut pages = recorded("odoo");
+    sources
+        .claim("odoo.sandbox", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("claimed");
+    sources.pace("odoo.sandbox", 3);
+    let Step::Request(first) = sources.step(&host, "odoo.sandbox", None, EXTRACTED_AT_MS) else {
+        panic!("a first request");
+    };
+    assert_eq!(sources.mapped("odoo.sandbox"), 0);
+    let dataset = profile("odoo").feeds[0].dataset.clone();
+    let (status, body) = pages.remove(&dataset).expect("a recorded page");
+    let rows = body
+        .pointer("/records")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    assert!(rows > 3, "{} has {rows} rows", first.url);
+    let step = sources.step(
+        &host,
+        "odoo.sandbox",
+        Some((status, body.to_string().as_bytes())),
+        EXTRACTED_AT_MS,
+    );
+    assert!(matches!(step, Step::Continue), "{step:?}");
+    assert_eq!(sources.mapped("odoo.sandbox"), 3);
+    let step = sources.step(&host, "odoo.sandbox", None, EXTRACTED_AT_MS);
+    assert!(matches!(step, Step::Continue), "{step:?}");
+    assert_eq!(sources.mapped("odoo.sandbox"), 3);
 }

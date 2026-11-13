@@ -28,7 +28,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::{CellError, CellStore, ObjectRecord};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
-use norn_ir::MetricDefinition;
+use norn_ir::{MetricDefinition, QuestionIR};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -322,6 +322,18 @@ impl<E: SqlEngine> AdHocQuestions<E> for EngineQuestions<'_, E> {
     }
     fn max_buckets(&self) -> usize {
         self.inner.max_buckets()
+    }
+    /// The wrapped runtime admits: a derived question keeps its default unit
+    /// and currency grouping on the engine (METRIC-UNIT-PARTITION-1).
+    fn admit(
+        &self,
+        question: &QuestionIR,
+        max_rows: u32,
+    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        self.inner.admit(question, max_rows)
+    }
+    fn unit_partition(&self, metric: &str) -> Vec<String> {
+        self.inner.unit_partition(metric)
     }
 }
 

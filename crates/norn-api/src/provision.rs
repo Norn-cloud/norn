@@ -51,6 +51,10 @@ pub mod codes {
     /// The scope has no cell yet; told only to a verified member of its
     /// organization.
     pub const NOT_PROVISIONED: &str = "cell.not_provisioned";
+    /// The scope has a cell this host cannot open (its stored layout is not
+    /// the one its definitions rebuild); told only to a verified member of
+    /// its organization, with the reason only to a definition writer.
+    pub const UNOPENABLE: &str = "cell.unopenable";
     /// The cell was provisioned from a different submission.
     pub const PROVISION_CONFLICT: &str = "cell.provision_conflict";
     /// The submitted definitions are not admissible.
@@ -216,6 +220,19 @@ pub fn not_provisioned() -> Refusal {
         codes::NOT_PROVISIONED,
         "no cell is provisioned for this scope",
         "provision the cell with POST /v1/cell:provision before using it",
+    )
+}
+
+/// The refusal for a scope whose stored cell this host cannot open: an
+/// operator must restore or repair it. `reason` (the open failure, naming the
+/// layout found and the one expected) goes only to a definition writer.
+#[must_use]
+pub fn unopenable(reason: Option<&str>) -> Refusal {
+    Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        codes::UNOPENABLE,
+        "the cell cannot be opened; an operator must restore it",
+        reason.unwrap_or("the cell's stored layout is not the one its definitions rebuild"),
     )
 }
 
@@ -481,7 +498,7 @@ fn receipt<E: SqlEngine>(
 /// `cell.provision_conflict` (409) when the engine already holds a cell
 /// provisioned from something else; `host.error` (500) for a storage failure,
 /// which leaves the engine as it was.
-#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused: the scope's stored cell cannot be opened.", body = Refusal)))]
 pub fn provision_cell<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
@@ -491,8 +508,10 @@ pub fn provision_cell<E: SqlEngine>(
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
     let input = install_input(admitted, now_ms);
     // Every provisioned cell can serve governed actions: the kernel's own
-    // receipt and owned-row types are part of its model from the start.
-    let model = crate::action_admission::prepare_action_model(&admitted.model)?;
+    // receipt and owned-row types are part of its model from the start. It
+    // is the model a reopen rebuilds from the installed set (DEFS-REOPEN-1).
+    let model = crate::host::reopen_model(&input.canonical_set, true)?;
+    crate::host::check_reopens(&model, &input.canonical_set, true)?;
     let store =
         CellStore::provision_definitions(engine, model, &input, &scope.key()).map_err(|error| {
             if matches!(error, CellError::IdempotencyConflict(_)) {

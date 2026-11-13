@@ -867,54 +867,7 @@ pub fn install<E: SqlEngine>(
     generated: &Generated,
     installed_at: u64,
 ) -> Result<u64, String> {
-    let active = host
-        .active_definitions()
-        .map_err(|r| r.message)?
-        .ok_or("the cell has no definitions to extend")?;
-    let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
-    let ours: BTreeSet<&str> = generated
-        .artifacts
-        .iter()
-        .map(|a| a.artifact_id.as_str())
-        .collect();
-    let mut artifacts: Vec<ArtifactEnvelope> =
-        crate::kernel_set::retained_artifacts(&active.canonical_set)?
-            .into_iter()
-            .filter(|a| !ours.contains(a.artifact_id.as_str()))
-            .collect();
-    artifacts.extend(generated.artifacts.iter().cloned());
-    let admitted =
-        crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(|refusal| {
-            match refusal {
-                crate::kernel_set::KernelRefusal::Refused(findings) => findings
-                    .iter()
-                    .map(|f| format!("{}: {}", f.code, f.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
-            }
-        })?;
-    // HOST-REOPEN-1: the model the cell reopens under, never the bare kernel
-    // model (which lacks the kernel's action tables).
-    let model = crate::kernel_set::retained_artifacts(&admitted.canonical_set)
-        .and_then(|set| crate::kernel_set::serving_model(&set))?;
-    let installed = host
-        .install_definitions(
-            model,
-            norn_cell::InstalledDefinitionInput {
-                canonical_set: admitted.canonical_set,
-                registry: vec![],
-                receipt_sha256: admitted.receipt_sha256,
-                admission_receipt: Some(admitted.receipt),
-                readmission: None,
-                diff: json!({}),
-                installed_at,
-                layout: None,
-            },
-            Some(active.version),
-        )
-        .map_err(|r| format!("{}: {}", r.code, r.message))?;
-    Ok(installed.version)
+    host.install_artifacts(&generated.artifacts, installed_at)
 }
 
 /// What loading an upload did.

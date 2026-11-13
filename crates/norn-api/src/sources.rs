@@ -190,6 +190,10 @@ struct Run {
     started_ms: u64,
     /// When the host last stepped the run (SYNC-LEASE-1).
     stepped_ms: u64,
+    /// SYNC-YIELD-2: the most rows the next step maps, as the host paces it.
+    step_rows: usize,
+    /// Rows the current step mapped.
+    mapped: usize,
     pull: Option<Pull>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
@@ -207,6 +211,8 @@ struct Run {
 #[derive(Default)]
 struct ConnectionState {
     run: Option<Run>,
+    /// Rows the last step mapped, for the host's pacing (SYNC-YIELD-2).
+    mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
 }
@@ -310,6 +316,8 @@ impl Sources {
             actor: actor.to_owned(),
             started_ms: now_ms,
             stepped_ms: now_ms,
+            step_rows: crate::host::PAGE_ROWS,
+            mapped: 0,
             pull: None,
             auth: Vec::new(),
             held: None,
@@ -322,6 +330,22 @@ impl Sources {
             reasons: BTreeMap::new(),
         });
         Ok(run)
+    }
+
+    /// SYNC-YIELD-2: map at most `rows` (1 to a page) in each step of the run
+    /// of `id` from now on. The runtime's clock stands still inside a step,
+    /// so the host paces from outside: it times each step against the rows it
+    /// mapped ([`Self::mapped`]) and keeps steps near a time budget.
+    pub fn pace(&mut self, id: &str, rows: usize) {
+        if let Some(run) = self.state.get_mut(id).and_then(|s| s.run.as_mut()) {
+            run.step_rows = rows.clamp(1, crate::host::PAGE_ROWS);
+        }
+    }
+
+    /// Rows the last step of `id` mapped (SYNC-YIELD-2).
+    #[must_use]
+    pub fn mapped(&self, id: &str) -> usize {
+        self.state.get(id).map_or(0, |s| s.mapped)
     }
 
     /// SYNC-ONE-1, SYNC-ACTOR-1: claim the first connection whose schedule
@@ -365,6 +389,7 @@ impl Sources {
             ));
         };
         run.stepped_ms = now_ms;
+        run.mapped = 0;
         let outcome = match response {
             None if run.pull.is_some() => drain(host, run),
             None => begin(host, &config, &self.secrets, run, watermarks_known)
@@ -374,6 +399,10 @@ impl Sources {
                 drain(host, run)
             }),
         };
+        let mapped = run.mapped;
+        if let Some(state) = self.state.get_mut(id) {
+            state.mapped = mapped;
+        }
         match outcome {
             Ok(Next::Request(request)) => Step::Request(request),
             Ok(Next::Continue) => Step::Continue,
@@ -615,12 +644,13 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
     let take = run
         .queue
         .iter()
-        .take(crate::host::PAGE_ROWS)
+        .take(run.step_rows.clamp(1, crate::host::PAGE_ROWS))
         .take_while(|(raw, input)| {
             Some(input) == first.as_ref() && seen.insert(raw.provenance.source_id.clone())
         })
         .count();
     let chunk: Vec<_> = run.queue.drain(..take).collect();
+    run.mapped = chunk.len();
     if !chunk.is_empty() {
         let outcomes = host
             .ingest(&chunk)
@@ -840,6 +870,8 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         actor: upload.actor.to_owned(),
         started_ms: upload.started_ms,
         stepped_ms: upload.ended_ms,
+        step_rows: crate::host::PAGE_ROWS,
+        mapped: 0,
         pull: None,
         auth: Vec::new(),
         held: None,
@@ -1014,14 +1046,18 @@ pub fn kept_upload_key(upload_id: &str) -> String {
 
 /// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
 /// are already kept; new bytes for the same upload are its next version.
+/// A cell whose definitions predate `source.Upload` first gets the cell's
+/// own sources pack through the governed install ([`ensure_upload_records`]).
 ///
 /// # Errors
-/// The cell has no `source.Upload` definitions, or refused the record.
+/// The pack could not be installed, the cell refused the record, or the
+/// write failed.
 pub fn keep_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload: &KeptUpload,
     now_ms: u64,
 ) -> Result<(), String> {
+    ensure_upload_records(host, now_ms)?;
     let key = kept_upload_key(&upload.upload_id);
     let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
     let store = match upload.store {
@@ -1068,6 +1104,44 @@ pub fn keep_upload<E: SqlEngine>(
     }
 }
 
+/// The cell's own sources pack: connections, sync runs and upload records,
+/// and the mapping that lands the cell's reports as them.
+const SOURCES_PACK: [&str; 6] = [
+    include_str!("../../../registry/packs/sources/artifacts/source.Synced.interface.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Connection.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.SyncRun.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/source.Upload.entity.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.source.json"),
+    include_str!("../../../registry/packs/sources/artifacts/norn.connect.mapping.json"),
+];
+
+/// UPLOAD-RECORD-1 for a cell provisioned before `source.Upload`: install the
+/// cell's own sources pack as the next governed definitions version (the
+/// shared install path, DEFS-REOPEN-1), once. `Ok(true)` when it installed.
+///
+/// # Errors
+/// The pack is refused or the install fails; the upload is then refused,
+/// never completed without its record.
+pub fn ensure_upload_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    installed_at: u64,
+) -> Result<bool, String> {
+    if host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(false);
+    }
+    let pack = SOURCES_PACK
+        .iter()
+        .map(|text| serde_json::from_str::<norn_ir::ArtifactEnvelope>(text))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("the sources pack: {e}"))?;
+    host.install_artifacts(&pack, installed_at)
+        .map_err(|reason| format!("the sources pack was not installed: {reason}"))?;
+    Ok(true)
+}
+
 /// The kept record of the upload `upload_id`, if the cell completed it.
 ///
 /// # Errors
@@ -1076,6 +1150,12 @@ pub fn kept_upload<E: SqlEngine>(
     host: &DevHost<E>,
     upload_id: &str,
 ) -> Result<Option<KeptUpload>, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(None);
+    }
     let Some(object) = host
         .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
         .map_err(|refusal| refusal.message)?

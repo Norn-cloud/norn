@@ -280,9 +280,14 @@ fn lower_sum(
     else {
         return Err(refuse());
     };
+    // An amount summed per currency (METRIC-UNIT-PARTITION-1) is summed as stored;
+    // the checker admitted the question only if it partitions by that currency.
     if object_type != &question.object_set
         || metric.time_dimension.links.len() > 1
-        || metric.currency.is_some()
+        || metric
+            .currency
+            .as_ref()
+            .is_some_and(|currency| currency.conversion.is_some())
         || definition.norn.freshness.is_some()
         || definition.norn.authz.is_some()
         || metric.default_filters.iter().any(unsupported_filter)
