@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chosen, toggled, without } from "../src/lib/facets.ts"
+import { chosen, isFacets, toggled, without } from "../src/lib/facets.ts"
 import { newViewId, sortKeys, sortText, viewPrefix } from "../src/lib/views.ts"
 
 const filter = { all: [{ property: "location", op: "contains" as const, value: "north" }] }
@@ -36,4 +36,11 @@ test("a view's id starts with its type's prefix, its sort round-trips through th
   expect(sortKeys(sortText(keys))).toEqual(keys)
   expect(sortText([])).toBeUndefined()
   expect(sortKeys("bad,x:sideways,y:asc")).toEqual([{ property: "y", direction: "asc" }])
+})
+
+test("only a facets document is counted from; anything else is not one", () => {
+  expect(isFacets({ rows: 3, withheldRows: 0, lowerBound: false, facets: [{ property: "status", values: [{ value: "open", count: 3 }], otherRows: 0, nulls: 0 }] })).toBe(true)
+  expect(isFacets({ objectType: "canon.Holding", records: [], total: { count: 0, approximate: false } })).toBe(false)
+  expect(isFacets({ rows: 3, approximate: true, facets: [] })).toBe(false)
+  expect(isFacets(null)).toBe(false)
 })

@@ -23,12 +23,22 @@ export interface Facets {
 }
 
 /** The cell's facets for `filter`, of every categorical property or of `properties` only. */
-export function readFacets(objectType: string, filter: Predicate | null, properties?: readonly string[]) {
+export async function readFacets(objectType: string, filter: Predicate | null, properties?: readonly string[]) {
   const query = new URLSearchParams()
   if (filter !== null && filter.all.length > 0) query.set("filter", JSON.stringify(filter))
   if (properties !== undefined) query.set("properties", properties.join(","))
   const search = query.toString()
-  return cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are")
+  const read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are")
+  // An answer that is not a facets document is not counted from: it reads as not served.
+  if (!isFacets(read.document)) throw new Error("The cell's answer is not a facets document, so nothing is counted here.")
+  return read
+}
+
+/** Whether `value` has the facets document's shape: counts, a flag and one facet per property. */
+export function isFacets(value: unknown): value is Facets {
+  const document = value as Partial<Facets> | null
+  return typeof document?.rows === "number" && typeof document.lowerBound === "boolean" && Array.isArray(document.facets)
+    && document.facets.every((facet) => typeof facet?.property === "string" && Array.isArray(facet.values) && typeof facet.otherRows === "number" && typeof facet.nulls === "number")
 }
 
 /** A facet count as the cell gave it: exact, or "≥ n" past the scan bound. */
