@@ -1791,8 +1791,6 @@ pub(crate) struct ClosedSchemaProfile {
 /// Precisely admitted closed-schema type-array forms.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ClosedSchemaUnions {
-    /// One explicit type only.
-    None,
     /// The declared closed non-null type or null.
     Nullable,
     /// Existing ActionIR input leaves: nullable primitives or bounded JSON.
@@ -1862,12 +1860,6 @@ pub(crate) fn validate_closed_schema(
                 artifact_id,
                 profile,
             ),
-            ClosedSchemaUnions::None => diagnostics.push(invalid_diagnostic(
-                code,
-                format!("closed {subject} schema requires one explicit type"),
-                format!("{path}.type"),
-                artifact_id,
-            )),
         }
         return;
     }
