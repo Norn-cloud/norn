@@ -7,12 +7,12 @@ export const LIFECYCLE_CSS = `
 .norn-life-title { margin: 0; font-size: .9375rem; font-weight: 600; }
 .norn-life-meta { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
 .norn-life-board { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 11rem; justify-content: start; gap: 1rem 4rem; align-items: start;
-  padding: 1.25rem 2.5rem 3rem 1.25rem; border-radius: var(--radius-node, .75rem); background: color-mix(in oklab, var(--muted, #f4f4f5) 45%, transparent); overflow-x: auto; }
-.norn-life[dir="rtl"] .norn-life-board { padding: 1.25rem 1.25rem 3rem 2.5rem; }
+  padding: 1.25rem 2.5rem max(1.25rem, calc(1rem + var(--norn-life-lanes, 0) * 1rem)) 1.25rem; border-radius: var(--radius-node, .75rem); background: color-mix(in oklab, var(--muted, #f4f4f5) 45%, transparent); overflow-x: auto; }
+.norn-life[dir="rtl"] .norn-life-board { padding-inline: 1.25rem 2.5rem; }
 .norn-life-col { display: grid; gap: .75rem; align-content: start; position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; }
 .norn-life-state { display: grid; gap: .125rem; padding: .625rem .75rem; border-radius: var(--radius-node, .75rem); background: var(--card, #fff);
   border: 1px solid var(--node-border, var(--border, #e5e5e5)); box-shadow: var(--elevation-node, 0 1px 2px rgb(0 0 0 / .06)); transition: border-color .15s, box-shadow .15s; }
-.norn-life-state[data-ending] { border-style: double; border-width: 3px; }
+.norn-life-state[data-ending] { border-style: double; border-width: 3px; padding: calc(.625rem - 2px) calc(.75rem - 2px); }
 .norn-life-state[data-current] { border-color: var(--primary, #2563eb); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary, #2563eb) 25%, transparent); }
 .norn-life-name { font-weight: 500; }
 .norn-life-count { font-variant-numeric: tabular-nums; font-size: 1.25rem; font-weight: 600; line-height: 1.2; }
@@ -21,6 +21,8 @@ export const LIFECYCLE_CSS = `
 .norn-life-arrows { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
 .norn-life-arrows path { fill: none; stroke: color-mix(in oklab, var(--foreground, #111) 28%, transparent); stroke-width: 1.25; }
 .norn-life-arrows path[data-active] { stroke: var(--primary, #2563eb); stroke-width: 2.25; }
+.norn-life-arrows marker path { stroke: none; fill: color-mix(in oklab, var(--foreground, #111) 40%, transparent); }
+.norn-life-arrows marker[id$="-on"] path { fill: var(--primary, #2563eb); }
 .norn-life-arrows text { font-size: 11px; fill: var(--muted-foreground, #666); paint-order: stroke; stroke: var(--background, #fff); stroke-width: 3px; }
 .norn-life-arrows text[data-active] { fill: var(--primary, #2563eb); font-weight: 600; }
 .norn-life-foot { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }

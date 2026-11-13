@@ -141,6 +141,82 @@ export function layout(lifecycle: LifecycleDoc): string[][] {
   return columns.filter((column) => column !== undefined)
 }
 
+/** A card's edges, in the board's own coordinates. */
+export interface Box {
+  readonly left: number
+  readonly top: number
+  readonly right: number
+  readonly bottom: number
+}
+
+export type Point = readonly [number, number]
+
+/** An arrow as data: straight to `to`, or curved by one (quadratic) or two (cubic) control points. */
+export interface ArrowRoute {
+  readonly start: Point
+  readonly segments: readonly { readonly to: Point; readonly via?: readonly Point[] }[]
+  readonly label: Point
+}
+
+/** A route's SVG path data. */
+export function pathData(route: ArrowRoute): string {
+  const at = (point: Point) => `${point[0]} ${point[1]}`
+  return `M${at(route.start)}` + route.segments.map((segment) =>
+    !segment.via ? ` L${at(segment.to)}` : ` ${segment.via.length === 1 ? "Q" : "C"}${segment.via.map(at).join(" ")} ${at(segment.to)}`).join("")
+}
+
+/** Straight runs through `points`, each corner rounded. */
+function rounded(points: readonly Point[], radius: number): ArrowRoute["segments"] {
+  const segments: { to: Point; via?: Point[] }[] = []
+  for (let index = 1; index < points.length; index += 1) {
+    const [x, y] = points[index]!
+    const next = points[index + 1]
+    if (!next) {
+      segments.push({ to: [x, y] })
+      continue
+    }
+    const [px, py] = points[index - 1]!
+    const r = Math.min(radius, Math.hypot(x - px, y - py) / 2, Math.hypot(next[0] - x, next[1] - y) / 2)
+    segments.push({ to: [x - Math.sign(x - px) * r, y - Math.sign(y - py) * r] })
+    segments.push({ to: [x + Math.sign(next[0] - x) * r, y + Math.sign(next[1] - y) * r], via: [[x, y]] })
+  }
+  return segments
+}
+
+/**
+ * One arrow from card `a` to card `b`, `hop` columns ahead, drawn only where no card is: in the
+ * gaps between columns and below the lowest card (`floor`). `layout` puts a transition's target at
+ * most one column ahead, so a forward arrow crosses one gap. Within a column it arcs through the
+ * gap on the column's far side; one column back it returns through the gap, lower on the cards
+ * than the forward arrows; further back it leaves by the gap, runs under every card in lane
+ * `lane`, and comes up the gap beside its target.
+ */
+export function routeArrow(a: Box, b: Box, hop: number, rtl: boolean, floor: number, lane: number): ArrowRoute {
+  const forward = rtl ? -1 : 1
+  const lead = (box: Box) => (rtl ? box.left : box.right)
+  const trail = (box: Box) => (rtl ? box.right : box.left)
+  const down = (box: Box, share: number) => box.top + (box.bottom - box.top) * share
+  if (hop > 0) {
+    const [x1, y1, x2, y2] = [lead(a), down(a, 0.5), trail(b), down(b, 0.5)]
+    const bend = (x2 - x1) / 2
+    return { start: [x1, y1], segments: [{ to: [x2, y2], via: [[x1 + bend, y1], [x2 - bend, y2]] }], label: [(x1 + x2) / 2, (y1 + y2) / 2 - 6] }
+  }
+  if (hop === 0) {
+    // A transition back to its own state loops on the one card.
+    const [y1, y2] = a === b ? [down(a, 0.3), down(a, 0.7)] : [down(a, 0.5), down(b, 0.5)]
+    const out = (rtl ? Math.min(lead(a), lead(b)) : Math.max(lead(a), lead(b))) + forward * 28
+    return { start: [lead(a), y1], segments: [{ to: [lead(b), y2], via: [[out, y1], [out, y2]] }], label: [out - forward * 4, (y1 + y2) / 2] }
+  }
+  const [x1, y1, x2, y2] = [trail(a), down(a, 0.72), lead(b), down(b, 0.72)]
+  if (hop === -1) {
+    const bend = (x2 - x1) / 2
+    return { start: [x1, y1], segments: [{ to: [x2, y2], via: [[x1 + bend, y1], [x2 - bend, y2]] }], label: [(x1 + x2) / 2, (y1 + y2) / 2 + 14] }
+  }
+  const shift = (lane % 3) * 6
+  const [leave, arrive, under] = [x1 - forward * (16 + shift), x2 + forward * (40 + shift), floor + 24 + lane * 16]
+  return { start: [x1, y1], segments: rounded([[x1, y1], [leave, y1], [leave, under], [arrive, under], [arrive, y2], [x2, y2]], 8), label: [(leave + arrive) / 2, under - 5] }
+}
+
 export type StateCount = { readonly kind: "count"; readonly count: number; readonly lowerBound: boolean } | { readonly kind: "pending" }
 
 export interface Counts {
@@ -213,6 +289,9 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   }
   const columns = layout(lifecycle)
   const column = new Map(columns.flatMap((states, index) => states.map((state) => [state, index] as const)))
+  // An arrow more than one column back runs under the cards; the board keeps room for each.
+  const lanes = lifecycle.transitions.reduce((count, transition) =>
+    count + transition.from.filter((from) => (column.get(transition.to) ?? 0) - (column.get(from) ?? 0) < -1).length, 0)
   root.innerHTML = `
     <section class="norn-life" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${locale}">
       <header class="norn-life-head">
@@ -221,8 +300,9 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       </header>
       <p class="norn-life-refused" data-region="refused" role="status" hidden></p>
       <p class="norn-life-refused" data-region="unavailable" role="status" hidden><span data-region="unavailable-text"></span> <button type="button" class="norn-life-retry" data-node="retry-button">${escape(w.retry)}</button></p>
-      <div class="norn-life-board" data-region="board">
-        <svg class="norn-life-arrows" aria-hidden="true"><defs><marker id="norn-life-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker></defs></svg>
+      <div class="norn-life-board" data-region="board" style="--norn-life-lanes:${lanes}">
+        <svg class="norn-life-arrows" aria-hidden="true"><defs>${["", "-on"].map((on) =>
+          `<marker id="norn-life-head${on}" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 8 4 0 8z"/></marker>`).join("")}</defs></svg>
         ${columns.map((column) => `<ol class="norn-life-col">${column.map((state) => `
           <li class="norn-life-state" data-state="${escape(state)}"${lifecycle.terminal.includes(state) ? " data-ending" : ""}>
             <span class="norn-life-name">${escape(label(state))}</span>
@@ -263,46 +343,24 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     const origin = board.getBoundingClientRect()
     const box = (state: string) => q(`[data-state="${CSS.escape(state)}"]`)?.getBoundingClientRect()
     const active = picked === null ? new Set<string>() : stepState(lifecycle, findings[picked]!, taken).transitions
-    const rtl = locale === "ar"
-    // Routed by column: forward edge to edge, within a column an arc along the outer side,
-    // backward a dip below the cards, so no arrow crosses a card.
-    const bottom = Math.max(0, ...lifecycle.states.map((state) => (box(state)?.bottom ?? origin.top) - origin.top))
-    const x = (value: number) => value - origin.left + board.scrollLeft
-    const y = (value: number) => value - origin.top
+    // Cards in the board's own coordinates; the routes are `routeArrow`'s.
+    const local = (rect: DOMRect): Box => ({ left: rect.left - origin.left + board.scrollLeft, right: rect.right - origin.left + board.scrollLeft, top: rect.top - origin.top, bottom: rect.bottom - origin.top })
+    const cards = new Map(lifecycle.states.flatMap((state) => { const rect = box(state); return rect ? [[state, local(rect)] as const] : [] }))
+    const floor = Math.max(0, ...[...cards.values()].map((card) => card.bottom))
     const parts: string[] = []
+    let lane = 0
     for (const transition of lifecycle.transitions) {
-      const to = box(transition.to)
+      const to = cards.get(transition.to)
       const toColumn = column.get(transition.to)
       if (!to || toColumn === undefined) continue
       for (const from of transition.from) {
-        const a = box(from)
+        const a = cards.get(from)
         const fromColumn = column.get(from)
         if (!a || fromColumn === undefined) continue
-        let d: string
-        let lx: number
-        let ly: number
-        if (toColumn > fromColumn) {
-          const x1 = x(rtl ? a.left : a.right), y1 = y(a.top + a.height / 2)
-          const x2 = x(rtl ? to.right : to.left), y2 = y(to.top + to.height / 2)
-          const bend = (x2 - x1) / 2
-          d = `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
-          ;[lx, ly] = [(x1 + x2) / 2, (y1 + y2) / 2 - 6]
-        } else if (toColumn === fromColumn) {
-          const side = rtl ? -1 : 1
-          const x1 = x(rtl ? a.left : a.right), y1 = y(a.top + a.height / 2)
-          const x2 = x(rtl ? to.left : to.right), y2 = y(to.top + to.height / 2)
-          const out = Math.max(x1, x2) * (side > 0 ? 1 : 0) + Math.min(x1, x2) * (side > 0 ? 0 : 1) + side * 28
-          d = `M${x1} ${y1} C${out} ${y1} ${out} ${y2} ${x2} ${y2}`
-          ;[lx, ly] = [out - side * 4, (y1 + y2) / 2]
-        } else {
-          const x1 = x(a.left + a.width / 2), y1 = y(a.bottom)
-          const x2 = x(to.left + to.width / 2), y2 = y(to.bottom)
-          const dip = bottom + 22
-          d = `M${x1} ${y1} C${x1} ${dip} ${x2} ${dip} ${x2} ${y2}`
-          ;[lx, ly] = [(x1 + x2) / 2, dip - 4]
-        }
-        const on = active.has(transition.id) ? " data-active" : ""
-        parts.push(`<path d="${d}" marker-end="url(#norn-life-head)"${on}/><text x="${lx}" y="${ly}" text-anchor="middle"${on}>${escape(label(transition.id))}</text>`)
+        const hop = toColumn - fromColumn
+        const route = routeArrow(a, to, hop, locale === "ar", floor, hop < -1 ? lane++ : 0)
+        const on = active.has(transition.id)
+        parts.push(`<path d="${pathData(route)}" marker-end="url(#norn-life-head${on ? "-on" : ""})"${on ? " data-active" : ""}/><text x="${route.label[0]}" y="${route.label[1]}" text-anchor="middle"${on ? " data-active" : ""}>${escape(label(transition.id))}</text>`)
       }
     }
     svg.setAttribute("width", String(board.scrollWidth))
