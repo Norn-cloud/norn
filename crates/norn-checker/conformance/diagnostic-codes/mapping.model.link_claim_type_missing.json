@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.link_claim_type_missing",
+  "message": "map {map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

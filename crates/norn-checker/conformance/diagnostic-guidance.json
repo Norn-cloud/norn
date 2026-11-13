@@ -1492,6 +1492,10 @@
     "fix": "Use a lifecycle mapping rule for lifecycle properties; use a property mapping rule when the named property has no lifecycle."
   },
   {
+    "code": "mapping.model.link_claim_type_missing",
+    "fix": "Include norn.ObservedLinkClaim (registry/core/artifacts/norn.ObservedLinkClaim.entity.json) in the definition set, or install on a host whose trusted base carries it: the cell records every mapped link as an observed link claim."
+  },
+  {
     "code": "mapping.model.link_target_mismatch",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
