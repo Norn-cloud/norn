@@ -109,6 +109,9 @@ pub struct Column {
     pub units: Vec<Origin>,
     /// Effective markings of every origin (VIEW-MARK-1).
     pub markings: BTreeSet<String>,
+    /// What readers call the column, when the definition names it: declared
+    /// where the column is defined, kept wherever it passes through unchanged.
+    pub label: Option<String>,
 }
 
 impl Column {
@@ -124,6 +127,7 @@ impl Column {
             currency: None,
             units: Vec::new(),
             markings: BTreeSet::new(),
+            label: None,
         }
     }
 
@@ -833,7 +837,7 @@ impl Builder<'_, '_> {
 
     fn node(&mut self, node: &ViewNode, at: &str) -> Option<AdmittedNode> {
         let before = self.out.len();
-        let admitted = match node {
+        let mut admitted = match node {
             ViewNode::Scan(scan) => self.scan(&scan.input, at),
             ViewNode::Filter(filter) => self.filter(&filter.input, &filter.predicate, at),
             ViewNode::Project(project) => self.project(project, at),
@@ -846,7 +850,7 @@ impl Builder<'_, '_> {
         if self.out.len() > before {
             return None;
         }
-        if let Some(admitted) = &admitted {
+        if let Some(admitted) = &mut admitted {
             let mut names = BTreeSet::new();
             for column in &admitted.schema.columns {
                 if !names.insert(column.name.as_str()) {
@@ -856,6 +860,24 @@ impl Builder<'_, '_> {
                         at,
                     );
                     return None;
+                }
+            }
+            for (name, label, pointer) in declared_labels(node) {
+                if label.trim().is_empty() {
+                    self.fail(
+                        codes::INVALID_PLAN,
+                        "a column label is not blank",
+                        format!("{at}{pointer}"),
+                    );
+                    return None;
+                }
+                if let Some(column) = admitted
+                    .schema
+                    .columns
+                    .iter_mut()
+                    .find(|column| column.name == name)
+                {
+                    column.label = Some(label.to_owned());
                 }
             }
         }
@@ -925,6 +947,7 @@ impl Builder<'_, '_> {
                 .iter()
                 .map(|marking| marking.as_str().to_owned())
                 .collect(),
+            label: None,
         }];
         for id in &input.properties {
             let Some(property) = object.property(id) else {
@@ -991,6 +1014,7 @@ impl Builder<'_, '_> {
                 currency,
                 units,
                 markings,
+                label: None,
             });
         }
         Some(AdmittedNode {
@@ -2098,6 +2122,62 @@ impl Builder<'_, '_> {
 }
 
 /// `input.<column>` exactly, with optional surrounding whitespace.
+/// The labels a node declares for the columns it defines: (column, label,
+/// pointer below the node).
+fn declared_labels(node: &ViewNode) -> Vec<(&str, &str, String)> {
+    let mut labels = Vec::new();
+    match node {
+        ViewNode::Project(project) => {
+            for (index, column) in project.columns.iter().enumerate() {
+                if let Some(label) = &column.label {
+                    labels.push((
+                        column.name.as_str(),
+                        label.as_str(),
+                        format!("/columns/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Aggregate(aggregate) => {
+            for (index, key) in aggregate.group_by.iter().enumerate() {
+                if let Some(label) = &key.label {
+                    labels.push((
+                        key.column.as_str(),
+                        label.as_str(),
+                        format!("/groupBy/{index}/label"),
+                    ));
+                }
+            }
+            for (index, measure) in aggregate.measures.iter().enumerate() {
+                if let Some(label) = &measure.label {
+                    labels.push((
+                        measure.name.as_str(),
+                        label.as_str(),
+                        format!("/measures/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Window(window) => {
+            for (index, column) in window.columns.iter().enumerate() {
+                if let Some(label) = &column.label {
+                    labels.push((
+                        column.name.as_str(),
+                        label.as_str(),
+                        format!("/columns/{index}/label"),
+                    ));
+                }
+            }
+        }
+        ViewNode::Scan(_)
+        | ViewNode::Filter(_)
+        | ViewNode::Join(_)
+        | ViewNode::Union(_)
+        | ViewNode::Dedupe(_) => {}
+    }
+    labels
+}
+
 fn passthrough(source: &str) -> Option<&str> {
     let name = source.trim().strip_prefix("input.")?;
     valid_name(name).then_some(name)

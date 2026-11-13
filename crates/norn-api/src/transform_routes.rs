@@ -86,6 +86,10 @@ pub struct NornTransformColumn {
     /// quantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;
     /// empty when it has none or the row does not carry them.
     pub unit_from: Vec<String>,
+    /// What readers call the column, as its definition labels it; null when
+    /// the definition names it only by `name`.
+    #[schema(required = true, nullable = true)]
+    pub label: Option<String>,
 }
 
 /// One output row.
@@ -445,6 +449,7 @@ fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
         markings: column.markings.iter().cloned().collect(),
         currency_from: column.currency.as_ref().and_then(holding),
         unit_from: column.units.iter().filter_map(holding).collect(),
+        label: column.label.clone(),
     }
 }
 

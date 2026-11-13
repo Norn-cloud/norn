@@ -1045,3 +1045,48 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
     let found = findings_of(&window(json!(["weight_unit"])));
     assert!(found.is_empty(), "{found:#?}");
 }
+
+#[test]
+fn a_column_label_travels_with_the_column_and_a_blank_one_refuses() {
+    let nodes = json!({
+        "s": {"op": "scan", "input": "s"},
+        "p": {"op": "project", "input": "s", "columns": [
+            {"name": "id", "expression": "input.id"},
+            {"name": "lane", "expression": "input.lane", "label": "Lane"},
+            {"name": "weight", "expression": "input.weight"},
+            {"name": "weight_unit", "expression": "input.weight_unit"}]},
+        "a": {"op": "aggregate", "input": "p",
+            "groupBy": [{"column": "lane"}, {"column": "weight_unit", "label": "Unit"}],
+            "measures": [{"name": "total", "fn": "sum", "column": "weight", "label": "Total weight"},
+                {"name": "n", "fn": "count"}]},
+        "w": {"op": "window", "input": "a", "partitionBy": ["weight_unit"],
+            "orderBy": [{"column": "lane", "direction": "asc"}],
+            "columns": [{"name": "place", "fn": "row_number", "label": "Place"}]}
+    });
+    let pool = shipments(nodes.clone(), "w");
+    let found = findings_of(&pool);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
+    let schema = plan.output_schema();
+    let label = |name: &str| schema.column(name).expect("column").label.clone();
+    // Declared where the column is defined, kept wherever it passes through.
+    assert_eq!(label("lane").as_deref(), Some("Lane"));
+    assert_eq!(label("weight_unit").as_deref(), Some("Unit"));
+    assert_eq!(label("total").as_deref(), Some("Total weight"));
+    assert_eq!(label("place").as_deref(), Some("Place"));
+    assert_eq!(label("n"), None);
+    // A blank label names nothing.
+    let mut blank = nodes;
+    blank["a"]["measures"][1]["label"] = json!("  ");
+    let found = findings_of(&shipments(blank, "w"));
+    assert!(
+        found
+            .iter()
+            .any(|finding| finding.code == codes::INVALID_PLAN
+                && finding
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.pointer.ends_with("/nodes/a/measures/1/label"))),
+        "{found:#?}"
+    );
+}
