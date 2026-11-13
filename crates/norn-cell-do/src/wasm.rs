@@ -10,17 +10,19 @@
 //! principals exist only in builds with the `fixtures` feature (local smoke
 //! tests). The analytics cell also needs the stage's lineage key
 //! (`NORN_LINEAGE_KEY`, at least 32 bytes) and refuses to open without it.
+//!
+//! The two demo scopes are seeded by this build. Every other scope is a
+//! [`Tenant`]: vacant, writing nothing, until its organization's owner
+//! provisions it (`POST /v1/cell:provision`).
 
-use norn_api::definition_routes::DefinitionKinds;
-use norn_api::host::DevHost;
-use norn_api::question_routes::AdHocQuestions;
 use norn_api::scope::CellScope;
 use norn_cell::workers::WorkersEngine;
 use wasm_bindgen::prelude::*;
 
 use crate::analytics::{self, DemoQuestions};
-use crate::policy::{DEMO_GRANTS, ReadPolicy};
+use crate::policy::DEMO_GRANTS;
 use crate::principal::{PrincipalResolver, TokenPrincipals};
+use crate::tenant::Tenant;
 use crate::{seed, server};
 
 enum Principals {
@@ -46,16 +48,8 @@ impl Principals {
 /// One opened tenant cell.
 #[wasm_bindgen]
 pub struct NornCell {
-    host: DevHost<WorkersEngine>,
-    /// The cell's admitted questions, when it publishes any.
-    questions: Option<DemoQuestions>,
+    tenant: Tenant<WorkersEngine>,
     principals: Principals,
-    /// The verified caller the policy reads, for `GET /v1/access`.
-    caller: std::sync::Arc<crate::policy::CallerSlot>,
-    /// The cell's collections, for `GET /v1/access`.
-    object_types: Vec<String>,
-    /// The retained-definition kinds this cell admits.
-    kinds: DefinitionKinds,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -77,16 +71,17 @@ pub struct Reply {
 
 #[wasm_bindgen]
 impl NornCell {
-    /// Open (provisioning on first use) the cell for the DO's own scope.
+    /// Open the cell for the DO's own scope: a demo scope is seeded on first
+    /// use; any other scope is served if it was provisioned, else vacant.
     /// `issuer` and `jwks` are the pinned token issuer and its key document
     /// (fetched at `now_ms`, Unix milliseconds); without the `fixtures` feature
     /// both are required. `lineage_key` is the stage secret
     /// (`NORN_LINEAGE_KEY`) that keys the analytics cell's lineage handles.
     ///
     /// # Errors
-    /// The scope has no published cell, provisioning failed, no usable issuer
-    /// keys were supplied, or the analytics cell has no lineage key of at
-    /// least 32 bytes.
+    /// Seeding failed, the storage holds a cell this host cannot serve, no
+    /// usable issuer keys were supplied, or the analytics cell has no lineage
+    /// key of at least 32 bytes.
     #[wasm_bindgen(constructor)]
     pub fn new(
         storage: JsValue,
@@ -102,72 +97,47 @@ impl NornCell {
             org_id,
             environment_id,
         };
-        let engine = WorkersEngine::new(storage);
-        let (store, questions) = if scope == seed::demo_scope() {
-            (seed::provision(engine, &scope).map_err(rejected)?, None)
+        let tenant = (if scope == seed::demo_scope() {
+            let store = seed::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
         } else if scope == analytics::analytics_scope() {
             let analytics::Analytics {
                 store,
                 plan,
                 definitions,
                 catalog,
-            } = analytics::provision(engine, &scope).map_err(rejected)?;
+            } = analytics::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
             let questions = DemoQuestions::new(plan, scope.clone())
                 .try_with_handle_key(lineage_key.as_deref())
                 .map_err(rejected)?
                 .with_metrics(definitions, catalog);
-            (store, Some(questions))
+            Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, Some(questions))
         } else {
-            return Err(JsValue::from_str("no cell is published for this scope"));
-        };
-        // Data reads are decided by the kernel PDP over this cell's own model.
-        let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS)
-            .map_err(rejected)?;
-        let slot = policy.caller();
-        let caller = policy.caller();
-        let object_types = store
-            .model()
-            .object_types()
-            .map(|object_type| object_type.name.as_str().to_owned())
-            .collect();
+            Tenant::open(
+                scope.clone(),
+                &DEMO_GRANTS,
+                Box::new(move || Ok(WorkersEngine::new(storage.clone()))),
+            )
+        })
+        .map_err(rejected)?;
+        let slot = tenant.caller();
         let principals = match (issuer, jwks) {
             (Some(issuer), Some(jwks)) => Principals::Tokens(
-                TokenPrincipals::new(&issuer, &jwks, scope.clone(), slot, seconds(now_ms))
+                TokenPrincipals::new(&issuer, &jwks, scope, slot, seconds(now_ms))
                     .map_err(|refusal| JsValue::from_str(&refusal.code))?,
             ),
             #[cfg(feature = "fixtures")]
-            (None, None) => Principals::Fixtures(crate::principal::FixturePrincipals::new(
-                crate::principal::DEMO_FIXTURES,
-                slot,
-            )),
+            (None, None) => Principals::Fixtures(
+                crate::principal::FixturePrincipals::new(crate::principal::DEMO_FIXTURES, slot)
+                    .of_org(crate::principal::FIXTURE_ORG, &scope),
+            ),
             _ => {
                 return Err(JsValue::from_str(
                     "the token issuer and its JWKS are required",
                 ));
             }
         };
-        let host = DevHost::from_store(store, scope, |command| command.payload.clone())
-            .map_err(|refusal| JsValue::from_str(&refusal.code))?
-            .with_authorizer(policy);
-        Ok(Self {
-            host,
-            questions,
-            principals,
-            caller,
-            object_types,
-            // Dashboards are built in; agents wait for lane CANVAS's checker.
-            kinds: DefinitionKinds::default()
-                // Sign-offs verify against the checker's words, as Studio shows
-                // them; D59: a flow is installed by signing the server's words for it.
-                .with_restater(norn_api::definition_routes::checker_restatement)
-                // A binding runs as a role of the cell's declared grant table.
-                .with_roles(
-                    crate::policy::DEMO_GRANTS
-                        .entries
-                        .iter()
-                        .map(|(role, _)| *role),
-                ),
-        })
+        Ok(Self { tenant, principals })
     }
 
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
@@ -208,7 +178,7 @@ impl NornCell {
         reason = "wasm-bindgen passes an optional string by value"
     )]
     pub fn fetch(
-        &self,
+        &mut self,
         method: &str,
         path: &str,
         query: &str,
@@ -216,11 +186,6 @@ impl NornCell {
         now_ms: f64,
         body: Option<String>,
     ) -> Reply {
-        let questions = self
-            .questions
-            .as_ref()
-            .map(|questions| -> &dyn AdHocQuestions<WorkersEngine> { questions });
-        let resolver = self.principals.resolver();
         let request = server::Request {
             method,
             path,
@@ -229,17 +194,7 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
-        let response = if path == "/v1/access" {
-            server::access(
-                &self.host,
-                resolver,
-                &self.caller,
-                &self.object_types,
-                &request,
-            )
-        } else {
-            server::handle_all(&self.host, resolver, questions, &self.kinds, &request)
-        };
+        let response = self.tenant.handle(self.principals.resolver(), &request);
         let refresh_jwks = match &self.principals {
             Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
             #[cfg(feature = "fixtures")]
