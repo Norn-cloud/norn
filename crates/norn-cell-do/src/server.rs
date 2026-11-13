@@ -656,7 +656,10 @@ fn route<E: SqlEngine>(
     } else if let Some(action) = action {
         governed_action(host, questions, actor, (method, action, query, body), now)
     } else if ad_hoc {
-        ad_hoc_question(host, questions, actor, method, path, query, body)
+        // A runtime that publishes no questions answers no ad-hoc question
+        // either: the base's answer, whatever the body (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        ad_hoc_question(host, published, actor, method, path, query, body)
     } else if path == "/v1/questions:catalog" {
         ad_hoc_catalog(cell(host)?, questions, actor, method, query)
     } else if path == "/v1/transforms:compile" {
