@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyId, DigestId } from "@/components/copy-id"
+import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
@@ -74,7 +74,7 @@ export function ObjectPage() {
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="text-meta text-muted-foreground">{concept?.title ?? conceptTitle(name)}</div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:anywhere]">{data ? recordName(data.object.document) : id}</h1>
+            <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
           </div>
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
