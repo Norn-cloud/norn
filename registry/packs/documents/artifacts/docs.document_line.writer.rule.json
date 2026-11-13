@@ -14,12 +14,14 @@
         {
           "id": "edge_0",
           "sourceId": "in",
-          "targetId": "decision"
+          "targetId": "decision",
+          "type": "edge"
         },
         {
           "id": "edge_1",
           "sourceId": "decision",
-          "targetId": "out"
+          "targetId": "out",
+          "type": "edge"
         }
       ],
       "nodes": [
@@ -30,27 +32,44 @@
         },
         {
           "content": {
-            "expressions": [
+            "hitPolicy": "first",
+            "inputs": [
               {
+                "id": "condition",
+                "name": "condition",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "field": "facts",
                 "id": "out_facts",
-                "key": "facts",
-                "value": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]"
+                "name": "facts"
               },
               {
+                "field": "commands",
                 "id": "out_commands",
-                "key": "commands",
-                "value": "[]"
+                "name": "commands"
               },
               {
+                "field": "timers",
                 "id": "out_timers",
-                "key": "timers",
-                "value": "[]"
+                "name": "timers"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "row_0",
+                "condition": "",
+                "out_commands": "[]",
+                "out_facts": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]",
+                "out_timers": "[]"
               }
             ]
           },
           "id": "decision",
           "name": "decision",
-          "type": "expressionNode"
+          "type": "decisionTableNode"
         },
         {
           "id": "out",
@@ -72,10 +91,6 @@
               "additionalProperties": false,
               "properties": {
                 "amount": {
-                  "nornType": {
-                    "kind": "decimal",
-                    "scale": 2
-                  },
                   "type": "number"
                 },
                 "correction_evidence": {
@@ -91,10 +106,6 @@
                   "type": "string"
                 },
                 "document_total": {
-                  "nornType": {
-                    "kind": "decimal",
-                    "scale": 2
-                  },
                   "type": "number"
                 },
                 "id": {
@@ -137,20 +148,12 @@
                   "type": "string"
                 },
                 "lines_total": {
-                  "nornType": {
-                    "kind": "decimal",
-                    "scale": 2
-                  },
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "total": {
-                  "nornType": {
-                    "kind": "decimal",
-                    "scale": 2
-                  },
                   "type": "number"
                 }
               },
@@ -185,10 +188,6 @@
               "additionalProperties": false,
               "properties": {
                 "amount": {
-                  "nornType": {
-                    "kind": "decimal",
-                    "scale": 2
-                  },
                   "type": "number"
                 },
                 "currency": {
@@ -262,10 +261,6 @@
                 "additionalProperties": false,
                 "properties": {
                   "amount": {
-                    "nornType": {
-                      "kind": "decimal",
-                      "scale": 2
-                    },
                     "type": "number"
                   },
                   "corrected_by": {
@@ -284,17 +279,9 @@
                     "type": "string"
                   },
                   "lines_total": {
-                    "nornType": {
-                      "kind": "decimal",
-                      "scale": 2
-                    },
                     "type": "number"
                   },
                   "total": {
-                    "nornType": {
-                      "kind": "decimal",
-                      "scale": 2
-                    },
                     "type": "number"
                   }
                 },

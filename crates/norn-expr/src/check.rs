@@ -1414,29 +1414,6 @@ fn optional(ty: T) -> T {
 /// The one type two values of types `a` and `b` share, if any: equal types,
 /// strings (known sets join), lists and literal records of joinable shapes
 /// with exactly the same fields, and `null` joining into an optional.
-/// Whether `actual` may stand where `expected` is declared: a record by its
-/// members (a member it omits must be optional there), anything else by
-/// joining with the declaration.
-fn conforms(actual: &T, expected: &T) -> bool {
-    if let (T::Record(Rec::Literal(actual)), T::Record(Rec::Literal(expected))) = (actual, expected)
-    {
-        return actual.iter().all(|(name, ty)| {
-            expected
-                .get(name)
-                .is_some_and(|declared| conforms(ty, declared))
-        }) && expected.iter().all(|(name, declared)| {
-            actual.contains_key(name) || matches!(declared, T::Optional(_))
-        });
-    }
-    if let T::Optional(inner) = expected {
-        if let T::Optional(actual) = actual {
-            return conforms(actual, inner);
-        }
-        return matches!(actual, T::Null) || conforms(actual, inner);
-    }
-    join(actual, expected).is_some()
-}
-
 fn join(a: &T, b: &T) -> Option<T> {
     Some(match (a, b) {
         (T::Null, T::Null) => T::Null,
@@ -2228,27 +2205,6 @@ impl<'a> Checker<'a> {
                     "an empty list needs an expected list type".to_owned(),
                 ),
             };
-        }
-        // A declared record element type (a writer's `facts`, whose records
-        // patch objects of different shapes) is the list's type when every
-        // element conforms to it.
-        if let Some(declared @ T::Record(Rec::Literal(_))) = &element_expected {
-            let mut conforming = true;
-            for item in items {
-                if let Some(ty) = self.value(item, Some(declared)) {
-                    if !conforms(&ty, declared) {
-                        self.report::<()>(
-                            item,
-                            codes::TYPE_ERROR,
-                            format!("list element `{ty}` does not conform to `{declared}`"),
-                        );
-                        conforming = false;
-                    }
-                } else {
-                    conforming = false;
-                }
-            }
-            return conforming.then(|| T::List(Box::new(declared.clone())));
         }
         // A string-shaped output schema is not an expression context that
         // erases semantic date/timestamp kinds. Infer non-empty string lists

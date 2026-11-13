@@ -290,8 +290,9 @@ const LineCorrectionInput = Schema.Struct({
   id: Schema.String, currency: Schema.Literals(["USD"]), amount: Money, document_total: Schema.optionalKey(Money),
   correction_reason: Schema.String, correction_evidence: Schema.String,
 })
-// The writer reads and writes exact decimals at scale 2; the currency stays the document's own (USD).
-const Amount = Norn.decimal(2)
+// The writer's numbers are the stored decimals (ZEN computes them exactly); the
+// commit holds each written amount to its property's scale and currency.
+const Amount = Schema.Finite
 const WriterInput = Schema.Struct({
   id: Schema.String, currency: Schema.Literals(["USD"]), amount: Amount, document_total: Schema.optionalKey(Amount),
   correction_reason: Schema.String, correction_evidence: Schema.String,
