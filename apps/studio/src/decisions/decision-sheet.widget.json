@@ -283,6 +283,11 @@
                 "fieldId": "lastCode",
                 "type": "text",
                 "required": false
+              },
+              {
+                "fieldId": "refusedChoice",
+                "type": "text",
+                "required": false
               }
             ],
             "events": [
@@ -426,6 +431,22 @@
                   "outcome": "refused",
                   "category": "invalid"
                 }
+              },
+              {
+                "eventId": "refused-permission",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused",
+                  "category": "permission"
+                }
+              },
+              {
+                "eventId": "refused-precondition",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused",
+                  "category": "precondition"
+                }
               }
             ],
             "states": [
@@ -565,7 +586,7 @@
                 "from": "choosing",
                 "on": "decide",
                 "target": "sending",
-                "guard": "input.fields.choice != null and not input.fields.needsConfirm",
+                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and not input.fields.needsConfirm",
                 "effects": [
                   {
                     "kind": "start",
@@ -585,14 +606,14 @@
                 "from": "choosing",
                 "on": "decide",
                 "target": "confirming",
-                "guard": "input.fields.choice != null and input.fields.needsConfirm"
+                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and input.fields.needsConfirm"
               },
               {
                 "transitionId": "refused--decide",
                 "from": "refused",
                 "on": "decide",
                 "target": "sending",
-                "guard": "input.fields.choice != null and not input.fields.needsConfirm",
+                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and not input.fields.needsConfirm",
                 "effects": [
                   {
                     "kind": "start",
@@ -612,7 +633,7 @@
                 "from": "refused",
                 "on": "decide",
                 "target": "confirming",
-                "guard": "input.fields.choice != null and input.fields.needsConfirm"
+                "guard": "input.fields.choice != null and input.fields.choice != input.fields.refusedChoice and input.fields.needsConfirm"
               },
               {
                 "transitionId": "choosing--close",
@@ -722,6 +743,26 @@
                 "target": "refused",
                 "assign": {
                   "lastCode": "input.event.code"
+                }
+              },
+              {
+                "transitionId": "sending--refused-permission",
+                "from": "sending",
+                "on": "refused-permission",
+                "target": "refused",
+                "assign": {
+                  "lastCode": "input.event.code",
+                  "refusedChoice": "input.fields.choice"
+                }
+              },
+              {
+                "transitionId": "sending--refused-precondition",
+                "from": "sending",
+                "on": "refused-precondition",
+                "target": "refused",
+                "assign": {
+                  "lastCode": "input.event.code",
+                  "refusedChoice": "input.fields.choice"
                 }
               },
               {

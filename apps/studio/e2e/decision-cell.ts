@@ -90,9 +90,20 @@ export function fixtures(now = START) {
 }
 
 /** `legacy`: runs as RUNS first ships them: no `steps`, no `decision`, no ETag (a plain 200 each read). */
-export async function decisionCell(page: Page, options: { readonly empty?: boolean; readonly capped?: boolean; readonly legacy?: boolean } = {}): Promise<DecisionCell> {
+/** A decision whose server content is Arabic, for the right-to-left path end to end. */
+const ARABIC: StoredDecision = {
+  id: "dec_QXJhYmljLXJlY291bnQ", runId: "run_count_4", flow: { ruleId: "canon.cycle_count.flow.rule", version: 2, title: "جرد دوري" }, step: { id: "recount", label: "إعادة عدّ الصندوق؟" },
+  question: "عدد الصندوق A-14 مختلف بمقدار 3 غرامات. هل نعيد العدّ؟", risk: "low",
+  options: [
+    { id: "recount", label: "أعد العدّ", scope: "الصندوق A-14", effect: { binding: "count.recount" } },
+    { id: "accept", label: "اقبل العدد", scope: "الصندوق A-14", effect: { binding: "count.accept" } },
+  ],
+  agentPick: "recount", requestedAtMs: START - HOUR, expiresAtMs: START + 6 * 24 * HOUR,
+}
+
+export async function decisionCell(page: Page, options: { readonly empty?: boolean; readonly capped?: boolean; readonly legacy?: boolean; readonly arabic?: boolean } = {}): Promise<DecisionCell> {
   const { decisions: all, runs } = fixtures()
-  const decisions = options.empty ? [] : all
+  const decisions = options.empty ? [] : options.arabic ? [...all, ARABIC] : all
   let now = START
   let seq = 1000
   let fail = false
@@ -136,7 +147,8 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     if (decision === undefined) return refuse(route, 404, "decision.not_found", "There is no such decision for you.")
     if (decision.resolved) return refuse(route, 409, "decision.resolved", "Someone already resolved this decision.", { resolution: decision.resolved })
     if (now >= decision.expiresAtMs) return refuse(route, 410, "decision.expired", "This decision expired before it was decided.")
-    if (decision.lawRefuses) return refuse(route, 403, "decision.law_not_satisfied", "Refunds over 1,000.00 USD need a finance manager's approval.", {}, null)
+    // The law refuses this choice, and the server says what would let it through.
+    if (decision.lawRefuses && parsed.choice === "approve") return refuse(route, 403, "decision.law_not_satisfied", "Refunds over 1,000.00 USD need a finance manager's approval.", { explanation: "A finance manager can approve it from their inbox; you can still reject it." }, null)
     const problems: { code: string; message: string; span: { pointer: string } }[] = []
     if (!decision.options.some((o) => o.id === parsed.choice)) problems.push({ code: "decision.unknown_choice", message: "Choose one of the options.", span: { pointer: "/choice" } })
     if (typeof parsed.note === "string" && [...parsed.note].length > 500) problems.push({ code: "decision.note_too_long", message: "A note is at most 500 characters.", span: { pointer: "/note" } })

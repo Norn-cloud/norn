@@ -66,7 +66,7 @@ const WORDS = {
     "confirm.body": "You're choosing \"{0}\" ({1}). The run goes on with it as soon as the cell records it.",
     failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", back: "Back to inbox",
     decidedAs: "Decided: {0} · {1}", byYou: "by you", byOther: "by {0}", replayed: " (already recorded; the cell returned the first receipt)",
-    details: "Details", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
+    details: "Details", copy: "Copy", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
     resolvedDecided: "Decided by {0} at {1}", resolvedChoice: ": {0}", anotherDecider: "another decider", resolvedBody: "Someone else got there first. Nothing you chose was sent.",
     withdrawn: "Withdrawn at {0}", withdrawnBody: "The run no longer needs this decision.", expiredAt: "Expired at {0}", expiredBody: "The deadline passed before anyone decided.",
     expired: "Expired", gone: "No longer here", awaiting: "Waiting for approval", awaitingBody: "Your choice waits for an approval before it takes effect.",
@@ -80,7 +80,7 @@ const WORDS = {
     "confirm.body": "تختار «{0}» ({1}). يتابع التشغيل به فور تسجيل الخلية له.",
     failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", back: "العودة إلى الصندوق",
     decidedAs: "تقرّر: {0} · {1}", byYou: "بواسطتك", byOther: "بواسطة {0}", replayed: " (مسجّل من قبل؛ أعادت الخلية الإيصال الأول)",
-    details: "التفاصيل", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
+    details: "التفاصيل", copy: "نسخ", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
     resolvedDecided: "قرّر {0} عند {1}", resolvedChoice: ": {0}", anotherDecider: "صاحب قرار آخر", resolvedBody: "سبقك شخص آخر. لم يُرسل شيء مما اخترته.",
     withdrawn: "سُحب عند {0}", withdrawnBody: "لم يعد التشغيل بحاجة إلى هذا القرار.", expiredAt: "انتهت المهلة عند {0}", expiredBody: "انقضت المهلة قبل أن يقرّر أحد.",
     expired: "انتهت المهلة", gone: "لم يعد هنا", awaiting: "بانتظار الموافقة", awaitingBody: "اختيارك بانتظار موافقة قبل أن يسري.",
@@ -157,15 +157,18 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
   const id = escape(decision.id)
   const button = (node: string, variant: string, text = label(byId.get(node), locale)) =>
     `<button type="button" data-node="${node}" data-variant="${variant}" class="norn-button">${escape(text)}</button>`
+  // The scope line says something only when options differ in it; one shared scope is the sheet's own subject.
+  const scopes = new Set(decision.options.map((option) => option.scope))
   const options = decision.options
     .map(
       (option) => `
-      <label class="norn-option" data-slot="label">
+      <label class="norn-option" data-slot="label" data-option="${escape(option.id)}">
         <ui-radio value="${escape(option.id)}" aria-label="${escape(option.label)}"><ui-radio-indicator></ui-radio-indicator></ui-radio>
         <span class="norn-option-text">
           <span class="norn-option-label">${escape(option.label)}${option.id === decision.agentPick ? ` <span class="norn-chip" data-tone="agent" title="${escape(w.suggestedTitle)}">${escape(w.suggested)}</span>` : ""}</span>
-          <span class="norn-meta">${escape(option.scope)}</span>
+          ${scopes.size > 1 ? `<span class="norn-meta">${escape(option.scope)}</span>` : ""}
           <span class="norn-meta">${escape("action" in option.effect ? w.starts : w.records)}</span>
+          <span class="norn-problem" role="alert" data-refusal hidden></span>
         </span>
       </label>`,
     )
@@ -194,18 +197,18 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
           <ui-textarea data-node="note-input"><textarea id="norn-note-${id}" rows="3" placeholder="${escape(w.notePlaceholder)}" aria-describedby="norn-note-${id}-problem"></textarea></ui-textarea>
           <p class="norn-problem" role="alert" data-problem="/note" id="norn-note-${id}-problem" hidden></p>
         </div>
-        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-confirm-${id}" data-region="confirm" hidden>
+        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-confirm-${id}" data-region="confirm" data-tone="${decision.risk === "high" ? "danger" : "neutral"}" hidden>
           <p class="norn-confirm-title" id="norn-confirm-${id}">${escape(decision.risk === "high" ? w["confirm.high"] : w["confirm.action"])}</p>
           <p class="norn-meta" data-region="confirm-body"></p>
         </div>
-        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-leave-${id}" data-region="decision-leave" hidden>
+        <div class="norn-confirm" role="alertdialog" aria-labelledby="norn-leave-${id}" data-region="decision-leave" data-tone="neutral" hidden>
           <p class="norn-confirm-title" id="norn-leave-${id}">${escape(label(byId.get("decision-leave"), locale))}</p>
           <p class="norn-meta">${escape(w.leaveBody)}</p>
           <div class="norn-actions"><span class="norn-spacer"></span>${button("stay-button", "ghost")}${button("leave-button", "outline")}</div>
         </div>
         <footer class="norn-actions norn-footer" data-region="decision-actions">
           <span class="norn-meta" data-region="hint"></span>
-          ${button("close-button", "ghost")}<span class="norn-spacer"></span>${button("back-button", "ghost")}${button("retry-button", "outline")}${button("confirm-button", "danger")}${button("decide-button", "solid")}
+          ${button("close-button", "ghost")}<span class="norn-spacer"></span>${button("back-button", "ghost")}${button("retry-button", "outline")}${button("confirm-button", decision.risk === "high" ? "danger" : "solid")}${button("decide-button", "solid")}
         </footer>
       </form>
       <section class="norn-outcome-card" data-region="decision-outcome" hidden>
@@ -256,6 +259,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
   adoptSheetStyles(root.ownerDocument)
   root.innerHTML = sheetMarkup(document, decision, locale)
   let lastBody: unknown
+  // The server's words for the refused choice, kept from the refusal that refused it.
+  let refusedWhy = ""
   let now = options.now
   const transport: Transport = {
     async call(call, input, callOptions) {
@@ -306,9 +311,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
         [w.decision, decision.id],
       ]
       const dl = details.querySelector("dl")
-      // Long values (the receipt hash) read as their first 16 characters; the whole value is the title.
-      const short = (value: string) => (value.length > 20 ? `${value.slice(0, 16)}…` : value)
-      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt><dd><code title="${escape(value)}">${escape(short(value))}</code></dd>`).join("")
+      // Dates, numbers and ids read whole; only the receipt hash shortens, with a copy button for all of it.
+      const cell = (term: string, value: string) =>
+        term === w.receipt && value.length > 20
+          ? `<dd class="norn-hash"><code title="${escape(value)}">${escape(value.slice(0, 16))}…</code><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
+          : `<dd><span class="norn-value">${escape(value)}</span></dd>`
+      if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt>${cell(term, value)}`).join("")
       details.hidden = false
     } else if (state === "resolved") {
       const resolution = record(doc.resolution)
@@ -371,7 +379,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const top = record(lastBody)
     const status = q('[data-region="status"]')
     if (status) {
-      const message = state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
+      // A refusal of one option reads under that option, not here.
+      const onOption = state === "refused" && snapshot.fields.refusedChoice != null && snapshot.fields.refusedChoice === snapshot.fields.choice
+      const message = onOption ? "" : state === "refused" ? text(top.message) ?? String(snapshot.fields.lastCode ?? "") : state === "failed" ? w.failed : ""
       const extra = found.filter((p) => p.pointer !== "/choice" && p.pointer !== "/note" && p.message !== message).map((p) => p.message)
       status.textContent = [message, ...extra].filter(Boolean).join(" ")
       status.hidden = status.textContent === ""
@@ -381,6 +391,20 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       const words = found.filter((p) => p.pointer === problem.dataset.problem).map((p) => p.message).join(" ")
       problem.textContent = words
       problem.hidden = words === ""
+    }
+    // A choice the cell refused by law or permission stays refused: its radio is disabled and the
+    // server's reason and next step read under it, while the other options stay open.
+    const refusedChoice = typeof snapshot.fields.refusedChoice === "string" ? snapshot.fields.refusedChoice : null
+    if (state === "refused" && refusedChoice !== null) refusedWhy = [text(top.message), text(top.explanation)].filter(Boolean).join(" ")
+    for (const option of root.querySelectorAll<HTMLElement>("[data-option]")) {
+      const refused = option.dataset.option === refusedChoice
+      option.toggleAttribute("data-refused", refused)
+      option.querySelector("ui-radio")?.toggleAttribute("disabled", refused)
+      const why = option.querySelector<HTMLElement>("[data-refusal]")
+      if (why) {
+        why.textContent = refused ? refusedWhy : ""
+        why.hidden = !refused
+      }
     }
     const textarea = q<HTMLTextAreaElement>("textarea")
     if (textarea) {
@@ -418,6 +442,11 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     if (link && options.navigate) {
       event.preventDefault()
       options.navigate(link.getAttribute("href") ?? "")
+      return
+    }
+    const copy = target?.closest<HTMLElement>("[data-copy]")
+    if (copy) {
+      void navigator.clipboard?.writeText(copy.dataset.copy ?? "")
       return
     }
     if (target?.closest("[data-host=back]")) {
