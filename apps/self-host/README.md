@@ -63,7 +63,7 @@ Caddy answers on ports 80 and 443 and obtains and renews the certificate itself.
 
 Storage is reached only through the S3 API, so any S3-compatible store can replace SeaweedFS: set
 `CELLD_BUCKET`, `S3_ENDPOINT`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` on
-the `norn` service and drop `s3` and `s3-bucket`.
+the `norn` service, create the bucket, remove `NORN_CREATE_BUCKET` and drop `s3`.
 
 ## Data and secrets
 

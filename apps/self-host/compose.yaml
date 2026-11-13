@@ -16,6 +16,7 @@ services:
       NORN_OWNER_EMAIL: ${NORN_OWNER_EMAIL:-owner@norn.localhost}
       NORN_OWNER_PASSWORD: ${NORN_OWNER_PASSWORD:-}
       CELLD_BUCKET: s3://norn
+      NORN_CREATE_BUCKET: "1"
       S3_ENDPOINT: http://s3:8333
       AWS_REGION: us-east-1
       # The store accepts only requests from this compose network (see s3 below).
@@ -25,31 +26,7 @@ services:
       - norn-data:/data
     networks: [internal, edge]
     depends_on:
-      s3-bucket:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  s3:
-    image: chrislusf/seaweedfs:3.97
-    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
-    volumes:
-      - s3-data:/data
-    networks: [internal]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null"]
-      interval: 3s
-      retries: 40
-    restart: unless-stopped
-
-  s3-bucket:
-    image: chrislusf/seaweedfs:3.97
-    entrypoint: ["/bin/sh", "-c", "echo 's3.bucket.create -name norn' | weed shell -master=s3:9333 2>&1 | grep -v 'already exists' || true"]
-    networks: [internal]
-    depends_on:
-      s3:
-        condition: service_healthy
-
-  proxy:
+      proxy:
     image: caddy:2.10.2
     environment:
       NORN_SITE: ${NORN_SITE:-:8080}

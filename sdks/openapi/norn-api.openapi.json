@@ -156,6 +156,43 @@
         ]
       }
     },
+    "/v1/cell:base": {
+      "get": {
+        "tags": [
+          "crate::provision"
+        ],
+        "summary": "`GET /v1/cell:base`: the digest of this host's trusted base, for anyone.\nIt names artifacts the host's own build publishes (`core.`, `std.`), so\nit discloses nothing about any tenant, cell or caller; no scope is read.",
+        "description": "# Errors\nAny method but `GET` (405).",
+        "operationId": "get_base",
+        "responses": {
+          "200": {
+            "description": "The digest of the trusted base this host provisions cells against: the baseSha256 a provisioning submission names.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseDocument"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The request was refused: the route takes GET.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/cell:provision": {
       "post": {
         "tags": [
@@ -2192,6 +2229,19 @@
               "null"
             ],
             "description": "Lower-case hex SHA-256 of `restatement`; null with it."
+          }
+        }
+      },
+      "BaseDocument": {
+        "type": "object",
+        "description": "The trusted base a host provisions cells against.",
+        "required": [
+          "baseSha256"
+        ],
+        "properties": {
+          "baseSha256": {
+            "type": "string",
+            "description": "The digest a provisioning submission names as its `baseSha256`."
           }
         }
       },

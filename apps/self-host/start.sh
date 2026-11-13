@@ -20,6 +20,18 @@ secret() { # secret NAME: a 32-byte hex value, created on first use
 AUTH_SECRET=$(secret better-auth-secret)
 LINEAGE_KEY=$(secret lineage-key)
 
+# The bundled store has no accounts on its private network; create the fleet bucket there. Any
+# other S3-compatible store: create the bucket yourself and leave NORN_CREATE_BUCKET unset.
+if [ "${NORN_CREATE_BUCKET:-0}" = 1 ]; then
+  bucket=${CELLD_BUCKET#s3://}; bucket=${bucket%%/*}
+  for attempt in $(seq 1 60); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${S3_ENDPOINT}/${bucket}" || true)
+    case "$code" in 200|409) break ;; esac
+    [ "$attempt" = 60 ] && { echo "the store at ${S3_ENDPOINT} did not create bucket ${bucket} (HTTP ${code})" >&2; exit 1; }
+    sleep 1
+  done
+fi
+
 # The cell Worker. It trusts only the host tokens Studio signs (issuer and JWKS are pinned here,
 # never read from a request); the JWKS is fetched over this node's own listener.
 CELL=/data/deploy/cell

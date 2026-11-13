@@ -143,6 +143,38 @@ fn percent(value: &str) -> String {
         .collect()
 }
 
+/// Sign in to Studio; the session cookie is kept in memory for this run only.
+fn sign_in(session: &mut Studio, email: &str, password: &str) -> Result<(), String> {
+    let credentials = serde_json::json!({ "email": email, "password": password }).to_string();
+    let url = format!("{}/api/auth/sign-in/email", session.address);
+    let request = ureq::http::Request::builder()
+        .method("POST")
+        .uri(&url)
+        .header("origin", &session.origin)
+        .header("content-type", "application/json")
+        .body(credentials.into_bytes())
+        .map_err(|e| e.to_string())?;
+    let response = session
+        .agent
+        .run(request)
+        .map_err(|e| format!("sign-in: {e}"))?;
+    if response.status().as_u16() != 200 {
+        return Err(format!(
+            "sign-in refused (HTTP {}): check the email and password",
+            response.status().as_u16()
+        ));
+    }
+    session.cookie = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|line| line.split(';').next())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Ok(())
+}
+
 pub(super) fn execute(args: &WorkspaceArgs) -> Result<(String, bool), String> {
     let WorkspaceCommand::Create {
         studio,
@@ -195,34 +227,7 @@ pub(super) fn execute(args: &WorkspaceArgs) -> Result<(String, bool), String> {
         cookie: String::new(),
     };
 
-    // Sign in. The session cookie is kept in memory for these calls only.
-    let credentials = serde_json::json!({ "email": email, "password": password }).to_string();
-    let url = format!("{}/api/auth/sign-in/email", session.address);
-    let request = ureq::http::Request::builder()
-        .method("POST")
-        .uri(&url)
-        .header("origin", studio)
-        .header("content-type", "application/json")
-        .body(credentials.into_bytes())
-        .map_err(|e| e.to_string())?;
-    let response = session
-        .agent
-        .run(request)
-        .map_err(|e| format!("sign-in: {e}"))?;
-    if response.status().as_u16() != 200 {
-        return Err(format!(
-            "sign-in refused (HTTP {}): check the email and password",
-            response.status().as_u16()
-        ));
-    }
-    session.cookie = response
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .filter_map(|line| line.split(';').next())
-        .collect::<Vec<_>>()
-        .join("; ");
+    sign_in(&mut session, email, &password)?;
 
     let (status, text) = session.call("GET", "/api/me", None)?;
     let me = json_of("/api/me", status, &text)?;
