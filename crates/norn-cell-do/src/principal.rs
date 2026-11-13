@@ -284,10 +284,15 @@ impl PrincipalResolver for TokenPrincipals {
 pub struct FixturePrincipals {
     names: &'static [(&'static str, &'static [&'static str])],
     slot: Arc<CallerSlot>,
+    /// Whether the fixtures belong to this cell's organization.
+    member: bool,
 }
 
 /// The role table fixture principals report.
 pub const FIXTURE_ROLES: &str = "fixtures/1";
+
+/// The organization the demo fixtures belong to.
+pub const FIXTURE_ORG: &str = "org_demo";
 
 /// The fixture principals: `viewer@demo` holds `admin`, `guest@demo` `viewer`.
 pub const DEMO_FIXTURES: &[(&str, &[&str])] =
@@ -300,13 +305,26 @@ impl FixturePrincipals {
         names: &'static [(&'static str, &'static [&'static str])],
         slot: Arc<CallerSlot>,
     ) -> Self {
-        Self { names, slot }
+        Self {
+            names,
+            slot,
+            member: true,
+        }
+    }
+
+    /// The fixtures as members of `org` only, as a verified host token is:
+    /// at another organization's cell they are nobody.
+    #[must_use]
+    pub fn of_org(mut self, org: &str, cell: &CellScope) -> Self {
+        self.member = cell.org_id == org;
+        self
     }
 }
 
 impl PrincipalResolver for FixturePrincipals {
     fn resolve(&self, authorization: Option<&str>, _now: u64) -> Option<String> {
         let caller = authorization
+            .filter(|_| self.member)
             .and_then(|value| value.strip_prefix("Bearer fixture:"))
             .and_then(|name| self.names.iter().find(|(known, _)| *known == name))
             .map(|(name, roles)| Caller {
