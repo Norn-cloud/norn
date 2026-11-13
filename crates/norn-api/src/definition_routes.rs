@@ -669,6 +669,7 @@ fn validate<E: SqlEngine>(
             flow = checked;
         }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
+        "view" => saved_view(host, &value, &mut findings)?,
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
             question_findings(
@@ -881,6 +882,94 @@ fn members<'v>(
         ));
     }
     Some(object)
+}
+
+/// VIEW-DEF-1: a saved records view, a title over one declared object type
+/// with the grid query it applies: a filter and sort in the grid's own
+/// grammar, checked by the grid's own parser against the type's properties,
+/// and the columns it shows, each a declared property.
+fn saved_view<E: SqlEngine>(
+    host: &DevHost<E>,
+    value: &Value,
+    findings: &mut Vec<RefusalDiagnostic>,
+) -> Result<(), Refusal> {
+    let Some(object) = members(
+        value,
+        "",
+        &["title", "objectType", "filter", "sort", "columns"],
+        findings,
+    ) else {
+        return Ok(());
+    };
+    title(object.get("title"), "/title", findings);
+    let declared = match object.get("objectType").and_then(Value::as_str) {
+        Some(object_type) => {
+            let cell = host.cell()?;
+            let reader = cell.store().read();
+            if reader.model().has_type(object_type) {
+                Some(
+                    reader
+                        .model()
+                        .effective_property_types(object_type)
+                        .map_err(Refusal::host)?,
+                )
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    let Some(properties) = declared else {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "objectType names a declared object type",
+            "/objectType",
+        ));
+        return Ok(());
+    };
+    let sort = match object.get("sort") {
+        None => None,
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(_) => {
+            findings.push(RefusalDiagnostic::error(
+                codes::INVALID_PAYLOAD,
+                "sort is the grid's `property:asc|desc` list, comma separated",
+                "/sort",
+            ));
+            None
+        }
+    };
+    let query = crate::object_query::ObjectQueryParams {
+        filter: object.get("filter").map(Value::to_string),
+        sort,
+        ..crate::object_query::ObjectQueryParams::default()
+    };
+    if let Err(refusal) = crate::object_query::parse(&query, &properties) {
+        findings.extend(refusal.diagnostics);
+    }
+    match object.get("columns") {
+        None => {}
+        Some(Value::Array(columns)) => {
+            for (index, column) in columns.iter().enumerate() {
+                let known = column
+                    .as_str()
+                    .is_some_and(|id| properties.iter().any(|(name, _)| name == id));
+                if !known {
+                    findings.push(RefusalDiagnostic::error(
+                        codes::INVALID_PAYLOAD,
+                        "a column is a declared property of the view's type",
+                        format!("/columns/{index}"),
+                    ));
+                }
+            }
+        }
+        Some(_) => findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "columns is a list of property ids",
+            "/columns",
+        )),
+    }
+    Ok(())
 }
 
 fn pointer_token(key: &str) -> String {
