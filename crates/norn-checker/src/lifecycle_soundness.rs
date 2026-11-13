@@ -626,7 +626,10 @@ impl CancellationDeadEnd {
             ));
         }
         if !self.blocking.is_empty() {
-            parts.push(format!("smallest blocking set: guarded {:?}", self.blocking));
+            parts.push(format!(
+                "smallest blocking set: guarded {:?}",
+                self.blocking
+            ));
         }
         parts.join("; ")
     }
@@ -635,7 +638,9 @@ impl CancellationDeadEnd {
 fn good_outcome(outcome: Option<LifecycleOutcome>) -> bool {
     matches!(
         outcome,
-        Some(LifecycleOutcome::Completed | LifecycleOutcome::Compensated | LifecycleOutcome::Resting)
+        Some(
+            LifecycleOutcome::Completed | LifecycleOutcome::Compensated | LifecycleOutcome::Resting
+        )
     )
 }
 
@@ -750,11 +755,11 @@ fn fewest_guards(net: &Net, from: usize) -> Option<Vec<usize>> {
                 continue;
             }
             let step = usize::from(edge.modality == Modality::May);
-            let next = here.saturating_add(step);
+            let total = here.saturating_add(step);
             if let Some(known) = cost.get_mut(edge.to)
-                && next < *known
+                && total < *known
             {
-                *known = next;
+                *known = total;
                 if let Some(slot) = parent.get_mut(edge.to) {
                     *slot = Some(position);
                 }
@@ -867,7 +872,10 @@ mod tests {
         let mut chart = order(&json!({}));
         chart["transitions"][1]["guards"] = json!(["self.total == 0"]);
         chart["transitions"][0]["guards"] = json!(["self.total > 0"]);
-        let findings = check_machine(&Machine::declared(&lifecycle(chart.clone()), ORDER.to_vec()));
+        let findings = check_machine(&Machine::declared(
+            &lifecycle(chart.clone()),
+            ORDER.to_vec(),
+        ));
         assert_eq!(
             findings
                 .iter()
@@ -1037,10 +1045,20 @@ mod tests {
                 ]
             })
         };
-        let states: Vec<String> = ["draft", "confirmed", "review", "shipped", "cancelled", "refunded"]
-            .map(str::to_owned)
-            .to_vec();
-        assert_eq!(cancellation_gate(&lifecycle(chart()), &states, "confirm"), Ok(()));
+        let states: Vec<String> = [
+            "draft",
+            "confirmed",
+            "review",
+            "shipped",
+            "cancelled",
+            "refunded",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(
+            cancellation_gate(&lifecycle(chart()), &states, "confirm"),
+            Ok(())
+        );
         assert_eq!(
             cancellation_gate(&lifecycle(chart()), &states, "post"),
             Err(CancellationRefusal::UnknownTrigger)
@@ -1126,7 +1144,7 @@ mod tests {
         let states = ["active", "building"];
         // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
         assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
-        let mut opted = chart.clone();
+        let mut opted = chart;
         opted.events = vec![norn_ir::LifecycleEvent {
             id: "audit".into(),
             ignored_in: vec![norn_ir::LifecycleIgnore {
