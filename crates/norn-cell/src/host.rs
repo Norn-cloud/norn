@@ -1783,16 +1783,10 @@ where
                     .map(|b| format!("mapping-bundle:{}", b.digest))
                     .collect();
                 let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
-                    let page = reader
-                        .pending_observation(observation_id)
-                        .map_err(CommitError::Host)?
-                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?;
                     reader
-                        .pending_page_members(&page.observed)
+                        .pending_page_member_ids(observation_id)
                         .map_err(CommitError::Host)?
-                        .into_iter()
-                        .map(|(id, _)| id)
-                        .collect()
+                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?
                 } else if mapped.is_empty() {
                     Vec::new()
                 } else {
