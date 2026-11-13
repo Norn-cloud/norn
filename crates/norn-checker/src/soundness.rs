@@ -30,6 +30,10 @@
 use std::collections::{BTreeSet, VecDeque};
 
 /// A UI machine composed with a backend lifecycle (#1236); `ui_lifecycle` is the caller.
+#[allow(
+    dead_code,
+    reason = "`ui_lifecycle` composes with `Together` syncs; `Alone`, `narrow_endings`, `state` and the Quint export are exercised by the core's own tests until a caller needs them"
+)]
 pub(crate) mod compose;
 
 /// What reaching a state means for a run.

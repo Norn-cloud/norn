@@ -209,7 +209,7 @@ impl Page<'_> {
         };
         let ui = crate::ui_machine::page_net(self.machine);
         let opening = ui.initial.first().copied();
-        let backend_net = self.opening(&backend, opening, &assumed);
+        let backend_net = Self::opening(&backend, opening, &assumed);
         let product = match compose::compose(&ui, &backend_net, &sync) {
             Ok(product) => product,
             Err(error) => {
@@ -269,7 +269,6 @@ impl Page<'_> {
     /// The backend net the page opens on: every lifecycle state the object can be in (reachable
     /// from its initial states) that the page's opening state assumes.
     fn opening(
-        &self,
         backend: &Backend<'_>,
         opening: Option<usize>,
         assumed: &BTreeMap<usize, BTreeSet<usize>>,

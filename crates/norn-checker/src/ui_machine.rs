@@ -864,10 +864,7 @@ impl<'m> MachineChecker<'m> {
             }
             let outcome = outcome_of(event);
             match &event.source {
-                WidgetMachineEventSource::Timer { .. } => {
-                    facts.recovers.insert(from);
-                }
-                WidgetMachineEventSource::User { .. } => {
+                WidgetMachineEventSource::Timer { .. } | WidgetMachineEventSource::User { .. } => {
                     facts.recovers.insert(from);
                 }
                 WidgetMachineEventSource::PageOpened if from != machine.initial_state_id => {
