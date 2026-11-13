@@ -352,7 +352,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       const node = element.dataset.node ?? ""
       const on = enabled(machine, evaluate, snapshot, node)
       // Decide stays in view while a choice is still to be made, so the form says what it waits for.
-      element.hidden = !on && !(node === "decide-button" && (state === "choosing" || state === "sending"))
+      element.hidden = !on && !(node === "decide-button" && (state === "choosing" || state === "sending" || state === "refused"))
       element.disabled = !on
     }
     const decideButton = q<HTMLButtonElement>('[data-node="decide-button"]')
