@@ -1861,7 +1861,8 @@ mod alias_names {
 /// historical envelope, after later corrections and retractions.
 mod known_at {
     use super::{
-        CLOCK, CommitBatch, METALS, TIMES, WORLD, by_metal, code, engine, row, shaped, sync, tenant,
+        ArtifactEnvelope, ArtifactKind, ArtifactPayload, CLOCK, CommitBatch, EntityIrVersion,
+        EntityRootV2, METALS, TIMES, WORLD, by_metal, code, engine, row, shaped, sync, tenant,
     };
     use norn_cell::KnowledgeCutoff;
     use norn_cell::compute::{Engine as Answered, HistoricalQuestionResult};
@@ -2000,13 +2001,45 @@ mod known_at {
             "name": "demo.Other", "properties": [{ "id": "code", "type": { "kind": "text" } }]
         }))
         .expect("other type");
+        let artifacts: Vec<ArtifactEnvelope> = [&object, &other]
+            .into_iter()
+            .map(|object| {
+                let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+                    "../../../fixtures/ir/metrics/ontology.json"
+                ))
+                .expect("template");
+                let mut artifact = artifacts.swap_remove(0);
+                let name = object.name.as_str();
+                artifact.artifact_id = format!("{name}.entity.v2");
+                artifact.name = name.into();
+                artifact.namespace = name.split_once('.').expect("qualified").0.into();
+                artifact.payload = ArtifactPayload::from_kind_json(
+                    &ArtifactKind::Entity,
+                    norn_ir::json_tree_from_value(
+                        serde_json::to_value(EntityRootV2 {
+                            entity_version: EntityIrVersion::V2_0,
+                            object_type: (*object).clone(),
+                            mutation_authority: None,
+                            extensions: None,
+                        })
+                        .expect("typed root"),
+                    )
+                    .expect("tree"),
+                )
+                .expect("payload");
+                artifact
+            })
+            .collect();
+        let canonical_set =
+            String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("set"))
+                .expect("UTF8");
         let model = norn_cell::Model::from_definitions(&[object, other], &[]).expect("model");
         let before = store.model().model_hash().to_owned();
         store
             .install_definitions(
                 model,
                 norn_cell::InstalledDefinitionInput {
-                    canonical_set: "[]".into(),
+                    canonical_set,
                     registry: Vec::new(),
                     receipt_sha256: "a".repeat(64),
                     admission_receipt: None,
