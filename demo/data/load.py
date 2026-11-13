@@ -4,8 +4,9 @@
 
 Reads a bearer token on stdin (so it stays out of the process list), then
 POSTs each file made by `generate.py` (or any recorded export of that shape)
-to `BASE_URL/v1/observations:load?orgId=...&environmentId=...` in slices of
-at most 500 snapshot rows, in file order. Each slice is captured and mapped
+to `BASE_URL/v1/observations:load?orgId=...&environmentId=...` in slices, in
+file order: at most 500 snapshot rows and 60 KiB of request body (the hosted
+Worker accepts request bodies up to 64 KiB). Each slice is captured and mapped
 by the cell in OBS-PAGE-1 pages; a row the mapping refuses stays in the
 cell as quarantined evidence. Loading a file again lands nothing new.
 
@@ -22,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 SLICE_ROWS = 500
+SLICE_BYTES = 60 * 1024
 
 
 def post(url: str, token: str, body: dict) -> dict:
@@ -36,6 +38,22 @@ def post(url: str, token: str, body: dict) -> dict:
             return json.load(response)
     except urllib.error.HTTPError as error:
         sys.exit(f"{url}: {error.code} {error.read().decode(errors='replace')[:500]}")
+
+
+def slices(header: dict, rows: list) -> list:
+    """Consecutive rows, at most SLICE_ROWS and SLICE_BYTES of body each."""
+    out, current, size = [], [], len(json.dumps({**header, "snapshot": []}))
+    base = size
+    for row in rows:
+        width = len(json.dumps(row)) + 2
+        if current and (len(current) >= SLICE_ROWS or size + width > SLICE_BYTES):
+            out.append(current)
+            current, size = [], base
+        current.append(row)
+        size += width
+    if current:
+        out.append(current)
+    return out
 
 
 def main() -> None:
@@ -54,8 +72,8 @@ def main() -> None:
         counts = {"rows": 0, "landed": 0, "alreadyLanded": 0, "quarantined": 0}
         reasons: dict = {}
         started = time.monotonic()
-        for start in range(0, len(rows), SLICE_ROWS):
-            answer = post(url, token, {**header, "snapshot": rows[start : start + SLICE_ROWS]})
+        for page in slices(header, rows):
+            answer = post(url, token, {**header, "snapshot": page})
             for key in counts:
                 counts[key] += answer[key]
             for code, n in answer.get("quarantineReasons", {}).items():
