@@ -4407,3 +4407,165 @@ fn a_control_raises_an_event_and_a_choice_carries_its_value() {
         "{found:#?}"
     );
 }
+
+// UI-CATALOG-1: catalog components, joined to the page only by typed contracts.
+
+fn catalog_widget() -> Value {
+    let mut widget = machine_widget(approve_machine());
+    let ux = &mut widget["payload"]["ux"];
+    ux["catalog"] = json!([
+        {
+            "entryId": "kpi-tile", "label": { "en": "KPI tile", "ar": "بطاقة مؤشر" }, "trust": "contract_checked",
+            "framework": "foldkit", "density": "scan",
+            "props": [{ "fieldId": "title", "type": "text", "required": true }, { "fieldId": "note", "type": "text", "required": false }],
+            "events": [{ "eventId": "drill", "payload": [{ "fieldId": "period", "type": "text", "required": true }] }],
+            "behaviors": ["live_region"]
+        },
+        {
+            "entryId": "yield-map", "label": { "en": "Yield map", "ar": "خريطة المردود" }, "trust": "opaque_island",
+            "framework": "three", "density": "focus",
+            "props": [{ "fieldId": "points", "type": "json", "required": true }],
+            "events": [{ "eventId": "point-selected", "payload": [{ "fieldId": "siteId", "type": "text", "required": true }] }]
+        },
+        { "entryId": "money", "label": { "en": "Money", "ar": "مبلغ" }, "trust": "native", "renders": "number" }
+    ]);
+    let page = &mut ux["pages"][0];
+    page["root"]["children"].as_array_mut().expect("children").push(json!({
+        "nodeId": "kpi-node", "component": { "kind": "catalog", "entry": { "entryId": "kpi-tile" },
+            "props": { "title": "\"Approvals\"", "note": "input.fields.lastCode" } },
+        "children": []
+    }));
+    page["root"]["children"].as_array_mut().expect("children").push(json!({
+        "nodeId": "map-node", "component": { "kind": "catalog", "entry": { "entryId": "yield-map" },
+            "props": { "points": "input.fields.lastCode" } },
+        "children": []
+    }));
+    let machine = &mut page["machine"];
+    machine["events"].as_array_mut().expect("events").extend([
+        json!({ "eventId": "drill", "source": { "kind": "user", "nodeId": "kpi-node", "emits": "drill" },
+            "payload": [{ "fieldId": "period", "type": "text", "required": true }] }),
+        json!({ "eventId": "site", "source": { "kind": "user", "nodeId": "map-node", "emits": "point-selected" },
+            "payload": [{ "fieldId": "siteId", "type": "text", "required": true }] }),
+    ]);
+    machine["transitions"].as_array_mut().expect("transitions").extend([
+        json!({ "transitionId": "drill-browsing", "from": "browsing", "on": "drill", "target": "browsing" }),
+        json!({ "transitionId": "site-browsing", "from": "browsing", "on": "site", "target": "browsing" }),
+    ]);
+    widget
+}
+
+fn catalog_edit(change: impl FnOnce(&mut Value)) -> Value {
+    let mut widget = catalog_widget();
+    change(&mut widget["payload"]["ux"]);
+    widget
+}
+
+#[test]
+fn catalog_components_join_the_page_only_through_their_contracts() {
+    let found = ui_codes(catalog_widget());
+    let catalog: Vec<_> = widget_findings(catalog_widget())
+        .into_iter()
+        .filter(|finding| finding.code.as_str().starts_with("widget.catalog."))
+        .collect();
+    assert!(
+        found.is_empty() && catalog.is_empty(),
+        "{found:#?} {catalog:#?}"
+    );
+}
+
+fn catalog_code(widget: Value, code: &str, part: &str) {
+    let found: Vec<(String, String)> = widget_findings(widget)
+        .into_iter()
+        .map(|finding| (finding.code.as_str().to_owned(), finding.message))
+        .collect();
+    assert!(
+        found.iter().any(|(c, m)| c == code && m.contains(part)),
+        "expected {code} containing {part:?}; got {found:#?}"
+    );
+}
+
+#[test]
+fn every_catalog_join_is_checked() {
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["root"]["children"][3]["component"]["entry"]["entryId"] = json!("gauge");
+        }),
+        "widget.catalog.unknown_entry",
+        "gauge",
+    );
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["root"]["children"][3]["component"]["props"]["colour"] =
+                json!("\"red\"");
+        }),
+        "widget.catalog.unknown_prop",
+        "colour",
+    );
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["root"]["children"][3]["component"]["props"]
+                .as_object_mut()
+                .expect("props")
+                .remove("title");
+        }),
+        "widget.catalog.unbound_prop",
+        "title",
+    );
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["root"]["children"][3]["component"]["props"]["title"] = json!("1 + 1");
+        }),
+        "widget.catalog.invalid_prop",
+        "title",
+    );
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["machine"]["events"][9]["source"]["emits"] = json!("explode");
+        }),
+        "widget.catalog.unknown_event",
+        "explode",
+    );
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["machine"]["events"][9]["payload"][0]["type"] = json!("integer");
+        }),
+        "widget.catalog.event_payload_mismatch",
+        "drill",
+    );
+    catalog_code(
+        catalog_edit(|ux| ux["catalog"][1]["machine"] = approve_machine()),
+        "widget.catalog.island_machine",
+        "yield-map",
+    );
+    catalog_code(
+        catalog_edit(|ux| ux["catalog"][0]["renders"] = json!("number")),
+        "widget.catalog.duplicate_renderer",
+        "number",
+    );
+}
+
+#[test]
+fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
+    // A compiled Foldkit edge (`when`) in a catalog entry's machine is admitted (May for the checker).
+    let entry_machine = json!({
+        "machineVersion": "0.1", "initialStateId": "Expanded", "fields": [],
+        "events": [{ "eventId": "ClickedPin", "source": { "kind": "user", "nodeId": "self" } }],
+        "states": [{ "stateId": "Expanded", "role": "idle" }, { "stateId": "Pinned", "role": "idle" }],
+        "transitions": [
+            { "transitionId": "pin", "from": "Expanded", "on": "ClickedPin", "target": "Pinned", "componentGuard": "When#0" },
+            { "transitionId": "stay", "from": "Expanded", "on": "ClickedPin", "target": "Expanded", "componentGuard": "Otherwise#1" },
+            { "transitionId": "unpin", "from": "Pinned", "on": "ClickedPin", "target": "Expanded" }
+        ]
+    });
+    let widget = catalog_edit(|ux| ux["catalog"][0]["machine"] = entry_machine);
+    let found = ui_codes(widget);
+    assert!(found.is_empty(), "{found:#?}");
+    // On a page machine the same field is refused: a page's guards are ZEN the checker reads.
+    catalog_code(
+        catalog_edit(|ux| {
+            ux["pages"][0]["machine"]["transitions"][0]["componentGuard"] = json!("When#0");
+        }),
+        "widget.machine.component_guard_outside_catalog",
+        "ZEN",
+    );
+}

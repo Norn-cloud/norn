@@ -2496,6 +2496,42 @@
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
   },
   {
+    "code": "widget.catalog.duplicate_entry",
+    "fix": "Give every catalog entry its own id."
+  },
+  {
+    "code": "widget.catalog.duplicate_renderer",
+    "fix": "Keep one renderer per field type, so every screen draws that type the same way."
+  },
+  {
+    "code": "widget.catalog.event_payload_mismatch",
+    "fix": "Declare the page event's payload exactly as the entry's event declares it."
+  },
+  {
+    "code": "widget.catalog.invalid_prop",
+    "fix": "Write the prop as ZEN over input.fields with the prop's declared type."
+  },
+  {
+    "code": "widget.catalog.island_machine",
+    "fix": "Remove the machine: an island joins the checked machine only through its typed props and declared events."
+  },
+  {
+    "code": "widget.catalog.unbound_prop",
+    "fix": "Bind every required prop to a ZEN expression over the page machine's fields."
+  },
+  {
+    "code": "widget.catalog.unknown_entry",
+    "fix": "Declare the entry in this widget's catalog, or pin the widget artifact whose catalog holds it."
+  },
+  {
+    "code": "widget.catalog.unknown_event",
+    "fix": "Set emits to an event the entry declares; only catalog components emit named events."
+  },
+  {
+    "code": "widget.catalog.unknown_prop",
+    "fix": "Bind only the props the entry declares, or declare the prop on the entry."
+  },
+  {
     "code": "widget.interaction.control_missing_for_transition",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -2532,6 +2568,38 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "widget.lifecycle.assumption_violated",
+    "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption."
+  },
+  {
+    "code": "widget.lifecycle.completion_unknown",
+    "fix": "Add an unguarded way on, or accept that the guards decide whether the page and the lifecycle settle."
+  },
+  {
+    "code": "widget.lifecycle.stuck",
+    "fix": "Show an ending only once the lifecycle has reached one, or give the page a way on while the object moves."
+  },
+  {
+    "code": "widget.lifecycle.sync_not_accepted",
+    "fix": "Sync the page transition that takes the accepted outcome of the action call that fires the lifecycle transition."
+  },
+  {
+    "code": "widget.lifecycle.sync_unfired",
+    "fix": "Sync the transition the action's decision emits, or add it to the decision's fact schema."
+  },
+  {
+    "code": "widget.lifecycle.uncovered_transition",
+    "fix": "Remove the sync, or let the page reach the call while the object can take the transition."
+  },
+  {
+    "code": "widget.lifecycle.unknown_lifecycle",
+    "fix": "Name an object type of the set and the property of one of its lifecycles."
+  },
+  {
+    "code": "widget.lifecycle.unknown_reference",
+    "fix": "Name a transition and states the page and the lifecycle declare."
+  },
+  {
     "code": "widget.machine.absorbing_state",
     "fix": "Add a transition out of the state, or give it the terminal role if the page is done there."
   },
@@ -2542,6 +2610,14 @@
   {
     "code": "widget.machine.cancel_outside_pending",
     "fix": "Put cancel on a user or timer self-transition of the pending state, and handle the cancelled outcome."
+  },
+  {
+    "code": "widget.machine.completion_unknown",
+    "fix": "Add an unguarded way on (a person's cancel, a deadline), or accept that the guards decide whether the page can settle."
+  },
+  {
+    "code": "widget.machine.component_guard_outside_catalog",
+    "fix": "Write the guard as a ZEN expression; only a catalog entry's machine may name a component guard."
   },
   {
     "code": "widget.machine.control_without_event",

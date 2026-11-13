@@ -1,0 +1,7 @@
+{
+  "code": "widget.lifecycle.sync_not_accepted",
+  "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -576,6 +576,7 @@ fn stub_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic>
         return vec![];
     }
     vec![Diagnostic {
+        witness: None,
         code: DiagnosticCode::new("agent.validation.unknown_model"),
         severity: DiagnosticSeverity::Error,
         message: format!("model {model:?} is not allowed"),
@@ -1037,6 +1038,7 @@ fn binding_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnost
             vec![]
         }
         _ => vec![Diagnostic {
+            witness: None,
             code: DiagnosticCode::new("agent.validation.unbound_tool"),
             severity: DiagnosticSeverity::Error,
             message: format!("{tool} is not bound"),

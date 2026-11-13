@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.duplicate_entry",
+  "message": "a widget's catalog declares one entry id twice: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
