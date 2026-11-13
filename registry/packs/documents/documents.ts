@@ -221,9 +221,10 @@ export const Mapping = Norn.mapping({
       properties: [
         { property: "id", value: "input.name" }, { property: "document_id", value: "input.parent" }, { property: "line_no", value: "input.line_no" },
         { property: "description", value: "input.description" }, { property: "currency", value: "'USD'" },
-        { property: "amount", value: "input.amount" }, { property: "review", value: "'extracted'" },
+        { property: "amount", value: "input.amount" },
         { property: "correction_reason", value: "null" }, { property: "corrected_by", value: "null" }, { property: "correction_evidence", value: "null" },
       ],
+      lifecycles: [{ property: "review", state: "'extracted'" }],
       links: [{ link: "document", targetMap: "document", key: "input.parent" }],
     },
     {
@@ -235,7 +236,7 @@ export const Mapping = Norn.mapping({
         { property: "id", value: "input.name" },
         { property: "subject_property", value: "startsWith(input.field, 'lines.') ? 'amount' : input.field" },
         { property: "subject_type", value: "startsWith(input.field, 'lines.') ? 'docs.DocumentLine' : null" },
-        { property: "subject_key", value: "startsWith(input.field, 'lines.') ? input.parent + '~line-' + split(input.field, '.')[1] : null" },
+        { property: "subject_key", value: "startsWith(input.field, 'lines.') ? input.parent + '~line-' + join(filter(split(input.field, ''), contains('0123456789', #)), '') : null" },
         { property: "document_uri", value: "input.document_uri" }, { property: "document_digest", value: "input.document_digest" },
         { property: "media_type", value: "input.media_type" }, { property: "page", value: "input.page" },
         { property: "bbox_x", value: "input.bbox_x" }, { property: "bbox_y", value: "input.bbox_y" },
@@ -293,7 +294,7 @@ const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Liter
 const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
-  amount: Schema.optionalKey(Money), total: Schema.optionalKey(Money), lines_total: Schema.optionalKey(Money), currency: Schema.optionalKey(Schema.Literals(["USD"])),
+  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Money), total: Schema.optionalKey(Money), lines_total: Schema.optionalKey(Money),
   correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
 })
 
@@ -313,7 +314,7 @@ export const LineCorrectionWriter = Norn.decision({
 }, input => ({
   facts: [
     { op: "patch", objectType: "docs.DocumentLine", key: input.event.input.id, patch: {
-      amount: input.event.input.amount, correction_reason: input.event.input.correction_reason,
+      currency: input.slice.line.currency, amount: input.event.input.amount, correction_reason: input.event.input.correction_reason,
       correction_evidence: input.event.input.correction_evidence, corrected_by: input.event.actor } },
     { op: "patch", objectType: "docs.ScannedDocument", key: input.slice.line.document_id, patch: {
       currency: input.slice.document.currency,

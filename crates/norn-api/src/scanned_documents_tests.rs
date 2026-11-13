@@ -854,6 +854,10 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
 /// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
 /// The misread line is corrected on the line itself; its document's sum of
 /// lines (and total) is restated in the same commit.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one scenario walks every refusal before the correction that commits"
+)]
 fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
     let line = |key: &str, amount: &str, total: Option<&str>, evidence: &str| {
         let total = total.map_or_else(String::new, |total| {

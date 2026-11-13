@@ -210,6 +210,12 @@
       },
       {
         "id": "line",
+        "lifecycles": [
+          {
+            "property": "review",
+            "state": "'extracted'"
+          }
+        ],
         "links": [
           {
             "key": "input.parent",
@@ -241,10 +247,6 @@
           {
             "property": "amount",
             "value": "input.amount"
-          },
-          {
-            "property": "review",
-            "value": "'extracted'"
           },
           {
             "property": "correction_reason",
@@ -297,7 +299,7 @@
           },
           {
             "property": "subject_key",
-            "value": "startsWith(input.field, 'lines.') ? input.parent + '~line-' + split(input.field, '.')[1] : null"
+            "value": "startsWith(input.field, 'lines.') ? input.parent + '~line-' + join(filter(split(input.field, ''), contains('0123456789', #)), '') : null"
           },
           {
             "property": "document_uri",

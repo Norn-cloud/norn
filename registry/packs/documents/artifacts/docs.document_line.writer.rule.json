@@ -34,7 +34,7 @@
               {
                 "id": "out_facts",
                 "key": "facts",
-                "value": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]"
+                "value": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]"
               },
               {
                 "id": "out_commands",
@@ -330,6 +330,9 @@
                     "type": "number"
                   }
                 },
+                "required": [
+                  "currency"
+                ],
                 "type": "object"
               }
             },
