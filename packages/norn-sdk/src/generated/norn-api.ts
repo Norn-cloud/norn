@@ -464,8 +464,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * VIEW-SQL-1: lower a SQL query to a transform and admit it against the
-         *     installed definitions. Nothing is installed and no SQL runs.
+         * VIEW-SQL-1: lower a SQL query to a transform and admit it as installing
+         *     it would: the installed set re-admitted whole with it added, on the base
+         *     the installed receipt records. Nothing is installed and no SQL runs.
          * @description # Errors
          *     A denied definitions read (the opaque 403), no installed definitions
          *     (404 `defs.version_not_found`) or a host failure. A query the dialect or
@@ -1185,7 +1186,10 @@ export interface components {
         };
         /** @description What a SQL transform lowers to, and whether the checker admits it. */
         NornCompiledTransform: {
-            /** @description The checker admits the lowered plan against the installed definitions. */
+            /**
+             * @description Installing the lowered transform over the installed definitions would
+             *     be admitted.
+             */
             admitted: boolean;
             /** @description The `derived` artifact the query declares, as an artifact envelope; null when refused. */
             artifact: {
