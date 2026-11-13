@@ -426,7 +426,7 @@ mod tests {
         }
     }
 
-    /// Backend: 0 awaiting_approval --approve(40)--> 1 approved; optionally an unsynced
+    /// Backend: 0 `awaiting_approval` --approve(40)--> 1 approved; optionally an unsynced
     /// auto-approval timer 0 --(41)--> 1.
     fn approval(auto: bool) -> Net {
         let mut edges = vec![NetEdge::unguarded(0, 1, 40, true)];
@@ -446,17 +446,28 @@ mod tests {
     /// alone, the idle page reaches an ending through interleaving.
     #[test]
     fn an_idle_ui_over_a_backend_awaiting_a_ui_action_is_not_resting() {
-        let sync = [Sync::Together { ui: 31, backend: 40 }];
+        let sync = [Sync::Together {
+            ui: 31,
+            backend: 40,
+        }];
         let product = compose(&sheet(true), &approval(false), &sync).expect("small");
         let idle = product.state(0, 0).expect("initial");
-        assert_eq!(product.net().endings[idle], None, "idle over awaiting approval");
+        assert_eq!(
+            product.net().endings[idle],
+            None,
+            "idle over awaiting approval"
+        );
         let verdict = analyse(product.net());
         assert_eq!(verdict.states[idle].completion, Completion::Must);
         let run = witness(product.net(), product.state(0, 1).expect("approved")).expect("run");
-        let ui_moves: Vec<Option<usize>> = run.iter().map(|edge| product.origins[*edge].ui).collect();
+        let ui_moves: Vec<Option<usize>> =
+            run.iter().map(|edge| product.origins[*edge].ui).collect();
         assert_eq!(ui_moves.len(), 2, "open the sheet, then approve");
         assert!(ui_moves.iter().all(Option::is_some));
-        assert_eq!(product.backend_labels(&approval(false)), BTreeSet::from([40]));
+        assert_eq!(
+            product.backend_labels(&approval(false)),
+            BTreeSet::from([40])
+        );
         // Without a way to open the sheet, the idle page over awaiting approval is stuck.
         let closed = compose(&sheet(false), &approval(false), &sync).expect("small");
         let idle = closed.state(0, 0).expect("initial");
@@ -481,7 +492,11 @@ mod tests {
         assert_eq!(product_ending(None, Some(Good)), None);
         assert_eq!(product_ending(Some(Good), Some(Resting)), Some(Good));
         assert_eq!(product_ending(Some(Resting), Some(Good)), Some(Resting));
-        assert_eq!(product_ending(Some(Resting), None), None, "rule (1) bounds rule (4)");
+        assert_eq!(
+            product_ending(Some(Resting), None),
+            None,
+            "rule (1) bounds rule (4)"
+        );
         assert_eq!(product_ending(Some(Good), Some(Cancelled)), Some(Cancelled));
         assert_eq!(
             product_ending(Some(Compensated), Some(Good)),
