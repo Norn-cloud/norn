@@ -155,7 +155,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if partition.is_empty() {
             return Ok(Vec::new());
         }
-        let (records, values) = self.partition_history(world, object_type, key, frontier, &partition)?;
+        let (records, values) =
+            self.partition_history(world, object_type, key, frontier, &partition)?;
         let changes = rule::changes(&values, &partition);
         if changes.is_empty() {
             return Ok(Vec::new());
