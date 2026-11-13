@@ -26,7 +26,7 @@ export const Order = Norn.type({
     credit_limit: Schema.Int,
     prepaid: Schema.Boolean,
     tier: Schema.Literals(["standard", "vip"]),
-    status: Schema.Literals(["draft", "confirmed", "refunding", "shipped", "cancelled", "refunded"]),
+    status: Schema.Literals(["draft", "confirmed", "refunding", "expired", "shipped", "cancelled", "refunded"]),
   }),
   identity: [{ name: "primary", properties: ["order_id"] }],
   lifecycles: [{
@@ -36,10 +36,11 @@ export const Order = Norn.type({
     states: {
       draft: { on: { confirm: { to: "confirmed", guards: [Norn.expression(Schema.Struct({ total: Schema.Int }), (o) => o.total > 0)] }, discard: "cancelled" } },
       confirmed: {
-        on: { ship: { to: "shipped", mode: "fact" }, cancel: "refunding", carrier_lost: "refunding" },
-        after: { days: 30, to: "refunding", id: "expire" },
+        on: { ship: { to: "shipped", mode: "fact" }, cancel: "refunding", carrier_lost: "cancelled" },
+        after: { days: 30, to: "expired", id: "expire" },
       },
       refunding: { on: { refund: "refunded" } },
+      expired: { on: { refund: "refunded" } },
       shipped: { final: "completed", immutable: true },
       cancelled: { final: "cancelled" },
       refunded: { final: "compensated" },
@@ -91,14 +92,14 @@ test("a machine lowers to one transition per event, with endings, triggers, mode
       { id: "discard", from: ["draft"], to: "cancelled" },
       { id: "ship", from: ["confirmed"], to: "shipped", mode: "fact" },
       { id: "cancel", from: ["confirmed"], to: "refunding" },
-      { id: "carrier_lost", from: ["confirmed"], to: "refunding", trigger: { kind: "event", event: "carrier_lost" } },
-      { id: "expire", from: ["confirmed"], to: "refunding", trigger: { kind: "timer", millis: "2592000000" } },
-      { id: "refund", from: ["refunding"], to: "refunded" },
+      { id: "carrier_lost", from: ["confirmed"], to: "cancelled", trigger: { kind: "event", event: "carrier_lost" } },
+      { id: "expire", from: ["confirmed"], to: "expired", trigger: { kind: "timer", millis: "2592000000" } },
+      { id: "refund", from: ["refunding", "expired"], to: "refunded" },
     ],
     endings: [{ state: "shipped", outcome: "completed" }, { state: "cancelled", outcome: "cancelled" }, { state: "refunded", outcome: "compensated" }],
     events: [
-      { id: "carrier_lost", ignoredIn: [{ states: ["draft", "refunding"], reason: "nothing is in transit" }] },
-      { id: "carrier_ping", ignoredIn: [{ states: ["draft", "confirmed", "refunding"], reason: "telemetry only" }] },
+      { id: "carrier_lost", ignoredIn: [{ states: ["draft", "refunding", "expired"], reason: "nothing is in transit" }] },
+      { id: "carrier_ping", ignoredIn: [{ states: ["draft", "confirmed", "refunding", "expired"], reason: "telemetry only" }] },
     ],
   }])
 })
@@ -122,16 +123,14 @@ test("the checker admits the sound machine and its exception tree", () => {
 
 test("planted dead ends come back with the checker's codes", () => {
   if (!checker) return
-  // confirmed and refunding only lead to each other: every state has an exit, none completes.
+  // refunding and expired only lead to each other: both have an exit, neither completes.
   const trap = SOURCE
-    .replace(`ship: { to: "shipped", mode: "fact" }, `, ``)
-    .replace(`refunding: { on: { refund: "refunded" } }`, `refunding: { on: { reconsider: "confirmed" } }`)
+    .replace(`refunding: { on: { refund: "refunded" } }`, `refunding: { on: { hold: "expired" } }`)
+    .replace(`expired: { on: { refund: "refunded" } }`, `expired: { on: { resume: "refunding" } }`)
   const trapped = codes(artifacts(trap)).map(([code]) => code)
   expect(trapped).toContain("lifecycle.soundness.trap")
-  // cancelling straight to cancelled after confirm dispatched skips the refund.
-  const skip = SOURCE
-    .replace(`confirm: { to: "confirmed",`, `confirm: { to: "confirmed", compensatedBy: "refund",`)
-    .replace(`cancel: "refunding"`, `cancel: "cancelled"`)
+  // confirm dispatches an effect; a lost carrier cancels without the refund.
+  const skip = SOURCE.replace(`confirm: { to: "confirmed",`, `confirm: { to: "confirmed", compensatedBy: "refund",`)
   expect(codes(artifacts(skip)).map(([code]) => code)).toContain("lifecycle.soundness.compensation_not_closed")
   // an event nobody handles in a live state.
   const unhandled = SOURCE.replace(`carrier_ping: { ignore: "telemetry only" }`, `carrier_ping: {}`)
@@ -162,20 +161,20 @@ export const Sale = Norn.type({
   name: "shop.Sale",
   title: "Sale",
   version: "0.1.0",
-  properties: Schema.Struct({ sale_id: Schema.String, total: Schema.Int, cash: Schema.Boolean, exempt: Schema.Boolean, reported: Schema.Boolean }),
-  identity: [{ name: "primary", properties: ["sale_id"] }],
+  properties: Schema.Struct({ cash: Schema.Boolean, large: Schema.Boolean, exempt: Schema.Boolean, reported: Schema.Boolean }),
 })
 
 export const regulatorExemption = Norn.permission("regulator_exemption", {
   on: Sale,
-  may: (s) => s.exempt,
+  when: (s) => s.exempt,
+  may: (s) => s.cash,
   cite: { authority: "regulator", version: "art-9" },
   because: "The regulator exempts listed merchants.",
 })
 
 export const noCashOverLimit = Norn.prohibition("no_cash_over_limit", {
   on: Sale,
-  never: (s) => s.cash && s.total > 10000,
+  never: (s) => s.cash,
   cite: { authority: "credit_policy", version: "2026" },
   yieldsTo: [regulatorExemption],
   because: "Large sales are not paid in cash.",
@@ -183,7 +182,7 @@ export const noCashOverLimit = Norn.prohibition("no_cash_over_limit", {
 
 export const reportLarge = Norn.obligation("report_large", {
   on: Sale,
-  when: (s) => s.total > 100000,
+  when: (s) => s.large,
   must: (s) => s.reported,
   cite: { authority: "credit_policy", version: "2026" },
   unless: { exempt: { when: (s) => s.exempt, because: "Exempt merchants report yearly" } },
@@ -199,19 +198,30 @@ test("norms lower into the subject's normative slot with cited authority, preced
     ["prohibition", "shop.Sale.no_cash_over_limit", "never", "credit_policy", "2026", "/payload/extensions/norn.normative~11.0.0/1", ["shop.Sale.regulator_exemption"]],
     ["obligation", "shop.Sale.report_large", "always", "credit_policy", "2026", "/payload/extensions/norn.normative~11.0.0/2", []],
   ])
-  expect(rules[2]!.law.condition).toBe("self.total > 100000")
+  expect(rules[0]!.law.condition).toBe("self.exempt")
+  expect(rules.map((r) => r.law.response.expression)).toEqual(["self.cash", "self.cash", "self.reported"])
+  expect(rules[2]!.law.condition).toBe("self.large")
   expect(rules[2]!.law.exceptions).toEqual([{ id: "exempt", overrides: "shop.Sale.report_large", condition: "self.exempt", rationale: "Exempt merchants report yearly", source: { artifactId: "shop.Sale.entity", pointer: "/payload/extensions/norn.normative~11.0.0/2/law/exceptions/0" } }])
   for (const rule of rules) expect(rule.law.scope).toEqual({ root: { kind: "entity", id: "shop.Sale" }, objectTypes: ["shop.Sale"] })
   // No norm becomes an artifact of its own.
   expect(artifacts(NORMS).map((a) => a.artifactId)).toEqual(["shop.Sale.entity"])
 })
 
-test("the checker's verdict on the authored norms", () => {
+test("the checker admits a prohibition that yields to a permission, and names its own fragment limit", () => {
   if (!checker) return
-  // Printed so the admission result of each norm kind is visible in the test log.
-  const verdict = checker.checkArtifactSet(artifacts(NORMS))
-  console.log(JSON.stringify(verdict.diagnostics.diagnostics.map((d: { code: string; message: string }) => [d.code, d.message.slice(0, 160)])))
-  expect(verdict.admitted).toBe(true)
+  // Declared-order admission grounds norms over one closed Boolean subject and one shared
+  // response; the cash pair is inside that fragment.
+  const pair = NORMS.slice(0, NORMS.indexOf("export const reportLarge"))
+  const admitted = checker.checkArtifactSet(artifacts(pair))
+  expect(admitted.diagnostics.diagnostics).toEqual([])
+  expect(admitted.admitted).toBe(true)
+  // Without yieldsTo the pair clashes, and admission says so.
+  const clash = checker.checkArtifactSet(artifacts(pair.replace("  yieldsTo: [regulatorExemption],\n", "")))
+  expect(clash.admitted).toBe(false)
+  // A third norm with another response is outside the grounded fragment: refused, never passed.
+  const mixed = checker.checkArtifactSet(artifacts(NORMS))
+  expect(mixed.admitted).toBe(false)
+  expect(mixed.diagnostics.diagnostics.map((d: { code: string }) => d.code)).toContain("consistency.diagnosis.unknown")
 }, 30_000)
 
 test("a norm over a type from another module is refused", () => {
