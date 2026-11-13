@@ -10978,7 +10978,16 @@ export interface components {
             numerator: string | null;
             /** @description The concept it aggregates, for a simple metric. */
             objectType: string | null;
-            /** @description The time property its buckets use, for a simple metric. */
+            /**
+             * @description The to-one links from the measured object to the object holding
+             *     [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
+             *     event's); empty when the time is the object's own.
+             */
+            timeLinks: string[];
+            /**
+             * @description The time property its buckets use, for a simple metric: a property of
+             *     the measured object, or of the object [`Self::time_links`] reach.
+             */
             timeProperty: string | null;
             /**
              * @description Properties a question over this metric must group by or fix with an

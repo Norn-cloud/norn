@@ -59,7 +59,8 @@
             "name": "core.quantity",
             "unitSource": [
               "unit",
-              "currency"
+              "currency",
+              "quantity_basis"
             ]
           }
         },
