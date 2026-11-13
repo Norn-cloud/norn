@@ -1225,6 +1225,56 @@ fn erpnext_mapping_checks_clean_in_the_artifact_set() {
     );
 }
 
+/// OBS-LINK-CONVERGE-1 at admission: the cell records every mapped link as a
+/// `norn.ObservedLinkClaim`, so a set whose mapping declares links without
+/// that type is refused here, at the first linking map, instead of admitting
+/// and then quarantining every linked row at mapping time.
+#[test]
+fn a_linking_mapping_without_the_claim_type_is_refused() {
+    let mapping = mapping_artifact(
+        read_json(&ir_fixtures().join("mapping/erpnext.mapping.json")),
+        false,
+    );
+    let payload: norn_ir::mapping::MappingIr =
+        serde_json::from_value(mapping.payload.clone()).expect("the mapping payload decodes");
+    let first_linking = payload
+        .maps
+        .iter()
+        .position(|map| !map.links.is_empty())
+        .expect("the ERPNext mapping declares links");
+    let mut artifacts: Vec<ArtifactEnvelope> = model_artifacts()
+        .into_iter()
+        .filter(|artifact| artifact.artifact_id != "norn.ObservedLinkClaim.entity")
+        .collect();
+    artifacts.push(source_artifact());
+    artifacts.push(mapping);
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    let refusals: Vec<&Diagnostic> = findings
+        .iter()
+        .filter(|finding| finding.code == "mapping.model.link_claim_type_missing")
+        .collect();
+    assert_eq!(refusals.len(), 1, "one refusal per mapping: {findings:#?}");
+    assert!(
+        refusals[0].span.as_ref().is_some_and(|span| span
+            .pointer
+            .ends_with(&format!("/maps/{first_linking}/links"))),
+        "the refusal points at the first linking map: {:#?}",
+        refusals[0]
+    );
+    assert_eq!(
+        findings.len(),
+        1,
+        "the claim type is the only thing missing: {findings:#?}"
+    );
+}
+
 #[test]
 fn input_record_types_follow_the_source_schema() {
     let fields = input_fields(&source(), "Customer").expect("Customer is declared");
