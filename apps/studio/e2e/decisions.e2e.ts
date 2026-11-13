@@ -117,10 +117,12 @@ test("validate: a law refuses a choice; it reads under that option with the serv
   await sheet(page).getByRole("button", { name: "Yes, approve" }).click()
   // The refusal order puts the law (403) before the note (422): the law reads first, under the option it refuses.
   const approve = sheet(page).locator('[data-option="approve"]')
-  await expect(approve.getByRole("alert")).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
-  await expect(approve.getByRole("alert")).toContainText("A finance manager can approve it from their inbox")
+  await expect(approve.getByRole("status")).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
+  await expect(approve.getByRole("status")).toContainText("A finance manager can approve it from their inbox")
   await expect(approve.locator("ui-radio")).toHaveAttribute("disabled", "")
-  await expect(sheet(page).getByRole("button", { name: "Decide: Approve" })).toBeDisabled()
+  // The refused choice is cleared: nothing is picked, and Decide waits for another option.
+  await expect(approve.getByRole("radio")).not.toBeChecked()
+  await expect(sheet(page).getByRole("button", { name: "Decide", exact: true })).toBeDisabled()
   await shoot(page, "refused")
   await sheet(page).getByLabel(/^Note/).fill("Short delivery confirmed.")
   await sheet(page).getByLabel("Reject").check()
