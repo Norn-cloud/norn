@@ -24,10 +24,13 @@ import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings, type Evidence, type EvidenceRef } from "./evidence/review.ts"
+import { readFindings, readHistory, type Evidence, type EvidenceRef } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factText, readProblem, recordName } from "./lib/objects.ts"
-import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
+import { RecordLineage } from "./record-lineage.tsx"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { liveAccess } from "./lib/live.ts"
 import { RefusedNote } from "./questions.tsx"
 import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources.tsx"
@@ -41,7 +44,11 @@ export function SourcesItemPage() {
   return id === "" ? <ObjectTypePage /> : <ObjectPage />
 }
 
-/** Everything known about one record, tab by tab; each value opens where it came from. */
+/**
+ * Everything known about one record. The overview reads like a record sheet: its key facts in the
+ * header, its story on the left (summary, findings, every version) and its facts and links on the
+ * right. Each value opens where it came from.
+ */
 export function ObjectPage() {
   // The id is the rest of the path: ids hold `/`, and Cloudflare redirects an encoded `%2F` to a decoded one, so it cannot be one segment.
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
@@ -72,19 +79,15 @@ export function ObjectPage() {
           </div>
           {data && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <CopyId value={id} />
-            <span className="text-meta">version {data.object.document.version}</span>
+            <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
             {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={() => void reads.refetch()} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>}
           </div>}
           {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={() => void reads.refetch()} /></div>}
-          {data && concept && <div className="flex flex-wrap gap-1.5 pt-1">
-            {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}
-            {/* Personal data is marked by the server in the documents it sends; these mark none. */}
-            <Badge variant="outline" className="gap-1 text-muted-foreground" title="The documents the server sent for this record mark no field as personal data."><ShieldOff />No personal data marked</Badge>
-          </div>}
         </div>
       </header>
+      {data && concept && <KeyFacts concept={concept} reads={data} onLineage={() => setTab("lineage")} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
@@ -96,31 +99,42 @@ export function ObjectPage() {
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
             {TABS.map(([value, label]) => <TabsTrigger key={value} value={value} className="flex-none">{label}</TabsTrigger>)}
           </TabsList>
-          <TabsContent value="overview" className="space-y-6 pt-4">
-            {concept.lifecycles.map((lifecycle) => (
-              <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
-                <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
-              </Panel>
-            ))}
-            <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
-            <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} />
-            {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
-            <RelatedInline concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} />
-            {view === "technical" && <Technical name={name} lineage={lineage} />}
+          <TabsContent value="overview" className="pt-4">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+              <div className="min-w-0 space-y-6">
+                <p className="text-panel">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
+                {concept.lifecycles.map((lifecycle) => (
+                  <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
+                    <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
+                  </Panel>
+                ))}
+                {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
+                {live ? <History objectType={name} id={id} /> : <Panel icon={HistoryIcon} label="History"><Well>
+                  <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
+                </Well></Panel>}
+                {view === "technical" && <Technical name={name} lineage={lineage} />}
+              </div>
+              <aside className="min-w-0 space-y-6" aria-label="Facts and links">
+                <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} />
+                <LinksRail concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} live={live} />
+                <div className="flex flex-wrap gap-1.5">
+                  {concept.rules.map((rule) => <Badge key={rule} variant="outline" className="max-w-xs gap-1" title={rule}><ShieldCheck className={KINDS.guarantee.text} /><span className="truncate">{rule}</span></Badge>)}
+                  {/* Personal data is marked by the server in the documents it sends; these mark none. */}
+                  <Badge variant="outline" className="gap-1 text-muted-foreground" title="The documents the server sent for this record mark no field as personal data."><ShieldOff />No personal data marked</Badge>
+                </div>
+              </aside>
+            </div>
           </TabsContent>
-          <TabsContent value="relations" className="pt-4"><Relations concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} /></TabsContent>
-          <TabsContent value="lineage" className="pt-4"><Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} /></TabsContent>
+          <TabsContent value="lineage" className="space-y-6 pt-4">
+            {lineage && <RecordLineage root={{ objectType: data.object.document.objectType, key: id, version: data.object.document.version }} lineage={lineage} live={live} />}
+            <Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} />
+          </TabsContent>
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
               {concept.rules.length === 0
                 ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/guarantees">See every guarantee</Link></Button>}>No law is declared over {concept.title.toLowerCase()} records.</Empty>
                 : <ul className="space-y-2 text-sm">{concept.rules.map((rule) => <li key={rule} className="flex gap-2"><ShieldCheck className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />{rule}</li>)}</ul>}
             </Well></Panel>
-          </TabsContent>
-          <TabsContent value="ledger" className="pt-4">
-            {live ? <History objectType={name} id={id} /> : <Panel icon={HistoryIcon} label="Ledger"><Well>
-              <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>The server does not publish this record's change history yet. Version {data.object.document.version} is the one stored.</Empty>
-            </Well></Panel>}
           </TabsContent>
           <TabsContent value="access" className="pt-4">
             <Panel icon={KeyRound} label="Access"><Well>
@@ -136,56 +150,105 @@ export function ObjectPage() {
   )
 }
 
-const TABS = [["overview", "Overview"], ["relations", "Relations"], ["lineage", "Lineage"], ["guarantees", "Guarantees"], ["ledger", "Ledger"], ["access", "Access"]] as const
+const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Guarantees"], ["access", "Access"]] as const
 
-/** An empty tab: a picture, one sentence and one way forward. */
-function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; readonly action: ReactNode; readonly children: ReactNode }) {
+/**
+ * Which read this page shows: the version and, live, the commit that wrote it and when, from the
+ * record's history (the same read its History panel uses). A recorded snapshot says so.
+ */
+function AsOf({ objectType, id, version, live }: { readonly objectType: string; readonly id: string; readonly version: number; readonly live: boolean }) {
+  const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), enabled: live, retry: false })
+  const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
-    <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
-      <span className="flex size-12 items-center justify-center rounded-full bg-muted"><Icon aria-hidden className="size-6 text-muted-foreground" /></span>
-      <p className="max-w-sm text-sm text-muted-foreground">{children}</p>
-      {action}
-    </div>
+    <span className="text-meta tabular-nums" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>
+      version {version}{entry ? <> · commit {entry.commit} · as of <span className="font-mono text-xs">{new Date(entry.logicalTime).toISOString()}</span></> : null}
+    </span>
   )
 }
 
-function Relations({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
-  // A connected cell's linking records are read in full, fact by fact.
-  const live = useMode().data?.kind === "live"
+/** The record's key facts, in its definition's presentation order, each opening where it came from. */
+function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
+  const fields = keyFacts(concept)
+  if (fields.length === 0) return null
   return (
-    <Panel icon={Link2} label="Related records"><Well className="p-3">
-      {concept.relationships.length === 0 && incomingOf(concept, concepts).length === 0 && links.items.length === 0
-        ? <p className="text-sm text-muted-foreground">This concept declares no relationships.</p>
-        : <ul className="space-y-2 text-sm">
-          {concept.relationships.map((relationship) => {
-            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
-            return (
-              <li key={relationship.id}>
-                <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} ({relationship.count}) → </span>
-                {edges.length === 0
-                  ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
-                  : edges.map((edge) => <Link key={`${edge.targetType}/${edge.target}`} to="/sources/$concept/$" params={{ concept: edge.targetType, _splat: edge.target }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.target}</Link>)}
-              </li>
-            )
-          })}
-          {incomingOf(concept, concepts).map(({ from, relationship }) => {
-            const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
-            return (
-              <li key={`in/${from.name}/${relationship.id}`}>
-                <span className="text-muted-foreground">{from.title} records ({relationship.id.replaceAll("_", " ")}) ← </span>
-                {edges.length === 0
-                  ? <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none stored yet"}</span>
-                  : live
-                    ? <div className="pt-2"><LinkedRecords from={from} ids={edges.map(({ source }) => source)} parent={id} /></div>
-                    : edges.map((edge) => <Link key={`${edge.sourceType}/${edge.source}`} to="/sources/$concept/$" params={{ concept: edge.sourceType, _splat: edge.source }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.source}</Link>)}
-              </li>
-            )
-          })}
-        </ul>}
-      {links.hasMore && <p className="pt-2 text-meta text-muted-foreground">More links may exist; these are the first page the server returned.</p>}
-    </Well></Panel>
+    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-node border border-node-border bg-node-border shadow-[var(--node-highlight),var(--elevation-1)] sm:grid-cols-3 xl:grid-cols-6">
+      {fields.map((field) => (
+        <div key={field.id} className="min-w-0 bg-card px-3 py-2.5">
+          <dt className="truncate text-meta text-muted-foreground">{field.label ?? field.id.replaceAll("_", " ")}</dt>
+          <dd className={cn("truncate pt-0.5 text-panel font-medium", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
+        </div>
+      ))}
+    </dl>
   )
 }
+
+/** One fact's exact text, opening its card; an empty fact is a dash with no card. */
+function FactValue({ field, reads, onLineage }: { readonly field: Concept["fields"][number]; readonly reads: ObjectReads; readonly onLineage: () => void }) {
+  const { objectType, id, version } = reads.object.document
+  const text = factText(field, reads.object.document, reads.object.numbers, "")
+  const value = reads.object.document.values[field.id]
+  if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
+  const label = field.label ?? field.id.replaceAll("_", " ")
+  return (
+    <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={text} lineage={reads.source?.document ?? null} live={reads.object.origin === "live"}
+      trace={<button type="button" className="text-sm font-medium underline-offset-4 hover:underline" onClick={onLineage}>Open the record's lineage</button>}>
+      {text}
+    </FactProvenance>
+  )
+}
+
+/**
+ * The record's links by link type and direction, with the server's counts (exact, or its lower bound
+ * past the count it reads), each group listing the linked records on the first page the server
+ * returned. Records that link here open in full, fact by fact.
+ */
+function LinksRail({ concept, id, links, concepts, live }: { readonly concept: Concept; readonly id: string; readonly links: CountedLinkPage; readonly concepts: readonly Concept[]; readonly live: boolean }) {
+  const groups = linkGroups(concept, incomingOf(concept, concepts), id, links)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const [table, setTable] = useState<LinkGroup | null>(null)
+  const from = table ? concepts.find(({ name }) => name === table.otherType) : undefined
+  const none = links.hasMore ? "None on the first page the cell returned" : "None stored"
+  return (
+    <Panel icon={Link2} label="Links" action={links.counts ? (links.counts.complete ? "Counted by the cell" : `Counted to ${links.counts.bound.toLocaleString("en")}`) : undefined}>
+      <Well className="p-1.5">
+        {groups.length === 0
+          ? <p className="p-2 text-sm text-muted-foreground">{links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
+          : <ul className="divide-y divide-border/70">
+            {groups.map((group) => {
+              const all = expanded.has(group.key)
+              const shown = all ? group.ids : group.ids.slice(0, LINKS_SHOWN)
+              return (
+                <li key={group.key} className="space-y-1 px-2 py-2">
+                  <div className="flex min-w-0 items-center gap-2 text-sm">
+                    <span className="text-muted-foreground" aria-hidden>{group.direction === "out" ? "→" : "←"}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                    {group.count !== null && <span className="shrink-0 rounded-md bg-muted px-1.5 text-meta tabular-nums text-muted-foreground" title={group.atLeast ? "At least this many: the cell stopped counting" : "Counted by the cell"}>{countText(group)}</span>}
+                  </div>
+                  {shown.length === 0
+                    ? <p className="ps-5 text-meta text-muted-foreground">{none}</p>
+                    : <ul className="space-y-0.5 ps-5 text-sm">{shown.map((other) => <li key={other} className="truncate"><Link to="/sources/$concept/$" params={{ concept: group.otherType, _splat: other }} className="underline-offset-4 hover:underline">{other}</Link></li>)}</ul>}
+                  <div className="flex flex-wrap items-center gap-x-3 ps-5 text-meta text-muted-foreground">
+                    {group.ids.length > LINKS_SHOWN && <button type="button" className="underline-offset-4 hover:underline" onClick={() => setExpanded((current) => { const next = new Set(current); if (all) next.delete(group.key); else next.add(group.key); return next })}>{all ? "Show fewer" : `Show all ${group.ids.length} on this page`}</button>}
+                    {group.count !== null && group.ids.length < group.count && <span>{group.ids.length} of {countText(group)} on the first page</span>}
+                    {live && group.direction === "in" && group.ids.length > 0 && <button type="button" className="underline-offset-4 hover:underline" onClick={() => setTable(group)}>See them fact by fact</button>}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>}
+      </Well>
+      <Sheet open={table !== null} onOpenChange={(next) => { if (!next) setTable(null) }}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+          <SheetHeader><SheetTitle>{table?.label}</SheetTitle><SheetDescription>The records on the first page the cell returned, read one by one.</SheetDescription></SheetHeader>
+          <div className="px-4 pb-6">{table && from && <LinkedRecords from={from} ids={table.ids} parent={id} />}</div>
+        </SheetContent>
+      </Sheet>
+    </Panel>
+  )
+}
+
+/** Linked records a group lists before "Show all". */
+const LINKS_SHOWN = 5
 
 function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: SourceLineage | undefined; readonly evidence?: readonly EvidenceRef[]; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const { inspect } = useInspector()
@@ -226,36 +289,20 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 /** The record's facts in words, or, in the technical view, the exact document the server sent. */
 function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const card = useCardView()
-  const lineage = reads.source?.document
-  const { objectType, id, version } = reads.object.document
-  const live = reads.object.origin === "live"
   const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
   if (card.view === "technical") {
     return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
   }
   return (
-    <Panel icon={Rows3} label="Facts" action={toggle}><Well className="space-y-2 p-3">
-      {(live || lineage) && <p className="text-meta text-muted-foreground">Select a value to see where it came from.</p>}
-      <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Value</TableHead></TableRow>}>
-        {concept.fields.map((field) => {
-          const text = factText(field, reads.object.document, reads.object.numbers, "")
-          const value = reads.object.document.values[field.id]
-          const label = field.id.replaceAll("_", " ")
-          return (
-            <TableRow key={field.id}>
-              <TableCell className="font-medium">{label}</TableCell>
-              <TableCell className={field.decimal ? "tabular-nums" : undefined}>
-                {value === null || value === undefined ? text : (
-                  <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={text} lineage={lineage ?? null} live={live}
-                    trace={<button type="button" className="text-sm font-medium underline-offset-4 hover:underline" onClick={onLineage}>Open the record's lineage</button>}>
-                    {text}
-                  </FactProvenance>
-                )}
-              </TableCell>
-            </TableRow>
-          )
-        })}
-      </DenseTable>
+    <Panel icon={Rows3} label="Facts" action={toggle}><Well className="p-1.5">
+      <dl className="divide-y divide-border/60 text-sm">
+        {concept.fields.map((field) => (
+          <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">
+            <dt className="truncate text-muted-foreground" title={field.id}>{field.label ?? field.id.replaceAll("_", " ")}</dt>
+            <dd className={cn("min-w-0 truncate", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
+          </div>
+        ))}
+      </dl>
     </Well></Panel>
   )
 }
@@ -310,43 +357,17 @@ const incomingOf = (concept: Concept, concepts: readonly Concept[]) =>
 export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readonly Concept[]): string {
   const source = reads.source?.document
   const { id, objectType } = reads.object.document
-  const stored = reads.links.document.items.filter((edge) => (edge.source === id && edge.sourceType === objectType) || (edge.target === id && edge.targetType === objectType)).length
+  const counts = reads.links.document.counts
+  // The server's count when it sends one; else the first page's links, a floor when more may exist.
+  const stored = counts ? counts.groups.reduce((sum, { count }) => sum + count, 0)
+    : reads.links.document.items.filter((edge) => (edge.source === id && edge.sourceType === objectType) || (edge.target === id && edge.targetType === objectType)).length
   const declared = concept.relationships.length + incomingOf(concept, concepts).length
   const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
-  // Only the first page of links may have been returned; then the count is a floor, not the whole.
-  const more = reads.links.document.hasMore
+  const more = counts ? !counts.complete : reads.links.document.hasMore
   const links = declared === 0 ? "Its type declares no relations."
     : stored === 0 ? (more ? "No stored link appears on the first page the server returned; more may exist." : declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`)
     : `${more ? "At least " : ""}${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
   return `${recordName(reads.object.document)} is ${/^[aeiou]/i.test(concept.title) ? "an" : "a"} ${concept.title.toLowerCase()} record${from}. ${links}`
-}
-
-/** The record's relations on its overview, both directions, each with the stored links the server returned or an honest "none". */
-function RelatedInline({ concept, id, links, concepts }: { readonly concept: Concept; readonly id: string; readonly links: LinkPage; readonly concepts: readonly Concept[] }) {
-  const incoming = incomingOf(concept, concepts)
-  if (concept.relationships.length === 0 && incoming.length === 0) return null
-  const none = <span className="text-muted-foreground">{links.hasMore ? "none on this page" : "none in this snapshot"}</span>
-  // One stored link's other end. Contested links (sources disagree, nothing added) never reach `items`, so nothing is shown for them.
-  const record = (edge: LinkPage["items"][number], type: string, target: string) => (
-    <span key={`${edge.link}/${type}/${target}`} className="me-3 inline-flex items-center gap-1">
-      <Link to="/sources/$concept/$" params={{ concept: type, _splat: target }} className="font-medium underline-offset-4 hover:underline">{target}</Link>
-      {/* Slot: the link's per-claim source lineage (observed_link_provenance) goes here once the server records it. */}
-    </span>
-  )
-  return (
-    <Panel icon={Link2} label="Related"><Well className="p-3">
-      <dl className="space-y-2 text-sm">
-        {concept.relationships.map((relationship) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.source === id && edge.sourceType === concept.name)
-          return <div key={`out/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{relationship.id.replaceAll("_", " ")} → {relationship.count} {conceptTitle(relationship.target)}</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.targetType, edge.target))}</dd></div>
-        })}
-        {incoming.map(({ from, relationship }) => {
-          const edges = links.items.filter((edge) => edge.link === relationship.id && edge.target === id && edge.targetType === concept.name && edge.sourceType === from.name)
-          return <div key={`in/${from.name}/${relationship.id}`} className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-muted-foreground sm:w-56">{from.title} records ({relationship.id.replaceAll("_", " ")})</dt><dd>{edges.length === 0 ? none : edges.map((edge) => record(edge, edge.sourceType, edge.source))}</dd></div>
-        })}
-      </dl>
-    </Well></Panel>
-  )
 }
 
 const CAPABILITIES = [["population", "Population: which records exist"], ["values", "Values: their amounts and facts"], ["sources", "Sources: where they came from"]] as const
