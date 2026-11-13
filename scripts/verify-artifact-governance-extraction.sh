@@ -22,7 +22,7 @@ cd "$repo_root"
 required_kib=$((12 * 1024 * 1024))
 available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2> /dev/null || echo 0)
 if (( available_kib < required_kib )); then
-  echo "artifact-governance extraction needs at least 12 GiB available memory (hax-engine alone held ~3.9 GB on norn-ir); this machine has $((available_kib / 1024)) MiB. Run the formal phase on a larger machine (Boat --type large)." >&2
+  echo "artifact-governance extraction needs at least 12 GiB available memory (hax-engine alone held ~3.9 GB on norn-ir); this machine has $((available_kib / 1024)) MiB. The formal phase runs on a large machine: on Boat, --type large (16 GB), for any change touching formal-covered crates (#718)." >&2
   exit 1
 fi
 # Attribute pre-existing drift before invoking an extractor.
