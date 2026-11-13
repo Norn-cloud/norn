@@ -25,6 +25,7 @@ import { catalogOf } from "./lib/catalog.ts"
 import { LocaleProvider, applyLocale, isLocale, type Locale } from "./lib/locale.tsx"
 import type { Artifact } from "./lib/transport.ts"
 import { FactsTable } from "./sources.tsx"
+import { defineLifecycleView, type FacetsAnswer, type LifecycleDoc, type LifecycleFinding, type LifecycleViewOptions, type LiveAnswer, type NornLifecycleView } from "../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import "./index.css"
 
 const DEFINITIONS = Object.values(import.meta.glob<string>("../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })).map((source) => JSON.parse(source) as Envelope)
@@ -75,7 +76,55 @@ function OrderFacts() {
   return concept ? <div className="space-y-2"><h2 lang={concept.titleLang} className="font-medium">{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
 }
 
+// The lifecycle view's specimens: the purchase order's approval lifecycle, its counts as one
+// facets answer, and the checker's planted counterexample (a page shows done while the order can
+// come back to a draft only the page could submit).
+const ORDER_LIFECYCLE: LifecycleDoc = {
+  property: "status",
+  states: ["draft", "submitted", "approved", "rejected", "received", "cancelled"],
+  initial: ["draft"],
+  terminal: ["received", "cancelled"],
+  transitions: [
+    { id: "submit", from: ["draft"], to: "submitted" }, { id: "approve", from: ["submitted"], to: "approved" },
+    { id: "reject", from: ["submitted"], to: "rejected" }, { id: "revise", from: ["rejected"], to: "draft" },
+    { id: "receive", from: ["approved"], to: "received" }, { id: "cancel", from: ["submitted", "approved"], to: "cancelled" },
+  ],
+}
+const facets = (values: Record<string, number>, extra: Partial<FacetsAnswer> = {}): LiveAnswer => ({
+  status: 200,
+  body: { rows: Object.values(values).reduce((a, b) => a + b, 0), withheldRows: 0, quarantinedRows: 0, approximate: false, ...extra, facets: [{ property: "status", values: Object.entries(values).map(([value, count]) => ({ value, count })), otherRows: 0, nulls: 0 }] } satisfies FacetsAnswer,
+})
+const STUCK: LifecycleFinding = {
+  code: "widget.lifecycle.stuck",
+  message: "page state `done` with the object `draft`: no ending of both is reachable",
+  witness: { steps: [
+    { edge: 0, moves: [{ side: "ui", label: "submit" }] },
+    { edge: 3, moves: [{ side: "ui", label: "on-accepted" }, { side: "backend", label: "submit" }] },
+    { edge: 9, moves: [{ side: "backend", label: "reject" }] },
+    { edge: 14, moves: [{ side: "backend", label: "revise" }] },
+  ] },
+}
+function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "lifecycle" | "title" | "counts"> & { readonly answers: readonly LiveAnswer[] }) {
+  return <div ref={(host) => {
+    if (host === null || host.firstChild) return
+    defineLifecycleView()
+    const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
+    view.options = {
+      lifecycle: ORDER_LIFECYCLE, title: (options.locale ?? SPECIMEN_LOCALE) === "ar" ? "أمر شراء" : "Purchase order", ...options,
+      // The first answer at once; any later one a moment after, as a commit would publish it.
+      counts: (listener) => { const timers = answers.map((answer, index) => setTimeout(() => listener(answer), index * 400)); return () => timers.forEach(clearTimeout) },
+    }
+    host.append(view)
+  }} />
+}
+
 const SPECIMENS: Record<string, () => ReactNode> = {
+  "lifecycle-view/counts": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} />,
+  "lifecycle-view/lower-bound": () => <LifecycleSpecimen answers={[facets({ draft: 6200, submitted: 1900, received: 1900 }, { approximate: true, withheldRows: 14, quarantinedRows: 2 })]} />,
+  "lifecycle-view/refused": () => <LifecycleSpecimen answers={[{ status: 403, body: { code: "authz.denied" } }]} />,
+  "lifecycle-view/live": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7 }), facets({ draft: 11, submitted: 8 })]} />,
+  "lifecycle-view/stepper": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, rejected: 2, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 3 }} />,
+  "lifecycle-view/rtl": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} findings={[STUCK]} open={{ finding: 0, step: 4 }} locale="ar" label={(id) => ({ draft: "مسودة", submitted: "مُقدَّم", approved: "معتمد", rejected: "مرفوض", received: "مستلم", cancelled: "ملغى", status: "الحالة", submit: "تقديم", approve: "اعتماد", reject: "رفض", revise: "مراجعة", receive: "استلام", cancel: "إلغاء", "on-accepted": "عند القبول" }[id] ?? id)} />,
   "locale/facts": () => <OrderFacts />,
   "locale/message": () => (
     <p className="max-w-xl space-y-2">
