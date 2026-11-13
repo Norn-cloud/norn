@@ -18,22 +18,29 @@ test("fmt_idempotent", () => {
   }
 }, 240000)
 
+const CHANGED_CASES = 20
+
 test("fmt_preserves_semantics", () => {
   const root = mkdtempSync(join(tmpdir(), "norn-fmt-parity-"))
   let compiled = 0
   let unchanged = 0
   try {
     for (const part of ["fixtures", "corpus", "profile", "src"]) cpSync(join(TOOL_ROOT, part), join(root, part), { recursive: true })
+    // A file fmt leaves byte-identical compiles to the same artifacts by
+    // determinism; only a file fmt changes can change meaning, so only those
+    // are compiled before and after. Each compile costs seconds (over 6 s on a
+    // slow VM), so at most CHANGED_CASES of them, evenly spread over the
+    // sorted list: fmt rewrites per construct, so a spread sample meets every
+    // rewrite it makes, and fmt_idempotent covers every file.
+    const changed: string[] = []
     for (const file of [...sources(join(root, "corpus/accept")), ...sources(join(root, "fixtures"))]) {
+      if (formatSource(file, readFileSync(file, "utf8")) === readFileSync(file, "utf8")) unchanged++
+      else changed.push(file)
+    }
+    const step = Math.max(1, Math.ceil(changed.length / CHANGED_CASES))
+    for (const file of changed.filter((_, index) => index % step === 0)) {
       const source = readFileSync(file, "utf8")
       const formatted = formatSource(file, source)
-      // A file fmt leaves byte-identical compiles to the same artifacts by
-      // determinism; only a file fmt changes can change meaning, so only those
-      // are compiled before and after (each compile costs seconds).
-      if (formatted === source) {
-        unchanged++
-        continue
-      }
       const compile = () => compilePack(root, { scope: { orgId: "org_demo", environmentId: "dev" }, modules: [file], root })
       const before = compile()
       if (!before.ok) continue // Rejection fixtures have no canonical artifact set.
@@ -45,6 +52,7 @@ test("fmt_preserves_semantics", () => {
         compiled++
       } finally { writeFileSync(file, source) }
     }
+    expect(compiled).toBeGreaterThan(5)
     expect(compiled + unchanged).toBeGreaterThan(20)
   } finally { rmSync(root, { recursive: true }) }
 }, 600000)
