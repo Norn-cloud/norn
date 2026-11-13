@@ -41,7 +41,7 @@ use norn_ir::MetricDefinition;
 
 use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
-use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::policy::{self, ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, ReadSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
@@ -102,6 +102,11 @@ impl<E: SqlEngine> QuestionRuntime<E> for ReceiptHandles {
 }
 
 impl<E: SqlEngine> AdHocQuestions<E> for ReceiptHandles {
+    /// Receipt handles answer no question: a definition naming one is
+    /// refused as unavailable, never as an authorization failure.
+    fn publishes_questions(&self) -> bool {
+        false
+    }
     fn definitions(&self) -> &[MetricDefinition] {
         &[]
     }
@@ -128,6 +133,8 @@ struct Serving<E: SqlEngine> {
     object_types: Vec<String>,
     /// Where the cell's action policy is installed.
     actions: ActionSlot,
+    /// Where the cell's read rules are installed.
+    reads: ReadSlot,
     /// The definitions version the installed action policy was compiled from.
     compiled: Option<u64>,
     /// Why the active definitions installed no action policy, if they failed.
@@ -147,11 +154,8 @@ impl<E: SqlEngine> Serving<E> {
         let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
             .with_caller(Arc::clone(caller));
         let actions = policy.action_slot();
-        let object_types = store
-            .model()
-            .object_types()
-            .map(|object_type| object_type.name.as_str().to_owned())
-            .collect();
+        let reads = policy.read_slot();
+        let object_types = collections(store.model().object_types());
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .map_err(|refusal| SeedError(refusal.code))?
             .with_authorizer(policy);
@@ -160,16 +164,30 @@ impl<E: SqlEngine> Serving<E> {
             questions,
             object_types,
             actions,
+            reads,
             compiled: None,
             policy_error: None,
         })
     }
 
-    /// Install the action policy of the active definitions when they changed
-    /// since it was compiled. A policy that does not compile, or definitions
-    /// that cannot be read, install none: the cell then serves no action, and
-    /// the reason is kept for the operator ([`Tenant::action_policy_error`]).
-    fn refresh_actions(&mut self) {
+    /// Recompile what the active definitions decide (the action policy, the
+    /// read rules and the `/v1/access` collections) when their version
+    /// changed since the last compile: a flow install adds its run type to a
+    /// live cell, and it is served at once, never only after a restart. A
+    /// policy that does not compile, or definitions that cannot be read,
+    /// install no action policy: the cell then serves no action, and the
+    /// reason is kept for the operator ([`Tenant::action_policy_error`]).
+    fn refresh_definitions(&mut self) {
+        let version = match self.host.active_definitions_version() {
+            Ok(version) => version,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
+        if version == self.compiled && version.is_some() {
+            return;
+        }
         let active = match self.host.active_definitions() {
             Ok(active) => active,
             Err(refusal) => {
@@ -177,14 +195,17 @@ impl<E: SqlEngine> Serving<E> {
                 return;
             }
         };
-        let version = active.as_ref().map(|set| set.version);
-        if version == self.compiled && version.is_some() {
-            return;
-        }
         let compiled = active.map(|set| {
             let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set)?;
             let model = norn_api::kernel_set::kernel_model(&artifacts)
                 .map_err(|error| format!("{error:?}"))?;
+            // The model the store serves: the admitted set's, with the
+            // kernel's action types, as provisioned.
+            if let Ok(served) = norn_api::action_admission::prepare_action_model(&model)
+                && policy::recompile_reads(&self.reads, served.object_types()).is_ok()
+            {
+                self.object_types = collections(served.object_types());
+            }
             ActionPolicy::compile(&model, &artifacts, self.host.scope()).map_err(|error| error.0)
         });
         match compiled {
@@ -325,7 +346,7 @@ impl<E: SqlEngine> Tenant<E> {
             return server::respond(self.provision(principals, request));
         }
         if let State::Serving(serving) = &mut self.state {
-            serving.refresh_actions();
+            serving.refresh_definitions();
         }
         match &self.state {
             State::Serving(serving) if request.path == "/v1/access" => server::access(
@@ -336,6 +357,10 @@ impl<E: SqlEngine> Tenant<E> {
                 request,
             ),
             State::Serving(serving) => {
+                // The cell's own questions, if it publishes any; else its
+                // receipt handles, which publish none: a definition naming a
+                // question is then unavailable (422), and every route sees
+                // the same runtime as on a vacant scope (#1297 r2 B1).
                 let questions = serving
                     .questions
                     .as_ref()
@@ -523,4 +548,19 @@ fn reopen<E: SqlEngine>(
     Ok(State::Serving(Box::new(Serving::from_store(
         store, scope, table, caller, None,
     )?)))
+}
+
+/// The cell's own collections, for `GET /v1/access`: every model type but the
+/// kernel's call records, which only definition writers read (#1297 r2 B2).
+fn collections<'a>(
+    object_types: impl IntoIterator<Item = &'a norn_ir::ObjectTypeDef>,
+) -> Vec<String> {
+    object_types
+        .into_iter()
+        .map(|object_type| object_type.name.as_str())
+        .filter(|name| {
+            *name != norn_kernel::ACTION_CALL_TYPE && *name != norn_kernel::OWNED_ROWS_TYPE
+        })
+        .map(str::to_owned)
+        .collect()
 }

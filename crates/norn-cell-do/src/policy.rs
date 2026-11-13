@@ -180,10 +180,14 @@ impl CallerSlot {
 /// change; `None` serves no action.
 pub type ActionSlot = Arc<RwLock<Option<Arc<ActionPolicy>>>>;
 
+/// The cell's read rules for its current model, replaced when a definitions
+/// install changes the model (a flow adds its run type).
+pub type ReadSlot = Arc<RwLock<Pdp>>;
+
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
     /// The compiled policy with no grant; each request adds its caller's.
-    base: Pdp,
+    base: ReadSlot,
     key: ScopeKey,
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
@@ -212,40 +216,20 @@ impl ReadPolicy {
         scope: &CellScope,
         table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
-        let types: Vec<ObjectTypeDef> = object_types.into_iter().cloned().collect();
-        let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
-        let host = norn_projections::project_host_access_schema(&types);
-        let schema =
-            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
-                .map_err(|e| SeedError(format!("read schema: {e}")))?;
-        let policy = AccessIr {
-            access_version: IrVersion01::V0_1,
-            policy_id: READ_POLICY_ID.into(),
-            rules: types
-                .iter()
-                .map(|object_type| AccessRule {
-                    rule_id: format!("read_{}", object_type.name.as_str()),
-                    actions: vec![READ_ACTION.into()],
-                    resource_type: object_type.name.clone(),
-                    scope: AccessScope {
-                        dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
-                    },
-                    all_of: vec![],
-                })
-                .collect(),
-            generic_rules: vec![],
-            extensions: None,
-        };
-        let compiled =
-            authz::compile(&schema, &policy).map_err(|e| SeedError(format!("read policy: {e}")))?;
-        let base = Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("read policy: {e}")))?;
+        let base = read_rules(object_types)?;
         Ok(Self {
-            base,
+            base: Arc::new(RwLock::new(base)),
             key: scope_key(scope),
             table,
             caller: Arc::default(),
             actions: Arc::default(),
         })
+    }
+
+    /// The slot holding this cell's read rules ([`recompile_reads`]).
+    #[must_use]
+    pub fn read_slot(&self) -> ReadSlot {
+        Arc::clone(&self.base)
     }
 
     /// The slot this cell's action policy is installed into; empty until the
@@ -326,8 +310,9 @@ impl ReadPolicy {
         if capabilities.is_empty() {
             return None;
         }
+        let base = self.base.read().ok()?.policy_set().clone();
         Pdp::new(
-            self.base.policy_set().clone(),
+            base,
             &[CapabilityGrant {
                 subject_id: caller.subject_id,
                 actor_kind: ActorKind::User,
@@ -533,4 +518,54 @@ impl norn_api::object_routes::ObjectAccess for CellObjectAccess {
         }
         Ok(request)
     }
+}
+
+/// Compile the read rules (one per object type, scoped grants added per
+/// request) for `object_types`.
+fn read_rules<'a>(
+    object_types: impl IntoIterator<Item = &'a ObjectTypeDef>,
+) -> Result<Pdp, SeedError> {
+    let types: Vec<ObjectTypeDef> = object_types.into_iter().cloned().collect();
+    let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
+    let host = norn_projections::project_host_access_schema(&types);
+    let schema = AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+        .map_err(|e| SeedError(format!("read schema: {e}")))?;
+    let policy = AccessIr {
+        access_version: IrVersion01::V0_1,
+        policy_id: READ_POLICY_ID.into(),
+        rules: types
+            .iter()
+            .map(|object_type| AccessRule {
+                rule_id: format!("read_{}", object_type.name.as_str()),
+                actions: vec![READ_ACTION.into()],
+                resource_type: object_type.name.clone(),
+                scope: AccessScope {
+                    dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
+                },
+                all_of: vec![],
+            })
+            .collect(),
+        generic_rules: vec![],
+        extensions: None,
+    };
+    let compiled =
+        authz::compile(&schema, &policy).map_err(|e| SeedError(format!("read policy: {e}")))?;
+    Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("read policy: {e}")))
+}
+
+/// Replace the read rules in `slot` with those for `object_types`, after a
+/// definitions install changed the cell's model.
+///
+/// # Errors
+/// The rules do not compile; the slot keeps its rules.
+pub fn recompile_reads<'a>(
+    slot: &ReadSlot,
+    object_types: impl IntoIterator<Item = &'a ObjectTypeDef>,
+) -> Result<(), SeedError> {
+    let rules = read_rules(object_types)?;
+    let mut held = slot
+        .write()
+        .map_err(|poisoned| SeedError(format!("read policy: {poisoned}")))?;
+    *held = rules;
+    Ok(())
 }
