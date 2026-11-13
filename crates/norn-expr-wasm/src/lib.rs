@@ -11,7 +11,7 @@ use norn_expr::{
 use norn_ir::ResourceLimitProfile;
 use serde_json::{Value, json};
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "bindings"))]
 pub mod wasm;
 
 /// Format tag of the [`evaluate_expression_json`] document.

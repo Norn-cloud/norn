@@ -17,7 +17,7 @@ target_dir="${CARGO_TARGET_DIR:-${root}/target}"
 out="${1:-${target_dir}/norn-expr-wasm/pkg}"
 wasm_manifest="${root}/crates/norn-expr-wasm/Cargo.toml"
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${wasm_manifest}" | head -n1)"
-wasm_bindgen_pin="$(sed -n 's/^wasm-bindgen = "=\([^"]*\)"$/\1/p' "${wasm_manifest}")"
+wasm_bindgen_pin="$(sed -n 's/^wasm-bindgen = { version = "=\([^"]*\)".*$/\1/p' "${wasm_manifest}")"
 
 if [[ -z "${wasm_bindgen_pin}" ]]; then
   echo "error: no exact wasm-bindgen pin found in ${wasm_manifest}" >&2
@@ -34,7 +34,7 @@ if [[ "${cli_version}" != "${expected_cli_version}" ]]; then
   exit 1
 fi
 
-cargo rustc --locked -p norn-expr-wasm --lib \
+cargo rustc --locked -p norn-expr-wasm --lib --features bindings \
   --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib \
   --manifest-path "${root}/Cargo.toml"
 
