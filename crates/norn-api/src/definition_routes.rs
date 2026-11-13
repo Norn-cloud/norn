@@ -1360,6 +1360,11 @@ fn append<E: SqlEngine>(
                 let serving = crate::host::serves_actions(cell.store().model());
                 let model = crate::host::reopen_model(&admitted.canonical_set, serving)?;
                 crate::host::check_reopens(&model, &admitted.canonical_set, serving)?;
+                // DEFS-REOPEN-1: the cell's own policy must serve the new
+                // model too; one that cannot refuses before any write.
+                let candidate: Vec<norn_ir::ObjectTypeDef> =
+                    model.object_types().cloned().collect();
+                host.authorizer.admits_model(&candidate)?;
                 (
                     model,
                     admitted.canonical_set,

@@ -671,7 +671,11 @@ fn route<E: SqlEngine>(
             "this host's read routes take GET",
         ))
     } else {
-        match (question, questions) {
+        // A runtime that publishes no questions (a tenant's receipt handles)
+        // has no named question to answer: the base's 404, never a refusal
+        // that depends on the caller (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        match (question, published) {
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),

@@ -998,3 +998,45 @@ fn outsiders_cannot_tell_a_vacant_scope_from_a_tenant_with_live_questions() {
     }
     assert!(compared >= 200, "{compared}");
 }
+
+/// D84: a tenant cell publishes no questions, so a named question is the
+/// base's 404 `question.not_found` on a vacant scope and a provisioned one
+/// alike, for every caller and with any query (#1297 r3 should 1).
+#[test]
+fn a_named_question_is_not_found_on_vacant_and_provisioned_cells_alike() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut served = provisioned(
+        &directory.path().join("served.sqlite"),
+        &with_policy(&["admin"]),
+    );
+    let mut vacant = opened(&directory.path().join("vacant.sqlite"));
+    for path in ["/v1/questions/q/answer", "/v1/questions/q/trace"] {
+        for query in [QUERY, "orgId=org_a&environmentId=prod&unknown=1"] {
+            for auth in [None, Some(user("admin")), Some(user("viewer"))] {
+                let ask = |cell: &mut Cell| {
+                    cell.tenant.handle(
+                        &cell.tokens,
+                        &Request {
+                            method: "GET",
+                            path,
+                            query,
+                            authorization: auth.as_deref(),
+                            now: NOW,
+                            body: "",
+                        },
+                    )
+                };
+                let at_served = ask(&mut served);
+                let document: Value = serde_json::from_str(&at_served.body).unwrap();
+                assert_eq!(
+                    (at_served.status, document["code"].as_str()),
+                    (404, Some("question.not_found")),
+                    "{path}?{query} as {auth:?}"
+                );
+                if auth.is_none() {
+                    assert_eq!(at_served, ask(&mut vacant), "{path}?{query}");
+                }
+            }
+        }
+    }
+}

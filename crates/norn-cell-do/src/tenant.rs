@@ -219,7 +219,8 @@ impl<E: SqlEngine> Serving<E> {
         });
         match compiled {
             Some(Ok(policy)) => self.install_actions(policy, version, None),
-            Some(Err(reason)) => self.install_actions(None, version, Some(reason)),
+            // Not marked compiled: the next request tries again.
+            Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
             None => self.install_actions(None, version, None),
         }
     }

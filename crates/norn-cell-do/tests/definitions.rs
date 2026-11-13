@@ -2230,3 +2230,133 @@ fn a_code_dashboard_is_admitted_like_one_saved_in_studio() {
         "{words}"
     );
 }
+
+/// The read policy with one change: no candidate model is servable, as when
+/// a flow's run type is one the cell's read rules cannot compile.
+struct ReadRulesRefuse(ReadPolicy);
+
+impl norn_api::authz::Authorizer for ReadRulesRefuse {
+    fn read(
+        &self,
+        request: &norn_api::authz::ReadRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.0.read(request)
+    }
+    fn action(
+        &self,
+        request: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action(request)
+    }
+    fn action_read(
+        &self,
+        request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read(request)
+    }
+    fn action_read_type(
+        &self,
+        request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read_type(request)
+    }
+    fn admits_model(
+        &self,
+        _object_types: &[norn_ir::ObjectTypeDef],
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        Err(norn_api::refusal::Refusal::new(
+            http::StatusCode::CONFLICT,
+            "defs.migration_refused",
+            "the candidate definitions cannot carry the cell's live data",
+            "the cell's read rules do not compile for the candidate model",
+        ))
+    }
+    fn disclose_refusal_detail(&self, request: &norn_api::authz::RefusalDetailRequest<'_>) -> bool {
+        self.0.disclose_refusal_detail(request)
+    }
+    fn authorize(
+        &self,
+        request: &norn_api::authz::AccessRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.0.authorize(request)
+    }
+}
+
+/// DEFS-REOPEN-1: a flow install the cell's read policy cannot serve is
+/// refused before anything is written (the route asks the policy first), the
+/// active definitions are unchanged, and the cell reopens as it was.
+#[test]
+fn a_flow_the_read_rules_cannot_serve_is_refused_and_the_cell_reopens() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    let before = {
+        let cell = cell_on(open(), flow_kinds());
+        assert_eq!(
+            install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+            200
+        );
+        cell.host.active_definitions().unwrap().unwrap().version
+    };
+    {
+        let scope = analytics::analytics_scope();
+        let opened = analytics::provision(open(), &scope).unwrap();
+        let policy =
+            ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+        let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+        let host = DevHost::from_store(opened.store, scope.clone(), |command| {
+            command.payload.clone()
+        })
+        .unwrap()
+        .with_authorizer(ReadRulesRefuse(policy));
+        let questions = DemoQuestions::new(opened.plan, scope)
+            .with_handle_key(&HANDLE_KEY)
+            .with_metrics(opened.definitions, opened.catalog);
+        let cell = Cell {
+            host,
+            questions,
+            principals,
+            kinds: flow_kinds(),
+        };
+        let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+        assert_eq!(
+            (status, refused["code"].as_str()),
+            (409, Some("defs.migration_refused")),
+            "{refused}"
+        );
+        assert_eq!(
+            cell.host.active_definitions().unwrap().unwrap().version,
+            before
+        );
+    }
+    let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    assert!(
+        !reopened
+            .store
+            .model()
+            .object_types()
+            .any(|object_type| object_type.name.as_str() == "crm.RouteMessageRun")
+    );
+    assert_eq!(
+        reopened
+            .store
+            .read()
+            .installed_definitions(None)
+            .unwrap()
+            .unwrap()
+            .version,
+        before
+    );
+}
+
+/// The read policy refuses a candidate model whose read rules do not
+/// compile, with the same compile the cell's reopen runs.
+#[test]
+fn the_read_policy_admits_only_models_its_rules_compile_for() {
+    use norn_api::authz::Authorizer as _;
+    let scope = analytics::analytics_scope();
+    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let types: Vec<norn_ir::ObjectTypeDef> = opened.store.model().object_types().cloned().collect();
+    let policy = ReadPolicy::compile(types.iter(), &scope, &DEMO_GRANTS).unwrap();
+    assert!(policy.admits_model(&types).is_ok());
+}
