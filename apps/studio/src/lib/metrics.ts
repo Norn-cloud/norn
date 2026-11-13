@@ -101,7 +101,7 @@ export const metricQuestion = (metric: MetricSummary, window: Window, conditions
   name: "studio.metric",
   objectSet: metric.objectType,
   aggregate: [{ metric: metric.name }],
-  ...metric.timeProperty === null ? {} : { groupBy: [{ path: { property: metric.timeProperty }, grain: window.grain }] },
+  ...metric.timeProperty === null ? {} : { groupBy: [{ path: { ...(metric.timeLinks ?? []).length > 0 ? { links: metric.timeLinks } : {}, property: metric.timeProperty }, grain: window.grain }] },
   ...conditions.length === 0 ? {} : { filter: conditions.map(({ property, value }) => ({ path: { property }, operator: "eq", value })) },
   window: { start: window.start, end: window.end },
   freshness: { kind: "live", maxAgeMs: 60_000 },

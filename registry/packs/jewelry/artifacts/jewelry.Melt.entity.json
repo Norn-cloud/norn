@@ -1,0 +1,110 @@
+{
+  "artifactId": "jewelry.Melt.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Melt",
+  "namespace": "jewelry",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "holding",
+          "target": "canon.Holding"
+        }
+      ],
+      "name": "jewelry.Melt",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metal",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "gold"
+              },
+              {
+                "value": "silver"
+              }
+            ]
+          }
+        },
+        {
+          "id": "input_fine_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "output_fine_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "loss_fine_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "loss_reason",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/jewelry/artifacts/jewelry.Melt.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
-import { ShieldAlert, ShieldCheck } from "lucide-react"
+import { CircleAlert, CircleCheck, CircleDashed, CircleDot, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
@@ -14,11 +14,17 @@ function ruleName(rule: RuleRef): string {
   return "an invariant"
 }
 
-const STATUS: Record<Finding["status"], { readonly label: string; readonly variant: "destructive" | "secondary" | "outline" }> = {
-  open: { label: "Open", variant: "destructive" },
-  acknowledged: { label: "Acknowledged", variant: "secondary" },
-  resolved: { label: "Resolved", variant: "outline" },
-  superseded: { label: "Superseded", variant: "outline" },
+const STATUS: Record<Finding["status"], { readonly label: string; readonly variant: "destructive" | "warning" | "success" | "outline"; readonly icon: LucideIcon }> = {
+  open: { label: "Open", variant: "destructive", icon: CircleAlert },
+  acknowledged: { label: "Acknowledged", variant: "warning", icon: CircleDot },
+  resolved: { label: "Resolved", variant: "success", icon: CircleCheck },
+  superseded: { label: "Superseded", variant: "outline", icon: CircleDashed },
+}
+
+/** A finding's state: its tone and its own icon, so the state never rests on colour alone. */
+function StatusBadge({ status }: { readonly status: Finding["status"] }) {
+  const { label, variant, icon: Icon } = STATUS[status]
+  return <Badge variant={variant}><Icon aria-hidden />{label}</Badge>
 }
 
 /**
@@ -42,7 +48,7 @@ export function Findings({ objectType, id, actionFor }: { readonly objectType: s
         {findings.map((finding) => (
           <article key={finding.id} className="space-y-1 rounded-md border bg-card p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={STATUS[finding.status].variant}>{STATUS[finding.status].label}</Badge>
+              <StatusBadge status={finding.status} />
               <span className="font-mono text-xs">{ruleName(finding.ruleRef)}</span>
               <span className="text-meta text-muted-foreground">{finding.severity} · first seen {finding.firstSeen}</span>
             </div>

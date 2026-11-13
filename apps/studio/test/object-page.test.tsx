@@ -54,7 +54,9 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
-  expect(html).toContain("Copy 39c47543142834013288b03019aaeb853ada42a763dc3985f5457ade3d943ac3")
+  // The pin as the recorded source document carries it, so a regenerated fixture moves the test with it (#1347).
+  const pin = (JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects/canon.Item/demo~item~gold.source.json"), "utf8")) as { mappingPin: { sha256: string } }).mappingPin.sha256
+  expect(html).toContain(`Copy ${pin}`)
   expect(html).toContain("This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.")
   expect(html).toContain("Viewing as")
   expect(html).not.toContain("no signed-in principal")

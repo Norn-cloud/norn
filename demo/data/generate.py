@@ -10,6 +10,12 @@ Writes into OUTDIR:
   three-systems mappings (`norn dev --load`), and a sandbox ERP can be seeded
   with the same rows. The order set is split by channel: wholesale lines in
   ERPNext, online retail in Shopify, enterprise in Odoo.
+  Each shipped gram line also has its delivery, the delivery's two ledger
+  postings (cost of goods sold and the matching inventory credit, in the
+  USD stock book) and the customer's payment, in the currency of the
+  customer's region at that month's rate; a few are later refunded. So
+  every canon type Studio shows (holdings, order lines, deliveries,
+  postings, settlements) has ten months of records.
 - `orders.json`: the same order lines with the analytics columns the source
   schemas do not carry (order and ship dates, lead time, region, customer
   segment, unit price, currency). These load through the demo project's
@@ -50,6 +56,16 @@ ITEMS = [
     ("RESIN", "Casting resin", "kg", "14.20", (1, 80)),
 ]
 # How each system names a dataset and the record's identity and reference fields.
+# The datasets each system exports deliveries, ledger lines and payments in.
+SHAPE_FLOWS = {
+    "erpnext": {"delivery": "Delivery Note Item", "posting": "GL Entry", "settlement": "Payment Entry"},
+    "shopify": {"delivery": "FulfillmentLine", "posting": None, "settlement": "Transaction"},
+    "odoo": {"delivery": "stock.move", "posting": "account.move.line", "settlement": "account.payment"},
+}
+# Customers pay in their region's currency; units of that currency per USD,
+# drifting a little each month so a converted total has a trend.
+REGION_CURRENCY = {"north": "EUR", "south": "EGP", "east": "AED", "west": "USD"}
+USD_RATE = {"EUR": 0.92, "EGP": 48.5, "AED": 3.6725, "USD": 1.0}
 SHAPE = {
     "erpnext": {"id": "name", "ref": "custom_norn_ref", "party": "Party", "item": "Item", "holding": "Warehouse Lot Balance", "order": "Sales Order Item", "prefix": "SYN-ERPNEXT", "observed": "modified"},
     "shopify": {"id": "id", "ref": "metafield_norn_ref", "party": "Customer", "item": "ProductVariant", "holding": "InventoryLevel", "order": "OrderLine", "prefix": "SYN-SHOPIFY", "observed": "updated_at"},
@@ -151,6 +167,24 @@ def snapshot(system: str, customers, rows):
         flows[key]["deliveries"] += quantity
         sequence += 1
         holding(key[0], key[1], balance[key], at, f"{at}#{sequence:06d}")
+    flows_out = SHAPE_FLOWS[system]
+    for row in mine:
+        number = row["order_ref"].split("/")[2]
+        delivery = f"demo/delivery/{number}/line/1"
+        shipped = f"{row['ship_date']}T12:00:00Z"
+        record(flows_out["delivery"], f"delivery-{number}", delivery, quantity=int(row["quantity"]), unit="g", occurred_at=shipped, provider_ref="demo/party/owner", receiver_ref=row["customer_ref"], holding_ref=f"demo/holding/owner/{row['region']}/{row['item_code'].lower()}", order_ref=row["order_ref"], posting_state="posted")
+        cost = round(int(row["quantity"]) * STOCK_COST_PER_GRAM[row["item_code"]], 2)
+        if flows_out["posting"] is not None:
+            for role, sign in (("cogs", 1), ("inventory", -1)):
+                record(flows_out["posting"], f"gl-{number}-{role}", f"demo/posting/{number}/{role}", account_code=role, amount=sign * cost, currency="USD", book="demo/stock-usd", account_role=role, event_ref=delivery, posting_state="posted")
+        currency = REGION_CURRENCY[row["region"]]
+        month = int(row["ship_date"][5:7])
+        rate = USD_RATE[currency] * (1 + 0.004 * (month - 6)) if currency != "USD" else 1.0
+        paid = round(int(row["quantity"]) * float(row["unit_price"]) * rate, 2)
+        record(flows_out["settlement"], f"pay-{number}", f"demo/settlement/{number}/payment", amount=paid, currency=currency, kind="payment", payer_ref=row["customer_ref"], payee_ref="demo/party/owner")
+        # A quarter of the price is refunded on about one line in 25, chosen by the order's ref.
+        if int(hashlib.sha256(row["order_ref"].encode()).hexdigest(), 16) % 25 == 0:
+            record(flows_out["settlement"], f"refund-{number}", f"demo/settlement/{number}/refund", amount=round(paid * 0.25, 2), currency=currency, kind="refund", payer_ref="demo/party/owner", payee_ref=row["customer_ref"])
     for (code, region), flow in flows.items():
         assert balance[(code, region)] == STOCK_PLAN[code][0] + flow["receipts"] - flow["deliveries"] >= 0
     stock = {f"{code.lower()}/{region}": {"opening": STOCK_PLAN[code][0], **flow, "closing": balance[(code, region)]} for (code, region), flow in sorted(flows.items())}

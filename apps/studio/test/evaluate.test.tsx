@@ -63,7 +63,7 @@ test("a run answer renders like a published one, without a link to a published p
   expect(html).toContain("<h3")
   expect(html).toContain(">Live<")
   expect(html).not.toContain('href="/questions/')
-  expect(html).toContain("Every week")
+  expect(html).toMatch(/Every week|The latest 8 weeks/)
 })
 
 

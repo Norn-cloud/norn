@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Ellipsis, Rows3, Split } from "lucide-react"
+import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Rows3, Split } from "lucide-react"
+import { Chip, FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -16,6 +17,9 @@ import { buckets, contribution, declarations, fraction, shown, type Bucket } fro
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, groupDigits, headline, period, scope, stamp } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
+import { CodedMessage } from "@/components/coded-message"
+import { useLocale } from "@/lib/locale"
+import { plainWords } from "./lib/plain-words.ts"
 import type { Read } from "./lib/exact.ts"
 import type { Question, QuestionAnswer } from "./lib/transport.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -97,12 +101,28 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale 
   )
 }
 
-/** The server's refusal, as an answer: its reason in its own words, and its code. */
+/** How many of a series' periods its table lists before "Show all". */
+const LATEST = 8
+
+/**
+ * The server's refusal, as an answer: what it means in plain words (the reader's language), with
+ * the engine's own message, code and explanation under Technical.
+ */
 export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
+  const { locale } = useLocale()
+  const plain = plainWords(refusal.code, locale)
   return (
-    <div role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
-      <div><span className="font-medium">Refused:</span> {refusal.message}</div>
-      <div className="font-mono text-xs text-muted-foreground">{refusal.code}{refusal.explanation ? ` · ${refusal.explanation}` : ""}</div>
+    <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
+      <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+      {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
+      {refusal.explanation && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{refusal.explanation}</p>}
+      <details className="text-meta text-muted-foreground">
+        <summary className="cursor-pointer select-none">{locale === "ar" ? "تقني" : "Technical"}</summary>
+        <div className="mt-1 grid gap-0.5 font-mono [overflow-wrap:anywhere]" dir="ltr">
+          <span>{refusal.code}</span>
+          <span>{refusal.message}</span>
+        </div>
+      </details>
     </div>
   )
 }
@@ -167,6 +187,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const declared = declarations(read)
   const rows = buckets(declared, { answer, numbers: read.answer.numbers, at: "" })
   const [open, setOpen] = useState<Bucket | undefined>(() => rows.find(({ key }) => key === openBucket))
+  const [every, setEvery] = useState(false)
   const named = title ?? headline(question)
   const provenanceOf = (bucket: Bucket) => bucketProvenance(answer, bucket, title === undefined ? metricLabels(declared) : [title], engineOf(answer) ?? null)
   const lead = headlineOf(named, question, rows, answer.nowMs, unit)
@@ -179,6 +200,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const [drill, setDrill] = useState<Drill>()
   const live = read.answer.origin === "live"
   const grain = question.groupBy?.[0]?.grain
+  // A long series lists its latest periods; the reader can show them all (the chart above draws every one).
+  const listed = grain !== undefined && !every && rows.length > LATEST ? rows.slice(-LATEST) : rows
   return (
     <section className="space-y-4">
       <div className="space-y-1 px-1">
@@ -186,10 +209,10 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           {heading === "h1" ? <h1 className="text-title font-semibold tracking-tight">{named}</h1>
             : heading === "h3" ? <h3 className="font-medium">{named}</h3>
             : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
-          <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
+          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
           {read.answer.origin === "live"
-            ? <Badge variant="secondary" title="Read now from the cell as your account.">Live</Badge>
-            : <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Badge>}
+            ? <Chip tone="teal" dot pulse title="Read now from the cell as your account.">Live</Chip>
+            : <Chip tone="gray" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Chip>}
         </div>
         {refusal && <RefusedNote refusal={refusal} />}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
@@ -197,33 +220,38 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </div>
       <div className="space-y-2 px-1" data-slot="answer-lead">
         {lead.bucket && (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pt-2">
             {lead.bucket.suppressed ? <span className="text-figure leading-none font-semibold tracking-[-0.02em] text-muted-foreground">—</span> : (
               <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
                 label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                <span className="block text-figure leading-none font-semibold tracking-[-0.02em] tabular-nums underline decoration-dotted decoration-muted-foreground/40 underline-offset-8">{figure(lead.bucket, unit)}</span>
+                <span className="block text-figure leading-none font-semibold tracking-[-0.03em] tabular-nums underline decoration-dotted decoration-muted-foreground/30 decoration-1 underline-offset-[10px]">{figure(lead.bucket, unit)}</span>
               </AnswerProvenance>
             )}
-            <span className="text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground tabular-nums">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</span>
           </div>
         )}
-        <p className="max-w-[72ch] text-panel text-pretty">{lead.sentence}</p>
-        <div className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground" aria-label="As of">
-          <Clock aria-hidden className="size-3.5" />
-          <span className="rounded-md bg-muted px-1.5 py-0.5 tabular-nums" title="The cell's knowledge when it answered: its committed changes">Known after {changes(answer.knownAsOf)}</span>
-          <span className="rounded-md bg-muted px-1.5 py-0.5 tabular-nums" title="The cell's clock when it answered">Read {stamp(answer.nowMs)}</span>
-          {engineOf(answer) && <span className="rounded-md bg-muted px-1.5 py-0.5">{engineOf(answer)}</span>}
-          {sources.length > 0 && <span className="rounded-md bg-muted px-1.5 py-0.5">Sources: {sources.join(", ")}</span>}
+        <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1" aria-label="As of">
+          <FactChip icon={GitCommitHorizontal} label="Known after" title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</FactChip>
+          <FactChip icon={Clock} label="Read" title="The cell's clock when it answered">{stamp(answer.nowMs)}</FactChip>
+          {engineOf(answer) && <FactChip icon={Cpu}>{engineOf(answer)}</FactChip>}
+          {sources.length > 0 && <FactChip icon={Database} label="Sources">{sources.join(", ")}</FactChip>}
         </div>
       </div>
       {/* A series over time is drawn; a breakdown by values is read in its table. */}
       {/* A series over time of two or more buckets is drawn; one bucket, or a breakdown by values, is read in its table. */}
       {rows.length >= 2 && (grain !== undefined || question.groupBy === undefined || question.groupBy.length === 0) ? <Panel icon={ChartLine} label={named} action={period(question.window)}>
-        <Well className="px-2 pt-4 pb-1">
+        <Well className="px-2 pt-4 pb-2">
           {frame ? (
           <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="h-56 w-full">
             <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
-              <CartesianGrid vertical={false} strokeDasharray="2 4" />
+              <defs>
+                <linearGradient id="answer-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-position)" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="var(--color-position)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
               <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick.toLocaleString("en")}${frame.unit}`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
@@ -232,17 +260,17 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                   <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
-              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.75} fill="url(#answer-fill)" dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
           ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
         </Well>
       </Panel> : null}
-      <Panel icon={Rows3} label={grain ? `Every ${grain}` : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
+      <Panel icon={Rows3} label={grain ? (listed.length < rows.length ? `The latest ${listed.length} ${grain}s` : `Every ${grain}`) : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} to see its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
           <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead>{ratio && <TableHead className="text-right max-sm:hidden">Exactly</TableHead>}<TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
           <TableBody>
-            {rows.map((bucket) => (
+            {listed.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
                 <TableCell>
                   <button type="button" className="rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); setOpen(bucket) }}>
@@ -258,7 +286,12 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               </TableRow>
             ))}
           </TableBody>
-        </Table></TableCard>}
+        </Table>
+        {grain && rows.length > LATEST && (
+          <div className="border-t border-border/70 px-3 py-1.5">
+            <Button variant="ghost" size="sm" onClick={() => setEvery(!every)}>{every ? `Show the latest ${LATEST}` : `Show all ${rows.length} ${grain}s`}</Button>
+          </div>
+        )}</TableCard>}
       </Panel>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>

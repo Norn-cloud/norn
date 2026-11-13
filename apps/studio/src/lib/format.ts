@@ -1,9 +1,55 @@
 import type { Answer, Question } from "./transport.ts"
 
-/** The last segment of a declared name, in words: `demo.yield_week` → `Yield week`. */
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+
+/**
+ * A column the metric compiler names for a path through links (`norn_path_5_event_11_occurred_uat_value`,
+ * each part length-prefixed with its underscores escaped as `_u`), in words: "event's occurred at".
+ * Undefined when `name` is not one.
+ */
+export function pathWords(name: string): string | undefined {
+  const body = /^norn_path_(.+)_value$/.exec(name)?.[1]
+  if (body === undefined) return undefined
+  const parts: string[] = []
+  let at = 0
+  while (at < body.length) {
+    const length = /^(\d+)_/.exec(body.slice(at))
+    if (length === null) return undefined
+    at += length[0].length
+    let part = ""
+    while (part.length < Number(length[1]) && at < body.length) {
+      if (body[at] === "_" && body[at + 1] === "u") { part += "_"; at += 2 } else { part += body[at]; at += 1 }
+    }
+    if (part.length !== Number(length[1])) return undefined
+    parts.push(part.replaceAll("_", " "))
+    if (at < body.length && body[at++] !== "_") return undefined
+  }
+  if (parts.length === 0) return undefined
+  return [...parts.slice(0, -1).map((link) => `${link}'s`), parts.at(-1)].join(" ")
+}
+
+/**
+ * A metric the cell derives from a type (`analysis.object_<type>.<property>.by_<time>` or `.as_of_<time>`)
+ * in words: "Quantity", "Quantity, as of observed at". Undefined when `name` is not one.
+ */
+export function derivedMetricWords(name: string): string | undefined {
+  const match = /^analysis\.object_[0-9a-f]+\.([a-z0-9_]+)\.(by|as_of)_(.+)$/.exec(name)
+  if (match === null) return undefined
+  const [, property = "", kind, time = ""] = match
+  const measured = capital(property.replaceAll("_", " "))
+  return kind === "as_of" ? `${measured}, as of ${pathWords(time) ?? time.replaceAll("_", " ")}` : measured
+}
+
+/**
+ * A declared or generated name in words: `demo.yield_week` → `Yield week`; a derived metric or a
+ * compiled link path by what it measures (see {@link derivedMetricWords}, {@link pathWords}).
+ * The raw name stays for the Technical view.
+ */
 export function words(name: string): string {
-  const last = name.slice(name.lastIndexOf(".") + 1).replaceAll("_", " ")
-  return last.charAt(0).toUpperCase() + last.slice(1)
+  const derived = derivedMetricWords(name)
+  if (derived !== undefined) return derived
+  const last = name.slice(name.lastIndexOf(".") + 1)
+  return capital(pathWords(last) ?? last.replaceAll("_", " "))
 }
 
 const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })

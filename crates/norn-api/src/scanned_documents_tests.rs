@@ -252,6 +252,40 @@ fn loaded() -> CellStore<NativeEngine> {
     cell.into_store()
 }
 
+/// Install the pack, then capture and map every extracted row in pages of
+/// consecutive rows of one dataset, as `norn dev --load` and hosted bulk loads
+/// deliver them (OBS-PAGE-1).
+fn loaded_by_pages() -> CellStore<NativeEngine> {
+    let mut store = admitted_store(&documents());
+    let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
+    for (dataset, record) in snapshot_rows() {
+        if pages.last().is_none_or(|(current, _)| *current != dataset) {
+            pages.push((dataset.clone(), Vec::new()));
+        }
+        if let Some((_, rows)) = pages.last_mut() {
+            rows.push(raw(&record));
+        }
+    }
+    let mut captured = Vec::new();
+    for (dataset, rows) in &pages {
+        let input = MappingInput {
+            mapping: "docs.scans.mapping".into(),
+            dataset: dataset.clone(),
+            connector_instance: "demo".into(),
+            partition: "snapshot".into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T12:00:00Z".into()),
+        };
+        let page = store.inject_mapping_page(rows, &input).expect("captured");
+        captured.extend(page.pages.into_iter().map(|(id, _)| id));
+    }
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    for id in &captured {
+        cell.process_mapping_page(id).expect("mapped");
+    }
+    cell.into_store()
+}
+
 /// Server policy keyed on the verified subject only: the steward may call and read.
 struct Policy;
 impl Authorizer for Policy {
@@ -1168,4 +1202,34 @@ fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
             .is_some(),
         "released once the entry agrees again"
     );
+}
+
+/// The same rows loaded in pages, as `norn dev --load` and hosted bulk loads
+/// deliver them, are caught by the same laws: a law that reads a link
+/// (`total_matches_lines` sums the document's lines) quarantines the 720
+/// invoice whose lines total 72 (LAW-LINK-1 on the page path).
+#[test]
+fn a_page_load_catches_the_dropped_decimal_too() {
+    let store = loaded_by_pages();
+    let reader = store.read();
+    assert!(
+        reader
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .expect("read")
+            .is_some(),
+        "a consistent invoice is admitted"
+    );
+    let caught = reader
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .expect("read")
+        .expect("raw reads keep the source truth");
+    assert!(
+        reader
+            .observation_is_quarantined(MAIN_WORLD, &caught)
+            .expect("quality")
+    );
+    let findings = reader
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .expect("findings");
+    assert_eq!(law_pins(&findings), [LAW_B, LAW], "{findings:#?}");
 }
