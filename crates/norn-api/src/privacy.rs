@@ -378,6 +378,40 @@ pub(crate) fn project<E: SqlEngine>(
     projected
 }
 
+/// Project the marked columns of one derived row (a transform's) in place:
+/// each column holds the strongest projection of its lineage markings, and a
+/// refused column is left out. A derived row is never revealable.
+///
+/// # Errors
+/// The cell or its definitions cannot be read.
+pub(crate) fn project_columns<E: SqlEngine>(
+    host: &DevHost<E>,
+    columns: &[(String, Vec<String>)],
+    rows: &mut [&mut BTreeMap<String, RuntimeValue>],
+) -> Result<(), Refusal> {
+    if columns.iter().all(|(_, markings)| markings.is_empty()) {
+        return Ok(());
+    }
+    let catalog = {
+        let cell = host.cell()?;
+        host.marking_catalog(&cell.store().read())?
+    };
+    if catalog.is_empty() {
+        return Ok(());
+    }
+    for (column, markings) in columns.iter().filter(|(_, markings)| !markings.is_empty()) {
+        let mask = strongest(&catalog, markings).unwrap_or(MaskPolicy::Refuse {});
+        for values in rows.iter_mut() {
+            if let Some(value) = values.get_mut(column)
+                && apply(&mask, host.pseudonym_key(), value) == NornMaskMode::Refuse
+            {
+                values.remove(column);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `POST /v1/objects/{type}/{id}:reveal` request body.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

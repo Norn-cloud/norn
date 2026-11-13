@@ -453,6 +453,14 @@ fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
     }
 }
 
+/// Each output column with its lineage markings.
+fn marked_columns(plan: &TransformPlan) -> Vec<(String, Vec<String>)> {
+    columns(plan.output_schema())
+        .into_iter()
+        .map(|column| (column.name, column.markings))
+        .collect()
+}
+
 fn columns(schema: &NodeSchema) -> Vec<NornTransformColumn> {
     schema
         .columns
@@ -518,7 +526,7 @@ pub fn get_transform_rows<E: SqlEngine>(
         }
     };
     let total = result.rows.len();
-    let page: Vec<NornTransformRow> = result
+    let mut page: Vec<NornTransformRow> = result
         .rows
         .iter()
         .skip(start)
@@ -529,6 +537,13 @@ pub fn get_transform_rows<E: SqlEngine>(
             member_count: u64::try_from(row.members.len()).unwrap_or(u64::MAX),
         })
         .collect();
+    // PRIVACY-1: a marked column leaves projected, as its source property does.
+    let marked = marked_columns(&plan);
+    crate::privacy::project_columns(
+        host,
+        &marked,
+        &mut page.iter_mut().map(|row| &mut row.values).collect::<Vec<_>>(),
+    )?;
     let end = start.saturating_add(page.len());
     let next_after = (end < total)
         .then(|| page.last().map(|row| format!("{commits}:{}", row.row_id)))
@@ -566,19 +581,21 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     access: &dyn ObjectAccess,
     now: LogicalTime,
 ) -> Result<NornTransformLineage, Refusal> {
-    let (_plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
     let found = result
         .rows
         .iter()
         .find(|candidate| candidate.id == row)
         .ok_or_else(row_not_found)?;
+    let mut values = found.values.clone();
+    crate::privacy::project_columns(host, &marked_columns(&plan), &mut [&mut values])?;
     Ok(NornTransformLineage {
         transform: result.transform.clone(),
         row_id: found.id.clone(),
         commits: result.revision.commits,
         materialization: served.materialization.as_ref().map(materialization),
-        values: found.values.clone(),
+        values,
         members: found
             .members
             .iter()

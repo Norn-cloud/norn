@@ -1,0 +1,21 @@
+{
+  "sha256": "a95e095b5afc8a43abaa480380bfe10c9ae463a12a3ba9dc707ca2496fecc6dc",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-api/tests/privacy.rs",
+    "crates/norn-api/src/privacy.rs",
+    "crates/norn-api/src/object_routes.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
