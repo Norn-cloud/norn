@@ -594,7 +594,11 @@ fn a_saved_view_is_checked_by_the_grid_rules_and_kept_like_any_definition() {
         "extra": true
     });
     let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&wrong));
-    assert_eq!((status, refused["admitted"].clone()), (200, json!(false)), "{refused}");
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
     let found = pointers(&refused);
     for pointer in ["/title", "/columns/1", "/extra"] {
         assert!(
@@ -610,7 +614,11 @@ fn a_saved_view_is_checked_by_the_grid_rules_and_kept_like_any_definition() {
     }
     let unknown = json!({ "title": "X", "objectType": "demo.Missing" });
     let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&unknown));
-    assert_eq!((status, refused["admitted"].clone()), (200, json!(false)), "{refused}");
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
     assert_eq!(
         pointers(&refused),
         [(

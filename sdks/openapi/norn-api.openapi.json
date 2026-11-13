@@ -30765,7 +30765,7 @@
             "items": {
               "$ref": "#/components/schemas/NornFacet"
             },
-            "description": "One facet per property asked for, in the order asked (declared order\nwhen none was named)."
+            "description": "One facet per property asked for, in the order asked (the order the\ncell's model lists the type's properties when none was named)."
           },
           "objectType": {
             "type": "string",

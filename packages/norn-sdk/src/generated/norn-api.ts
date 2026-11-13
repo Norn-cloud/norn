@@ -11008,8 +11008,8 @@ export interface components {
             /** @description True when the scan bound was reached: every count is a lower bound. */
             approximate: boolean;
             /**
-             * @description One facet per property asked for, in the order asked (declared order
-             *     when none was named).
+             * @description One facet per property asked for, in the order asked (the order the
+             *     cell's model lists the type's properties when none was named).
              */
             facets: components["schemas"]["NornFacet"][];
             /** @description The concept counted; rows may be of its subtypes. */
