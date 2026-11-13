@@ -1383,7 +1383,12 @@ pub fn analytics<E: SqlEngine>(
     }
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    let actor = actor.as_deref();
+    // A caller nobody verified is answered by the cell's ordinary routes,
+    // exactly as on a scope with no cell: the engine path never parses or
+    // refuses for them first, so its answers cannot tell a provisioned
+    // tenant from a vacant one (#1297 r1 B1 on the analytics routes).
+    let actor = actor.as_deref()?;
+    let actor = Some(actor);
     let result = match (request.method, export, profile, uploads) {
         ("GET", None, Some(kind), _) => engine_profile(host, actor, transport, kind, request.query),
         ("GET", Some(kind), None, _) => engine_export(host, actor, transport, kind, request.query),

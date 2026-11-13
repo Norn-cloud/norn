@@ -730,8 +730,12 @@ fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
                 json!(true),
                 "{case} {path}: {document}"
             );
+            // The finding is the question runtime's, never an authorization
+            // refusal: unavailable on a cell with no question runtime, or
+            // the checker's own finding where the cell derives metrics.
             assert!(
-                codes.contains(&"definition.question_unavailable"),
+                codes.contains(&"definition.question_unavailable")
+                    || codes.contains(&"metric.validation.unknown_metric"),
                 "{case} {path}: {document}"
             );
         }
