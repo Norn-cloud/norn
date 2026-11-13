@@ -834,8 +834,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * VIEW-SQL-1: lower a SQL query to a transform and admit it against the
-         *     installed definitions. Nothing is installed and no SQL runs.
+         * VIEW-SQL-1: lower a SQL query to a transform and admit it as installing
+         *     it would: the installed set re-admitted whole with it added, on the base
+         *     the installed receipt records. Nothing is installed and no SQL runs.
          * @description # Errors
          *     A denied definitions read (the opaque 403), no installed definitions
          *     (404 `defs.version_not_found`) or a host failure. A query the dialect or
@@ -1937,7 +1938,10 @@ export interface components {
         };
         /** @description What a SQL transform lowers to, and whether the checker admits it. */
         NornCompiledTransform: {
-            /** @description The checker admits the lowered plan against the installed definitions. */
+            /**
+             * @description Installing the lowered transform over the installed definitions would
+             *     be admitted.
+             */
             admitted: boolean;
             /** @description The `derived` artifact the query declares, as an artifact envelope; null when refused. */
             artifact: {
@@ -4878,6 +4882,11 @@ export interface components {
              * @enum {string}
              */
             grain?: "day" | "week" | "month" | "quarter" | "year";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
         };
         /**
          * @description Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so
@@ -6434,6 +6443,11 @@ export interface components {
              * @enum {string}
              */
             fn: "sum" | "count" | "count_distinct" | "min" | "max";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
         };
@@ -7436,6 +7450,11 @@ export interface components {
              *     column through with its full contract.
              */
             expression: string;
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
         };
@@ -10789,6 +10808,11 @@ export interface components {
              * @enum {string}
              */
             fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
+            /**
+             * @description What readers call the column (Studio's Business view); `name` stays
+             *     its id. Kept wherever the column passes through unchanged.
+             */
+            label?: string;
             /** @description The output column name. */
             name: string;
             /**
@@ -11589,6 +11613,11 @@ export interface components {
             currencyFrom: string | null;
             /** @description The object type whose ids the column holds, if any. */
             identity: string | null;
+            /**
+             * @description What readers call the column, as its definition labels it; null when
+             *     the definition names it only by `name`.
+             */
+            label: string | null;
             /** @description Effective markings of the origins. */
             markings: string[];
             /** @description The column name. */

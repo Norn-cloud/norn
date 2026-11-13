@@ -258,25 +258,19 @@ impl<E: SqlEngine> DevHost<E> {
             .active_definitions()
             .map_err(|r| r.message)?
             .ok_or("the cell has no definitions to extend")?;
-        let base = crate::kernel_set::base_ids(active.admission_receipt.as_deref())?;
-        let ours: std::collections::BTreeSet<&str> =
-            added.iter().map(|a| a.artifact_id.as_str()).collect();
-        let mut artifacts: Vec<norn_ir::ArtifactEnvelope> =
-            crate::kernel_set::retained_artifacts(&active.canonical_set)?
-                .into_iter()
-                .filter(|a| !ours.contains(a.artifact_id.as_str()))
-                .collect();
-        artifacts.extend(added.iter().cloned());
-        let admitted = crate::kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(
-            |refusal| match refusal {
-                crate::kernel_set::KernelRefusal::Refused(findings) => findings
-                    .iter()
-                    .map(|f| format!("{}: {}", f.code, f.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-                crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
-            },
-        )?;
+        let admitted = crate::kernel_set::admit_over(
+            &active.canonical_set,
+            active.admission_receipt.as_deref(),
+            added,
+        )
+        .map_err(|refusal| match refusal {
+            crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                .iter()
+                .map(|f| format!("{}: {}", f.code, f.message))
+                .collect::<Vec<_>>()
+                .join("; "),
+            crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+        })?;
         // The model this cell reopens under (DEFS-REOPEN-1), by its kind.
         let serving = serves_actions(self.cell().map_err(|r| r.explanation)?.store().model());
         let model = reopen_model(&admitted.canonical_set, serving).map_err(|r| r.explanation)?;
