@@ -32,6 +32,8 @@ test("every transition of the sheet's machine has a walk", () => {
 })
 
 const DECISION = "dec_QXBwcm92ZS1yZWZ1bmQ"
+/** Room for the expression engine to compile in a fresh page under the suite's load. */
+const ENGINE_MS = 30_000
 const STATUS = { visibility: 404, permission: 403, precondition: 422, conflict: 409, invalid: 422, limit: 429, internal: 500 } as const
 
 /** The stand-in's answer to the next decide call, for one outcome message. `null` hangs (a timeout). */
@@ -79,7 +81,10 @@ async function openRefund(page: Page) {
   await page.goto("/decisions")
   await page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Refund 1,240.00 USD" }).click()
   const sheet = page.locator("norn-decision-sheet .norn-sheet")
+  // The sheet draws its first state at once; it takes input once the expression engine (WASM) is
+  // here, which the walk waits for before its first step (the decisions rows time both).
   await expect(sheet).toHaveAttribute("data-state", machine.initialStateId)
+  await expect(sheet).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
   return {
     sheet,
     queue: (next: ReturnType<typeof answer>) => {
