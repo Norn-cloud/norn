@@ -339,6 +339,7 @@ fn finding(
     path: &[String],
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

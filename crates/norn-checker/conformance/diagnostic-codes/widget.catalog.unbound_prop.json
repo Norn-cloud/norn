@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.unbound_prop",
+  "message": "a catalog component's required prop is not bound: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

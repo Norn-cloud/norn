@@ -31,7 +31,7 @@ pub fn lint_observed_deviations(findings: &[DataQualityFinding]) -> Vec<Diagnost
         for subject in &finding.subjects {
             for lineage in &finding.provenance {
                 let provenance = &lineage.provenance;
-                diagnostics.push(Diagnostic {
+                diagnostics.push(Diagnostic { witness: None,
                     code: DiagnosticCode::new(super::codes::OBSERVED_OUT_OF_BAND),
                     severity: DiagnosticSeverity::Warning,
                     message: format!(

@@ -3,7 +3,7 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "exports": { ".": "./src/definitions.ts", "./catalog": "./src/catalog.ts", "./refusal": "./src/refusal.ts", "./machine": "./src/machine/index.ts", "./elements/decision-sheet": "./src/elements/decision-sheet.ts" },
+  "exports": { ".": "./src/definitions.ts", "./catalog": "./src/catalog.ts", "./refusal": "./src/refusal.ts", "./machine": "./src/machine/index.ts", "./elements/decision-sheet": "./src/elements/decision-sheet.ts", "./catalog-host": "./src/catalog-host/host.ts", "./catalog-host/foldkit": "./src/catalog-host/foldkit.ts" },
   "scripts": { "test": "bun test", "typecheck": "tsc -p tsconfig.json" },
-  "devDependencies": { "@types/bun": "1.4.2", "typescript": "6.0.3", "parse5": "8.0.0" }
+  "devDependencies": { "@effect/platform-browser": "4.1.0", "@types/bun": "1.4.2", "effect": "4.1.0", "foldkit": "0.170.0", "parse5": "8.0.0", "typescript": "6.0.3" }
 }

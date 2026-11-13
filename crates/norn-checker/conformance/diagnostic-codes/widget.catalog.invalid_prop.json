@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.invalid_prop",
+  "message": "a catalog component's prop does not compile or does not fit its declared type: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
