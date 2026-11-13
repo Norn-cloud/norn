@@ -247,6 +247,17 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
   )
 }
 
+/** An empty tab: a picture, one sentence and one way forward. */
+function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; readonly action: ReactNode; readonly children: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-muted"><Icon aria-hidden className="size-6 text-muted-foreground" /></span>
+      <p className="max-w-sm text-sm text-muted-foreground">{children}</p>
+      {action}
+    </div>
+  )
+}
+
 /** Linked records a group lists before "Show all". */
 const LINKS_SHOWN = 5
 
