@@ -4038,7 +4038,7 @@
         "tags": [
           "crate::transform_routes"
         ],
-        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it as installing\nit would: the installed set re-admitted whole with it added, on the base\nthe installed receipt records. Nothing is installed and no SQL runs.",
+        "summary": "VIEW-SQL-1: lower a SQL query to a transform and admit it against the\ninstalled definitions. Nothing is installed and no SQL runs.",
         "description": "# Errors\nA denied definitions read (the opaque 403), no installed definitions\n(404 `defs.version_not_found`) or a host failure. A query the dialect or\nthe checker refuses is a 200 with `admitted: false` and its diagnostics.",
         "operationId": "compile_transform",
         "parameters": [
@@ -6742,7 +6742,7 @@
         "properties": {
           "admitted": {
             "type": "boolean",
-            "description": "Installing the lowered transform over the installed definitions would\nbe admitted."
+            "description": "The checker admits the lowered plan against the installed definitions."
           },
           "artifact": {
             "type": [
@@ -14553,10 +14553,6 @@
               "Quarter.",
               "Year."
             ]
-          },
-          "label": {
-            "type": "string",
-            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           }
         },
         "additionalProperties": false
@@ -18414,10 +18410,6 @@
               "Greatest non-null value."
             ]
           },
-          "label": {
-            "type": "string",
-            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
-          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -20852,10 +20844,6 @@
           "expression": {
             "type": "string",
             "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract."
-          },
-          "label": {
-            "type": "string",
-            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
           },
           "name": {
             "type": "string",
@@ -30117,10 +30105,6 @@
               "Exact sum of an additive column from the partition start to this row."
             ]
           },
-          "label": {
-            "type": "string",
-            "description": "What readers call the column (Studio's Business view); `name` stays\nits id. Kept wherever the column passes through unchanged."
-          },
           "name": {
             "type": "string",
             "description": "The output column name."
@@ -31791,22 +31775,12 @@
           "additivity",
           "identity",
           "origins",
-          "markings",
-          "currencyFrom",
-          "unitFrom",
-          "label"
+          "markings"
         ],
         "properties": {
           "additivity": {
             "type": "string",
             "description": "The aggregation contract: `undeclared`, `additive`, `semi_additive`,\n`non_additive` or `ratio`."
-          },
-          "currencyFrom": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The column of the same row holding this quantity's currency\n(VIEW-AGG-1): null when it has none or the row does not carry it."
           },
           "identity": {
             "type": [
@@ -31814,13 +31788,6 @@
               "null"
             ],
             "description": "The object type whose ids the column holds, if any."
-          },
-          "label": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "What readers call the column, as its definition labels it; null when\nthe definition names it only by `name`."
           },
           "markings": {
             "type": "array",
@@ -31847,13 +31814,6 @@
           "type": {
             "type": "string",
             "description": "The value type, as the checker names it (`decimal`, `text`, …)."
-          },
-          "unitFrom": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The columns of the same row whose values together are this\nquantity's unit (METRIC-UNIT-PARTITION-1), in declaration order;\nempty when it has none or the row does not carry them."
           }
         }
       },
@@ -32498,24 +32458,49 @@
           {
             "oneOf": [
               {
-                "type": "object",
-                "description": "The words a signer can sign: what the host reads the submission as.",
-                "properties": {
-                  "restatement": {
-                    "type": "string",
-                    "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+                "allOf": [
+                  {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "description": "The words a signer can sign: what the host reads the submission as.",
+                        "properties": {
+                          "restatement": {
+                            "type": "string",
+                            "description": "The plain-words restatement the host recomputed. Present, with its\ndigest, only on `definition.signoff_mismatch`."
+                          },
+                          "restatementSha256": {
+                            "type": "string",
+                            "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "On `definition.signoff_mismatch` only: the host's restatement."
                   },
-                  "restatementSha256": {
-                    "type": "string",
-                    "description": "Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes."
+                  {
+                    "type": "object",
+                    "properties": {
+                      "incidentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."
+                      }
+                    }
                   }
-                }
+                ],
+                "description": "The rarely present parts of a refusal, boxed so every refusal stays small."
               },
               {
                 "type": "null"
               }
             ],
-            "description": "On `definition.signoff_mismatch` only: the host's restatement of the\ncaller's own admitted payload, flattened into the refusal as\n`restatement` and `restatementSha256`. Absent otherwise."
+            "description": "What only some refusals carry, flattened into the refusal: on\n`definition.signoff_mismatch`, the host's restatement of the caller's\nown admitted payload (`restatement`, `restatementSha256`); on an\ninternal refusal, its `incidentId` (INCIDENT-1). Absent otherwise."
           },
           {
             "type": "object",
