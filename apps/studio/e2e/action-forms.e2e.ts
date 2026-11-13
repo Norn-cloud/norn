@@ -24,7 +24,7 @@ async function open(page: Page, count = 40, options: Parameters<typeof actionCel
   const objects = await objectCell(page, population(count))
   const actions = await actionCell(page, objects, options)
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText(`${count} records`)).toBeVisible()
+  await expect(page.getByText(`${count} records`, { exact: true })).toBeVisible()
   return { objects, actions }
 }
 
@@ -87,7 +87,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await expect(page.getByRole("dialog").getByRole("heading", { name: "demo/holding/9001" })).toBeVisible()
   await expect(page.getByRole("dialog")).toContainText("10.500")
   await page.keyboard.press("Escape")
-  await expect(page.getByText("41 records")).toBeVisible()
+  await expect(page.getByText("41 records", { exact: true })).toBeVisible()
 })
 
 test("validate: the cell's input refusal shows on the form, which stays on the review; fixing it commits", async ({ page }) => {
@@ -174,7 +174,7 @@ test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; 
   await expect(sheet(page).getByLabel("Holding id")).toHaveValue("")
   await page.keyboard.press("Escape")
   await expect(sheet(page)).toHaveCount(0)
-  await expect(page.getByText("41 records")).toBeVisible()
+  await expect(page.getByText("41 records", { exact: true })).toBeVisible()
 })
 
 test("create: a parent with owned rows takes a list of records; the cell's input refusal keeps them for fixing", async ({ page }) => {

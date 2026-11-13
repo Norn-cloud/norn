@@ -24,7 +24,7 @@ async function start(page: Page) {
   const objects = await objectCell(page, population(20))
   const actions = await actionCell(page, objects)
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("20 records")).toBeVisible()
+  await expect(page.getByText("20 records", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "New holding" }).click()
   await page.getByRole("menuitem", { name: "Open a holding" }).click()
   return { objects, actions }
