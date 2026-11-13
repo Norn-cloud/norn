@@ -15,6 +15,7 @@
  * are omitted (the canonical form); an absent optional member is omitted,
  * never `null` (#2819).
  */
+import type { DeonticRule } from "./deontic.ts"
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
@@ -127,6 +128,30 @@ export interface TransitionDecl {
   /** ZEN Expression guards (conjoined). */
   readonly guards?: ReadonlyArray<string>
   readonly guardRefusalCode?: string
+  /** LIFE-SOUND-3: a timer or declared external event fires it; omitted, an action does. */
+  readonly trigger?: TransitionTrigger
+  /** LIFE-SOUND-5: a fact is never refused (no guard); omitted, a request unless triggered. */
+  readonly mode?: "fact" | "request"
+  /** LIFE-SOUND-8: the transition that compensates the effect this one dispatches. */
+  readonly compensatedBy?: string
+}
+
+export type TransitionTrigger =
+  | { readonly kind: "timer"; readonly millis: string }
+  | { readonly kind: "event"; readonly event: string }
+
+/** LIFE-SOUND-1: how a run ending in a state ended; `resting` is a non-terminal state a perpetual object may stay in. */
+export type LifecycleOutcome = "completed" | "compensated" | "cancelled" | "breached_visible" | "resting"
+
+export interface LifecycleEnding {
+  readonly state: string
+  readonly outcome: LifecycleOutcome
+}
+
+/** LIFE-SOUND-6: an external event kind, with the states that ignore it and why. */
+export interface LifecycleEvent {
+  readonly id: string
+  readonly ignoredIn?: ReadonlyArray<{ readonly states: ReadonlyArray<string>; readonly reason: string }>
 }
 
 export interface LifecycleDecl {
@@ -136,6 +161,8 @@ export interface LifecycleDecl {
   readonly terminal?: ReadonlyArray<string>
   readonly immutable?: ReadonlyArray<string>
   readonly transitions: ReadonlyArray<TransitionDecl>
+  readonly endings?: ReadonlyArray<LifecycleEnding>
+  readonly events?: ReadonlyArray<LifecycleEvent>
 }
 
 export type Multiplicity = "one" | "many"
@@ -185,8 +212,13 @@ export interface PathEquation {
   readonly right: ReadonlyArray<string>
 }
 
+/** The EntityIR extension slot normative rules live in (norn-checker `NORMATIVE_SLOT`). */
+export const NORMATIVE_SLOT = "norn.normative/1.0.0"
+
 export interface ObjectTypeDef extends TypeMetaBase {
   readonly pathEquations?: ReadonlyArray<PathEquation>
+  /** Obligations, prohibitions and permissions over this type, in the `norn.normative/1.0.0` slot. */
+  readonly norms?: ReadonlyArray<DeonticRule>
   readonly _tag: "ObjectType"
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
@@ -243,6 +275,7 @@ export function property(id: string, type: PropertyType, options: Omit<PropertyD
 export function objectType(
   meta: TypeMetaBase & {
     readonly pathEquations?: ReadonlyArray<PathEquation>
+    readonly norms?: ReadonlyArray<DeonticRule>
     readonly extends?: string | ObjectTypeDef
     readonly implements?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<LinkDecl>
@@ -341,7 +374,12 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
         }
       : {
           entityVersion: "2.0",
-          extensions: def.pathEquations?.length ? { "norn.path-equations/1.0.0": def.pathEquations } : undefined,
+          extensions: def.pathEquations?.length || def.norms?.length
+            ? {
+                ...(def.pathEquations?.length ? { "norn.path-equations/1.0.0": def.pathEquations } : {}),
+                ...(def.norms?.length ? { [NORMATIVE_SLOT]: def.norms } : {}),
+              }
+            : undefined,
           objectType: {
             name: def.name,
             role: def.role,
@@ -364,6 +402,8 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
                 terminal: omitEmpty(l.terminal ?? []),
                 immutable: omitEmpty(l.immutable ?? []),
                 transitions: omitEmpty(l.transitions.map((t) => ({ ...t, guards: omitEmpty(t.guards ?? []) }))),
+                endings: omitEmpty(l.endings ?? []),
+                events: omitEmpty((l.events ?? []).map((e) => ({ ...e, ignoredIn: omitEmpty(e.ignoredIn ?? []) }))),
               })),
             ),
           },
