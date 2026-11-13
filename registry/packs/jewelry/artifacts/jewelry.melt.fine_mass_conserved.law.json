@@ -35,8 +35,8 @@
         "jewelry.Melt"
       ],
       "root": {
-        "id": "jewelry",
-        "kind": "app"
+        "id": "jewelry.Melt",
+        "kind": "entity"
       }
     },
     "severity": "error",

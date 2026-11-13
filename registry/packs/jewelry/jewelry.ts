@@ -35,7 +35,7 @@ export const FineMassConserved = Norn.law({
     severity: "error",
     rationale: "Fine metal is neither created nor destroyed by a melt; any difference is recorded as loss.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/jewelry/jewelry.ts" },
-    scope: { root: { kind: "app", id: "jewelry" }, objectTypes: ["jewelry.Melt"] },
+    scope: { root: { kind: "entity", id: "jewelry.Melt" }, objectTypes: ["jewelry.Melt"] },
     subject: "jewelry.Melt",
     condition: "true",
     modality: { kind: "always" },
@@ -48,6 +48,7 @@ export const RecordMelt = Norn.action({
   id: "jewelry.melt.record", title: "Record a melt", version: "0.1.0",
   description: "Record how much fine metal a melt took in, gave out and lost.",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   input: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
     input_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), output_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), loss_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), loss_reason: Schema.NullOr(Schema.String),
