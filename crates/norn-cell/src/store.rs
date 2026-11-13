@@ -2147,6 +2147,21 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(store)
     }
 
+    /// The value a file is bound to under `key` ([`Self::bind`]), read
+    /// without opening the store under a model: a host checks which tenant a
+    /// file belongs to before trusting its layout. `None` when unbound.
+    ///
+    /// # Errors
+    /// Store-format or engine failures.
+    pub fn read_binding(engine: &E, key: &str) -> Result<Option<String>, CellError> {
+        validate_store_format(engine)?;
+        engine.query_optional(
+            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+            params![format!("binding:{key}")],
+            |row| row.get::<String>(0),
+        )
+    }
+
     /// Read the installed active set before constructing the model used to
     /// open this cell. A missing system table means this is a fresh or
     /// pre-install file and the host may use its seed.
