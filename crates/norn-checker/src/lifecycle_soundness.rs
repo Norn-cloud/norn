@@ -253,14 +253,6 @@ fn index(machine: &Machine<'_>, state: &str) -> Option<usize> {
     machine.states.iter().position(|name| *name == state)
 }
 
-fn modality(edge: &Edge<'_>) -> Modality {
-    if edge.guards.is_empty() {
-        Modality::Must
-    } else {
-        Modality::May
-    }
-}
-
 fn is_timer(edge: &Edge<'_>) -> bool {
     matches!(edge.trigger, Some(TransitionTrigger::Timer { .. }))
 }
@@ -293,12 +285,11 @@ pub(crate) fn net(machine: &Machine<'_>) -> Net {
             .filter(|state| edge.from.contains(*state))
         {
             if let Some(from) = index(machine, from) {
-                net.edges.push(NetEdge {
-                    from,
-                    to,
-                    label,
-                    modality: modality(edge),
-                    input: !is_timer(edge),
+                let input = !is_timer(edge);
+                net.edges.push(if edge.guards.is_empty() {
+                    NetEdge::unguarded(from, to, label, input)
+                } else {
+                    NetEdge::guarded(from, to, label, input)
                 });
             }
         }
@@ -545,13 +536,13 @@ fn check_compensation(machine: &Machine<'_>, out: &mut Vec<Finding>) {
                     } else {
                         owed
                     };
-                    product.edges.push(NetEdge {
-                        from: from.saturating_mul(2).saturating_add(owed),
-                        to: to.saturating_mul(2).saturating_add(after),
+                    // Reachability only: every declared step counts.
+                    product.edges.push(NetEdge::guarded(
+                        from.saturating_mul(2).saturating_add(owed),
+                        to.saturating_mul(2).saturating_add(after),
                         label,
-                        modality: Modality::May,
-                        input: true,
-                    });
+                        true,
+                    ));
                 }
             }
         }
@@ -742,7 +733,7 @@ fn fewest_guards(net: &Net, from: usize) -> Option<Vec<usize>> {
             let mut current = state;
             while let Some(edge) = parent.get(current).copied().flatten() {
                 let edge = net.edges.get(edge)?;
-                if edge.modality == Modality::May {
+                if edge.modality() == Modality::May {
                     labels.push(edge.label);
                 }
                 current = edge.from;
@@ -754,7 +745,7 @@ fn fewest_guards(net: &Net, from: usize) -> Option<Vec<usize>> {
             if edge.from != state {
                 continue;
             }
-            let step = usize::from(edge.modality == Modality::May);
+            let step = usize::from(edge.modality() == Modality::May);
             let total = here.saturating_add(step);
             if let Some(known) = cost.get_mut(edge.to)
                 && total < *known

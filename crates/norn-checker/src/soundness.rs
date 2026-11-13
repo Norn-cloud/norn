@@ -62,7 +62,10 @@ pub(crate) enum Modality {
     May,
 }
 
-/// One edge of a [`Net`].
+/// One edge of a [`Net`]. Built only through [`NetEdge::unguarded`], [`NetEdge::guarded`] or
+/// [`NetEdge::evaluated`]: a caller says what it knows about the edge's guard and the core
+/// decides the modality, so a guard that may never be enabled can never discharge option to
+/// complete (coordinator ruling, 2026-11-13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NetEdge {
     /// Source state index.
@@ -71,10 +74,52 @@ pub(crate) struct NetEdge {
     pub(crate) to: usize,
     /// The caller's label for the edge (a transition index), echoed in witnesses.
     pub(crate) label: usize,
-    /// Must or may.
-    pub(crate) modality: Modality,
     /// Driven by an input (a person, an external event, a server outcome) rather than time alone.
     pub(crate) input: bool,
+    modality: Modality,
+}
+
+impl NetEdge {
+    /// An edge with no guard: enabled whenever its source state holds (must).
+    pub(crate) const fn unguarded(from: usize, to: usize, label: usize, input: bool) -> Self {
+        Self {
+            from,
+            to,
+            label,
+            input,
+            modality: Modality::Must,
+        }
+    }
+
+    /// An edge whose guard the caller has not decided (may): it counts for reachability, never
+    /// for completion. This is the only constructor for a guarded edge over abstract states.
+    pub(crate) const fn guarded(from: usize, to: usize, label: usize, input: bool) -> Self {
+        Self {
+            from,
+            to,
+            label,
+            input,
+            modality: Modality::May,
+        }
+    }
+
+    /// An edge of a graph over exact valuations whose guards and laws were evaluated true on
+    /// this source valuation (the PROOF-LIFECYCLE-3 rows): must, because the evaluation is the
+    /// proof that the guard is enabled there.
+    pub(crate) const fn evaluated(from: usize, to: usize, label: usize, input: bool) -> Self {
+        Self {
+            from,
+            to,
+            label,
+            input,
+            modality: Modality::Must,
+        }
+    }
+
+    /// Must or may, as decided by the constructor.
+    pub(crate) const fn modality(&self) -> Modality {
+        self.modality
+    }
 }
 
 /// A finite machine: states `0..states`, initial states, endings and edges.
@@ -182,7 +227,7 @@ pub(crate) fn analyse(net: &Net) -> Verdict {
     );
     let exit = closure(
         endings(),
-        &adjacency(net, |edge| edge.modality == Modality::Must, true),
+        &adjacency(net, |edge| edge.modality() == Modality::Must, true),
     );
     let may_exit = closure(endings(), &adjacency(net, |_| true, true));
     let leaves: BTreeSet<usize> = net
@@ -267,12 +312,9 @@ mod tests {
     use super::*;
 
     fn edge(from: usize, to: usize, modality: Modality) -> NetEdge {
-        NetEdge {
-            from,
-            to,
-            label: to,
-            modality,
-            input: true,
+        match modality {
+            Modality::Must => NetEdge::unguarded(from, to, to, true),
+            Modality::May => NetEdge::guarded(from, to, to, true),
         }
     }
 
