@@ -41,9 +41,16 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
   const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false })
-  const window = profile.data && metric.timeProperty !== null ? windowOf(profile.data.document, metric.timeProperty) : undefined
+  const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
+  // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
+  // cell declares them; the window then spans every date that type carries.
+  const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
+    : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
+  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: timeType !== undefined && timeType !== metric.objectType })
+  const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
+  const window = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The answer is read with the type's own declaration, as the cell admitted it.
-  const objectType = catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === metric.objectType ? [artifact.payload.objectType] : [])[0]
+  const objectType = typeNamed(metric.objectType)
   const declared = { metrics: readDocument<readonly Metric[]>("[]", "live"), objectType: readDocument<ObjectType>(JSON.stringify(objectType ?? { name: metric.objectType, properties: [] }), "live") }
   const what = metricHeading(metric, window?.grain)
   const sources = metric.unitPartition ?? []
