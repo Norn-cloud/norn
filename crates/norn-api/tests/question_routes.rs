@@ -1679,6 +1679,7 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         "core.LedgerEffect.interface",
         "core.Claim.interface",
         "norn.SourceEvidence.interface",
+        "norn.SourceDocument.interface",
         "core.value_types.entity",
         "std.value_types.entity",
         "core.units",

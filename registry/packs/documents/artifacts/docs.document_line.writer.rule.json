@@ -1,0 +1,501 @@
+{
+  "artifactId": "docs.document_line.writer.rule",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "rule",
+  "lifecycle": "active",
+  "name": "Restate a corrected line and its document",
+  "namespace": "docs",
+  "payload": {
+    "contract": "decide",
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "edges": [
+        {
+          "id": "edge_0",
+          "sourceId": "in",
+          "targetId": "decision",
+          "type": "edge"
+        },
+        {
+          "id": "edge_1",
+          "sourceId": "decision",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "in",
+          "name": "input",
+          "type": "inputNode"
+        },
+        {
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "condition",
+                "name": "condition",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "field": "facts",
+                "id": "out_facts",
+                "name": "facts"
+              },
+              {
+                "field": "commands",
+                "id": "out_commands",
+                "name": "commands"
+              },
+              {
+                "field": "timers",
+                "id": "out_timers",
+                "name": "timers"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "row_0",
+                "condition": "",
+                "out_commands": "[]",
+                "out_facts": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]",
+                "out_timers": "[]"
+              }
+            ]
+          },
+          "id": "decision",
+          "name": "decision",
+          "type": "decisionTableNode"
+        },
+        {
+          "id": "out",
+          "name": "output",
+          "type": "outputNode"
+        }
+      ]
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "input": {
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "type": "number"
+                },
+                "correction_evidence": {
+                  "type": "string"
+                },
+                "correction_reason": {
+                  "type": "string"
+                },
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "document_total": {
+                  "type": "number"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "currency",
+                "amount",
+                "correction_reason",
+                "correction_evidence"
+              ],
+              "type": "object"
+            },
+            "operationId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "actor",
+            "operationId"
+          ],
+          "type": "object"
+        },
+        "slice": {
+          "additionalProperties": false,
+          "properties": {
+            "document": {
+              "additionalProperties": false,
+              "properties": {
+                "corrected_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_evidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "doc_number": {
+                  "type": "string"
+                },
+                "document_digest": {
+                  "type": "string"
+                },
+                "document_uri": {
+                  "type": "string"
+                },
+                "extractor": {
+                  "type": "string"
+                },
+                "extractor_version": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "issued_on": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "enum": [
+                    "receipt",
+                    "invoice",
+                    "expense_report"
+                  ],
+                  "type": "string"
+                },
+                "line_count": {
+                  "type": "integer"
+                },
+                "lines_total": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "number"
+                },
+                "vendor": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "doc_number",
+                "kind",
+                "vendor",
+                "issued_on",
+                "currency",
+                "total",
+                "lines_total",
+                "line_count",
+                "document_uri",
+                "document_digest",
+                "media_type",
+                "extractor",
+                "extractor_version",
+                "correction_reason",
+                "corrected_by",
+                "correction_evidence"
+              ],
+              "type": "object"
+            },
+            "evidence": {
+              "additionalProperties": false,
+              "properties": {
+                "bbox_h": {
+                  "type": "number"
+                },
+                "bbox_w": {
+                  "type": "number"
+                },
+                "bbox_x": {
+                  "type": "number"
+                },
+                "bbox_y": {
+                  "type": "number"
+                },
+                "confidence_bp": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "document_digest": {
+                  "type": "string"
+                },
+                "document_uri": {
+                  "type": "string"
+                },
+                "extractor": {
+                  "type": "string"
+                },
+                "extractor_version": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "integer"
+                },
+                "subject_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "subject_property": {
+                  "type": "string"
+                },
+                "subject_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "subject_property",
+                "subject_type",
+                "subject_key",
+                "document_uri",
+                "document_digest",
+                "media_type",
+                "page",
+                "bbox_x",
+                "bbox_y",
+                "bbox_w",
+                "bbox_h",
+                "text",
+                "extractor",
+                "extractor_version",
+                "confidence_bp"
+              ],
+              "type": "object"
+            },
+            "line": {
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "type": "number"
+                },
+                "corrected_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_evidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "correction_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "currency": {
+                  "enum": [
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "document_id": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "line_no": {
+                  "type": "integer"
+                },
+                "review": {
+                  "enum": [
+                    "extracted",
+                    "corrected"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "document_id",
+                "line_no",
+                "description",
+                "currency",
+                "amount",
+                "review",
+                "correction_reason",
+                "corrected_by",
+                "correction_evidence"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "line",
+            "document",
+            "evidence"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "objectType": {
+                "enum": [
+                  "docs.DocumentLine",
+                  "docs.ScannedDocument"
+                ],
+                "type": "string"
+              },
+              "op": {
+                "enum": [
+                  "patch"
+                ],
+                "type": "string"
+              },
+              "patch": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "corrected_by": {
+                    "type": "string"
+                  },
+                  "correction_evidence": {
+                    "type": "string"
+                  },
+                  "correction_reason": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "enum": [
+                      "USD"
+                    ],
+                    "type": "string"
+                  },
+                  "lines_total": {
+                    "type": "number"
+                  },
+                  "total": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "currency"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "patch"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "timers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "type": "object"
+    },
+    "ruleId": "docs.document_line.writer",
+    "ruleVersion": "2.0",
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.document_line.writer.rule.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

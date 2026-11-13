@@ -19,7 +19,8 @@
         }
       ],
       "implements": [
-        "docs.SourceDocument"
+        "docs.SourceDocument",
+        "norn.SourceDocument"
       ],
       "links": [
         {

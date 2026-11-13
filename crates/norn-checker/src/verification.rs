@@ -3,7 +3,7 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
-use norn_expr::env::{FieldSource, RecordKind};
+use norn_expr::env::{FieldSource, RecordKind, RecordType};
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
@@ -1407,34 +1407,46 @@ fn link_reads(
         let Ok(paths) = norn_expr::expression_read_paths(source, "self") else {
             continue;
         };
-        let refused = paths.iter().any(|path| {
-            let Some(field) = path.first().and_then(|first| record.fields.get(first)) else {
-                return false;
-            };
-            if matches!(field.source, FieldSource::Inverse { .. }) {
-                return true;
+        // One finding per distinct reason, however often the source repeats a read.
+        let mut said = BTreeSet::new();
+        for message in paths
+            .iter()
+            .filter_map(|path| link_read_refusal(path, record, env))
+        {
+            if said.insert(message.clone()) {
+                out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
             }
-            if !matches!(field.source, FieldSource::Link { .. }) {
-                return false;
-            }
-            let Some(target) = to_one_target(&field.ty) else {
-                return true;
-            };
-            path.get(1).is_some_and(|member| {
-                env.record(target)
-                    .and_then(|target| target.fields.get(member))
-                    .is_some_and(|read| !matches!(read.source, FieldSource::Property { .. }))
-            })
-        });
-        if refused {
-            out.push(finding(
-                codes::UNKNOWN_BINDING,
-                artifact,
-                pointer,
-                "LAW-LINK-1: a law reads one declared to-one forward link of its subject, and only its target's properties",
-            ));
         }
     }
+}
+
+/// Why one read path leaves LAW-LINK-1, in words that say what to do.
+fn link_read_refusal(path: &[String], record: &RecordType, env: &ZenTypeEnv) -> Option<String> {
+    let name = path.first()?;
+    let field = record.fields.get(name)?;
+    if matches!(field.source, FieldSource::Inverse { .. }) {
+        return Some(format!(
+            "LAW-LINK-1: `self.{name}` is an inverse link; a law reads only a to-one link its subject declares, and that target's properties"
+        ));
+    }
+    if !matches!(field.source, FieldSource::Link { .. }) {
+        return None;
+    }
+    let Some(target) = to_one_target(&field.ty) else {
+        return Some(format!(
+            "LAW-LINK-1: `self.{name}` is a to-many link, which a law cannot read yet. Reading every target of a to-many link (an entry's lines balance) is LAW-LINK-1's to-many extension, which comes next; until then, read the subject's own properties or a to-one link's target"
+        ));
+    };
+    let member = path.get(1)?;
+    let second_hop = env
+        .record(target)
+        .and_then(|target| target.fields.get(member))
+        .is_some_and(|read| !matches!(read.source, FieldSource::Property { .. }));
+    second_hop.then(|| {
+        format!(
+            "LAW-LINK-1: `self.{name}.{member}` is a second hop; a law reads one to-one link and only its target's properties"
+        )
+    })
 }
 
 /// A law's response is evaluated only when its condition holds, so it is

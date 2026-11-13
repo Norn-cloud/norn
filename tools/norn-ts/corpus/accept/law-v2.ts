@@ -1,6 +1,6 @@
 // Intent: law(name, { on, must | never, when, within, because }) (A3, #1176;
 // dx-spec §4.5). Id, scope, objectTypes, lawVersion, owner, provenance and the
-// entity dependency are inferred; `self` is the subject's properties and links.
+// entity dependency are inferred; `self` is the subject's properties (and a to-one link's target).
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
@@ -26,7 +26,7 @@ export const Invoice = Norn.type({
   implements: [Payable],
   properties: Schema.Struct({
     invoice_id: Schema.String,
-    total: Schema.Int,
+    total: Schema.Int, net: Schema.Int, tax: Schema.Int,
     paid: Schema.Int,
     status: Schema.Literals(["draft", "issued", "paid"]),
     issue_date: Norn.date(),
@@ -47,8 +47,8 @@ export const notOverpaid = Norn.law("not_overpaid", {
 export const linesAddUp = Norn.law("lines_add_up", {
   on: Invoice,
   when: (self) => self.status !== "draft",
-  must: (self) => Norn.sum(self.lines.map((l) => l.amount)) === self.total && self.lines.every((l) => l.amount > 0),
-  because: "An issued invoice totals its lines.",
+  must: (self) => Norn.sum([{ amount: self.net }, { amount: self.tax }].map((l) => l.amount)) === self.total && [{ amount: self.net }, { amount: self.tax }].every((l) => l.amount > 0),
+  because: "An issued invoice totals its net and tax.",
 })
 
 export const dueAfterIssue = Norn.law("due_after_issue", {

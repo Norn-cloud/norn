@@ -88,7 +88,7 @@ export interface PendingDecision { readonly id: string; readonly expiresAtMs: nu
 export type CallResult =
   | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
   | { readonly kind: "pending"; readonly decision: PendingDecision }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
+  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason }
   | { readonly kind: "no-cell" }
   | { readonly kind: "unavailable" }
 
@@ -97,12 +97,23 @@ export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio y
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 const defaultFetch: Fetch = (input, init) => fetch(input, init)
 
-interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string }
+/**
+ * DIAG-REASON-1: what refused a call, disclosed with the caller's authority: the law (its pinned
+ * declaration), the subject, and the stored values it checked, by path (`total`, `ledger_entry.amount`).
+ */
+export interface RefusalReason {
+  readonly law: string
+  readonly subject: string
+  readonly values: Readonly<Record<string, unknown>>
+  readonly pin?: { readonly kind?: string; readonly artifactId?: string; readonly lawId?: string; readonly version?: string }
+}
+
+interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason }
 
 function refusalOf(text: string): Refusal | null {
   let body: unknown
   try { body = JSON.parse(text) } catch { return null }
-  const { code, message, diagnostics, explanation } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown; explanation?: unknown }
+  const { code, message, diagnostics, explanation, reason } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown; explanation?: unknown; reason?: unknown }
   if (typeof code !== "string") return null
   // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
   const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
@@ -110,7 +121,8 @@ function refusalOf(text: string): Refusal | null {
     pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
   })) : []
   // The cell's own explanation names what refused the call (a law and its statement, say); it is shown as sent.
-  return { code, message: typeof message === "string" ? message : code, diagnostics: list, ...typeof explanation === "string" ? { explanation } : {} }
+  const disclosed = reason !== null && typeof reason === "object" && typeof (reason as { law?: unknown }).law === "string" ? reason as RefusalReason : undefined
+  return { code, message: typeof message === "string" ? message : code, diagnostics: list, ...typeof explanation === "string" ? { explanation } : {}, ...disclosed ? { reason: disclosed } : {} }
 }
 
 async function scoped(fetcher: Fetch) {

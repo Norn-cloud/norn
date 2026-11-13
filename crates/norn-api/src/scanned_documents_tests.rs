@@ -55,6 +55,8 @@ use serde_json::Value;
 const DOCUMENT: &str = "docs.ScannedDocument";
 const EVIDENCE: &str = "docs.FieldEvidence";
 const CORRECT: &str = "docs.scanned_document.correct";
+const CORRECT_LINE: &str = "docs.document_line.correct";
+const LINE: &str = "docs.DocumentLine";
 const LAW: &str = "docs.ScannedDocument.total_matches_lines.law";
 const LAW_B: &str = "docs.ScannedDocument.total_matches_ledger.law";
 const STEWARD: &str = "user:steward";
@@ -73,6 +75,7 @@ fn artifact(path: &str) -> Value {
 fn documents() -> Vec<Value> {
     let mut documents = vec![
         artifact("registry/core/artifacts/norn.SourceEvidence.interface.json"),
+        artifact("registry/core/artifacts/norn.SourceDocument.interface.json"),
         artifact("registry/core/artifacts/norn.ObservedLinkClaim.entity.json"),
     ];
     let directory = root().join("registry/packs/documents/artifacts");
@@ -404,6 +407,15 @@ fn correct(
     actor: &str,
     body: &str,
 ) -> Result<ActionReceipt, Refusal> {
+    call(host, actor, CORRECT, body)
+}
+
+fn call(
+    host: &DevHost<NativeEngine>,
+    actor: &str,
+    action: &str,
+    body: &str,
+) -> Result<ActionReceipt, Refusal> {
     let query = ActionQuery {
         org_id: Some("org_demo".into()),
         environment_id: Some("dev".into()),
@@ -414,7 +426,7 @@ fn correct(
         host,
         &query,
         Some(actor),
-        CORRECT,
+        action,
         &request,
         &Disclosure,
         LogicalTime::from_millis(1_800_000_000_000),
@@ -520,6 +532,19 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .expect("read")
         .expect("total evidence");
     assert_eq!(text(&evidence, "subject_property"), "total");
+    assert_eq!(
+        text(&evidence, "subject_type"),
+        "null",
+        "the total's subject is the document"
+    );
+    // A printed line's value is evidence for that line's amount.
+    let line_evidence = reader
+        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-0042~lines.1.amount")
+        .expect("read")
+        .expect("line evidence");
+    assert_eq!(text(&line_evidence, "subject_type"), LINE);
+    assert_eq!(text(&line_evidence, "subject_key"), "SCAN-INV-0042~line-1");
+    assert_eq!(text(&line_evidence, "subject_property"), "amount");
     assert_eq!(text(&evidence, "extractor"), "legacy-ocr");
     assert!(text(&evidence, "document_uri").starts_with("s3://"));
 
@@ -827,24 +852,99 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
 
 /// LAW-LINK-1 on a native write: INV-0043 printed one line of 72.00 and a
 /// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
+/// The misread line is corrected on the line itself; its document's sum of
+/// lines (and total) is restated in the same commit.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one scenario walks every refusal before the correction that commits"
+)]
 fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
-    let refused = |key: &str, total: &str, lines: &str| {
-        let body = format!(
-            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-0043","currency":"USD","total":"{total}","lines_total":"{lines}","correction_reason":"r","correction_evidence":"SCAN-INV-0043~total"}}}}"#
-        );
-        correct(host, STEWARD, &body).expect_err("refused")
+    let line = |key: &str, amount: &str, total: Option<&str>, evidence: &str| {
+        let total = total.map_or_else(String::new, |total| {
+            format!(r#","document_total":"{total}""#)
+        });
+        format!(
+            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-0043~line-1","currency":"USD","amount":"{amount}"{total},"correction_reason":"Line and total both read 720; the scan and journal entry JE-0043 say 72.00.","correction_evidence":"{evidence}"}}}}"#
+        )
     };
     // Fixing the total alone breaks LAW A: the line still reads 720.
-    assert_eq!(refused("only-total", "72.00", "720").status, 422);
-    // Agreeing with the lines but not the booked entry breaks LAW B, through the link.
-    let ledger = refused("off-ledger", "70.00", "70.00");
-    assert_eq!(ledger.status, 422, "{ledger:?}");
-    correct(
+    let only_total = correct(
         host,
         STEWARD,
-        r#"{"idempotencyKey":"inv-0043","input":{"id":"SCAN-INV-0043","currency":"USD","total":"72.00","lines_total":"72.00","correction_reason":"Line and total both read 720; the scan and journal entry JE-0043 say 72.00.","correction_evidence":"SCAN-INV-0043~total"}}"#,
+        r#"{"idempotencyKey":"only-total","input":{"id":"SCAN-INV-0043","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-INV-0043~total"}}"#,
     )
-    .expect("a correction that agrees with the lines and the booked entry commits");
+    .expect_err("refused");
+    assert_eq!(only_total.status, 422, "{only_total:?}");
+    // The refusal names the law and the values it checked (DIAG-REASON-1).
+    let reason = only_total
+        .reason
+        .as_ref()
+        .expect("a law refusal carries its reason");
+    assert_eq!(reason.law, "docs.ScannedDocument.total_matches_lines");
+    assert!(
+        reason.values.contains_key("total") && reason.values.contains_key("lines_total"),
+        "{reason:?}"
+    );
+    // Fixing the line alone breaks LAW A the other way: the total still reads 720.
+    let only_line = call(
+        host,
+        STEWARD,
+        CORRECT_LINE,
+        &line("only-line", "72.00", None, "SCAN-INV-0043~lines.1.amount"),
+    )
+    .expect_err("refused");
+    assert_eq!(only_line.status, 422, "{only_line:?}");
+    // A line correction must cite that line's own evidence.
+    assert!(
+        call(
+            host,
+            STEWARD,
+            CORRECT_LINE,
+            &line(
+                "other-evidence",
+                "72.00",
+                Some("72.00"),
+                "SCAN-INV-0043~total"
+            )
+        )
+        .is_err(),
+        "the total's evidence is not this line's"
+    );
+    // Agreeing with each other but not the booked entry breaks LAW B, through the link.
+    let ledger = call(
+        host,
+        STEWARD,
+        CORRECT_LINE,
+        &line(
+            "off-ledger",
+            "70.00",
+            Some("70.00"),
+            "SCAN-INV-0043~lines.1.amount",
+        ),
+    )
+    .expect_err("refused");
+    assert_eq!(ledger.status, 422, "{ledger:?}");
+    let reason = ledger
+        .reason
+        .as_ref()
+        .expect("a law refusal carries its reason");
+    assert_eq!(reason.law, "docs.ScannedDocument.total_matches_ledger");
+    assert!(
+        reason.values.contains_key("ledger_entry.amount"),
+        "{reason:?}"
+    );
+    call(
+        host,
+        STEWARD,
+        CORRECT_LINE,
+        &line(
+            "inv-0043",
+            "72.00",
+            Some("72.00"),
+            "SCAN-INV-0043~lines.1.amount",
+        ),
+    )
+    .expect("a line and total that agree with each other and the booked entry commit");
     let cell = host.cell().expect("cell");
     let reader = cell.store().read();
     let findings = reader
@@ -852,12 +952,24 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B]);
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
-    assert!(
-        reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
-            .expect("read")
-            .is_some(),
-        "released from quarantine"
+    let document = reader
+        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .expect("read")
+        .expect("released from quarantine");
+    assert_eq!(
+        (text(&document, "total"), text(&document, "lines_total")),
+        ("72".to_owned(), "72".to_owned())
+    );
+    let corrected = reader
+        .object(MAIN_WORLD, LINE, "SCAN-INV-0043~line-1")
+        .expect("read")
+        .expect("line");
+    assert_eq!(text(&corrected, "amount"), "72");
+    assert_eq!(text(&corrected, "review"), "corrected");
+    assert_eq!(text(&corrected, "corrected_by"), STEWARD);
+    assert_eq!(
+        text(&corrected, "correction_evidence"),
+        "SCAN-INV-0043~lines.1.amount"
     );
 }
 

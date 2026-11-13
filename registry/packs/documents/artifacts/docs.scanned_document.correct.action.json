@@ -57,21 +57,8 @@
           "title": "Document",
           "type": "string"
         },
-        "lines_total": {
-          "description": "Only when a printed line was misread too: the sum of the lines as printed.",
-          "nornType": {
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
-            "kind": "decimal",
-            "scale": 2
-          },
-          "title": "Corrected sum of lines",
-          "type": "number"
-        },
         "total": {
-          "description": "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry.",
+          "description": "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry; a misread line is corrected on that line.",
           "nornType": {
             "currencySource": {
               "links": [],

@@ -1,0 +1,166 @@
+{
+  "artifactId": "docs.document_line.correct.action",
+  "dependencies": [
+    {
+      "artifactId": "docs.document_line.writer.rule",
+      "kind": "rule",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Correct an extracted line",
+  "namespace": "docs",
+  "payload": {
+    "access": {
+      "artifactId": "docs.scanned_document.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "docs.document_line.correct",
+    "effectProgram": {
+      "entityArtifactId": "docs.DocumentLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "review",
+      "objectIdField": "id",
+      "objectKind": "docs.DocumentLine",
+      "transition": "correct"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "description": "The line's amount as printed on the scanned page.",
+          "nornType": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          },
+          "title": "Corrected amount",
+          "type": "number"
+        },
+        "correction_evidence": {
+          "description": "The evidence object read for this line, for example SCAN-INV-0043~lines.1.amount.",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "correction_reason": {
+          "description": "Why the imported value is wrong, kept with the correction.",
+          "title": "Reason",
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "USD"
+          ],
+          "type": "string"
+        },
+        "document_total": {
+          "description": "Only when the document's printed total was misread too: the total as printed.",
+          "nornType": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 2
+          },
+          "title": "Corrected document total",
+          "type": "number"
+        },
+        "id": {
+          "description": "The printed line to correct.",
+          "title": "Line",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "currency",
+        "amount",
+        "correction_reason",
+        "correction_evidence"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(input.correction_reason != '') and ((slice.evidence.subject_key ?? '') == input.id)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "id"
+          }
+        },
+        "name": "line",
+        "objectType": "docs.DocumentLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "line",
+            "property": "document_id"
+          }
+        },
+        "name": "document",
+        "objectType": "docs.ScannedDocument"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "correction_evidence"
+          }
+        },
+        "name": "evidence",
+        "objectType": "docs.FieldEvidence"
+      }
+    ],
+    "synchronousRule": {
+      "artifactId": "docs.document_line.writer.rule",
+      "version": "0.1.0"
+    },
+    "title": "Correct an extracted line",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "docs.DocumentLine"
+      },
+      {
+        "change": "modified",
+        "entityKind": "docs.ScannedDocument"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/documents/artifacts/docs.document_line.correct.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
