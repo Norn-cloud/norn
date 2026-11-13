@@ -35,7 +35,7 @@ fn definition(source: &str) -> MetricDefinition {
 fn schema() -> jsonschema::Validator {
     let directory = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR")
         .map(std::path::PathBuf::from)
-        .expect("acquire pinned inputs with scripts/importers/erpnext_runtime.py --output EXTERNAL_SCRATCH --interop-only; set NORN_UPSTREAM_FIXTURE_DIR");
+        .expect("NORN_UPSTREAM_FIXTURE_DIR is unset: this test reads inputs generated outside the tree (checksum-pinned third-party schemas and the compiled core artifacts). Run it through `bash scripts/ci/core.sh test` (its prepare step generates them and sets the variable), or generate them as scripts/ci/core.sh prepare_inputs does and set NORN_UPSTREAM_FIXTURE_DIR to that directory");
     let path = directory
         .join("osi-schema.json")
         .canonicalize()

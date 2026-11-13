@@ -6,6 +6,11 @@ mod historical;
 pub mod ivm;
 /// Exact result membership and native fact evidence.
 pub mod lineage;
+/// VIEW-MAT-1: a materialized transform's stored result.
+pub mod materialize;
+/// VIEW-ENGINE-1: admitted transforms lowered to embedded `DuckDB`.
+#[cfg(feature = "duckdb")]
+mod olap_transform;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;

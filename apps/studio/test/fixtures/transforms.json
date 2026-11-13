@@ -273,6 +273,7 @@
     "version": "0.1.0",
     "engine": "cell",
     "commits": 2,
+    "materialization": null,
     "columns": [
       {
         "name": "region",
@@ -499,6 +500,15 @@
     "withheld": {},
     "excluded": 0,
     "complete": true,
+    "nodeRows": {
+      "customer": 4,
+      "joined": 11,
+      "order": 12,
+      "paid": 11,
+      "ranked": 8,
+      "regional": 11,
+      "weekly": 8
+    },
     "nextAfter": null
   },
   "lineage": {
@@ -506,6 +516,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "1ed76a21ea30ac577dbf68c911252b141e4062ce69cb89d506d38f76f6cfe9ff",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 60,
         "orders": 1,
@@ -535,6 +546,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "2fad5e2a0780e346979d54dc6f622bd70cc82e8096fbde15367478463087f3a6",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 205,
         "orders": 2,
@@ -576,6 +588,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "483c4f73b411cf0723a171fe47230e5c3fea5230cba54dd9f47e63f979bc225c",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 240,
         "orders": 1,
@@ -605,6 +618,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "60cea42e2a456c8b0cef9f68179d8c452cb20fe0800c26a63bcff3ebbc4f1eb1",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 310.4,
         "orders": 2,
@@ -640,6 +654,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "6386ba2844eecb1dc8161b72f8a266177aaefe15907f495e20f1532331df2cc9",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 18.25,
         "orders": 1,
@@ -669,6 +684,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "be1c486b086c416ffdcc96bc73e81f9beeb4c9639da08a27f04589a49d8f10a3",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 40,
         "orders": 1,
@@ -692,6 +708,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "cb771e6fc24fd751ece709bb09396152b7363ca7a39b75f79e5e7ae4f1b35fd3",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 66,
         "orders": 1,
@@ -721,6 +738,7 @@
       "transform": "shop.revenue_by_region",
       "rowId": "d5afb4c1c59745a56ee0a55fed4213cd304511399b41a58c16a86cb96297a094",
       "commits": 2,
+      "materialization": null,
       "values": {
         "largest": 120,
         "orders": 2,
@@ -1341,6 +1359,7 @@
         ]
       }
     ],
-    "output": "ranked"
+    "output": "ranked",
+    "refresh": null
   }
 }

@@ -2,6 +2,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::needless_pass_by_value,
+    clippy::unnecessary_wraps,
     missing_docs,
     reason = "VIEW-ROWS-1 native conformance"
 )]
@@ -12,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::transform::{RowAccess, TransformMember};
-use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
+use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, LinkChange, Model, ObjectRecord};
 use norn_checker::transform::{TransformPlan, admit};
 use norn_ir::{ArtifactEnvelope, Decimal, ObjectTypeDef, RuntimeValue as V};
 use serde_json::{Value, json};
@@ -44,6 +45,11 @@ fn artifact(id: &str, kind: &str, dependencies: Value, payload: Value) -> Artifa
 
 /// Revenue by customer region per ISO week, ranked within the region.
 fn plan() -> TransformPlan {
+    plan_with(json!({"maintenance": "recompute_on_read"}))
+}
+
+/// The weekly-revenue plan with `maintenance` (and `refresh`) from `upkeep`.
+fn plan_with(upkeep: Value) -> TransformPlan {
     let entity = |object: Value| {
         let name = object["name"].as_str().expect("name").to_owned();
         artifact(
@@ -81,9 +87,14 @@ fn plan() -> TransformPlan {
                     "columns": [{"name": "week_number", "fn": "row_number"},
                         {"name": "to_date", "fn": "running_sum", "column": "revenue"}]}
             }},
-            "outputSchema": {}, "maintenance": "recompute_on_read"
+            "outputSchema": {}
         }),
     );
+    let mut view = serde_json::to_value(&view).expect("view");
+    for (key, value) in upkeep.as_object().expect("upkeep") {
+        view["payload"][key] = value.clone();
+    }
+    let view: ArtifactEnvelope = serde_json::from_value(view).expect("view");
     let pool = vec![entity(order_type()), entity(customer_type()), view];
     admit(&pool[2], &pool, &BTreeSet::new()).expect("admitted")
 }
@@ -182,6 +193,12 @@ fn a_transform_reads_the_cell_snapshot_with_row_lineage() {
     assert!(result.complete);
     assert_eq!(result.grain, ["region", "placed_at"]);
     assert_eq!(result.revision, store.verified_head().expect("head"));
+    // The plan's volume: the rows each node produced.
+    let output = u64::try_from(result.rows.len()).expect("rows");
+    assert_eq!(result.node_rows.get("order"), Some(&5));
+    assert_eq!(result.node_rows.get("customer"), Some(&2));
+    assert_eq!(result.node_rows.get("joined"), Some(&5));
+    assert_eq!(result.node_rows.get("ranked"), Some(&output));
     let north = row(&result, "north", "2026-11-02");
     assert_eq!(north.values["revenue"], decimal("15.5"));
     assert_eq!(north.values["orders"], decimal("2"));
@@ -281,4 +298,188 @@ fn a_transform_refuses_a_foreign_scope() {
         store.evaluate_transform(&plan, WORLD, "other", |_| Ok(RowAccess::Read)),
         Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
+}
+
+/// A correction to `o2`: north's first week goes from 15.5 to 16.5.
+fn correct(store: &mut CellStore) {
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: 1_792_972_900_000,
+            writes: vec![order("o2", "6.50", "2026-11-03T09:00:00Z")],
+            ..CommitBatch::default()
+        })
+        .expect("correction");
+}
+
+fn whole(_record: &ObjectRecord) -> Result<RowAccess, CellError> {
+    Ok(RowAccess::Read)
+}
+
+fn north_first_week(result: &norn_cell::compute::transform::TransformResult) -> V {
+    row(result, "north", "2026-11-02").values["revenue"].clone()
+}
+
+#[test]
+fn a_materialization_is_served_exact_until_its_inputs_change() {
+    let plan = plan_with(json!({"maintenance": "materialized"}));
+    let mut store = store();
+    load(&mut store);
+    let first = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 1_000)
+        .expect("served");
+    let label = first.materialization.clone().expect("stored");
+    assert_eq!((label.refreshed_at_ms, label.stale), (1_000, false));
+    // The stored result is the live evaluation's envelope.
+    let live = store
+        .evaluate_transform(&plan, WORLD, SCOPE, whole)
+        .expect("live");
+    assert_eq!(first.result, live);
+    // The same snapshot is answered from the store: same rows, same refresh time.
+    let again = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 2_000)
+        .expect("served");
+    assert_eq!(again.result, first.result);
+    assert_eq!(again.materialization, Some(label));
+    // A changed snapshot refreshes on read.
+    correct(&mut store);
+    let refreshed = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 3_000)
+        .expect("refreshed");
+    let label = refreshed.materialization.clone().expect("stored");
+    assert_eq!((label.refreshed_at_ms, label.stale), (3_000, false));
+    assert_eq!(north_first_week(&refreshed.result), decimal("16.5"));
+
+    // With maxAgeMs, a younger stored result is served for a changed
+    // snapshot, labelled stale with its frontier; an older one refreshes.
+    let aged = plan_with(json!({"maintenance": "materialized",
+        "refresh": {"policy": "on_read", "maxAgeMs": 10_000}}));
+    let mut store = crate::store();
+    load(&mut store);
+    let stored = store
+        .serve_transform(&aged, (WORLD, SCOPE), whole, 1_000)
+        .expect("served");
+    let frontier = stored.result.revision;
+    correct(&mut store);
+    let young = store
+        .serve_transform(&aged, (WORLD, SCOPE), whole, 5_000)
+        .expect("served");
+    let label = young.materialization.expect("stored");
+    assert!(label.stale);
+    assert_eq!(label.frontier, frontier);
+    assert_eq!(north_first_week(&young.result), decimal("15.5"));
+    let old = store
+        .serve_transform(&aged, (WORLD, SCOPE), whole, 20_000)
+        .expect("served");
+    let label = old.materialization.expect("stored");
+    assert_eq!((label.refreshed_at_ms, label.stale), (20_000, false));
+    assert_eq!(north_first_week(&old.result), decimal("16.5"));
+}
+
+#[test]
+fn a_manual_materialization_serves_its_frontier_labelled_stale() {
+    let plan = plan_with(json!({"maintenance": "materialized", "refresh": {"policy": "manual"}}));
+    let mut store = store();
+    load(&mut store);
+    // Nothing is stored until a refresh: the read is live.
+    let before = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 1_000)
+        .expect("live");
+    assert_eq!(before.materialization, None);
+    let refreshed = store
+        .refresh_transform(&plan, (WORLD, SCOPE), whole, 2_000)
+        .expect("refreshed")
+        .expect("a whole reader refreshes");
+    assert!(!refreshed.stale);
+    correct(&mut store);
+    // Reads never refresh a manual transform: the frontier is served, labelled.
+    let stale = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 9_000_000)
+        .expect("served");
+    let label = stale.materialization.expect("stored");
+    assert!(label.stale);
+    assert_eq!(label.frontier, refreshed.frontier);
+    assert_eq!(label.refreshed_at_ms, 2_000);
+    assert_eq!(north_first_week(&stale.result), decimal("15.5"));
+    store
+        .refresh_transform(&plan, (WORLD, SCOPE), whole, 9_500_000)
+        .expect("refreshed")
+        .expect("a whole reader refreshes");
+    let exact = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 9_600_000)
+        .expect("served");
+    assert_eq!(exact.materialization.map(|label| label.stale), Some(false));
+    assert_eq!(north_first_week(&exact.result), decimal("16.5"));
+}
+
+#[test]
+fn a_partial_reader_gets_a_live_evaluation_and_cannot_refresh() {
+    let plan = plan_with(json!({"maintenance": "materialized"}));
+    let mut store = store();
+    load(&mut store);
+    let stored = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 1_000)
+        .expect("served");
+    assert!(stored.materialization.is_some());
+    let counted = |record: &ObjectRecord| -> Result<RowAccess, CellError> {
+        Ok(if record.id == "c-north" {
+            RowAccess::Count
+        } else {
+            RowAccess::Read
+        })
+    };
+    let hidden = |record: &ObjectRecord| -> Result<RowAccess, CellError> {
+        Ok(if record.id == "o4" {
+            RowAccess::None
+        } else {
+            RowAccess::Read
+        })
+    };
+    // A reader who may not read every input row is evaluated live.
+    let partial = store
+        .serve_transform(&plan, (WORLD, SCOPE), counted, 2_000)
+        .expect("served");
+    assert_eq!(partial.materialization, None);
+    assert!(!partial.result.complete);
+    assert!(
+        partial
+            .result
+            .rows
+            .iter()
+            .all(|row| row.values["region"] != V::from("north"))
+    );
+    let invisible = store
+        .serve_transform(&plan, (WORLD, SCOPE), hidden, 2_500)
+        .expect("served");
+    assert_eq!(invisible.materialization, None);
+    assert!(
+        invisible
+            .result
+            .rows
+            .iter()
+            .flat_map(|row| &row.members)
+            .all(|member| member.id != "o4")
+    );
+    // Neither may refresh, and neither changed what is stored.
+    assert_eq!(
+        store
+            .refresh_transform(&plan, (WORLD, SCOPE), counted, 3_000)
+            .expect("refused"),
+        None
+    );
+    assert_eq!(
+        store
+            .refresh_transform(&plan, (WORLD, SCOPE), hidden, 3_000)
+            .expect("refused"),
+        None
+    );
+    let again = store
+        .serve_transform(&plan, (WORLD, SCOPE), whole, 4_000)
+        .expect("served");
+    assert_eq!(again.result, stored.result);
+    assert_eq!(
+        again.materialization.map(|label| label.refreshed_at_ms),
+        Some(1_000)
+    );
 }

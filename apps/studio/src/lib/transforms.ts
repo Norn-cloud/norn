@@ -38,6 +38,8 @@ export interface TransformPage {
   readonly withheld: Readonly<Record<string, number>>
   readonly excluded: number
   readonly complete: boolean
+  /** Rows each plan node produced for this read; absent from a cell that does not report node volumes. */
+  readonly nodeRows?: Readonly<Record<string, number>>
   readonly nextAfter: string | null
 }
 
@@ -88,6 +90,15 @@ export function transformsOf(artifacts: readonly Artifact[]): readonly Transform
       output: envelope.payload.calc.output ?? "",
     }]
   }).sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** One node's definition as the installed artifact declares it, pretty-printed; undefined when absent. */
+export function nodeDefinition(artifacts: readonly Artifact[], transform: string, node: string | undefined): string | undefined {
+  if (node === undefined) return undefined
+  const envelope = artifacts.find((artifact) => (artifact as unknown as { artifactId?: string }).artifactId === transform) as unknown as
+    { payload?: { calc?: { nodes?: Readonly<Record<string, unknown>> } } } | undefined
+  const declared = envelope?.payload?.calc?.nodes?.[node]
+  return declared === undefined ? undefined : JSON.stringify(declared, null, 2)
 }
 
 const path = (id: string, leaf: string) => `/v1/transforms/${encodeURIComponent(id)}/${leaf}`
