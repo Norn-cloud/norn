@@ -262,6 +262,10 @@
                 "additionalProperties": false,
                 "properties": {
                   "amount": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 2
+                    },
                     "type": "number"
                   },
                   "corrected_by": {
@@ -280,9 +284,17 @@
                     "type": "string"
                   },
                   "lines_total": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 2
+                    },
                     "type": "number"
                   },
                   "total": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 2
+                    },
                     "type": "number"
                   }
                 },

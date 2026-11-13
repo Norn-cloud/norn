@@ -301,7 +301,7 @@ const DocumentValues = Schema.Struct({ id: Schema.String, currency: Schema.Liter
 const EvidenceValues = Schema.Struct({ id: Schema.String, subject_key: Schema.NullOr(Schema.String) })
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
-  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Schema.Finite), total: Schema.optionalKey(Schema.Finite), lines_total: Schema.optionalKey(Schema.Finite),
+  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount), lines_total: Schema.optionalKey(Amount),
   correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
 })
 
