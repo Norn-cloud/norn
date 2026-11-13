@@ -69,6 +69,7 @@ mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod retained;
+pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
@@ -77,13 +78,6 @@ mod write;
 
 pub use error::CellError;
 
-/// Whether `function_id@version` is a compiled-in built-in
-/// (`norn_builtins::resolve`); a host registers it so a flow step may
-/// perform only built-ins (#1252).
-#[must_use]
-pub fn builtin_registered(function_id: &str, version: u32) -> bool {
-    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
-}
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
@@ -102,6 +96,14 @@ pub use store::{
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
+
+/// Whether `function_id@version` is a compiled-in built-in
+/// (`norn_builtins::resolve`); a host registers it so a flow step may
+/// perform only built-ins (#1252).
+#[must_use]
+pub fn builtin_registered(function_id: &str, version: u32) -> bool {
+    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
+}
 
 /// Workers/Durable Objects SQLite adapter (celld and workerd).
 #[cfg(target_arch = "wasm32")]

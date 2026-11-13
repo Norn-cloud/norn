@@ -112,6 +112,7 @@ impl NornCell {
         lineage_key: Option<String>,
         now_ms: f64,
     ) -> Result<Self, JsValue> {
+        crate::incident::install_panic_log();
         let lineage_key = lineage_key.map(String::into_bytes);
         let scope = CellScope {
             org_id,

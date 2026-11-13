@@ -516,6 +516,10 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "core.observation.source_disagreement",
+    "fix": "Correct the source that reports the wrong value; the finding resolves when the record returns to the earlier report."
+  },
+  {
     "code": "core.projection.publication_guard",
     "no_fix": "The declared publication policy refused this projection; publishing it requires a policy decision, not an automatic repair."
   },

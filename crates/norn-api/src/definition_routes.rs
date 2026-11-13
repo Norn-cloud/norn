@@ -1009,7 +1009,7 @@ fn question_findings<E: SqlEngine>(
             }
             Some(Ok(question)) => question,
         };
-    let Some(runtime) = questions else {
+    let Some(runtime) = questions.filter(|runtime| runtime.publishes_questions()) else {
         findings.push(RefusalDiagnostic::error(
             codes::QUESTION_UNAVAILABLE,
             "this cell admits no ad-hoc questions",
@@ -1360,6 +1360,11 @@ fn append<E: SqlEngine>(
                 let serving = crate::host::serves_actions(cell.store().model());
                 let model = crate::host::reopen_model(&admitted.canonical_set, serving)?;
                 crate::host::check_reopens(&model, &admitted.canonical_set, serving)?;
+                // DEFS-REOPEN-1: the cell's own policy must serve the new
+                // model too; one that cannot refuses before any write.
+                let candidate: Vec<norn_ir::ObjectTypeDef> =
+                    model.object_types().cloned().collect();
+                host.authorizer.admits_model(&candidate)?;
                 (
                     model,
                     admitted.canonical_set,
@@ -1558,10 +1563,13 @@ fn verify_signoff(
             "the sign-off does not match the definition",
             "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
         );
-        refusal.restatement = Some(Box::new(RefusalRestatement {
-            restatement,
-            restatement_sha256: recomputed,
-        }));
+        refusal
+            .extra
+            .get_or_insert_with(Box::default)
+            .set_restatement(RefusalRestatement {
+                restatement,
+                restatement_sha256: recomputed,
+            });
         return Err(refusal);
     }
     Ok(recomputed)

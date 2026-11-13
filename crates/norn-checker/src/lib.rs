@@ -97,6 +97,7 @@ mod model;
 )]
 pub mod posting;
 mod soundness;
+pub mod source_agreement;
 pub mod table_analysis;
 pub mod tool_effect;
 mod unit_admission;

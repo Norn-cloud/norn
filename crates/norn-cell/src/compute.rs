@@ -246,6 +246,11 @@ pub struct QueryResult {
     /// link is absent, so they have no time: skipped, never bucketed.
     #[serde(default, skip_serializing_if = "crate::store::is_zero")]
     pub unlinked: u64,
+    /// SOURCE-AGREE-1: members two sources disagree on, by partition source,
+    /// at this answer's frontier and visible to its reader; never excluded.
+    /// Absent when no member is disputed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_disagreements: Option<crate::source_agreement::SourceDisagreementCounts>,
 }
 
 #[derive(Serialize)]
@@ -270,7 +275,7 @@ fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
 }
 /// A question scans under its own bound (ruling 2026-11-12), not the bound
 /// on records a slice returns.
-fn question_budget() -> Result<DecodeBudget, CellError> {
+pub(crate) fn question_budget() -> Result<DecodeBudget, CellError> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let question = profile.question_limits();
     let limits = ReactiveLimits {
@@ -338,6 +343,36 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<QueryResult, CellError> {
         self.question_snapshot(plan, context, &mut visible)
             .map(|snapshot| snapshot.result)
+    }
+
+    /// SOURCE-AGREE-1 on an answer another engine computed (D102): the same
+    /// counts [`Self::evaluate_question`] reports, read in one transaction at
+    /// `known_as_of`, with membership decided as the exact engine decides it
+    /// and each disagreement's two versions gated by `visible`.
+    ///
+    /// # Errors
+    /// Unproven history, an exhausted budget, or a gate's error.
+    pub fn answer_source_disagreements(
+        &self,
+        plan: &QuestionPlan,
+        context: &QueryContext,
+        known_as_of: u64,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Option<crate::source_agreement::SourceDisagreementCounts>, CellError> {
+        self.conn.transaction(|| {
+            let reader = self.read();
+            let mut budget = question_budget()?;
+            let grain = plan.grain().as_str();
+            let mut member = |id: &str| -> Result<bool, CellError> {
+                let Some(record) = reader.object(&context.world, grain, id)? else {
+                    return Ok(false);
+                };
+                let (entries, _) =
+                    subject_contributions(&reader, plan, context, id, &record, &mut budget)?;
+                Ok(!entries.is_empty())
+            };
+            reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
+        })
     }
 
     fn question_snapshot(
@@ -473,6 +508,15 @@ impl<E: SqlEngine> CellStore<E> {
                 &contributions,
             )?;
             result.unlinked = unlinked;
+            // SOURCE-AGREE-1: the members two sources disagree on, at this
+            // answer's own frontier, as the reader may see them.
+            result.source_disagreements = reader.answer_disagreements(
+                &result.context.world,
+                plan.grain().as_str(),
+                result.known_as_of,
+                &mut |id| Ok(contributions.contains_key(id)),
+                visible,
+            )?;
             consume(
                 Snapshot {
                     historical_receipt,
@@ -786,6 +830,7 @@ pub(crate) fn finish(
         },
         complete,
         unlinked: 0,
+        source_disagreements: None,
         context,
         exclusions,
     })

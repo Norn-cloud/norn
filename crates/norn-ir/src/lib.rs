@@ -131,7 +131,7 @@ pub use customization::{
 pub use data_quality::{
     DATA_QUALITY_FINDING_VERSION, DataQualityFinding, DataQualityFindingStatus, DataQualityLineage,
     DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, DataQualitySubject,
-    InvariantOwner, data_quality_finding_schema, data_quality_lineage_schema,
+    InvariantOwner, SourceClaim, data_quality_finding_schema, data_quality_lineage_schema,
     data_quality_subject_schema,
 };
 pub use decision_output::{DecisionOutput, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER};

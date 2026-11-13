@@ -218,7 +218,7 @@ pub fn get_object_findings<E: SqlEngine>(
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
-    let (mut document, linked) = locked(host, access, &mut start, |reader| {
+    let (mut document, linked, disputes) = locked(host, access, &mut start, |reader| {
         let page = reader
             .links_touching_page(
                 MAIN_WORLD,
@@ -249,6 +249,9 @@ pub fn get_object_findings<E: SqlEngine>(
                 evidence: Vec::new(),
             },
             linked,
+            reader
+                .source_disagreements(MAIN_WORLD, &row.object_type, &row.id, None)
+                .map_err(Refusal::host)?,
         ))
     })?;
     // Each evidence row is disclosed on its own Population and Values.
@@ -264,6 +267,20 @@ pub fn get_object_findings<E: SqlEngine>(
                 .all(|capability| permitted(host, access, &actor, &evidence, capability))
         {
             document.evidence.push(NornEvidenceRef { object_type, id });
+        }
+    }
+    // SOURCE-AGREE-1: a disagreement is disclosed only where the caller may
+    // read both versions it names: their values and their sources.
+    for disputed in disputes {
+        if [&disputed.earlier, &disputed.later]
+            .into_iter()
+            .all(|version| {
+                [Population, Values, Sources]
+                    .into_iter()
+                    .all(|capability| permitted(host, access, &actor, version, capability))
+            })
+        {
+            document.findings.push(disputed.finding);
         }
     }
     Ok(document)
