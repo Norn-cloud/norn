@@ -17,8 +17,8 @@ export interface Facet {
 export interface Facets {
   readonly rows: number
   readonly withheldRows: number
-  /** The scan bound was reached: every count is a lower bound. */
-  readonly approximate: boolean
+  /** The scan bound was reached: every count is exact over the rows scanned, so at most the true count ("≥ n"). */
+  readonly lowerBound: boolean
   readonly facets: readonly Facet[]
 }
 
@@ -30,6 +30,9 @@ export function readFacets(objectType: string, filter: Predicate | null, propert
   const search = query.toString()
   return cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are")
 }
+
+/** A facet count as the cell gave it: exact, or "≥ n" past the scan bound. */
+export const countText = (count: number, lowerBound: boolean): string => `${lowerBound ? "≥ " : ""}${count.toLocaleString("en")}`
 
 /** The values a filter holds `property` to with `eq` or `in`. */
 export function chosen(filter: Predicate | null, property: string): readonly (string | boolean)[] {

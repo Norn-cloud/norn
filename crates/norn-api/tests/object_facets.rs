@@ -14,7 +14,9 @@
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
-use norn_api::object_facets::{NornObjectFacets, ObjectFacetParams, get_object_facets};
+use norn_api::object_facets::{
+    NornObjectFacets, ObjectFacetParams, get_object_facets, get_object_facets_within,
+};
 use norn_api::object_routes::ObjectAccess;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
@@ -198,7 +200,7 @@ fn every_categorical_property_is_counted_exactly_most_rows_first() {
     let (host, _dir) = host();
     let found = facets(&host, "full", None, None).unwrap();
     assert_eq!(found.rows, 5);
-    assert!(!found.approximate);
+    assert!(!found.lower_bound);
     assert_eq!(
         found
             .facets
@@ -259,4 +261,53 @@ fn a_property_that_is_not_text_a_choice_or_yes_no_is_refused_at_its_pointer() {
     assert!(wire.contains("missing is not a text"), "{wire}");
     assert!(wire.contains("/properties"), "{wire}");
     assert!(facets(&host, "full", None, Some("{not json")).is_err());
+}
+
+/// Past the scan bound every count is exact over the rows scanned: a lower
+/// bound of the true count, never an estimate, and said so.
+#[test]
+fn past_the_scan_bound_every_count_is_a_lower_bound_of_the_truth() {
+    let (host, _dir) = host();
+    let all = facets(&host, "full", None, None).unwrap();
+    for bound in 1..5 {
+        let params = ObjectFacetParams::default();
+        let scanned = get_object_facets_within(
+            &host,
+            (&scope(), Some("full")),
+            TYPE,
+            &params,
+            &Mapping,
+            bound,
+        )
+        .unwrap();
+        assert!(scanned.lower_bound, "bound {bound}");
+        assert_eq!(scanned.scan_limit, u64::try_from(bound).unwrap());
+        assert!(scanned.rows <= all.rows && scanned.rows <= u64::try_from(bound).unwrap());
+        for facet in &scanned.facets {
+            let (values, nulls, other) = read(&scanned, &facet.property);
+            let (truth, true_nulls, true_other) = read(&all, &facet.property);
+            assert!(
+                nulls <= true_nulls && other <= true_other,
+                "{}",
+                facet.property
+            );
+            for (value, count) in values {
+                let true_count = truth
+                    .iter()
+                    .find(|(candidate, _)| *candidate == value)
+                    .map_or(0, |(_, count)| *count);
+                assert!(
+                    count <= true_count,
+                    "{}={value}: {count} > {true_count}",
+                    facet.property
+                );
+            }
+        }
+    }
+    // At the bound or past it, nothing is held back: the counts are the truth.
+    let params = ObjectFacetParams::default();
+    let whole =
+        get_object_facets_within(&host, (&scope(), Some("full")), TYPE, &params, &Mapping, 5)
+            .unwrap();
+    assert_eq!((whole.lower_bound, &whole.facets), (false, &all.facets));
 }

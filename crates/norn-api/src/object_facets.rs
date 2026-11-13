@@ -6,7 +6,9 @@
 //! collection gate first, then each row on its own (D67). A row whose values
 //! are withheld is never counted, and quarantined rows are left out, as on a
 //! page. Counts are exact over the rows read; past the visible-row scan bound
-//! the facets cover the rows read and say `approximate`.
+//! the facets cover the rows read and say `lowerBound`: each count is then
+//! exactly what the scanned rows hold, so never more than the true count, and
+//! never an estimate or an extrapolation.
 
 use std::collections::BTreeMap;
 
@@ -55,8 +57,10 @@ pub struct NornObjectFacets {
     pub withheld_rows: u64,
     /// Rows held back by source disputes or open quarantining findings.
     pub quarantined_rows: u64,
-    /// True when the scan bound was reached: every count is a lower bound.
-    pub approximate: bool,
+    /// True when the scan bound was reached: every count (`rows`, each value,
+    /// `otherRows`, `nulls`) is exact over the rows scanned, and so at most the
+    /// true count.
+    pub lower_bound: bool,
     /// The visible-row scan bound.
     pub scan_limit: u64,
     /// One facet per property asked for, in the order asked (the order the
@@ -150,6 +154,31 @@ pub fn get_object_facets<E: SqlEngine>(
     params: &ObjectFacetParams,
     access: &dyn ObjectAccess,
 ) -> Result<NornObjectFacets, Refusal> {
+    get_object_facets_within(
+        host,
+        (scope, actor),
+        object_type,
+        params,
+        access,
+        MAX_QUERY_SCAN,
+    )
+}
+
+/// [`get_object_facets`] under a visible-row bound of `max_scan` instead of
+/// [`MAX_QUERY_SCAN`]: the seam lets a test cross the bound without a
+/// collection of ten thousand rows.
+///
+/// # Errors
+/// As [`get_object_facets`].
+#[doc(hidden)]
+pub fn get_object_facets_within<E: SqlEngine>(
+    host: &DevHost<E>,
+    (scope, actor): (&ScopeQuery, Option<&str>),
+    object_type: &str,
+    params: &ObjectFacetParams,
+    access: &dyn ObjectAccess,
+    max_scan: usize,
+) -> Result<NornObjectFacets, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let properties = {
         let cell = host.cell()?;
@@ -204,7 +233,7 @@ pub fn get_object_facets<E: SqlEngine>(
         access,
         &actor,
         object_type,
-        (None, usize::MAX, MAX_QUERY_SCAN),
+        (None, usize::MAX, max_scan),
     )?;
     let counted: Vec<&BTreeMap<String, RuntimeValue>> = scan
         .listed
@@ -220,8 +249,8 @@ pub fn get_object_facets<E: SqlEngine>(
         rows: count(counted.len()),
         withheld_rows: count(withheld),
         quarantined_rows: scan.quarantined,
-        approximate: !scan.exhausted,
-        scan_limit: count(MAX_QUERY_SCAN),
+        lower_bound: !scan.exhausted,
+        scan_limit: count(max_scan),
         facets: asked
             .iter()
             .map(|property| facet(property, &counted))

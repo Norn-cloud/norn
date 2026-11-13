@@ -3,7 +3,7 @@ import { Check, ListFilter, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
-import { chosen, readFacets, toggled, without, type Facet } from "../lib/facets.ts"
+import { chosen, countText, readFacets, toggled, without, type Facet } from "../lib/facets.ts"
 import { displayOf } from "../lib/objects.ts"
 import type { Clause, Predicate } from "../lib/records-query.ts"
 
@@ -48,7 +48,7 @@ export function FacetsRail({ objectType, fields, filter, onFilter }: {
     <div className="grid gap-4" aria-label="Narrow by">
       <div className="flex items-center gap-2 px-1 text-meta text-muted-foreground">
         <ListFilter className="size-3.5" aria-hidden />
-        <span className="flex-1">{document.rows.toLocaleString("en")} {document.rows === 1 ? "record" : "records"}{document.approximate ? " or more" : ""}, counted by the cell</span>
+        <span className="flex-1">{countText(document.rows, document.lowerBound)} {document.rows === 1 ? "record" : "records"}, counted by the cell</span>
       </div>
       {shown.map(({ property }) => {
         const facet = facetOf(property)
@@ -67,7 +67,7 @@ export function FacetsRail({ objectType, fields, filter, onFilter }: {
                   <span aria-hidden className="absolute inset-y-1 left-0 rounded-e-sm bg-primary/10" style={{ width: `${(count / most) * 100}%` }} />
                   <span className="relative flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border border-node-border bg-card">{on && <Check className="size-3" aria-hidden />}</span>
                   <span className="relative min-w-0 flex-1 truncate" title={String(value)}>{valueText(field, value)}</span>
-                  <span className="relative shrink-0 text-meta tabular-nums text-muted-foreground">{count.toLocaleString("en")}{document.approximate ? "+" : ""}</span>
+                  <span className="relative shrink-0 text-meta tabular-nums text-muted-foreground">{countText(count, document.lowerBound)}</span>
                 </button>
               )
             })}
