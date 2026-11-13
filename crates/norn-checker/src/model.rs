@@ -295,7 +295,8 @@ fn unsupported_output(property_type: &PropertyType) -> Option<String> {
             per_unit,
             ..
         } => (currency_source.is_some() || per_unit.is_some()).then(|| {
-            "a decimal output carries a static unit or none, never a currencySource or perUnit".into()
+            "a decimal output carries a static unit or none, never a currencySource or perUnit"
+                .into()
         }),
         PropertyType::DecimalBinding { .. }
         | PropertyType::Timestamp { .. }
