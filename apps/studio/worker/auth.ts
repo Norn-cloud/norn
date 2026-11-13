@@ -8,6 +8,7 @@ import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
+import type { ClientIpHeader } from "./client-ip.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -57,6 +58,8 @@ export interface AuthConfig {
   readonly scrypt?: PasswordScrypt
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
+  /** The header the edge sets to the client's address (rate limits); never defaulted. */
+  readonly clientIpHeader: ClientIpHeader
 }
 
 /** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
@@ -265,8 +268,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // The same cookie prefix as Norn's other Better Auth apps; host-only, never shared across subdomains.
       cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
-      // Cloudflare sets this header itself; X-Forwarded-For is client-controlled.
-      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+      // Only the header this deployment's edge sets itself (client-ip.ts); X-Forwarded-For is client-controlled.
+      ipAddress: { ipAddressHeaders: [config.clientIpHeader] },
     },
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
