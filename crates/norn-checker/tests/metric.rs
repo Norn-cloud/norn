@@ -252,18 +252,42 @@ fn fan_out_is_checked_at_every_hop_in_both_directions() {
     );
 }
 
+/// METRIC-UNIT-PARTITION-1: without a conversion, an amount aggregates per
+/// currency, so a question groups by its currency source or fixes it.
 #[test]
-fn sums_reject_mixed_currencies_without_conversion_and_infer_singletons() {
+fn sums_without_conversion_aggregate_per_currency() {
     let (mut metric, question) = sales();
     metric["x-norn"]["currency"]
         .as_object_mut()
         .expect("currency")
         .remove("conversion");
     assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
-    metric["x-norn"]["currency"]["property"]["property"] = json!("fx_currency");
-    assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
-    metric["x-norn"]["currency"]["property"]["property"] = json!("base_currency");
-    assert_code(&check(&metric, &question), codes::CURRENCY_SOURCE_MISMATCH);
+    let currency = json!({"links": ["parent_sales_invoice"], "property": "currency"});
+    let mut grouped = question.clone();
+    grouped["groupBy"]
+        .as_array_mut()
+        .expect("groupBy")
+        .push(json!({"path": currency}));
+    let findings = check(&metric, &grouped);
+    assert!(findings.is_empty(), "{findings:?}");
+    let mut fixed = question.clone();
+    fixed["filter"] = json!([{"path": currency, "operator": "eq", "value": "SAR"}]);
+    let findings = check(&metric, &fixed);
+    assert!(findings.is_empty(), "{findings:?}");
+    fixed["filter"][0]["operator"] = json!("ne");
+    assert_code(&check(&metric, &fixed), codes::MIXED_CURRENCY);
+    // An ISO 4217 code is upper case.
+    fixed["filter"][0] = json!({"path": currency, "operator": "eq", "value": "sar"});
+    assert_code(&check(&metric, &fixed), codes::INVALID_FILTER);
+    // A reaggregation never rolls up across the currency.
+    let mut rolled = grouped.clone();
+    rolled["aggregate"][0]["reaggregate"] =
+        json!({"aggregate": "sum", "across": [currency], "overTime": false});
+    assert_code(&check(&metric, &rolled), codes::MIXED_CURRENCY);
+    for other in ["fx_currency", "base_currency"] {
+        metric["x-norn"]["currency"]["property"]["property"] = json!(other);
+        assert_code(&check(&metric, &question), codes::CURRENCY_SOURCE_MISMATCH);
+    }
 }
 
 #[test]
@@ -714,12 +738,13 @@ fn mandatory_paths_reject_optional_forward_and_unproven_inverse_existence() {
 }
 
 #[test]
-fn monetary_type_derives_currency_and_rejects_omission_and_rebinding() {
+fn monetary_type_infers_its_currency_and_rejects_rebinding() {
     let (mut metric, question) = sales();
     metric["x-norn"]
         .as_object_mut()
         .expect("extension")
         .remove("currency");
+    // Omitted, the binding is the type's own source, summed per currency.
     assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
     let (mut metric, _) = sales();
     metric["x-norn"]["currency"] =
@@ -864,7 +889,11 @@ fn shared_and_inherited_monetary_types_keep_the_authoritative_currency_source() 
         .expect("extension")
         .remove("currency");
     assert_code(
-        &check_metrics_and_questions(&[decode::<MetricDefinition>(&metric)], &[], &cat),
+        &check_metrics_and_questions(
+            &[decode::<MetricDefinition>(&metric)],
+            &[decode::<QuestionIR>(&question)],
+            &cat,
+        ),
         codes::MIXED_CURRENCY,
     );
 }
@@ -1126,7 +1155,7 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
 
 /// METRIC-ADDITIVITY-1: declaration, rather than unit or metric metadata, authorizes aggregation.
 #[test]
-fn invoice_totals_require_their_authoritative_currency() {
+fn invoice_totals_aggregate_per_their_authoritative_currency() {
     let (mut metric, _) = sales();
     metric["type_params"]["expr"] = json!("grand_total");
     metric["type_params"]["metric_aggregation_params"]["semantic_model"] =
@@ -1138,10 +1167,23 @@ fn invoice_totals_require_their_authoritative_currency() {
         .expect("policy")
         .remove("currency");
     let metric: MetricDefinition = decode(&metric);
-    assert_code(
-        &check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)),
-        codes::MIXED_CURRENCY,
-    );
+    let (_, mut question) = sales();
+    question["objectSet"] = json!("erpnext.SalesInvoice");
+    question["groupBy"] = json!([{"path": {"property": "posting_date"}, "grain": "day"}]);
+    let run = |question: &Value| {
+        check_metrics_and_questions(
+            std::slice::from_ref(&metric),
+            &[decode::<QuestionIR>(question)],
+            &catalog(ONTOLOGY),
+        )
+    };
+    assert_code(&run(&question), codes::MIXED_CURRENCY);
+    question["groupBy"]
+        .as_array_mut()
+        .expect("groupBy")
+        .push(json!({"path": {"property": "currency"}}));
+    let findings = run(&question);
+    assert!(findings.is_empty(), "{findings:?}");
 }
 
 #[test]

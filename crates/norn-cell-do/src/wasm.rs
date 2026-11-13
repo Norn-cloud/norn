@@ -355,10 +355,17 @@ impl NornCell {
         status: Option<u16>,
         body: Option<Vec<u8>>,
         now_ms: f64,
+        rows: Option<u32>,
     ) -> String {
         let response = status.map(|status| (status, body.as_deref().unwrap_or_default()));
+        let rows = rows.and_then(|rows| usize::try_from(rows).ok());
         match self.connect.as_mut() {
-            Some(connect) => connect.step(self.tenant.serving_host(), id, response, millis(now_ms)),
+            Some(connect) => connect.step(
+                self.tenant.serving_host(),
+                id,
+                response,
+                (millis(now_ms), rows),
+            ),
             None => String::from(r#"{"done":{"outcome":"failed"}}"#),
         }
     }
