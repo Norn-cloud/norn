@@ -2053,17 +2053,35 @@ mod known_at {
             )
             .expect("installed");
         assert_ne!(store.model().model_hash(), before);
+        // G2 under the new model: at its frontier the only version of the old
+        // model is G1's deletion, which the mirror does not keep.
+        let at = CLOCK.checked_add(20).expect("clock");
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: at,
+                writes: vec![row("G2", 2000, Some(500), TIMES[0], METALS[0])],
+                ..CommitBatch::default()
+            })
+            .expect("committed");
+        let last = KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(at),
+            frontier: store.verified_head().expect("head").commits,
+        };
+        cutoffs.push(last);
         for cutoff in cutoffs {
             let mut context = context.clone();
             context.now_ms = cutoff.recorded_at.as_millis();
             let want = exact(&store, &plan, context.clone(), cutoff).map(|_| ());
             let got = on_engine(&store, &engine, &plan, &context, cutoff).map(|_| ());
-            assert_eq!(
-                want,
-                Err("core.compute.unsupported_engine".to_owned()),
-                "{cutoff:?}"
-            );
             assert_eq!(got, want, "{cutoff:?}");
         }
+        let mut context = context;
+        context.now_ms = last.recorded_at.as_millis();
+        assert_eq!(
+            exact(&store, &plan, context, last).map(|_| ()),
+            Err("core.compute.unsupported_engine".to_owned())
+        );
     }
 }
