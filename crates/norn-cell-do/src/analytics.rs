@@ -476,4 +476,16 @@ impl<E: SqlEngine> norn_api::question_routes::AdHocQuestions<E> for DemoQuestion
     fn max_buckets(&self) -> usize {
         AD_HOC_MAX_BUCKETS
     }
+
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<E>(self, question, max_rows)
+    }
+
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
+    }
 }

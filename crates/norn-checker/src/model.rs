@@ -291,10 +291,13 @@ fn unsupported_output(property_type: &PropertyType) -> Option<String> {
         | PropertyType::Boolean {}
         | PropertyType::Enum { .. } => None,
         PropertyType::Decimal {
+            additivity: _additivity,
+            scale: _scale,
+            rounding: _rounding,
+            unit: _unit,
             currency_source,
             per_unit,
             unit_source,
-            ..
         } => (currency_source.is_some() || per_unit.is_some() || !unit_source.is_empty()).then(
             || {
                 "a decimal output carries a static unit or none, never a currencySource, perUnit or unitSource".into()
@@ -878,17 +881,22 @@ fn column_mismatch(output: &PropertyType, column: &PropertyType) -> Option<Strin
             .then(kinds)
             .flatten(),
         PropertyType::Decimal {
+            additivity: _additivity,
             scale: wanted_scale,
+            rounding: _rounding,
             unit: wanted_unit,
-            ..
+            currency_source: _currency_source,
+            per_unit: _per_unit,
+            unit_source: _unit_source,
         } => {
             let PropertyType::Decimal {
+                additivity: _additivity,
                 scale,
+                rounding: _rounding,
                 unit,
                 currency_source,
                 per_unit,
                 unit_source,
-                ..
             } = column
             else {
                 return kinds();

@@ -95,10 +95,15 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
   // The cell has already authorized this definition read. Add a display-only name
   // without changing its recorded signer or exposing users from other organizations.
   if (request.method !== "GET" || !/^\/v1\/definitions\/[^/:]+$/.test(path) || !response.ok) return response
-  const value: unknown = await response.clone().json().catch(() => null)
-  if (typeof value !== "object" || value === null || Array.isArray(value) || !("signoff" in value)) return response
+  // Read once: a streamed host body cannot be cloned before it is consumed
+  // (the cell runtime refuses), so every outcome below re-serves these bytes.
+  const text = await response.text()
+  const unchanged = () => new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers })
+  let value: unknown = null
+  try { value = JSON.parse(text) } catch { return unchanged() }
+  if (typeof value !== "object" || value === null || Array.isArray(value) || !("signoff" in value)) return unchanged()
   const signoff = value.signoff
-  if (typeof signoff !== "object" || signoff === null || Array.isArray(signoff) || !("signer" in signoff) || typeof signoff.signer !== "string") return response
+  if (typeof signoff !== "object" || signoff === null || Array.isArray(signoff) || !("signer" in signoff) || typeof signoff.signer !== "string") return unchanged()
   const userId = signoff.signer.startsWith("user:") ? signoff.signer.slice(5) : ""
   let displayName = "a removed user"
   if (userId && actor.actorKind === "user" && actor.subjectId === userId) displayName = "you"
