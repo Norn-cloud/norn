@@ -178,11 +178,12 @@ fn check_entries(ux: &WidgetUx, findings: &mut Vec<Finding>) {
             && let Some(first) =
                 renderers.insert(format!("{value_type:?}"), entry.entry_id.as_str())
         {
+            let type_name = format!("{value_type:?}").to_lowercase();
             findings.push(Finding {
                 code: DUPLICATE_RENDERER,
                 pointer: format!("{pointer}/renders"),
                 message: format!(
-                    "`{}` and `{first}` both render {value_type:?}: one renderer per field type",
+                    "`{}` and `{first}` both render {type_name}: one renderer per field type",
                     entry.entry_id
                 ),
             });
