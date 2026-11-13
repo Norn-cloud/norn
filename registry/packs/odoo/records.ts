@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "odoo.three.source",
@@ -84,13 +84,13 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "stock.move", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "account.payment", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "stock.quant", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
-    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "delivery_posting_state", dataset: "stock.move", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "account.move.line", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "posting_currency", dataset: "account.move.line", field: "currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "posting_currency", dataset: "account.move.line", field: "currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "posting_account_role", dataset: "account.move.line", field: "account_role", origin: "declared", values: [{value: "cogs"}, {value: "inventory"}]},
     {id: "posting_book", dataset: "account.move.line", field: "book", origin: "declared", values: [{value: "demo/stock-usd"}]},
-    {id: "settlement_currency", dataset: "account.payment", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "account.payment", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "product.product", fields: ["id"], origin: "declared"},
@@ -107,7 +107,7 @@ export const Mapping = Norn.mapping({
   id: "odoo.three.mapping",
   title: "odoo synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "6472d633da08e9dadc2251228e21269964367122047b5c8bc79041680ddeee75"},
+  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "9a996b1b5b2827db69b781441373fedc1e2750f83ab40553fb535eb8ba804ec0"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [

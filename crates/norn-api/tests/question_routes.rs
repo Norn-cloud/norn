@@ -1645,3 +1645,99 @@ fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_withou
         BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
     );
 }
+
+/// Every registry pack, derived as a cell would: no listed metric names an
+/// internal encoding (a semantic model's `norn_path_…` field or an encoded
+/// object name). A linked time is its definition's path: the property and the
+/// links to it (METRIC-GRAIN-LINK-1).
+#[test]
+fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |dir: &str| -> Vec<norn_ir::ArtifactEnvelope> {
+        let mut paths: Vec<_> = std::fs::read_dir(root.join(dir))
+            .expect("artifacts")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        paths.sort();
+        paths
+            .iter()
+            .map(|path| {
+                serde_json::from_str(&std::fs::read_to_string(path).expect("artifact"))
+                    .expect("envelope")
+            })
+            .collect()
+    };
+    // Every pack at once over the core base packs implement, as the registry's
+    // admission test checks them (registry standards such as iso4217 are not installed).
+    let mut set: Vec<norn_ir::ArtifactEnvelope> = [
+        "core.Agent.interface",
+        "core.AgentRole.interface",
+        "core.Resource.interface",
+        "core.Commitment.interface",
+        "core.Hold.interface",
+        "core.EconomicEvent.interface",
+        "core.LedgerEffect.interface",
+        "core.Claim.interface",
+        "norn.SourceEvidence.interface",
+        "core.value_types.entity",
+        "std.value_types.entity",
+        "core.units",
+    ]
+    .iter()
+    .map(|name| {
+        let path = root.join(format!("registry/core/artifacts/{name}.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).expect("core artifact"))
+            .expect("envelope")
+    })
+    .collect();
+    let mut packs: Vec<_> = std::fs::read_dir(root.join("registry/packs"))
+        .expect("packs")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.join("artifacts").is_dir())
+        .collect();
+    packs.sort();
+    for pack in &packs {
+        let name = pack
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        set.extend(read(&format!("registry/packs/{name}/artifacts")));
+    }
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &set,
+        &std::collections::BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Holding".to_owned()),
+    )
+    .unwrap_or_else(|findings| panic!("the registry packs derive: {findings:#?}"));
+    let mut linked = 0;
+    for candidate in space.candidates() {
+        let summary = norn_api::question_routes::metric_summary(&candidate.definition, Vec::new());
+        let mut shown = summary.unit_partition.clone();
+        shown.extend(summary.time_links.iter().cloned());
+        shown.extend(
+            [
+                &summary.time_property,
+                &summary.expression,
+                &summary.object_type,
+            ]
+            .into_iter()
+            .flatten()
+            .cloned(),
+        );
+        shown.push(summary.label.clone());
+        for text in &shown {
+            assert!(
+                !text.contains("norn_path_") && !text.contains("analysis.object_"),
+                "{} shows {text}",
+                candidate.definition.name
+            );
+        }
+        if !summary.time_links.is_empty() {
+            linked += 1;
+            assert_eq!(summary.time_property.as_deref(), Some("occurred_at"));
+        }
+    }
+    // The posting and settlement sums of the three systems take their event's time.
+    assert!(linked > 0);
+}

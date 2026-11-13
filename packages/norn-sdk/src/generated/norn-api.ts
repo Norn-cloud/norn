@@ -5924,6 +5924,22 @@ export interface components {
         NornIrLifecycle: {
             description?: string;
             /**
+             * @description LIFE-SOUND-1: the declared endings and their outcomes. A run is sound
+             *     when it can always reach one. A non-`resting` ending is a terminal
+             *     state; a `resting` ending is a non-terminal state a perpetual object
+             *     may stay in (an account, an item). A terminal state with no entry here
+             *     is an unclassified ending. Omitted when empty.
+             */
+            endings?: components["schemas"]["NornIrLifecycleEnding"][];
+            /**
+             * @description LIFE-SOUND-6: the external event kinds an object of this lifecycle can
+             *     receive (connector observations, provider results, counterparty
+             *     cancellations). Every reachable non-terminal state handles each one by
+             *     an event-triggered transition or an explicit `ignoredIn` entry.
+             *     Omitted when empty.
+             */
+            events?: components["schemas"]["NornIrLifecycleEvent"][];
+            /**
              * @description States in which non-lifecycle properties cannot be written. Declared
              *     transitions may still leave these states. Omitted when empty.
              */
@@ -5956,6 +5972,33 @@ export interface components {
              */
             transitions?: components["schemas"]["NornIrTransition"][];
         };
+        /** @description One declared ending of a lifecycle. */
+        NornIrLifecycleEnding: {
+            /**
+             * @description What ending in it means.
+             * @enum {string}
+             */
+            outcome: "completed" | "compensated" | "cancelled" | "breached_visible" | "resting";
+            /** @description The state; listed once. */
+            state: string;
+        };
+        /** @description An external event kind a lifecycle receives (LIFE-SOUND-6). */
+        NornIrLifecycleEvent: {
+            /** @description The event id, same grammar as a transition id; unique per lifecycle. */
+            id: string;
+            /**
+             * @description States in which the event is deliberately ignored, each with a reason.
+             *     Omitted when empty.
+             */
+            ignoredIn?: components["schemas"]["NornIrLifecycleIgnore"][];
+        };
+        /** @description States in which an external event is ignored on purpose. */
+        NornIrLifecycleIgnore: {
+            /** @description Why ignoring it there is correct; non-blank. */
+            reason: string;
+            /** @description The states; non-empty. */
+            states: string[];
+        };
         /**
          * @description One lifecycle observation rule of a lifecycle property.
          *
@@ -5985,6 +6028,11 @@ export interface components {
              */
             transition?: string;
         };
+        /**
+         * @description How a lifecycle run ended (LIFE-SOUND-1).
+         * @enum {string}
+         */
+        NornIrLifecycleOutcome: "completed" | "compensated" | "cancelled" | "breached_visible" | "resting";
         /**
          * @description Every path from an initial state to `target` must visit `via`, including
          *     the initial and target states. An unreachable target satisfies this law
@@ -9225,6 +9273,13 @@ export interface components {
         NornIrTimezonePolicy: "utc" | "offset";
         /** @description One named, allowed change of the lifecycle property. */
         NornIrTransition: {
+            /**
+             * @description LIFE-SOUND-8: this transition dispatches an irreversible external
+             *     effect, and the named transition compensates it. A run that dispatched
+             *     it may end `cancelled`, `compensated` or `breached_visible` only after
+             *     the compensating transition. Omitted when the transition dispatches none.
+             */
+            compensatedBy?: string;
             description?: string;
             /** @description The source states, non-empty and distinct; none is `to`. */
             from: string[];
@@ -9247,14 +9302,30 @@ export interface components {
             guards?: components["schemas"]["NornIrZenExpression"][];
             /** @description Unique id within the lifecycle (`submit`, `cancel`). */
             id: string;
+            /**
+             * @description LIFE-SOUND-5: fact or request. Omitted: a request, unless a trigger
+             *     makes it a fact.
+             * @enum {string}
+             */
+            mode?: "request" | "fact";
             /** @description The target state. */
             to: string;
+            /**
+             * @description LIFE-SOUND-3: a timer or external event that fires this transition.
+             *     Omitted: an action fires it.
+             */
+            trigger?: components["schemas"]["NornIrTransitionTrigger"];
         };
         /**
          * @description Id of a [`Transition`], unique within its lifecycle. Same grammar as a
          *     property id ([`MEMBER_ID_PATTERN`]).
          */
         NornIrTransitionId: string;
+        /**
+         * @description Whether a transition records a fact or asks for a change (LIFE-SOUND-5).
+         * @enum {string}
+         */
+        NornIrTransitionMode: "request" | "fact";
         /** @description **Transition**: one declared transition. */
         NornIrTransitionRow: {
             at: components["schemas"]["NornIrMemberRef"];
@@ -9262,6 +9333,25 @@ export interface components {
             /** @description Declared guards, in semantic order. */
             guards: components["schemas"]["NornIrZenExpression"][];
             to: string;
+        };
+        /** @description What fires a transition (LIFE-SOUND-3). Omitted: an action fires it. */
+        NornIrTransitionTrigger: components["schemas"]["NornIrTransitionTriggerOneOf0"] | components["schemas"]["NornIrTransitionTriggerOneOf1"];
+        /**
+         * @description The cell clock: the transition fires once the object has been in a
+         *     source state for `millis`. A deadline; always a fact.
+         */
+        NornIrTransitionTriggerOneOf0: {
+            /** @enum {string} */
+            kind: "timer";
+            /** @description Positive canonical unsigned milliseconds, bounded by u64. */
+            millis: string;
+        };
+        /** @description A declared external event of the lifecycle. Always a fact. */
+        NornIrTransitionTriggerOneOf1: {
+            /** @description The [`LifecycleEvent`] id. */
+            event: string;
+            /** @enum {string} */
+            kind: "event";
         };
         /** @description One named observation, read on each side of a translation and compared exactly. */
         NornIrTranslationObservation: {
@@ -10888,7 +10978,16 @@ export interface components {
             numerator: string | null;
             /** @description The concept it aggregates, for a simple metric. */
             objectType: string | null;
-            /** @description The time property its buckets use, for a simple metric. */
+            /**
+             * @description The to-one links from the measured object to the object holding
+             *     [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
+             *     event's); empty when the time is the object's own.
+             */
+            timeLinks: string[];
+            /**
+             * @description The time property its buckets use, for a simple metric: a property of
+             *     the measured object, or of the object [`Self::time_links`] reach.
+             */
             timeProperty: string | null;
             /**
              * @description Properties a question over this metric must group by or fix with an

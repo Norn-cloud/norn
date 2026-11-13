@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.product_limit",
+  "message": "the composed UI and lifecycle machine exceeds its state bound: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
