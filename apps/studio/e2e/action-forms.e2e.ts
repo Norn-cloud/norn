@@ -97,8 +97,9 @@ test("validate: the cell's input refusal shows on the form, which stays on the r
   await form.getByLabel("Quantity").fill("12,5")
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  // The served route names no field in an input refusal yet, so the refusal shows on the review.
-  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  // The served route names no field in an input refusal yet, so the refusal shows on the review, headlined from its code.
+  await expect(form.getByRole("alert").first()).toContainText("The input doesn't fit this action")
+  await expect(form.getByRole("alert").first()).toContainText("action.invalid_input")
   await expect(form.getByRole("region", { name: "Review" })).toBeVisible()
   await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await shoot(page, "refused")
@@ -146,7 +147,8 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await sheet(page).getByLabel("Reason").fill("Late count")
   await sheet(page).getByRole("button", { name: "Adjust quantity" }).click()
   // The served refusal names the precondition's failure and carries no diagnostic for this caller.
-  await expect(sheet(page).getByRole("alert").first()).toHaveText("a declared precondition does not hold")
+  await expect(sheet(page).getByRole("alert").first()).toContainText("A condition for this action does not hold")
+  await expect(sheet(page).getByRole("alert").first()).toContainText("action.precondition_failed")
 })
 
 test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; a retry after an outage commits once", async ({ page }) => {
@@ -186,7 +188,7 @@ test("create: a parent with owned rows takes a list of records; the cell's input
   await form.getByLabel("Quantity").nth(0).fill("1.250")
   await form.getByLabel("Quantity").nth(1).fill("2,0")
   await form.getByRole("button", { name: "Restock holding" }).click()
-  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.getByRole("alert").first()).toContainText("The input doesn't fit this action")
   await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await expect(form.getByRole("button", { name: "Remove lot 2" })).toBeVisible()
   await shoot(page, "rows")
