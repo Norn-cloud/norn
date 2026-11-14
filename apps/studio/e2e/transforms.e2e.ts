@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
-import { chooseFromAccountMenu } from "./account-menu.ts"
+
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
 
 // Typed transforms (ViewIR v1, #341): the list, a transform's rows, one row's lineage, the plan
 // graph and checking a query. The cell routes are stubbed with test/fixtures/transforms.json, which

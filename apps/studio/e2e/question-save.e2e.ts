@@ -2,7 +2,13 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
 import type { Page, Route } from "@playwright/test"
-import { chooseFromAccountMenu } from "./account-menu.ts"
+
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
 
 /** The definitions routes' refusals (test/fixtures/definition-call.json, pinned to the routes by crates/norn-cell-do/tests/definitions.rs). */
 type Served = "signoffUnavailable" | "signoffMismatch" | "notFound"

@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
-import { chooseFromAccountMenu } from "./account-menu.ts"
+
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
 
 // LABEL-LOCALE-1 / MESSAGE-LOCALE-1: one row per locale and theme. Arabic mirrors the layout (dir=rtl),
 // shows labels and catalog messages in Arabic, and keeps ids, codes and phone numbers isolated left-to-right.
