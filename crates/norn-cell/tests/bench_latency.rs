@@ -189,7 +189,7 @@ fn governed_commit_and_law_check_latency_by_history_size() {
             let failures =
                 governing_laws::evaluate(&catalog, &key, &values, &mut fuel).expect("law check");
             law_only.push(at.elapsed().as_nanos());
-            assert!(failures.is_empty());
+            assert_eq!(failures, []);
         }
         let size = std::fs::metadata(&path).expect("size").len();
         println!(

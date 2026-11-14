@@ -1231,7 +1231,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
     let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 422, "{refused}");
     let unknown = pointers(&refused);
-    assert!(!unknown.is_empty(), "{refused}");
+    assert_ne!(unknown, [], "{refused}");
     for (code, pointer) in &unknown {
         assert_eq!(code, "definition.flow_function_unknown");
         assert!(
@@ -1289,7 +1289,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         .into_iter()
         .filter_map(|perform| perform.name)
         .collect();
-    assert!(!pairs.is_empty());
+    assert_ne!(pairs, []);
     assert!(
         pairs
             .iter()

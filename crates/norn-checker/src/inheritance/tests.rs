@@ -503,8 +503,9 @@ fn compare_catalog_combinations(
         ),
     ];
     for (label, base, local) in &snapshots {
-        assert!(
-            !registered(base, local).is_empty(),
+        assert_ne!(
+            registered(base, local).len(),
+            0,
             "meaningful snapshot {label}"
         );
         compare_snapshot(label, base, local);

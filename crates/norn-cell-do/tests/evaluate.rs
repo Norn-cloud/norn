@@ -251,7 +251,7 @@ fn an_ad_hoc_answer_applies_d53_per_bucket() {
     assert_eq!(viewer.status, 200, "{}", viewer.body);
     let viewer = json_of(&viewer);
     let admin = json_of(&evaluate(&cell, ADMIN, &question("silver")));
-    assert!(!viewer["rows"].as_object().unwrap().is_empty());
+    assert_ne!(viewer["rows"].as_object().unwrap().len(), 0);
     for (bucket, row) in viewer["rows"].as_object().unwrap() {
         assert_eq!(row["members"].as_object().unwrap().len(), 1, "{bucket}");
         assert_eq!(row["suppressed"], true, "{bucket}");
@@ -323,7 +323,7 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     let refused = json_of(&refused);
     assert_eq!(refused["code"], "question.refused");
     let diagnostics = refused["diagnostics"].as_array().unwrap();
-    assert!(!diagnostics.is_empty());
+    assert_ne!(diagnostics.len(), 0);
     assert!(
         diagnostics
             .iter()

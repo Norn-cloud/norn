@@ -612,7 +612,7 @@ pub fn dcat_catalog(
         let stable_id = item.stable_id();
         let id = qualified(scope, &stable_id)?;
         let mut members: BTreeMap<String, JsonValue> = BTreeMap::from([
-            ("@id".to_owned(), string(id.clone())),
+            ("@id".to_owned(), string(id)),
             ("@type".to_owned(), string("dcat:Dataset")),
             ("dcterms:identifier".to_owned(), string(item.key.as_str())),
             ("dcterms:title".to_owned(), string(item.key.as_str())),

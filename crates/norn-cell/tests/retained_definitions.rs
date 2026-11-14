@@ -263,11 +263,11 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         .expect("page");
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].definition.id, "studio.dashboard.b");
-    assert!(
+    assert_eq!(
         reader
             .retained_definitions("agent", true, None, 10)
-            .expect("kind")
-            .is_empty()
+            .expect("kind"),
+        []
     );
 
     // The export journal carries each revision; a restore rebuilds them.

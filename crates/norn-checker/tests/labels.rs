@@ -86,7 +86,7 @@ fn invoice_labels() -> Value {
 #[test]
 fn a_complete_catalog_is_admitted_with_its_definitions() {
     let catalog = labels("sales.labels", &invoice_labels());
-    assert!(codes(&check_artifact(&catalog)).is_empty());
+    assert_eq!(codes(&check_artifact(&catalog)).len(), 0);
     assert_eq!(set_codes(&[invoice(), catalog], &[]), BTreeSet::new());
 }
 
@@ -141,7 +141,7 @@ fn every_target_resolves_to_a_declared_definition() {
             "sales.labels",
             &json!([{ "target": target, "label": { "en": "X" } }]),
         );
-        assert!(codes(&check_artifact(&catalog)).is_empty(), "{target}");
+        assert_eq!(codes(&check_artifact(&catalog)).len(), 0, "{target}");
         assert_eq!(
             set_codes(&[invoice(), catalog], &[]),
             BTreeSet::from(["labels.admission.unknown_target".to_owned()]),
@@ -329,7 +329,7 @@ fn a_required_locale_lists_every_unlabelled_definition_as_a_warning() {
             { "target": invoice_targets()[0], "label": { "ar": "فاتورة" } }
         ] }),
     );
-    assert!(missing_label_findings(&[filled, catalog], &[invoice()]).is_empty());
+    assert_eq!(missing_label_findings(&[filled, catalog], &[invoice()]), []);
 }
 
 #[test]

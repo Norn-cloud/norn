@@ -4373,16 +4373,13 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let mut out = BTreeMap::new();
         for name in names.into_iter().filter(|name| include(name)) {
             let projection = dump_projection(self.model, &name);
-            let integer_columns: Vec<bool> = projection
-                .as_ref()
-                .map(|projection| {
-                    projection
-                        .columns
-                        .iter()
-                        .map(|(_, is_integer)| *is_integer)
-                        .collect()
-                })
-                .unwrap_or_default();
+            let integer_columns: Vec<bool> = projection.as_ref().map_or_default(|projection| {
+                projection
+                    .columns
+                    .iter()
+                    .map(|(_, is_integer)| *is_integer)
+                    .collect()
+            });
             let rows = if let Some(projection) = projection {
                 let columns: Vec<(&str, bool)> = projection
                     .columns

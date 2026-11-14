@@ -168,7 +168,7 @@ fn edit_object_type(
 
 #[test]
 fn every_rule_has_a_positive_and_a_negative_fixture() {
-    assert!(!RULES.is_empty());
+    assert_ne!(RULES, []);
     for rule in RULES {
         let registered = codes::lookup(rule.code)
             .unwrap_or_else(|| panic!("{} code {} is unregistered", rule.id, rule.code));
@@ -178,8 +178,9 @@ fn every_rule_has_a_positive_and_a_negative_fixture() {
             .iter()
             .filter(|finding| finding.code == rule.code)
             .collect();
-        assert!(
-            !hits.is_empty(),
+        assert_ne!(
+            hits.len(),
+            0,
             "{} positive fixture emits no {}; got {positive:#?}",
             rule.id,
             rule.code
@@ -198,8 +199,9 @@ fn every_rule_has_a_positive_and_a_negative_fixture() {
             .iter()
             .filter(|finding| finding.code == rule.code)
             .collect();
-        assert!(
-            misses.is_empty(),
+        assert_eq!(
+            misses.len(),
+            0,
             "{} negative fixture emits {}: {misses:#?}",
             rule.id,
             rule.code
@@ -237,7 +239,7 @@ fn rules_have_both_warning_and_error_severities() {
 fn gating_is_separate_from_severity() {
     // NORN-NAME-001 emits only warnings: reported, but not failing by default.
     let findings = lint_fixture("NORN-NAME-001", "positive");
-    assert!(!findings.is_empty());
+    assert_ne!(findings, []);
     assert!(findings.iter().all(|finding| !finding.is_error()));
     assert!(!FailSeverity::default().fails(&findings));
     assert!(FailSeverity::Warning.fails(&findings));
@@ -366,7 +368,7 @@ fn tier_two_findings_are_warnings_and_obey_the_default_gate() {
             .into_iter()
             .filter(|finding| finding.code == rule.code)
             .collect();
-        assert!(!findings.is_empty(), "{}", rule.id);
+        assert_ne!(findings, [], "{}", rule.id);
         assert!(!FailSeverity::default().fails(&findings), "{}", rule.id);
         assert!(FailSeverity::Warning.fails(&findings), "{}", rule.id);
     }

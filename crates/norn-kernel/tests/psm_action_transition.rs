@@ -413,7 +413,7 @@ fn authorized_stage_orders_binding_protocol_time_then_authorization() {
             transition_id: "t".to_string()
         })
     );
-    assert!(s.log.is_empty());
+    assert_eq!(s.log.len(), 0);
 
     // An exact retry verifies the recorded receipt first...
     let mut s = shell(Err("integrity"), Ok(1));
@@ -462,7 +462,7 @@ fn authorized_stage_orders_binding_protocol_time_then_authorization() {
         decide_authorized(&fresh, &request("a", 50), &mut s),
         Err(AuthorizedRejection::LogicalTimeRollback)
     );
-    assert!(s.log.is_empty());
+    assert_eq!(s.log.len(), 0);
     assert_eq!(
         decide_authorized(&fresh, &request("a", 100), &mut s),
         Ok(AuthorizedOutcome::Proceed(1))

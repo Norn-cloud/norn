@@ -303,7 +303,7 @@ fn function_admission_manifest_rules() {
         evidence.qualified = true;
     }
     qualified.cache = CachePolicy::ActionCache;
-    assert!(manifest_findings(&qualified).is_empty());
+    assert_eq!(manifest_findings(&qualified), []);
 
     let mut networked = manifest("container");
     if let DeterminismProfile::HermeticContainer(evidence) = &mut networked.determinism {
@@ -383,8 +383,9 @@ fn function_admission_invocation_rules() {
         "messageText".to_owned(),
         RuntimeValue::String("see https://example.com/menu for prices".to_owned()),
     );
-    assert!(
-        check(&mentions).is_empty(),
+    assert_eq!(
+        check(&mentions).len(),
+        0,
         "text that mentions a URL is data, not a mutable reference"
     );
 
@@ -508,8 +509,9 @@ fn function_admission_receipt_rules() {
         resource: ExhaustedResource::Cpu,
     };
     exhausted.resources.cpu_millis = 101;
-    assert!(
-        check(&exhausted).is_empty(),
+    assert_eq!(
+        check(&exhausted).len(),
+        0,
         "an exhausted attempt reports the use that stopped it"
     );
 
@@ -518,8 +520,9 @@ fn function_admission_receipt_rules() {
     hit.cache = CacheOrigin::Hit {
         action_key: key.clone(),
     };
-    assert!(
-        check(&hit).is_empty(),
+    assert_eq!(
+        check(&hit).len(),
+        0,
         "a qualified WASM success may be served"
     );
 
@@ -574,8 +577,9 @@ fn function_admission_is_deterministic() {
 fn function_admission_refuses_non_nfc_text() {
     let mut decomposed = manifest("wasm");
     decomposed.implementation.entry_point = "classify\u{e9}".to_owned();
-    assert!(
-        manifest_findings(&decomposed).is_empty(),
+    assert_eq!(
+        manifest_findings(&decomposed),
+        [],
         "composed text is canonical"
     );
     decomposed.implementation.entry_point = "classifye\u{301}".to_owned();
@@ -669,7 +673,7 @@ fn function_admission_detects_credentials_by_name_and_shape() {
         ("idempotencyKey", "msg-42"),
         ("note", "please send the basic plan"),
     ] {
-        assert!(check(name, value).is_empty(), "{name}: {value}");
+        assert_eq!(check(name, value).len(), 0, "{name}: {value}");
     }
 
     for scope in [
@@ -689,7 +693,7 @@ fn function_admission_detects_credentials_by_name_and_shape() {
     }
     let mut host = manifest("effectful");
     host.capabilities[0].scope = "https://api.example.com/v1/*".to_owned();
-    assert!(manifest_findings(&host).is_empty());
+    assert_eq!(manifest_findings(&host), []);
 }
 
 #[test]

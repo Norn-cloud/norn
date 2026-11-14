@@ -47,8 +47,9 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
             .iter_errors(&document)
             .map(|error| error.to_string())
             .collect();
-        assert!(
-            errors.is_empty(),
+        assert_eq!(
+            errors.len(),
+            0,
             "{file} does not satisfy {root}: {errors:#?}"
         );
     }

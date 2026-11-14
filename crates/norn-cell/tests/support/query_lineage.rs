@@ -50,7 +50,7 @@ pub(crate) fn store(path: &std::path::Path) -> CellStore {
         tenant: None,
     };
     let findings = norn_checker::check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
     let mut objects = Vec::new();
     let mut interfaces = Vec::new();
     for artifact in &artifacts {

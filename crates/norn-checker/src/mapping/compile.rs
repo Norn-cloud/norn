@@ -506,19 +506,15 @@ pub(super) fn compile_mapping(
                     Span::pointer(""),
                 )]
             })?;
-        let dependencies = root
-            .effect_program
-            .as_ref()
-            .map(|program| {
-                let target = program.target();
-                vec![ArtifactDependency {
-                    artifact_id: target.entity_artifact_id.to_owned(),
-                    kind: ArtifactKind::Entity,
-                    version: Some(target.entity_artifact_version.to_owned()),
-                    required: true,
-                }]
-            })
-            .unwrap_or_default();
+        let dependencies = root.effect_program.as_ref().map_or_default(|program| {
+            let target = program.target();
+            vec![ArtifactDependency {
+                artifact_id: target.entity_artifact_id.to_owned(),
+                kind: ArtifactKind::Entity,
+                version: Some(target.entity_artifact_version.to_owned()),
+                required: true,
+            }]
+        });
         out.action_artifacts.push(ArtifactEnvelope {
             ir_version: SUPPORTED_IR_VERSION.to_owned(),
             artifact_id: root.action_id.clone(),
@@ -3176,7 +3172,7 @@ mod nested_budget_tests {
             parent.source_fields,
             ["name", "item_code", "item_name", "variant_of", "attributes"]
         );
-        assert!(parent.markings.is_empty());
+        assert_eq!(parent.markings, []);
     }
 
     #[test]

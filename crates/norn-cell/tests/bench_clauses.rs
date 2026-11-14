@@ -275,8 +275,9 @@ fn encoded_clauses_commit_refuse_atomically_and_fail_open_when_removed() {
             failures.push(id.to_owned());
         }
     }
-    assert!(
-        failures.is_empty(),
+    assert_eq!(
+        failures.len(),
+        0,
         "clauses without complete controls: {failures:?}"
     );
 }
@@ -298,6 +299,6 @@ fn cross_object_law_probes_report_their_exact_refusal() {
             "BENCH-PROBE {}",
             json!({"id":probe["id"],"expression":probe["expression"],"diagnostics":refused})
         );
-        assert!(!refused.is_empty(), "{} unexpectedly admitted", probe["id"]);
+        assert_ne!(refused.len(), 0, "{} unexpectedly admitted", probe["id"]);
     }
 }

@@ -101,7 +101,10 @@ fn unknown_parent_and_acyclic_catalog_keep_existing_behavior() {
     );
     assert!(actual[0].structural_evidence().is_none());
     assert!(actual[0].to_json().get("evidence").is_none());
-    assert!(findings(&types(&[("test.A", None), ("test.B", Some("test.A"))]), &[]).is_empty());
+    assert_eq!(
+        findings(&types(&[("test.A", None), ("test.B", Some("test.A"))]), &[]),
+        []
+    );
 }
 
 #[test]
@@ -114,15 +117,15 @@ fn mixed_layers_report_only_local_members_and_snapshots_never_share_state() {
     assert_eq!(findings(&local, &base), [cycle(0, "test.Local")]);
     // Equal names in a distinct selected catalog do not inherit the prior cycle.
     let other_base = types(&[("test.Base", None)]);
-    assert!(findings(&local, &other_base).is_empty());
+    assert_eq!(findings(&local, &other_base), []);
     assert_eq!(findings(&local, &base), [cycle(0, "test.Local")]);
     // Unrelated base-only cycles are not re-reported as local diagnostics.
-    assert!(
+    assert_eq!(
         findings(
             &types(&[("test.Clear", None)]),
             &types(&[("test.A", Some("test.A"))])
-        )
-        .is_empty()
+        ),
+        []
     );
 }
 

@@ -438,14 +438,13 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
         let fields = |pointer: &str| {
             c.pointer(pointer)
                 .and_then(Value::as_array)
-                .map(|items| {
+                .map_or_default(|items| {
                     items
                         .iter()
                         .filter_map(Value::as_str)
                         .collect::<Vec<_>>()
                         .join(",")
                 })
-                .unwrap_or_default()
         };
         Some(format!(
             "{} {}[{}] -> {}[{}] .{}",

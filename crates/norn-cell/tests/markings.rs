@@ -684,7 +684,7 @@ async fn reference_lineage_preserves_occurrence_unknown_full_reads_and_restore()
         .expect("identity")
         .expect("fits without contact");
     assert_eq!(identity.state.version, norn_kernel::FactVersion(1));
-    assert!(identity.state.values.expect("exists").is_empty());
+    assert_eq!(identity.state.values.expect("exists").len(), 0);
 }
 
 #[test]
@@ -1091,8 +1091,9 @@ fn action_and_command_outputs_preserve_empty_unions_and_fail_closed_on_partial_s
         ("norn.ActionCall", "call-public", "object"),
         ("norn.CommandTask", "task-public", "objectKey"),
     ] {
-        assert!(
-            effective_markings(&store, object_type, key, None)[property].is_empty(),
+        assert_eq!(
+            effective_markings(&store, object_type, key, None)[property].len(),
+            0,
             "a complete empty target union remains public"
         );
     }
@@ -1207,8 +1208,9 @@ fn command_tasks_keep_the_attributed_action_call_snapshot_after_target_declassif
         vec![CONTACT.to_owned(), HEALTH.to_owned()],
         "a task uses its attributed action call's immutable marking snapshot"
     );
-    assert!(
-        effective_markings(&store, "norn.CommandTask", "task-public", None)["objectKey"].is_empty()
+    assert_eq!(
+        effective_markings(&store, "norn.CommandTask", "task-public", None)["objectKey"].len(),
+        0
     );
     for key in ["task-missing-call", "task-unattributed"] {
         assert_eq!(
@@ -1329,7 +1331,10 @@ fn mapped_labels_follow_exact_historical_snapshots_and_unknowns_fail_closed() {
     store
         .commit(&declass)
         .expect("source current marking is removed");
-    assert!(effective_markings(&store, "marking.Source", "source-1", None)["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Source", "source-1", None)["email"].len(),
+        0
+    );
     assert_eq!(
         effective_markings(&store, "marking.Source", "source-1", Some(1))["email"],
         vec![CONTACT.to_owned()]
@@ -1462,10 +1467,11 @@ fn read_set_markings_cover_each_emitted_version_and_only_changed_put_properties(
     for version in [2, 3] {
         let labels = effective_markings(&store, "marking.Output", "put-output", Some(version));
         assert_eq!(labels["derived"], vec![CONTACT.to_owned()]);
-        assert!(labels["untouched"].is_empty());
+        assert_eq!(labels["untouched"].len(), 0);
     }
-    assert!(
-        effective_markings(&store, "marking.Output", "put-output", Some(1))["derived"].is_empty()
+    assert_eq!(
+        effective_markings(&store, "marking.Output", "put-output", Some(1))["derived"].len(),
+        0
     );
     for version in [1, 2] {
         assert_eq!(
@@ -1683,7 +1689,10 @@ fn typed_declassification_is_ledgered_idempotent_and_reinherited_on_write() {
         ledger.iter().filter(|entry| entry.event == audit).count(),
         1
     );
-    assert!(effective_markings(&store, "marking.Contact", "alice", None)["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Contact", "alice", None)["email"].len(),
+        0
+    );
     assert_eq!(
         effective_markings(&store, "marking.Contact", "alice", Some(1))["email"],
         vec![CONTACT.to_owned()],
@@ -1831,7 +1840,10 @@ fn definition_marking_additions_backfill_history_and_removal_is_refused() {
             )],
         ))
         .expect("unmarked fact commits");
-    assert!(effective_markings(&store, "marking.Contact", "alice", Some(1))["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Contact", "alice", Some(1))["email"].len(),
+        0
+    );
 
     let before_check = store.read().verify_ledger().expect("ledger verifies");
     store
@@ -1841,7 +1853,10 @@ fn definition_marking_additions_backfill_history_and_removal_is_refused() {
         store.read().verify_ledger().expect("ledger verifies"),
         before_check
     );
-    assert!(effective_markings(&store, "marking.Contact", "alice", Some(1))["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Contact", "alice", Some(1))["email"].len(),
+        0
+    );
 
     store
         .install_definitions(
@@ -1935,8 +1950,9 @@ fn new_properties_keep_complete_snapshots_and_computed_inputs_inherit_runtime_la
         .expect("new nullable and computed properties install");
     for version in [None, Some(1)] {
         let labels = effective_markings(&store, "marking.Contact", "alice", version);
-        assert!(
-            labels["note"].is_empty(),
+        assert_eq!(
+            labels["note"].len(),
+            0,
             "a new absent nullable property has complete unmarked evidence"
         );
         assert_eq!(labels["email"], vec![CONTACT.to_owned()]);
@@ -2039,7 +2055,10 @@ fn declassified_runtime_lineage_is_reinherited_by_an_ordinary_rewrite() {
     declass.events = vec![change.ledger_event().expect("audit")];
     declass.marking_declassifications = vec![change];
     store.commit(&declass).expect("declassification");
-    assert!(effective_markings(&store, "marking.Runtime", "R-1", None)["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Runtime", "R-1", None)["email"].len(),
+        0
+    );
     store
         .commit(&batch(
             3,
@@ -2143,7 +2162,10 @@ async fn canonical_fact_provenance_survives_declassification_restart_and_restore
             ..batch(2, Vec::new())
         })
         .expect("current source declassified");
-    assert!(effective_markings(&store, "marking.Source", "S-1", None)["email"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Source", "S-1", None)["email"].len(),
+        0
+    );
     let provenance = evidence_provenance(
         &[HEALTH],
         vec![norn_ir::provenance::FactRef::new(
@@ -2161,7 +2183,10 @@ async fn canonical_fact_provenance_survives_declassification_restart_and_restore
             ..batch(3, Vec::new())
         })
         .expect("canonical creates");
-    assert!(effective_markings(&store, "marking.Evidence", "set", Some(1))["message"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Evidence", "set", Some(1))["message"].len(),
+        0
+    );
     store
         .commit(&CommitBatch {
             facts: vec![evidence_set("set", "provenance", provenance)],
@@ -2444,8 +2469,9 @@ fn naming_series_identity_inherits_runtime_scope_markings_without_fact_refs() {
     assert!(!generated["number"].contains(&"norn.unknown-lineage".to_owned()));
 
     let public = effective_markings(&store, "marking.PublicInvoice", "public-invoice-1", None);
-    assert!(
-        public["number"].is_empty(),
+    assert_eq!(
+        public["number"].len(),
+        0,
         "an unclassified key stays public"
     );
 }
@@ -2598,7 +2624,10 @@ fn ancestor_sets_close_subtype_computed_markings_on_every_immutable_version() {
         })
         .expect("ancestor addressed repeated sets");
     for property in ["source", "derived", "transitive"] {
-        assert!(effective_markings(&store, "marking.Child", "child", Some(1))[property].is_empty());
+        assert_eq!(
+            effective_markings(&store, "marking.Child", "child", Some(1))[property].len(),
+            0
+        );
         for version in [None, Some(2), Some(3)] {
             assert_eq!(
                 effective_markings(&store, "marking.Child", "child", version)[property],
@@ -2939,7 +2968,10 @@ fn mixed_declassification_receipt_keeps_its_immutable_subject_lineage() {
             .expect("receipt lineage"),
         Some(std::collections::BTreeSet::from([CONTACT.to_owned()]))
     );
-    assert!(effective_markings(&store, "marking.Private", "subject", None)["value"].is_empty());
+    assert_eq!(
+        effective_markings(&store, "marking.Private", "subject", None)["value"].len(),
+        0
+    );
     assert_eq!(
         effective_markings(&store, "marking.Private", "subject", Some(1))["value"],
         vec![CONTACT.to_owned()]
@@ -3090,7 +3122,7 @@ fn repeated_ancestor_deletes_retain_the_concrete_subtype_snapshot() {
             .expect("ancestor deletes and concrete recreate");
         for version in [None, Some(1), Some(2), Some(3), Some(4)] {
             let snapshot = effective_markings(&store, concrete, key, version);
-            assert!(snapshot["value"].is_empty());
+            assert_eq!(snapshot["value"].len(), 0);
             if concrete == "marking.PrivateChild" {
                 assert_eq!(snapshot["private"], labels);
             }
@@ -3308,13 +3340,14 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
                 vec![put("marking.Evidence", key, &[("message", "later")])],
             ))
             .expect("later version retains occurrence");
-        assert!(
+        assert_eq!(
             store
                 .read()
                 .fact_occurrence_markings(MAIN_WORLD, "marking.Evidence", key, Some(1))
                 .expect("public history")
                 .expect("complete")
-                .is_empty()
+                .len(),
+            0
         );
         for version in [None, Some(2), Some(3)] {
             assert!(
@@ -3658,9 +3691,9 @@ fn source_field_marking_addition_refuses_live_and_deleted_immutable_lineage_atom
         ));
         assert_eq!(store.read().dump().expect("unchanged snapshot"), before);
         for version in [Some(1), Some(2)] {
-            assert!(
-                effective_markings(&store, "marking.Contact", "existing", version)["email"]
-                    .is_empty()
+            assert_eq!(
+                effective_markings(&store, "marking.Contact", "existing", version)["email"].len(),
+                0
             );
         }
         let record = store
@@ -3669,17 +3702,18 @@ fn source_field_marking_addition_refuses_live_and_deleted_immutable_lineage_atom
             .expect("record");
         if deleted {
             assert!(record.is_none());
-            assert!(
-                effective_markings(&store, "marking.Contact", "existing", Some(3))["email"]
-                    .is_empty()
+            assert_eq!(
+                effective_markings(&store, "marking.Contact", "existing", Some(3))["email"].len(),
+                0
             );
         } else {
             assert_eq!(
                 record.expect("present").values["email"].as_str(),
                 Some("later@example.test")
             );
-            assert!(
-                effective_markings(&store, "marking.Contact", "existing", None)["email"].is_empty()
+            assert_eq!(
+                effective_markings(&store, "marking.Contact", "existing", None)["email"].len(),
+                0
             );
         }
     }
@@ -3773,7 +3807,10 @@ fn verify_deletion_lineage(store: &mut CellStore, entry: &norn_cell::LedgerEntry
         Some(labels.clone())
     );
     for property in ["value", "derived"] {
-        assert!(effective_markings(store, "marking.Child", "target", Some(1))[property].is_empty());
+        assert_eq!(
+            effective_markings(store, "marking.Child", "target", Some(1))[property].len(),
+            0
+        );
         assert_eq!(
             effective_markings(store, "marking.Child", "target", Some(2))[property],
             labels.iter().cloned().collect::<Vec<_>>()
@@ -3926,9 +3963,8 @@ fn orphan_and_additional_declassification_event_lookalikes_refuse_atomically() {
                 effective_markings(&store, "marking.Input", "private", version)["value"],
                 vec![CONTACT.to_owned()]
             );
-            assert!(
-                effective_markings(&store, "marking.Public", "public", version)["value"].is_empty()
-            );
+            let value = &effective_markings(&store, "marking.Public", "public", version)["value"];
+            assert_eq!(value.len(), 0);
         }
         assert!(
             store

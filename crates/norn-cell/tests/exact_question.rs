@@ -194,13 +194,14 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         std::fs::read_to_string(path).expect("retained finding"),
         text
     );
-    assert!(
+    assert_eq!(
         host.store()
             .evaluate_question_known_at(&plan, context.clone(), before, |_| Ok(true))
             .expect("before finding")
             .result
             .exclusions
-            .is_empty()
+            .len(),
+        0
     );
     let mut reference = excluded.clone();
     reference.engine = Engine::Ivm;
@@ -214,7 +215,7 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .store()
         .evaluate_question(&plan, context.clone(), |_| Ok(true))
         .expect("corrected");
-    assert!(corrected.exclusions.is_empty());
+    assert_eq!(corrected.exclusions.len(), 0);
     reference = corrected;
     reference.engine = Engine::Ivm;
     assert_eq!(

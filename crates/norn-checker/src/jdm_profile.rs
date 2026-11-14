@@ -1951,7 +1951,7 @@ mod tests {
         assert_eq!(keys(&closure), ["demo.discount@1", "demo.tier@1"]);
         // A standalone rule has an empty closure, and its own identity.
         let leaf = super::rule_closure(&set, &[], "demo.tier").expect("leaf resolves");
-        assert!(leaf.sub_decisions.is_empty());
+        assert_eq!(leaf.sub_decisions.len(), 0);
         assert_ne!(leaf.digest, closure.digest);
         // The digest is exactly the rule set: stable, and moved by any member.
         assert_eq!(

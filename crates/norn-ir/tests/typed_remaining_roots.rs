@@ -90,8 +90,9 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
         let envelope: ArtifactEnvelope = serde_json::from_str(source)
             .unwrap_or_else(|error| panic!("{name} should deserialize: {error}"));
         assert_eq!(envelope.kind(), kind, "{name} kind");
-        assert!(
-            envelope.payload.unknown_fields().is_empty(),
+        assert_eq!(
+            envelope.payload.unknown_fields().len(),
+            0,
             "{name} has undeclared members: {:?}",
             envelope.payload.unknown_fields()
         );
@@ -617,7 +618,7 @@ fn access_policy_generic_rules_roundtrip_through_the_closed_envelope_root() {
     });
     let envelope: ArtifactEnvelope = serde_json::from_value(wire.clone())
         .expect("genericRules is a declared policy payload member");
-    assert!(envelope.payload.unknown_fields().is_empty());
+    assert_eq!(envelope.payload.unknown_fields().len(), 0);
     assert_eq!(
         serde_json::to_value(envelope.payload.to_json_value()).expect("payload serializes"),
         wire["payload"]

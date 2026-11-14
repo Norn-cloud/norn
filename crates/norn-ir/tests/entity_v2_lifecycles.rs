@@ -70,14 +70,14 @@ fn invalid_lifecycle_fixtures_decode() {
     let manifest: serde_json::Value =
         serde_json::from_str(&read("lifecycles/invalid/manifest.json")).expect("manifest");
     let fixtures = manifest["fixtures"].as_array().expect("fixture list");
-    assert!(!fixtures.is_empty());
+    assert_ne!(fixtures.len(), 0);
     for fixture in fixtures {
         let file = fixture["file"].as_str().expect("file");
         let document: serde_json::Value =
             serde_json::from_str(&read(&format!("lifecycles/invalid/{file}"))).expect("JSON");
         let types: Vec<ObjectTypeDef> = serde_json::from_value(document["objectTypes"].clone())
             .unwrap_or_else(|error| panic!("{file} should decode: {error}"));
-        assert!(!types.is_empty(), "{file}");
+        assert_ne!(types, [], "{file}");
     }
 }
 

@@ -274,7 +274,7 @@ fn assert_refused(
     let before = visible(cell, &keys);
     let refusal = commit_decision(cell, catalog, slice, turn, output).unwrap_err();
     assert_eq!(refusal.code(), code, "{refusal}");
-    assert!(!refusal.to_string().is_empty());
+    assert_ne!(refusal.to_string().len(), 0);
     assert_eq!(visible(cell, &keys), before, "a refused decision committed");
     refusal
 }
@@ -1967,7 +1967,7 @@ fn decision_over_a_listed_slice_writes_every_member_or_none() {
         6,
         "three patches and three rows in one commit"
     );
-    assert!(prepared.reads.is_empty(), "every listed object is written");
+    assert_eq!(prepared.reads, [], "every listed object is written");
     commit_decision(&mut cell, &catalog, &slice, &turn("all"), &patch_all(7)).unwrap();
     for line in &lines {
         let values = cell.load(line).unwrap().values.unwrap();
@@ -2606,8 +2606,8 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
             assert_eq!((host.evaluations, host.commits), (0, 0));
             assert_eq!(visible(&host.cell, &keys), before);
             assert_eq!(host.cell.ledger().len(), ledger_before);
-            assert!(host.cell.outbox().is_empty());
-            assert!(host.cell.timers().is_empty());
+            assert_eq!(host.cell.outbox(), []);
+            assert_eq!(host.cell.timers().len(), 0);
             continue;
         }
         let prepared = prepared.unwrap();
@@ -2633,7 +2633,7 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
                     .unwrap(),
                 links_before
             );
-            assert!(host.cell.outbox().is_empty());
+            assert_eq!(host.cell.outbox(), []);
         } else {
             host.commit(prepared).unwrap();
             assert_eq!(host.cell.ledger().len(), ledger_before + 1);
@@ -2813,7 +2813,7 @@ proptest! {
         let catalog = TypeCatalog::new(&definitions);
         for name in [ORDER, BIG] {
             let key = FactKey::new(name, "existing");
-            let slice = FactSlice::from([(key.clone(), FactState { version: FactVersion(1),
+            let slice = FactSlice::from([(key, FactState { version: FactVersion(1),
                 values: Some(record(json!({"order_no":"existing", "amount":1, "status":"draft", "approver":""}))) })]);
             let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("property"),
                 &output(json!({"facts":[set(name, "existing", "amount", &json!(amount))],"commands":[],"timers":[]})));

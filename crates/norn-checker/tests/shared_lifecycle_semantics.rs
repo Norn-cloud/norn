@@ -240,7 +240,10 @@ fn lifecycle_over_an_extension_property_is_effective() {
     assert_eq!(shared, expected);
     // Without the extension the machine does not resolve, but the property
     // is still known to carry a declared lifecycle, so enforcers fail closed.
-    assert!(effective_lifecycles(&lookup, &[], "commerce.AcmeTicket").is_empty());
+    assert_eq!(
+        effective_lifecycles(&lookup, &[], "commerce.AcmeTicket").len(),
+        0
+    );
     assert!(
         declared_lifecycle_properties(&lookup, "commerce.AcmeTicket")
             .iter()

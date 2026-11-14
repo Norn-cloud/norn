@@ -542,10 +542,7 @@ fn assert_issue(found: &[Diagnostic], pointer_part: &str, message_part: &str) {
 }
 
 fn assert_clean(found: &[Diagnostic]) {
-    assert!(
-        found.is_empty(),
-        "expected a clean artifact set; got {found:#?}"
-    );
+    assert_eq!(found, [], "expected a clean artifact set; got {found:#?}");
 }
 
 /// For fixtures that deliberately strip a widget down to one reference-semantics question (an
@@ -557,8 +554,9 @@ fn assert_contract_clean(found: &[Diagnostic], expected_interaction: &[&str]) {
         .iter()
         .filter(|finding| !expected_interaction.contains(&finding.code.as_str()))
         .collect();
-    assert!(
-        unexpected.is_empty(),
+    assert_eq!(
+        unexpected.len(),
+        0,
         "expected a clean widget contract; got {unexpected:#?}"
     );
 }
@@ -4073,7 +4071,7 @@ fn nullable_clear_findings(value: Value) -> Vec<String> {
 #[test]
 fn a_nullable_form_input_must_stay_clearable() {
     // `comment` is a nullable ActionIR leaf; a free control is clearable to an explicit null.
-    assert!(nullable_clear_findings(with_comment_field(None)).is_empty());
+    assert_eq!(nullable_clear_findings(with_comment_field(None)).len(), 0);
     // Always required: a cleared value could never be submitted, so there is no real clear path.
     let forced = with_comment_field(Some(json!({ "expression": "true", "inputs": {} })));
     let found = nullable_clear_findings(forced);

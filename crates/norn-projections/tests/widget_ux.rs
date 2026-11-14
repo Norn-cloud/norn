@@ -126,7 +126,7 @@ fn validation_errors(schema: &Value, instance: &Value) -> Vec<String> {
 
 fn assert_rejected(schema: &Value, instance: &Value, case: &str) {
     let errors = validation_errors(schema, instance);
-    assert!(!errors.is_empty(), "{case} should fail schema validation");
+    assert_ne!(errors.len(), 0, "{case} should fail schema validation");
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn widget_ux_payload_schema_accepts_a_closed_bounded_contract() {
     let schema = widget_schema();
     let payload = valid_widget_payload();
     let errors = validation_errors(&schema, &payload);
-    assert!(errors.is_empty(), "valid Widget UX payload: {errors:?}");
+    assert_eq!(errors.len(), 0, "valid Widget UX payload: {errors:?}");
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn child_grid_schema_is_closed_and_requires_its_ordered_collection_contract() {
         "label": { "en": "Item name" },
         "control": "text"
     }));
-    assert!(validation_errors(&schema, &payload).is_empty());
+    assert_eq!(validation_errors(&schema, &payload).len(), 0);
 
     payload["ux"]["pages"][0]["root"]["children"][1]["component"]["unexpected"] = json!(true);
     assert_rejected(&schema, &payload, "unknown child grid member");
@@ -248,8 +248,9 @@ fn orders_customer_widget_fixture_is_valid_against_the_generated_schema() {
     let envelope: Value = serde_json::from_str(source).expect("demo widget fixture should parse");
     let schema = widget_schema();
     let errors = validation_errors(&schema, &envelope["payload"]);
-    assert!(
-        errors.is_empty(),
+    assert_eq!(
+        errors.len(),
+        0,
         "demo Widget UX fixture schema errors: {errors:?}"
     );
 }

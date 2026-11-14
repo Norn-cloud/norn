@@ -88,8 +88,9 @@ impl Fixture {
         provenance::check_distribution(self.root())
     }
     fn passes(&self) {
-        assert!(
-            self.report().errors().is_empty(),
+        assert_eq!(
+            self.report().errors().len(),
+            0,
             "{:?}",
             self.report().errors()
         );
@@ -144,7 +145,7 @@ fn unknown_ambiguous_and_cyclic_ancestry_fails_closed() {
         let a = f.derived("a", "LICENSE", "generated");
         f.add("b", b"different input", "code");
         f.records[a]["parents"] = parents;
-        assert!(!f.report().errors().is_empty());
+        assert_ne!(f.report().errors().len(), 0);
     }
     let mut f = Fixture::new();
     f.derived("a", "b", "generated");
@@ -241,7 +242,7 @@ fn source_ids_revisions_and_evidence_are_exact() {
         };
         let i = f.add("analysis.dl", b"authored query", "authored-query");
         f.records[i]["analyzed_sources"] = json!([source]);
-        assert!(!f.report().errors().is_empty());
+        assert_ne!(f.report().errors().len(), 0);
     }
 }
 
@@ -356,7 +357,7 @@ fn structured_payload_cannot_use_authored_code_to_hide_extraction_or_schema() {
     ] {
         let mut f = Fixture::new();
         f.add("renamed.json", payload, "code");
-        assert!(!f.report().errors().is_empty());
+        assert_ne!(f.report().errors().len(), 0);
     }
 }
 
@@ -473,7 +474,7 @@ fn strict_records_reject_unknown_fields_categories_origins_and_directory_claims(
     ] {
         let mut f = Fixture::new();
         f.records[0][field] = value;
-        assert!(!f.report().errors().is_empty());
+        assert_ne!(f.report().errors().len(), 0);
     }
     let mut f = Fixture::new();
     f.records[0]["path"] = json!(".");
@@ -575,7 +576,10 @@ fn index_fixture(fixture: &Fixture) {
 #[test]
 fn trusted_policy_gates_every_file_of_the_guard_crate() {
     let base = policy_fixture();
-    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(base.root(), base.root()).len(),
+        0
+    );
     // An unlisted file added under the crate (say a module copy to redirect to).
     let mut candidate = policy_fixture();
     candidate.add(
@@ -628,7 +632,10 @@ fn the_trusted_build_closure_is_the_gated_guard_directory() {
     );
     base.save();
     index_fixture(&base);
-    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(base.root(), base.root()).len(),
+        0
+    );
     let changed = |path: &str, data: &[u8]| {
         let mut candidate = policy_fixture();
         candidate.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
@@ -688,7 +695,10 @@ fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
         );
     };
     let base = policy_fixture();
-    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(base.root(), base.root()).len(),
+        0
+    );
     // Adding a toolchain file where the base has none.
     for path in ["rust-toolchain.toml", "rust-toolchain"] {
         let mut candidate = policy_fixture();
@@ -724,7 +734,10 @@ fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
         (fixture, record)
     };
     let (cargo_base, _) = config(b"[alias]\nxtask = \"run\"\n");
-    assert!(norn_skeleton_guard::ci::run(cargo_base.root(), cargo_base.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(cargo_base.root(), cargo_base.root()).len(),
+        0
+    );
     let (mut cargo_candidate, record) = config(b"[alias]\nxtask = \"run\"\n");
     cargo_candidate.write(
         ".cargo/config.toml",
@@ -924,13 +937,16 @@ fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
     tree.save();
     index_fixture(&tree);
     let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
-    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(errors.len(), 0, "{errors:?}");
 }
 
 #[test]
 fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated_hashes() {
     let base = policy_fixture();
-    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(base.root(), base.root()).len(),
+        0
+    );
     for path in [
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
@@ -1046,9 +1062,9 @@ fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entri
         };
         let errors = norn_skeleton_guard::ci::run(candidate.root(), baseline);
         if matches!(change, "none" | "empty") {
-            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(errors.len(), 0, "{errors:?}");
         } else {
-            assert!(!errors.is_empty(), "accepted {change}");
+            assert_ne!(errors.len(), 0, "accepted {change}");
         }
     }
 }
@@ -1104,7 +1120,10 @@ fn trusted_policy_refuses_a_dropped_subsystem_a_missing_index_and_stray_entries(
 #[test]
 fn trusted_policy_rejects_artifact_promotion_drift() {
     let mut fixture = policy_fixture();
-    assert!(norn_skeleton_guard::ci::run(fixture.root(), fixture.root()).is_empty());
+    assert_eq!(
+        norn_skeleton_guard::ci::run(fixture.root(), fixture.root()).len(),
+        0
+    );
     let path = "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst";
     let record = fixture
         .records
@@ -1217,7 +1236,7 @@ fn rejected(errors: &[String], reason: &str) {
 fn trusted_policy_admits_a_gate_change_an_admin_approved_on_its_exact_head() {
     let (candidate, _, head) = gate_change_candidate();
     let errors = checked_with(&candidate, "Norn-cloud/norn", &head, Some((&head, "admin")));
-    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(errors.len(), 0, "{errors:?}");
     // Without evidence the same candidate is rejected exactly as before.
     let base = policy_fixture();
     let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
@@ -1395,13 +1414,13 @@ fn merge_group_admits_an_approved_gate_change_behind_data_only_pulls() {
         ),
     ];
     let errors = group_checked(&candidate, &base, &head, &pulls);
-    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(errors.len(), 0, "{errors:?}");
 }
 
 #[test]
 fn merge_group_without_gate_changes_needs_no_evidence() {
     let (candidate, base, _, head) = merge_group(&[&data_edit]);
-    assert!(group_checked(&candidate, &base, &head, &[]).is_empty());
+    assert_eq!(group_checked(&candidate, &base, &head, &[]).len(), 0);
 }
 
 #[test]
@@ -1492,7 +1511,7 @@ fn merge_group_admits_exactly_the_longest_walk_and_rejects_a_longer_one() {
             &[(pr, "Norn-cloud/norn", Some((pr, "admin")))],
         );
         if admitted {
-            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(errors.len(), 0, "{errors:?}");
         } else {
             rejected(&errors, "longer than 64 merges");
         }
@@ -1508,7 +1527,7 @@ fn merge_group_admits_a_shared_head_when_any_of_its_pull_requests_is_approved() 
         (pr, "Norn-cloud/norn", Some((pr, "admin"))),
     ];
     let errors = group_checked(&candidate, &base, &head, &pulls);
-    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(errors.len(), 0, "{errors:?}");
     rejected(
         &group_checked(&candidate, &base, &head, &pulls[..1]),
         "only Norn-cloud/norn branches",

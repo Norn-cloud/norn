@@ -107,10 +107,11 @@ fn impact_unions_both_directions_and_handles_cycles() {
         reachability(&graph, &["d"], Direction::Upstream, BUDGET).unwrap(),
         BTreeSet::from(["a", "b", "c", "d"])
     );
-    assert!(
+    assert_eq!(
         reachability(&graph, &[], Direction::Downstream, BUDGET)
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
     graph.edges.push(("d", "a"));
     assert_eq!(
@@ -246,11 +247,11 @@ fn zero_requirements_do_not_contribute_cost_or_lead_time() {
         line.quantity = d(0);
     }
     let result = explode(&bom, &BTreeMap::from([("assembly", d(1))]), BUDGET).unwrap();
-    assert!(result.requirements.is_empty());
+    assert_eq!(result.requirements.len(), 0);
     assert_eq!(result.total_cost, d(1));
     assert_eq!(result.lead_time, d(2));
     let result = explode(&bom, &BTreeMap::from([("assembly", d(0))]), BUDGET).unwrap();
-    assert!(result.requirements.is_empty());
+    assert_eq!(result.requirements.len(), 0);
     assert_eq!(result.total_cost, d(0));
     assert_eq!(result.lead_time, d(0));
 }
@@ -519,10 +520,11 @@ fn empty_graphs_are_well_defined() {
         max_steps: 0,
     };
     assert_eq!(topological_order(&graph, zero_budget), Ok(vec![]));
-    assert!(
+    assert_eq!(
         reachability(&graph, &[], Direction::Downstream, zero_budget)
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         critical_path(&graph, &BTreeMap::<_, Decimal>::new(), zero_budget)

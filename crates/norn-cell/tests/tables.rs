@@ -256,8 +256,9 @@ fn a_subtype_object_reads_through_its_supertype_and_deletes_with_it() {
         None
     );
     let dump = store.read().dump().expect("dumps");
-    assert!(
-        dump["o:crm.KeyAccount"].is_empty(),
+    assert_eq!(
+        dump["o:crm.KeyAccount"].len(),
+        0,
         "the subtype row cascaded"
     );
 }

@@ -74,7 +74,7 @@ fn provenanced_instance_round_trips_with_two_source_records() {
         first.observed_at,
         Some(UtcTimestamp("2026-09-30T08:00:00Z".to_owned()))
     );
-    assert!(first.upstream.is_empty());
+    assert_eq!(first.upstream, []);
     assert_eq!(instance.provenance[1].upstream.len(), 1);
     assert_eq!(
         serde_json::to_value(&instance).expect("instance encodes"),
@@ -92,8 +92,8 @@ fn envelope_is_closed_and_rejects_explicit_null() {
     });
     let decoded = serde_json::from_value::<InstanceProvenance>(base.clone())
         .expect("minimal envelope decodes with the pre-markings wire shape");
-    assert!(decoded.source_fields.is_empty());
-    assert!(decoded.markings.is_empty());
+    assert_eq!(decoded.source_fields.len(), 0);
+    assert_eq!(decoded.markings, []);
     assert_eq!(
         serde_json::to_value(decoded).expect("legacy provenance re-encodes"),
         base,

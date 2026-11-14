@@ -711,7 +711,7 @@ fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> Str
             .iter_errors(&document)
             .map(|e| e.to_string())
             .collect();
-        assert!(errors.is_empty(), "{name}: {errors:?}");
+        assert_eq!(errors.len(), 0, "{name}: {errors:?}");
         if root == "NornNumericTrace" {
             assert!(document["contributions"][0]["source"].is_object());
             let mut extended = document.clone();
@@ -1283,7 +1283,7 @@ fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
         ("mixed", other.as_str()),
     ] {
         let traced = trace(actor, bucket);
-        assert!(!traced.contributions.is_empty(), "{actor} {bucket}");
+        assert_ne!(traced.contributions, [], "{actor} {bucket}");
         for member in &traced.contributions {
             assert!(
                 !member.restricted && member.values.is_some(),

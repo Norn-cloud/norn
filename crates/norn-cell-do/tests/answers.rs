@@ -90,7 +90,7 @@ fn granted_principals_get_the_exact_live_answer() {
     let answer = json(&viewer);
     assert_eq!(answer["freshness"], "exact");
     assert_eq!(answer["complete"], true);
-    assert!(!answer["rows"].as_object().unwrap().is_empty());
+    assert_ne!(answer["rows"].as_object().unwrap().len(), 0);
     // Population alone answers the question with the same aggregate and
     // membership; member amounts are row values and are withheld (DATA-VALUES-1).
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
@@ -160,7 +160,7 @@ fn traces_disclose_values_only_under_their_own_grant() {
         assert_eq!(viewer.status, 200, "{bucket}: {}", viewer.body);
         let viewer = json(&viewer);
         let contributions = viewer["contributions"].as_array().unwrap();
-        assert!(!contributions.is_empty(), "{bucket}");
+        assert_ne!(contributions.len(), 0, "{bucket}");
         assert!(
             contributions
                 .iter()

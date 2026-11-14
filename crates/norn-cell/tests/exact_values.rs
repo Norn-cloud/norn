@@ -152,7 +152,7 @@ fn a_decimal_beyond_the_engine_range_is_refused_never_rounded() {
             .expect("reads")
             .is_none()
     );
-    assert!(store.read().ledger(1).expect("ledger").is_empty());
+    assert_eq!(store.read().ledger(1).expect("ledger"), []);
 }
 
 #[test]

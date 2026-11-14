@@ -129,7 +129,7 @@ fn filtered_windowed_sums_and_counts_are_admitted_and_typed_for_preconditions() 
     let found = with_action(|action| {
         action["preconditions"] = json!(["aggregates.missing < 1"]);
     });
-    assert!(!found.is_empty(), "an unknown aggregate member is refused");
+    assert_ne!(found, [], "an unknown aggregate member is refused");
 }
 
 #[test]

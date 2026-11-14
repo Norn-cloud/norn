@@ -378,7 +378,7 @@ fn only_the_owner_of_the_scopes_organization_provisions_it() {
     assert_eq!(receipt["outcome"], "provisioned");
     assert_eq!(receipt["definitionsVersion"], 1);
     assert_eq!(receipt["baseSha256"], cell.tenant.base_sha256());
-    assert!(!receipt["cellId"].as_str().unwrap().is_empty());
+    assert_ne!(receipt["cellId"].as_str().unwrap().len(), 0);
     assert_eq!(receipt["receiptSha256"].as_str().unwrap().len(), 64);
     assert!(cell.tenant.is_provisioned());
     // The cell serves its organization's roles through the declared tables.
@@ -468,11 +468,9 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
         "{}",
         response.body
     );
-    assert!(
-        !json_of(&response)["diagnostics"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+    assert_ne!(
+        json_of(&response)["diagnostics"].as_array().unwrap().len(),
+        0
     );
     // Shape, bound, method and query.
     let large = format!("{}{}", submission(&full()), " ".repeat(MAX_PROVISION_BYTES));
@@ -1219,8 +1217,9 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
     // A shard that runs to the bound must reach the end of every transaction
     // (a fault that no longer fires); a shard ending earlier stops by design.
     if to == 400_000 {
-        assert!(
-            swept.unexhausted.is_empty(),
+        assert_eq!(
+            swept.unexhausted.len(),
+            0,
             "statements left past the bound in: {:?}",
             swept.unexhausted
         );

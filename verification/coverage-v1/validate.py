@@ -448,11 +448,11 @@ def validate_rust_toolchain_steps(path: Path, source: str) -> None:
         toolchain_line = lines[toolchain_lines[0]]
         require(
             re.fullmatch(
-                rf"\s{{{step_indent + 4}}}toolchain:\s*['\"]?1\.98\.0['\"]?\s*(?:#.*)?",
+                rf"\s{{{step_indent + 4}}}toolchain:\s*['\"]?1\.100\.0['\"]?\s*(?:#.*)?",
                 toolchain_line,
             )
             is not None,
-            f"{path.name}:{toolchain_lines[0] + 1}: Rust action toolchain must be exactly 1.98.0",
+            f"{path.name}:{toolchain_lines[0] + 1}: Rust action toolchain must be exactly 1.100.0",
         )
 
     require(action_count > 0, f"{path.name}: workflow must contain a Rust toolchain action")
@@ -670,7 +670,7 @@ echo "$plan"''',
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
     setup = [
         {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
-         "with": {"toolchain": "1.98.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
+         "with": {"toolchain": "1.100.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
         {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
         # No post-job stats: their failure would fail a build that succeeded without sccache.
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",

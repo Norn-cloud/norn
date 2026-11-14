@@ -181,7 +181,7 @@ mod tests {
                 "{} lacks actionable guidance or an explicit no_fix reason",
                 entry.code
             );
-            assert!(!entry.message.is_empty(), "{} has no message", entry.code);
+            assert_ne!(entry.message.len(), 0, "{} has no message", entry.code);
             assert_eq!(lookup(entry.code), Some(entry));
         }
         assert_eq!(lookup("ir.validation.not_a_code"), None);

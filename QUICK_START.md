@@ -1,6 +1,6 @@
 # Check a typed definition
 
-Install Rust 1.98.0 with the `wasm32-unknown-unknown` target, Bun 1.3.14 and
+Install Rust 1.100.0 with the `wasm32-unknown-unknown` target, Bun 1.3.14 and
 `wasm-bindgen-cli` 0.2.129. From this checkout:
 
 ```sh

@@ -188,7 +188,7 @@ fn baseline() -> &'static BTreeMap<String, String> {
     static RECORDED: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     RECORDED.get_or_init(|| {
         let (errors, recorded) = admit_and_install(definitions());
-        assert!(errors.is_empty(), "the label-free set admits: {errors:#?}");
+        assert_eq!(errors.len(), 0, "the label-free set admits: {errors:#?}");
         recorded
     })
 }

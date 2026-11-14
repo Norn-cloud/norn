@@ -184,7 +184,7 @@ fn rounding_scales_and_non_nfc_buckets_preserve_envelopes_after_correction_and_r
                 key: id.into(),
             }],
         );
-        assert!(compare(&store, &plan, context).rows.is_empty());
+        assert_eq!(compare(&store, &plan, context).rows, []);
     }
 }
 

@@ -881,7 +881,7 @@ mod ontology_derived_measures {
                 _ => law.modality = LawModality::Never {},
             }
             artifacts[1].payload = payload(&ArtifactKind::Law, &law);
-            assert!(space(&artifacts).candidates().is_empty());
+            assert_eq!(space(&artifacts).candidates().len(), 0);
         }
     }
 
@@ -1081,7 +1081,7 @@ mod ontology_derived_measures {
             };
             *additivity = class;
             artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
-            assert!(space(&artifacts).candidates().is_empty());
+            assert_eq!(space(&artifacts).candidates().len(), 0);
         }
     }
 

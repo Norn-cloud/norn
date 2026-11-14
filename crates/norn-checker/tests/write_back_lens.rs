@@ -62,8 +62,9 @@ fn mapping(get: &str, mut put: Value) -> MappingIr {
 #[test]
 fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [2, 3], [2, 3]]));
-    assert!(
-        check_mapping_local(&mapping).is_empty(),
+    assert_eq!(
+        check_mapping_local(&mapping),
+        [],
         "{:?}",
         check_mapping_local(&mapping)
     );
@@ -95,7 +96,7 @@ fn lawful_projection_round_trips_original_non_nfc_source_keys() {
         record.insert(key.into(), complement);
     }
     let mapping = serde_json::from_value(raw).expect("typed mapping");
-    assert!(check_mapping_local(&mapping).is_empty());
+    assert_eq!(check_mapping_local(&mapping), []);
     let lens = admit(&mapping, &source_schema(key))
         .expect("checked")
         .expect("declared");
@@ -165,7 +166,7 @@ fn unknown_evaluation_or_fragment_never_passes() {
         LENS_SLOT.into(),
         serde_json::from_value(json!({})).expect("JSON"),
     );
-    assert!(!check_mapping_local(&mapping).is_empty());
+    assert_ne!(check_mapping_local(&mapping), []);
 }
 
 #[test]

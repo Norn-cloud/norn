@@ -1627,7 +1627,7 @@ fn link_protection_is_refused_for_definitions_and_extensions_until_authority_exi
         }]);
         let defined = findings(&serde_json::json!({"objectTypes":[{
             "name":"test.Thing", "links":[{"id":"owner","target":"crm.Customer",
-                "cardinality":one_of_many(), "properties":properties.clone()}]
+                "cardinality":one_of_many(), "properties":properties}]
         }]}));
         assert_eq!(
             defined,
@@ -1795,7 +1795,7 @@ fn subtype_only_acyclic_override_refuses_mixed_base_subtype_bypass() {
             );
         }
         if admits {
-            assert!(diagnostics.is_empty());
+            assert_eq!(diagnostics, []);
         }
     }
 }
@@ -1890,12 +1890,12 @@ fn interface_invariants_defer_parent_member_typing_until_artifact_set_admission(
         "name":"test.Child","extends":["test.Parent"],
         "invariants":[{"id":"present","expression":"self.code != ''","message":"code must be present"}]
     })).expect("interface");
-    assert!(norn_checker::check_interface_local(&definition).is_empty());
+    assert_eq!(norn_checker::check_interface_local(&definition), []);
     let model = serde_json::json!({"interfaces":[
         {"name":"test.Parent","properties":[{"id":"code","type":{"kind":"text"}}]},
         definition
     ]});
-    assert!(findings(&model).is_empty());
+    assert_eq!(findings(&model), []);
 }
 
 #[test]
@@ -1940,8 +1940,8 @@ fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String>
 
 #[test]
 fn graph_role_defaults_inherits_and_refuses_conflicts_without_implementors() {
-    assert!(role_diagnostics(&[None, None], &[0, 1]).is_empty());
-    assert!(role_diagnostics(&[Some(true), None], &[0, 1]).is_empty());
+    assert_eq!(role_diagnostics(&[None, None], &[0, 1]).len(), 0);
+    assert_eq!(role_diagnostics(&[Some(true), None], &[0, 1]).len(), 0);
     assert_eq!(
         role_diagnostics(&[Some(true), Some(false)], &[0, 1]),
         ["core.graph.role_mismatch"]

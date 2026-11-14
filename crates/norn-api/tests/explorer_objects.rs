@@ -298,8 +298,9 @@ fn retained_object_documents_validate_against_their_projected_schemas() {
             .iter_errors(&document)
             .map(|e| e.to_string())
             .collect();
-        assert!(
-            errors.is_empty(),
+        assert_eq!(
+            errors.len(),
+            0,
             "{} does not satisfy {root}: {errors:#?}",
             path.display()
         );

@@ -61,11 +61,12 @@ fn xsd_unadmitted_bytes_fail_closed_with_complete_inventory() {
             .iter()
             .any(|d| d.code == "format.xsd.invalid")
     );
-    assert!(
+    assert_eq!(
         result
             .loss_report
             .validate_inventory(&XsdReader.inventory(&files, &c))
-            .is_empty()
+            .len(),
+        0
     );
 }
 #[test]
@@ -147,11 +148,12 @@ fn xsd_invalid_occurrence_and_unbound_qnames_are_rejected() {
         }];
         let result = XsdReader.import(&files, &synthetic(xml.as_bytes()));
         assert!(result.source_schema.is_none());
-        assert!(
+        assert_eq!(
             result
                 .loss_report
                 .validate_inventory(&XsdReader.inventory(&files, &synthetic(xml.as_bytes())))
-                .is_empty()
+                .len(),
+            0
         );
     }
 }
@@ -195,11 +197,12 @@ fn xsd_valid_sibling_inventory_survives_invalid_utf8() {
         });
     let result = XsdReader.import(&files, &c);
     assert!(result.source_schema.is_none());
-    assert!(
+    assert_eq!(
         result
             .loss_report
             .validate_inventory(&XsdReader.inventory(&files, &c))
-            .is_empty()
+            .len(),
+        0
     );
     assert!(result.loss_report.entries.iter().any(|entry|matches!(&entry.element,norn_formats::contract::SourceElement::Dataset {dataset} if dataset.ends_with("}DocumentType"))));
 }
@@ -264,7 +267,7 @@ fn xsd_canonical_checker_admission_rejects_mutable_or_unlicensed_sources() {
         // Syntax compilation is not authority; checker admission is mandatory.
         let findings =
             norn_checker::source_schema::check_source_schema(&result.source_schema.unwrap());
-        assert!(!findings.is_empty(), "unadmitted source {mutation}");
+        assert_ne!(findings, [], "unadmitted source {mutation}");
     }
 }
 #[test]
@@ -279,7 +282,10 @@ fn xsd_checker_rejects_missing_admission() {
         .source_schema
         .unwrap();
     schema.extensions = None;
-    assert!(!norn_checker::source_schema::check_source_schema(&schema).is_empty());
+    assert_ne!(
+        norn_checker::source_schema::check_source_schema(&schema),
+        []
+    );
 }
 
 #[test]
@@ -465,7 +471,7 @@ fn xsd_reserved_namespaces_may_be_named_by_ordinary_attributes() {
         bytes: xml,
     }];
     let result = XsdReader.import(&files, &synthetic(xml));
-    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    assert_eq!(result.diagnostics, [], "{:?}", result.diagnostics);
     assert!(result.source_schema.is_some());
 }
 
@@ -562,7 +568,7 @@ fn xsd_output_carries_each_nodes_own_declarations_only() {
         bytes,
     }];
     let result = XsdReader.import(&files, &synthetic(bytes));
-    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    assert_eq!(result.diagnostics, [], "{:?}", result.diagnostics);
     let output = result.canonical_json().unwrap();
     assert!(
         output.len() < 32 * 1024 * 1024,

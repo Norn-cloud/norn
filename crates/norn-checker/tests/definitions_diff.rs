@@ -561,9 +561,9 @@ fn provenance_only_change_is_not_a_semantic_change_and_event_summary_is_bounded(
     previous["provenance"]["sourcePath"] = json!("before.ts");
     candidate["provenance"]["sourcePath"] = json!("after.ts");
     let diff = diff_definition_sets(&[decode(&previous)], &[decode(&candidate)]);
-    assert!(diff.changed.is_empty());
-    assert!(diff.added.is_empty());
-    assert!(diff.removed.is_empty());
+    assert_eq!(diff.changed, []);
+    assert_eq!(diff.added, []);
+    assert_eq!(diff.removed, []);
     let summary = diff.to_json();
     assert_eq!(summary["addedCount"], 0);
     assert_eq!(summary["narrowingCount"], 0);
@@ -690,7 +690,7 @@ fn additivity_change_is_declared_separately_from_value_narrowing() {
         let candidate = object(additive.clone());
         let diff = diff_definition_sets(std::slice::from_ref(&previous), &[candidate]);
         assert_eq!(diff.changed.len(), 1);
-        assert!(diff.narrowing.is_empty());
+        assert_eq!(diff.narrowing, []);
         assert_eq!(diff.additivity_changes.len(), 1);
         let summary = diff.to_json();
         assert_eq!(summary["additivityChangeCount"], 1);

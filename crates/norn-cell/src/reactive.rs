@@ -551,8 +551,7 @@ impl Registry {
     pub fn subscribers(&self, key: &QueryKey) -> Vec<SubscriptionId> {
         self.entries
             .get(key)
-            .map(|entry| entry.subscribers.iter().copied().collect())
-            .unwrap_or_default()
+            .map_or_default(|entry| entry.subscribers.iter().copied().collect())
     }
 
     /// How many distinct slices are declared.

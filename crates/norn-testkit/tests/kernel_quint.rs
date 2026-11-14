@@ -72,11 +72,7 @@ fn traces(name: &str) -> Vec<(PathBuf, Vec<Value>)> {
         })
         .collect::<Vec<_>>();
     paths.sort();
-    assert!(
-        !paths.is_empty(),
-        "no {name} ITF traces in {}",
-        root.display()
-    );
+    assert_ne!(paths.len(), 0, "no {name} ITF traces in {}", root.display());
     paths
         .into_iter()
         .map(|path| {
@@ -680,8 +676,9 @@ fn quantity_v2_quint_traces() {
         );
     }
     eprintln!("quantity v2 coverage: {coverage:?}");
-    assert!(
-        mismatches.is_empty(),
+    assert_eq!(
+        mismatches.len(),
+        0,
         "typed conformance mismatches (all state comparisons still enforced): {mismatches:#?}"
     );
 }
@@ -851,8 +848,9 @@ fn projection_trust_quint_traces() {
                                 .query("SELECT * FROM _norn_ledger ORDER BY seq", &[])
                                 .expect("immutable chain after forgery")
                         );
-                        assert!(
-                            !intact_ledger.is_empty(),
+                        assert_ne!(
+                            intact_ledger.len(),
+                            0,
                             "forgery must retain committed immutable evidence"
                         );
                         let balance = engine.query("SELECT posted, held, version FROM _norn_quantity_balance WHERE account='lot0' AND unit='u0' AND layer='l0'", &[]).expect("forged balance");

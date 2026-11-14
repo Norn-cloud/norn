@@ -144,7 +144,7 @@ fn high_fanout_permission_snapshot_is_refused_without_partial_output() {
         .apply_complete_snapshot(&small_documents, &complete, &BTreeMap::new(), &recorded_at)
         .expect("small complete snapshot remains supported");
     let previously_owned = owned_entitlement_keys(&previous.records);
-    assert!(!previously_owned.is_empty());
+    assert_ne!(previously_owned.len(), 0);
 
     let role_row = small_documents
         .iter()

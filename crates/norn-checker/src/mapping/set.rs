@@ -818,9 +818,7 @@ fn resolve_source(
             Span::pointer("/source"),
         )));
     };
-    let actual = ArtifactRef::of(artifact)
-        .map(|reference| reference.sha256)
-        .unwrap_or_default();
+    let actual = ArtifactRef::of(artifact).map_or_default(|reference| reference.sha256);
     if actual != binding.sha256 {
         return Err(Box::new(error(
             codes::SOURCE_HASH_MISMATCH,

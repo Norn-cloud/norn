@@ -131,21 +131,21 @@ fn commits_chain_receipts_and_enqueue_atomically() {
     let page = store.read().ledger_page(1, 2).expect("page");
     assert_eq!(page, ledger[1..3]);
     assert_eq!(store.read().ledger_page(4, 10).expect("tail"), ledger[4..]);
-    assert!(store.read().ledger_page(5, 10).expect("end").is_empty());
-    assert!(store.read().ledger_page(0, 0).expect("empty").is_empty());
-    assert!(
+    assert_eq!(store.read().ledger_page(5, 10).expect("end"), []);
+    assert_eq!(store.read().ledger_page(0, 0).expect("empty"), []);
+    assert_eq!(
         store
             .read()
             .ledger_page(u64::MAX, 10)
-            .expect("past the end")
-            .is_empty()
+            .expect("past the end"),
+        []
     );
-    assert!(
+    assert_eq!(
         store
             .read()
             .ledger_page(u64::try_from(i64::MAX).unwrap(), 10)
-            .expect("at the bound")
-            .is_empty()
+            .expect("at the bound"),
+        []
     );
     let head = store.read().verify_ledger().expect("verifies");
     assert_eq!((head.seq, head.commits), (5, 2));
@@ -223,8 +223,8 @@ fn a_performed_result_is_recorded_once_and_consumed_atomically() {
             incarnation: 1,
         }))
         .expect("commits");
-    assert!(store.read().pending_commands().expect("outbox").is_empty());
-    assert!(store.read().pending_timers().expect("timers").is_empty());
+    assert_eq!(store.read().pending_commands().expect("outbox"), []);
+    assert_eq!(store.read().pending_timers().expect("timers"), []);
     let runs = store.read().runs("notify-1").expect("runs");
     assert_eq!(runs.len(), 1);
     assert_eq!((runs[0].attempt, runs[0].consumed_commit_seq), (1, Some(2)));

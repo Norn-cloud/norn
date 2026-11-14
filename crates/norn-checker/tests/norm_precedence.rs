@@ -86,7 +86,7 @@ fn every_declared_three_norm_grounding_has_the_expected_survivors() -> Result<()
                             context.survivors.iter().copied().collect::<BTreeSet<_>>(),
                             expected
                         );
-                        assert!(context.conflicts.is_empty());
+                        assert_eq!(context.conflicts, []);
                         assert!(context.defeats.iter().all(|d| expected.contains(&d.winner)
                             && !expected.contains(&d.loser)
                             && d.reason == PriorityReason::Declared));
@@ -216,7 +216,7 @@ fn declared(
 fn declared_only_priorities_and_constitution_layers() {
     let norms = [norm(2, Obligation), norm(1, Prohibition)];
     let resolved = declared(&norms, &[Company; 2], &[(0, 1)], &[]);
-    assert!(resolved.diagnosis.cores.is_empty());
+    assert_eq!(resolved.diagnosis.cores.len(), 0);
     let refused = declared(&norms, &[Company; 2], &[], &[]);
     assert_eq!(
         refused.diagnosis.cores,
@@ -235,20 +235,20 @@ fn declared_only_priorities_and_constitution_layers() {
             .all(|d| d.artifact_id.as_deref() == Some("synthetic.rules") && d.span.is_some())
     );
     let clash = declared(&norms, &[Religious, Company], &[(0, 1)], &[]);
-    assert!(!clash.diagnosis.cores.is_empty());
+    assert_ne!(clash.diagnosis.cores.len(), 0);
     let mut inactive = [norm(0, Prohibition), norm(1, Permission)];
     if let Some(n) = inactive.get_mut(1) {
         n.excepted.insert(0);
     }
     let masked = declared(&inactive, &[Religious, Company], &[(1, 0)], &[]);
-    assert!(!masked.diagnosis.cores.is_empty());
+    assert_ne!(masked.diagnosis.cores.len(), 0);
     let stack = [
         norm(0, Obligation),
         norm(1, Obligation),
         norm(2, Permission),
     ];
     let valid = declared(&stack, &[Religious, Legal, Company], &[], &[]);
-    assert!(valid.diagnosis.cores.is_empty());
+    assert_eq!(valid.diagnosis.cores.len(), 0);
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn exact_cycles_transitivity_and_protected_laws() {
         norm(2, Prohibition),
     ];
     let transitive = declared(&endpoints, &[Company; 3], &[(0, 1), (1, 2)], &[]);
-    assert!(transitive.diagnosis.cores.is_empty());
+    assert_eq!(transitive.diagnosis.cores.len(), 0);
     let protected = declared(&endpoints, &[Company; 3], &[(0, 1), (1, 2)], &[2]);
     assert_eq!(
         protected.diagnosis.cores,
@@ -305,11 +305,12 @@ fn declared_order_is_independent_of_catalog_permutation() {
                     1_usize.saturating_sub(edge.1),
                 );
             }
-            assert!(
+            assert_eq!(
                 declared(&norms, &[Company; 2], &[edge], &[])
                     .diagnosis
                     .cores
-                    .is_empty(),
+                    .len(),
+                0,
                 "{case}"
             );
             let refusal = declared(&norms, &[Company; 2], &[], &[]);

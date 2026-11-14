@@ -3676,12 +3676,12 @@ mod identity_history_tests {
             .expect("inactive metadata lookup");
         assert_eq!(lookup.definitions_snapshot(), snapshot(17));
         assert_eq!(lookup.model_hash(), legacy.model_hash());
-        assert!(
+        assert_eq!(
             store
                 .read()
                 .governing_laws_at(2, "identity.Legacy")
-                .expect("public retained lookup")
-                .is_empty()
+                .expect("public retained lookup"),
+            []
         );
         let expected = store.read().dump().expect("before retry");
         drop(store);
