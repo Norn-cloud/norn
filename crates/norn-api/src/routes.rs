@@ -6,7 +6,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
+use std::collections::BTreeMap;
+
+use crate::{
+    host::DevHost,
+    object_query::ObjectQueryParams,
+    object_routes::{ObjectAccess, get_object_query_within},
+    objects::NornQueryTotal,
+    refusal::Refusal,
+    scope::{CellScope, ScopeQuery},
+};
 use norn_ir::{ResourceLimitProfile, RuntimeValue};
 
 /// Explicit scope and optional retained definition version.
@@ -58,7 +67,17 @@ pub struct DefsResponse {
     /// Admitted semantic documents, preserving exact numeric values.
     #[schema(schema_with = artifacts_schema)]
     pub artifacts: Vec<Box<RawValue>>,
+    /// Live record counts by object type, under the caller's own visibility:
+    /// each is the total `GET /v1/objects/{type}` reports on its first page,
+    /// through the same gates, counted to at most 500 visible records
+    /// (`approximate`, and the count 500, past it). A type the caller may not
+    /// list has no entry, never a zero.
+    pub object_counts: BTreeMap<String, NornQueryTotal>,
 }
+
+/// Visible records the catalog counts per object type at most; past it the
+/// count is this bound, as a lower bound.
+pub const CATALOG_COUNT_BOUND: usize = 500;
 
 fn layout_schema() -> utoipa::openapi::Ref {
     utoipa::openapi::Ref::from_schema_name("LayoutSidecar")
@@ -168,6 +187,84 @@ pub fn get_defs<E: SqlEngine>(
     defs_response(installed, host.scope())
 }
 
+/// [`get_defs`] with each object type's record count for this caller
+/// ([`object_counts`]), as `GET /v1/definitions` serves it.
+///
+/// # Errors
+/// As [`get_defs`]; counting never refuses the catalog.
+pub fn get_defs_counted<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &DefinitionsQuery,
+    actor: Option<&str>,
+    access: &dyn ObjectAccess,
+) -> Result<DefsResponse, Refusal> {
+    let mut response = get_defs(host, query, actor)?;
+    // Counted after the catalog's epoch guard is released: each count takes
+    // its own, as the list does.
+    let scope = ScopeQuery {
+        org_id: query.org_id.clone(),
+        environment_id: query.environment_id.clone(),
+    };
+    response.object_counts = object_counts(host, &scope, actor, access, CATALOG_COUNT_BOUND);
+    Ok(response)
+}
+
+/// Every object type's first-page total from `GET /v1/objects/{type}` for
+/// this caller, under a visible-record bound of `bound`: the list's own read,
+/// so the same collection and row gates decide it, and rows the caller may
+/// not see are never counted. A type whose list refuses (no Population on
+/// the collection, a foreign scope, an anonymous caller, a commit during the
+/// scan) has no entry. Past `bound` the count is `bound`, approximate.
+#[must_use]
+pub fn object_counts<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    access: &dyn ObjectAccess,
+    bound: usize,
+) -> BTreeMap<String, NornQueryTotal> {
+    // The type names only; the cell lock is released before any count.
+    let types: Vec<String> = match host.cell() {
+        Ok(cell) => cell
+            .store()
+            .read()
+            .model()
+            .object_types()
+            .map(|object| object.name.as_str().to_owned())
+            .collect(),
+        Err(_unavailable) => return BTreeMap::new(),
+    };
+    let first_page = ObjectQueryParams {
+        limit: Some("1".into()),
+        ..ObjectQueryParams::default()
+    };
+    let limit = u64::try_from(bound).unwrap_or(u64::MAX);
+    types
+        .into_iter()
+        .filter_map(|object_type| {
+            let page = get_object_query_within(
+                host,
+                (scope, actor),
+                &object_type,
+                &first_page,
+                access,
+                bound,
+            )
+            .ok()?;
+            let total = page.total?;
+            let total = NornQueryTotal {
+                count: if total.approximate {
+                    total.count.min(limit)
+                } else {
+                    total.count
+                },
+                approximate: total.approximate,
+            };
+            Some((object_type, total))
+        })
+        .collect()
+}
+
 fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsResponse, Refusal> {
     let base_artifact_ids = verify_retained(&set, scope)?;
     let receipt = set
@@ -191,6 +288,7 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
         registry: set.registry,
         base_artifact_ids,
         artifacts: serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?,
+        object_counts: BTreeMap::new(),
     })
 }
 
