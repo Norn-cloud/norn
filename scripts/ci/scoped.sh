@@ -13,7 +13,12 @@ failed=0
 # faster but the I/O-bound norn-cell durable-store tests slower, so it is not the default.
 step() { local n=$1 t=$SECONDS rc; shift; "$@" > "$out/$n.log" 2>&1; rc=$?; echo "$n rc=$rc $((SECONDS-t))s" | tee -a "$out/steps"; [[ $rc -eq 0 ]] || failed=1; }
 t0=$SECONDS
-changed=$(git diff --name-only "$base" HEAD)
+changed=$(git diff --name-only "$base" HEAD) || { echo "scoped: cannot diff against $base" >&2; exit 2; }
+# Workspace-wide inputs reach every crate: such a unit needs the full gate, never a scoped one.
+if wide=$(grep -E '^(Cargo\.lock|Cargo\.toml|rust-toolchain(\.toml)?|\.cargo/.*)$' <<<"$changed"); then
+  echo "scoped: workspace-wide change ($(tr '\n' ' ' <<<"$wide")); run the full gate: scripts/ci/core.sh all" >&2
+  exit 3
+fi
 read -r touched dependents < <(python3 -I - "$changed" <<'PY'
 import json, subprocess, sys
 changed = sys.argv[1].split()
@@ -59,7 +64,7 @@ if grep -q '^apps/studio/' <<<"$changed"; then
   if [[ -n $rest ]]; then
     step e2e bash scripts/ci/core.sh browser
   elif [[ -n $specs ]]; then
-    step e2e bash -c 'crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker" && cd apps/studio && bun run build && bunx playwright test "$@" --reporter=list | tee /dev/stderr | grep -qE "^ +[0-9]+ passed"' _ $(sed 's#^apps/studio/##' <<<"$specs")
+    step e2e bash -c 'set -o pipefail; crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker" && cd apps/studio && bun run build && bunx playwright test "$@" --reporter=list | tee /dev/stderr | grep -qE "^ +[0-9]+ passed"' _ $(sed 's#^apps/studio/##' <<<"$specs")
   fi
 fi
 echo "total $((SECONDS-t0))s failed=$failed" | tee -a "$out/steps"
