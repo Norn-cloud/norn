@@ -15,12 +15,7 @@ use norn_ir::quantity_ledger::{
 };
 
 use super::checked_pow10;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ScaledInteger {
-    unscaled: i128,
-    scale: u8,
-}
+use super::decimal::{self, ScaledInteger, ScaledIntegerRefusal};
 
 impl ScaledInteger {
     const fn zero() -> Self {
@@ -31,77 +26,66 @@ impl ScaledInteger {
     }
 
     fn canonical(self) -> Self {
-        let (unscaled, scale) = super::decimal::canonical_parts(self.unscaled, self.scale);
-        Self { unscaled, scale }
+        decimal::canonical(self)
     }
 
     fn checked_add(self, rhs: Self, path: &str) -> Result<Self, LedgerAmountLoweringError> {
-        let target_scale = self.scale.max(rhs.scale);
-        let lhs = checked_rescale(self, target_scale, path)?;
-        let rhs = checked_rescale(rhs, target_scale, path)?;
-        lhs.checked_add(rhs)
-            .map(|unscaled| {
-                Self {
-                    unscaled,
-                    scale: target_scale,
-                }
-                .canonical()
-            })
-            .ok_or_else(|| {
-                error(
-                    LedgerAmountLoweringErrorCode::ArithmeticOverflow,
-                    path,
-                    "addition overflows signed i128",
-                )
-            })
+        decimal::checked_add(self, rhs).map_err(|refusal| refusal_error(refusal, path))
     }
 
     fn checked_sub(self, rhs: Self, path: &str) -> Result<Self, LedgerAmountLoweringError> {
-        let target_scale = self.scale.max(rhs.scale);
-        let lhs = checked_rescale(self, target_scale, path)?;
-        let rhs = checked_rescale(rhs, target_scale, path)?;
-        lhs.checked_sub(rhs)
-            .map(|unscaled| {
-                Self {
-                    unscaled,
-                    scale: target_scale,
-                }
-                .canonical()
-            })
-            .ok_or_else(|| {
-                error(
-                    LedgerAmountLoweringErrorCode::ArithmeticOverflow,
-                    path,
-                    "subtraction overflows signed i128",
-                )
-            })
+        decimal::checked_sub(self, rhs).map_err(|refusal| refusal_error(refusal, path))
     }
 
     fn checked_mul(self, rhs: Self, path: &str) -> Result<Self, LedgerAmountLoweringError> {
-        let scale = self.scale.checked_add(rhs.scale).ok_or_else(|| {
-            error(
-                LedgerAmountLoweringErrorCode::ScaleOutOfRange,
-                path,
-                "multiplication scale overflows its u8 representation",
-            )
-        })?;
-        if scale > MAX_LEDGER_SCALE {
-            return Err(error(
-                LedgerAmountLoweringErrorCode::ScaleOutOfRange,
-                path,
-                format!("multiplication scale {scale} exceeds maximum {MAX_LEDGER_SCALE}"),
-            ));
-        }
-        self.unscaled
-            .checked_mul(rhs.unscaled)
-            .map(|unscaled| ScaledInteger { unscaled, scale }.canonical())
-            .ok_or_else(|| {
-                error(
-                    LedgerAmountLoweringErrorCode::ArithmeticOverflow,
-                    path,
-                    "multiplication overflows signed i128",
-                )
-            })
+        decimal::checked_mul(self, rhs, MAX_LEDGER_SCALE)
+            .map_err(|refusal| refusal_error(refusal, path))
+    }
+}
+
+/// Attaches the lowering code, path and message to a proved-core refusal.
+fn refusal_error(refusal: ScaledIntegerRefusal, path: &str) -> LedgerAmountLoweringError {
+    match refusal {
+        ScaledIntegerRefusal::ScaleLoss => error(
+            LedgerAmountLoweringErrorCode::ScaleLoss,
+            path,
+            "internal rescale would discard precision",
+        ),
+        ScaledIntegerRefusal::AlignmentMultiplierOverflow => error(
+            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
+            path,
+            "power-of-ten alignment overflows signed i128",
+        ),
+        ScaledIntegerRefusal::AlignmentOverflow => error(
+            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
+            path,
+            "scale alignment overflows signed i128",
+        ),
+        ScaledIntegerRefusal::AdditionOverflow => error(
+            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
+            path,
+            "addition overflows signed i128",
+        ),
+        ScaledIntegerRefusal::SubtractionOverflow => error(
+            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
+            path,
+            "subtraction overflows signed i128",
+        ),
+        ScaledIntegerRefusal::MultiplicationScaleOverflow => error(
+            LedgerAmountLoweringErrorCode::ScaleOutOfRange,
+            path,
+            "multiplication scale overflows its u8 representation",
+        ),
+        ScaledIntegerRefusal::MultiplicationScaleAboveMaximum(scale) => error(
+            LedgerAmountLoweringErrorCode::ScaleOutOfRange,
+            path,
+            format!("multiplication scale {scale} exceeds maximum {MAX_LEDGER_SCALE}"),
+        ),
+        ScaledIntegerRefusal::MultiplicationOverflow => error(
+            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
+            path,
+            "multiplication overflows signed i128",
+        ),
     }
 }
 
@@ -414,34 +398,6 @@ fn verify_component_scale(
         )
     })?;
     Ok(())
-}
-
-fn checked_rescale(
-    value: ScaledInteger,
-    target_scale: u8,
-    path: &str,
-) -> Result<i128, LedgerAmountLoweringError> {
-    let gap = target_scale.checked_sub(value.scale).ok_or_else(|| {
-        error(
-            LedgerAmountLoweringErrorCode::ScaleLoss,
-            path,
-            "internal rescale would discard precision",
-        )
-    })?;
-    let multiplier = checked_pow10(gap).ok_or_else(|| {
-        error(
-            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
-            path,
-            "power-of-ten alignment overflows signed i128",
-        )
-    })?;
-    value.unscaled.checked_mul(multiplier).ok_or_else(|| {
-        error(
-            LedgerAmountLoweringErrorCode::ArithmeticOverflow,
-            path,
-            "scale alignment overflows signed i128",
-        )
-    })
 }
 
 fn parse_canonical_i128(value: &str, path: String) -> Result<i128, LedgerAmountLoweringError> {

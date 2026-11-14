@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
-import type { Page } from "@playwright/test"
+import type { Page, Route } from "@playwright/test"
+
+/** The definitions routes' refusals (test/fixtures/definition-call.json, pinned to the routes by crates/norn-cell-do/tests/definitions.rs). */
+type Served = "signoffUnavailable" | "signoffMismatch" | "notFound"
+const SERVED = JSON.parse(readFileSync(new URL("../test/fixtures/definition-call.json", import.meta.url), "utf8")) as Record<Served, object> & { readonly status: Record<Served, number> }
+/** The served refusal `kind` verbatim with its status; `replace` sets only members the cell computes from the request. */
+const refuse = (route: Route, kind: Served, replace: Record<string, string> = {}) => route.fulfill({ status: SERVED.status[kind], json: { ...SERVED[kind], ...replace } })
 
 const press = (page: Page, combo: string) => page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+${combo}`)
 async function session(page: Page) {
@@ -55,8 +62,9 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
       const body = route.request().postDataJSON()
       expect(body.signoff.restatementSha256).toBe(expectedHash)
       expect(body.payload.name).toBe("studio.yield_weekly")
-      if (unavailable) return route.fulfill({ status: 422, json: { code: "definition.signoff_unavailable", detail: "not available" } })
-      if (mismatch) { mismatch = false; currentWords = newWords; expectedHash = newHash; return route.fulfill({ status: 422, json: { code: "definition.signoff_mismatch", restatement: newWords, restatementSha256: newHash } }) }
+      if (unavailable) return refuse(route, "signoffUnavailable")
+      // The cell's own words for this payload, and their digest, replace the fixture's.
+      if (mismatch) { mismatch = false; currentWords = newWords; expectedHash = newHash; return refuse(route, "signoffMismatch", { restatement: newWords, restatementSha256: newHash }) }
       stored = { id: body.id, version: (stored?.version ?? 0) + 1, payload: body.payload, retired: false, text: currentWords, sha256: body.signoff.restatementSha256 }
       return route.fulfill({ json: { installed: true, id: stored.id, version: stored.version } })
     }
@@ -65,7 +73,7 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
       return route.fulfill({ json: { installed: true, id: stored.id, version: stored.version } })
     }
     if (stored) return route.fulfill({ json: { id: stored.id, kind: "question", version: stored.version, payload: stored.payload, restatement: returnedWords ?? stored.text, restatementSha256: digest(returnedWords ?? stored.text), signoff: { signer: "user:analyst-id", displayName: "you", signedAtMs: 1794000000000, restatementSha256: stored.sha256 } } })
-    return route.fulfill({ status: 404, json: { code: "definition.not_found" } })
+    return refuse(route, "notFound")
   })
   await page.goto("/questions/build")
   await expect(page.getByLabel("Question name")).toHaveValue("Yield")

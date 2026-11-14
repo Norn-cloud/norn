@@ -660,13 +660,24 @@ const RETAINED_TEST_BUDGET: Budget = Budget {
     max_steps: 4096,
 };
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn law_contained_generated_orderings_preserve_effective_instances(reverse in proptest::bool::ANY, rotation in 0usize..12) {
-        let (law, mut base) = membership_case(); let expected = projected(&law, &base);
-        if reverse {base.reverse();} let count = rotation.checked_rem(base.len()).expect("nonempty"); base.rotate_left(count);
-        proptest::prop_assert_eq!(projected(&law, &base), expected);
+#[test]
+fn law_contained_every_ordering_preserves_effective_instances() {
+    let (law, base) = membership_case();
+    let expected = projected(&law, &base);
+    for reverse in [false, true] {
+        for rotation in 0usize..12 {
+            let mut ordered = base.clone();
+            if reverse {
+                ordered.reverse();
+            }
+            let count = rotation.checked_rem(ordered.len()).expect("nonempty");
+            ordered.rotate_left(count);
+            assert_eq!(
+                projected(&law, &ordered),
+                expected,
+                "reverse {reverse} rotation {rotation}"
+            );
+        }
     }
 }
 
@@ -1219,5 +1230,210 @@ fn interface_decimal_binding_inherited_contract_rechecks_effective_members() {
         findings
             .iter()
             .any(|finding| finding.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
+fn exception(id: &str, overrides: &str, condition: &str) -> Value {
+    json!({
+        "id": id, "overrides": overrides, "condition": condition,
+        "rationale": format!("{id} is exempt"),
+        "source": {"artifactId": "erpnext.no_unpaid_ship.law", "pointer": "/payload"}
+    })
+}
+
+/// `laws()[0]` (`erpnext.no_unpaid_ship`) with the given exception tree.
+fn excepted(exceptions: Vec<Value>) -> Value {
+    let mut law = laws()[0].clone();
+    law["payload"]["exceptions"] = Value::Array(exceptions);
+    law
+}
+
+#[test]
+fn law_exception_tree_admits_nested_and_overlapping_siblings() {
+    use norn_checker::law_exceptions::{check_tree, fold};
+    const LAW: &str = "erpnext.no_unpaid_ship";
+    // R3: two siblings may both match; a nested exception lifts only its parent.
+    let tree = vec![
+        exception("open_order", LAW, "self.status == 'open'"),
+        exception("unpaid", LAW, "self.paid == false"),
+        exception("open_and_paid", "open_order", "self.paid == true"),
+    ];
+    assert_eq!(
+        run(vec![excepted(tree.clone())], &entities()),
+        Vec::<String>::new()
+    );
+    let declared: Vec<norn_ir::LawException> =
+        serde_json::from_value(Value::Array(tree)).expect("typed tree");
+    assert_eq!(check_tree(LAW, &declared), Ok(()));
+    // Exhaustive over every valuation: the applied set is the sorted set of
+    // matching nodes with no matching child, and siblings never short-circuit.
+    for bits in 0_u8..8 {
+        let matched: Vec<bool> = (0..3).map(|i| bits & (1 << i) != 0).collect();
+        let (lifted, applied) = fold(LAW, &declared, &matched);
+        let open = matched[0] && !matched[2];
+        let mut expected = BTreeSet::new();
+        if open {
+            expected.insert("open_order");
+        }
+        if matched[1] {
+            expected.insert("unpaid");
+        }
+        if matched[0] && matched[2] {
+            expected.insert("open_and_paid");
+        }
+        assert_eq!(applied, expected, "{matched:?}");
+        assert_eq!(lifted, open || matched[1], "{matched:?}");
+        // Declaration order does not matter.
+        let mut reversed = declared.clone();
+        reversed.reverse();
+        let mut flipped = matched.clone();
+        flipped.reverse();
+        assert_eq!(
+            fold(LAW, &reversed, &flipped),
+            (lifted, applied),
+            "{matched:?}"
+        );
+    }
+}
+
+#[test]
+fn law_exception_tree_shape_refusals_name_the_declaration() {
+    use norn_checker::law_exceptions::codes as exception;
+    const LAW: &str = "erpnext.no_unpaid_ship";
+    let blank_rationale = {
+        let mut e = exception("blank", LAW, "true");
+        e["rationale"] = json!(" ");
+        e
+    };
+    let bad_source = {
+        let mut e = exception("bad_source", LAW, "true");
+        e["source"]["pointer"] = json!("payload");
+        e
+    };
+    for (tree, code, pointer) in [
+        (
+            vec![exception("ghost", "missing", "true")],
+            exception::DANGLING_OVERRIDE,
+            "/payload/exceptions/0/overrides",
+        ),
+        (
+            vec![exception("self_loop", "self_loop", "true")],
+            exception::CYCLE,
+            "/payload/exceptions/0/overrides",
+        ),
+        (
+            vec![
+                exception("root", LAW, "true"),
+                exception("a", "b", "true"),
+                exception("b", "a", "true"),
+            ],
+            exception::CYCLE,
+            "/payload/exceptions/1/overrides",
+        ),
+        (
+            vec![
+                exception("twice", LAW, "true"),
+                exception("twice", LAW, "true"),
+            ],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/1",
+        ),
+        (
+            vec![exception(LAW, LAW, "true")],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
+        (
+            vec![exception(" ", LAW, "true")],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
+        (
+            vec![blank_rationale],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
+        (
+            vec![bad_source],
+            exception::INVALID_DECLARATION,
+            "/payload/exceptions/0",
+        ),
+        (
+            (0..=norn_checker::law_exceptions::MAX_LAW_EXCEPTIONS)
+                .map(|i| exception(&format!("e{i}"), LAW, "true"))
+                .collect(),
+            exception::LIMIT,
+            "/payload/exceptions",
+        ),
+    ] {
+        let artifact: ArtifactEnvelope = serde_json::from_value(excepted(tree)).expect("law");
+        let findings = norn_checker::verification::check_law_local(&artifact);
+        assert!(
+            findings.iter().any(|d| d.code.as_str() == code
+                && d.span.as_ref().is_some_and(|s| s.pointer == pointer)),
+            "{code} at {pointer}: {findings:?}"
+        );
+        assert!(
+            run(
+                vec![serde_json::to_value(&artifact).expect("wire")],
+                &entities()
+            )
+            .contains(&code.to_owned())
+        );
+    }
+}
+
+#[test]
+fn law_exception_conditions_type_check_and_invariant_laws_refuse_them() {
+    const LAW: &str = "erpnext.no_unpaid_ship";
+    for condition in ["self.missing == true", "self.paid", "self.status"] {
+        let findings = run(
+            vec![excepted(vec![exception("e", LAW, condition)])],
+            &entities(),
+        );
+        // `self.paid` is Boolean and admits; the other two do not type as Boolean.
+        assert_eq!(
+            findings.contains(&codes::PREDICATE_TYPE.to_owned()),
+            condition != "self.paid",
+            "{condition}: {findings:?}"
+        );
+    }
+    let mut invariant = laws()[4].clone();
+    let id = invariant["payload"]["id"].clone();
+    invariant["payload"]["exceptions"] = json!([exception("e", id.as_str().expect("id"), "true")]);
+    assert!(
+        run(vec![invariant], &entities())
+            .contains(&norn_checker::law_exceptions::codes::UNSUPPORTED_RESPONSE.to_owned())
+    );
+}
+
+#[test]
+fn installed_law_is_closed_to_exceptions_from_another_artifact() {
+    // R4: exceptions live in the owner's artifact, so redeclaring an installed
+    // law with an added exception is `law.model.weakens_inherited`.
+    let parent: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("parent");
+    let mut base = entities();
+    base.push(parent);
+    let mut child = excepted(vec![exception(
+        "exempt",
+        "erpnext.no_unpaid_ship",
+        "self.paid == false",
+    )]);
+    child["artifactId"] = json!("downstream.no_unpaid_ship.law");
+    let pool = vec![serde_json::from_value::<ArtifactEnvelope>(child).expect("child")];
+    let findings = check_artifact_set(
+        &pool,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == codes::WEAKENS_INHERITED
+                && d.message.contains("cannot add or change its exceptions")),
+        "{findings:?}"
     );
 }

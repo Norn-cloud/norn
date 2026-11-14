@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
+# Python isolation (#513): no script directory or cwd on sys.path, and no bytecode read or
+# written next to any source. Older Pythons ignore these variables, so the assertion refuses
+# to run where they have no effect. scripts/ci/python_isolation.py pins these lines.
+export PYTHONSAFEPATH=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-pycache.XXXXXX")"
+python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features wasm clippy doc guards integration browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc guards integration browser formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -19,10 +26,37 @@ rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
+# The skeleton guard is its own Cargo workspace (D95): its manifest and lockfile are in the
+# gated crate directory. Every guard command names it and shares the root target directory;
+# tool installs (`cargo install`) build in their own directory under $upstream instead.
+guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+# Pinned cargo tools: a binary that already reports the exact pinned version (CI preinstalls
+# checksummed release binaries) is used as is; otherwise the same version is built from source.
+ensure_tool() {
+  local crate=$1 version=$2 binary=$3
+  [[ $("$binary" --version 2> /dev/null) == "${4:-$binary} $version" ]] \
+    || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked "$crate" --version "$version"
+}
 # The pinned nextest, installed like the other tools when absent.
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
-    || cargo install --locked cargo-nextest --version 0.9.150
+    || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-nextest --version 0.9.150
+}
+# Fails unless each named test of binary $2 ran and passed in nextest's JUnit report $1:
+# absent (renamed, deleted, ignored, cfg'd out), skipped, failed or an unreadable report fails.
+require_passed() {
+  python3 - "$@" << 'PY'
+import sys
+import xml.etree.ElementTree as ET
+report, binary, *names = sys.argv[1:]
+cases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")
+         if suite.get("name") == binary for case in suite.iter("testcase")}
+bad = [name for name in names if name not in cases or any(
+    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]
+if not names or bad:
+    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or 'none named'}")
+PY
 }
 list_shards() {
   local index
@@ -50,7 +84,51 @@ select_shard() {
   exit 2
 }
 upstream=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-upstream.XXXXXX")
-trap 'rm -rf -- "$upstream"' EXIT
+# CI telemetry: when NORN_CI_SPANS names a file, every phase and bundle task appends one JSON
+# line (task, commit, PR, VM, start and end in ns, exit code, sccache hit and miss deltas) that
+# a collector ships off the machine. Recording never changes a phase's result or exit status.
+span_task='' span_start=0 span_counts=''
+# Only this invocation records: nested core.sh runs (the canaries call it) inherit no span file.
+spans_file=${NORN_CI_SPANS:-}
+unset NORN_CI_SPANS
+sccache_counts() {
+  [[ ${RUSTC_WRAPPER:-} == *sccache* ]] || command -v sccache > /dev/null 2>&1 || return 0
+  sccache --show-stats --stats-format=json 2> /dev/null | python3 -c 'import json, sys
+stats = json.load(sys.stdin)["stats"]
+print(*(sum(stats[key]["counts"].values()) for key in ("cache_hits", "cache_misses")))' 2> /dev/null || true
+}
+span_begin() {
+  [[ -n $spans_file ]] || return 0
+  span_task=$1 span_start=$(date +%s%N) span_counts=$(sccache_counts)
+  [[ $span_start =~ ^[0-9]+$ ]] || span_task=''
+}
+span_end() {
+  [[ -n $spans_file && -n $span_task ]] || return 0
+  local end hits='' misses='' after phase=${span_task#*/} shard=''
+  [[ $span_task != test/* ]] || { shard=$phase; phase=test; }
+  end=$(date +%s%N)
+  [[ $end =~ ^[0-9]+$ ]] || { span_task=''; return 0; }
+  after=$(sccache_counts)
+  if [[ $span_counts =~ ^[0-9]+\ [0-9]+$ && $after =~ ^[0-9]+\ [0-9]+$ ]]; then
+    read -r hits misses <<<"$after"
+    hits=$((hits - ${span_counts%% *})) misses=$((misses - ${span_counts##* }))
+  fi
+  clean() { tr -cd 'A-Za-z0-9._/:-' <<<"$1"; }
+  printf '{"span":"task %s","ci_source":"core.sh","ci_task":"%s","ci_phase":"%s","ci_shard":"%s","ci_commit":"%s","ci_pr":"%s","ci_vm":"%s","ci_runner":"%s","start_ns":%s,"end_ns":%s,"span_ms":%s,"ci_exit_code":%s,"ok":%s,"cache_hits":%s,"cache_misses":%s}\n' \
+    "$span_task" "$span_task" "$phase" "$shard" "$(git rev-parse HEAD 2> /dev/null || true)" \
+    "$(clean "${NORN_CI_PR:-}")" "$(clean "${NORN_CI_VM:-$(hostname)}")" "$(clean "${NORN_CI_RUNNER:-${RUNNER_ENVIRONMENT:-local}}")" \
+    "$span_start" "$end" "$(((end - span_start) / 1000000))" "$1" "$([[ $1 -eq 0 ]] && echo true || echo false)" \
+    "${hits:-null}" "${misses:-null}" >> "$spans_file" 2> /dev/null || true
+  span_task=''
+}
+# Runs phase $1 (shard $2) as one span; a failing phase is recorded by the EXIT trap. span_end
+# takes the exit status.
+timed_phase() {
+  span_begin "$([[ $1 == test ]] && echo "test/${2:-all}" || echo "phase/$1")"
+  run_phase "$@"
+  span_end 0
+}
+trap 'status=$?; span_end "$status"; rm -rf -- "$upstream"' EXIT
 export NORN_CHECKER_WASM_PARITY_OUT="$upstream/native-parity"
 # Every phase but `cheap` runs over these generated inputs.
 prepared=''
@@ -69,25 +147,43 @@ use_jsonschema() {
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && $1 != browser && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
+      cargo metadata --locked --format-version 1 "${guard[@]}" > /dev/null
       cargo fmt --all -- --check
+      cargo fmt --all "${guard[@]}" -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       python3 scripts/ci/frontier.py self-test
+      python3 scripts/ci/python_isolation.py
+      python3 scripts/ci/test_python_isolation.py
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       python3 scripts/ci/test_implementation_receipts.py
+      python3 scripts/ci/test_contract_diff.py
+      python3 scripts/ci/contract_diff.py --ci
       python3 scripts/test_record_new_files.py
       python3 scripts/test_demo_scenarios.py
+      python3 scripts/standards_atlas.py --check
+      python3 scripts/test_standards_atlas.py
+      python3 scripts/metrics/test_metrics.py
       cargo xtask ci policy
       cargo xtask ci provenance
+      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
+      # plan selects, and its two named tests must have run and passed.
+      ensure_nextest
+      # nextest keeps its reports under the workspace root's target/nextest, whatever
+      # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (D95).
+      parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
+      rm -f "$parity_report"
+      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
       ;;
     test)
       select_shard "${2:-all}"
@@ -145,39 +241,59 @@ PY
       ;;
     doctest)
       cargo test --locked --workspace --doc
+      cargo test --locked "${guard[@]}" --doc
       ;;
     features)
       cargo test --locked -p norn-canonical -p norn-checker
       cargo test --locked -p norn-canonical -p norn-checker --features norn-canonical/preserve-order-probe
       cargo test --locked -p norn-canonical -p norn-ir -p norn-checker --features serde_json/arbitrary_precision
       ;;
+    duckdb)
+      # The workspace never enables the optional DuckDB backend, so a change that breaks it
+      # compiles everywhere else (#513, #1152). Build it and run its integration test; full
+      # plans run this phase, and affected plans run it whenever norn-cell is reached.
+      cargo test --locked -p norn-cell --features duckdb --test duckdb_question
+      ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
+      cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ;;
-    clippy) cargo clippy --locked --workspace --all-targets -- -D warnings ;;
-    doc) RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps ;;
+    clippy)
+      cargo clippy --locked --workspace --all-targets -- -D warnings
+      cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings
+      ;;
+    doc)
+      RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+      RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
+      ;;
     guards)
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
-      cargo install --locked cargo-public-api --version 0.52.0
+      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-public-api --version 0.52.0
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
       # Proof enrollment and its tests run in `cheap`, which every CI run and `all` include.
       ensure_nextest
       python3 scripts/check_demo_scenarios.py
-      cargo install --locked cargo-deny --version 0.19.0
+      ensure_tool cargo-deny 0.19.0 cargo-deny
       cargo deny --locked check
+      cargo deny --locked "${guard[@]}" check --config deny.toml
       cargo xtask ci policy
+      # The guard's own suite: it left the root workspace (D95), so no test shard selects it.
+      # The guards phase runs in every plan, full or affected.
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
     integration)
       cargo build --locked -p norn-cli
-      cargo install --locked wasm-bindgen-cli --version 0.2.129
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
+      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
@@ -215,11 +331,17 @@ PY
         printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
         exit 1
       fi
-      cargo install --locked wasm-bindgen-cli --version 0.2.129
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
+        # The checker-admission case needs the WASM package built above, so it runs here,
+        # not in the cheap phase, and is required: a missing package fails it, never skips.
+        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\n' "$decision"; exit 1; }
+        printf '%s\n' "$decision"
+        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.
+        grep -qxE '\(pass\) the checker admits what a drawn decision lowers to \[[0-9.]+m?s\]' <<< "$decision" || { printf 'browser: the checker-admission case did not run and pass\n' >&2; exit 1; }
         bun run build
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
@@ -249,6 +371,28 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
+# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
+# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
+# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
+# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
+# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
+# verification evidence and tools (target/verification-*), symlinks and any other
+# content stay.
+prune_target() {
+  local root target entry name
+  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
+  if [[ $target != "$root/target" ]]; then
+    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
+    return 0
+  fi
+  for entry in "$target"/*; do
+    name=${entry##*/}
+    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
+    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
+      rm -rf -- "$entry"
+    fi
+  done
+}
 bundle_plan() {
   python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
 import json, sys
@@ -257,21 +401,20 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# Warm nextest runtimes and phase seconds: Boat run 41541177097;
-# heavy-3 and integration: repaired Boat run 41542781995.
+# Task seconds: p50 of green hosted tasks over 78 recorded runs, 2026-11-11..13 (#1348;
+# refit with the recorded task spans). They include each task's compile through the shared
+# sccache, so a bundle's first test task is charged only the residual cold compile below.
 weights = {
-    "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 89,
-    "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
-    "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
-    "phase/doctest": 6, "phase/features": 239, "phase/wasm": 97,
-    "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
-    "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
-    # Estimate until the first Studio browser rows run in CI (#1113).
-    "phase/browser": 600,
+    "test/heavy-1": 90, "test/heavy-2": 653, "test/heavy-3": 158,
+    "test/heavy-4": 99, "test/heavy-5": 66, "test/heavy-6": 85,
+    "test/rest-1": 1158, "test/rest-2": 513, "test/rest-3": 319,
+    "phase/doctest": 31, "phase/features": 788, "phase/duckdb": 565, "phase/wasm": 137,
+    "phase/clippy": 94, "phase/doc": 44, "phase/guards": 735,
+    "phase/integration": 924, "phase/provenance": 12, "phase/test-shards": 13,
+    "phase/browser": 403,
 }
-# Cold test tasks spent 163–193 seconds compiling, before nextest's runtime.
-# Charge that once per bundle; later shards reuse the same test binaries.
-compile_seconds = 180
+# A bundle's first test task observed at 66 s (heavy-5, n=47): the residual cold compile.
+compile_seconds = 60
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
@@ -370,7 +513,7 @@ gate_source = (root / "crates/norn-skeleton-guard/src/ci/mod.rs").read_text()
 gate_block = gate_source.split("const GATE_FILES:", 1)[1].split("];", 1)[0]
 gates = set(re.findall(r'"([^"]+)"', gate_block))
 for path in changed:
-    if (path in gates or path.startswith((".github/workflows/", "crates/norn-skeleton-guard/"))
+    if (path in gates or path.startswith((".github/workflows/", ".cargo/", "crates/norn-skeleton-guard/"))
             or Path(path).name in {"Cargo.lock", "Cargo.toml", "rust-toolchain", "rust-toolchain.toml", "lean-toolchain"}):
         full(f"gate, dependency or toolchain changed: {path}")
 try:
@@ -402,7 +545,8 @@ for path in changed:
     elif not path.startswith(".github/ci/provenance/") and not (
             path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
         outside.append(path)
-reached, stack = set(touched) | {"norn-skeleton-guard"}, list(touched)
+# The guard is its own workspace (D95); the guards phase, in every plan, runs its suite.
+reached, stack = set(touched), list(touched)
 while stack:
     for user in users[stack.pop()]:
         if user not in reached:
@@ -417,7 +561,12 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
                   if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
-done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"] + browser,
+# The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
+duckdb = ["duckdb"] if "norn-cell" in reached else []
+# A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
+# would not narrow a shard, and the guard's own suite runs in the guards phase (D95).
+rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
@@ -429,18 +578,27 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    pruned=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
+      # Bundle tasks never share build outputs (the planner packs them freely), so
+      # a task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+        prune_target
+        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
+      fi
+      pruned=1
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
-        trap 'task_status=$?; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
+        span_begin "$task"
+        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
         if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
       )
     done <<<"$task_lines"
     ;;
-  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do run_phase "$phase"; done ;;
+  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;
-  test) [[ $# -le 2 ]] || run_phase usage; run_phase test "${2:-all}" ;;
-  *) [[ $# -le 1 ]] || run_phase usage; run_phase "$1" ;;
+  test) [[ $# -le 2 ]] || run_phase usage; timed_phase test "${2:-all}" ;;
+  *) [[ $# -le 1 ]] || run_phase usage; timed_phase "$1" ;;
 esac

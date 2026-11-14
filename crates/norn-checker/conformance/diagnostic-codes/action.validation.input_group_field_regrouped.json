@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_group_field_regrouped",
+  "message": "ActionIR input field {pointer} is in more than one group",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

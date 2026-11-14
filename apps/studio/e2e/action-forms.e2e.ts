@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { actionCell } from "./action-cell.ts"
+import { actionCell, refuse } from "./action-cell.ts"
 import { objectCell, population, session } from "./object-cell.ts"
 
 // One test per row of the action forms' verb matrix (see the PR), plus each state the forms show.
@@ -19,10 +19,10 @@ async function shoot(page: Page, name: string) {
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the object and action route stand-ins`) })
 
-async function open(page: Page, count = 40) {
+async function open(page: Page, count = 40, options: Parameters<typeof actionCell>[2] = {}) {
   await session(page)
   const objects = await objectCell(page, population(count))
-  const actions = await actionCell(page, objects)
+  const actions = await actionCell(page, objects, options)
   await page.goto("/objects/canon.Holding")
   await expect(page.getByText(`${count} records`)).toBeVisible()
   return { objects, actions }
@@ -80,7 +80,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await sheet(page).getByText("Details").click()
   await expect(sheet(page).getByText("Commit")).toBeVisible()
   // The exact decimal went as typed, digit for digit.
-  expect(actions.calls.at(-1)?.body).toContain('"quantity":10.500')
+  expect(actions.calls.at(-1)?.body).toContain('"quantity":"10.500"')
   await shoot(page, "receipt")
   // View record: the sheet closes, the grid reads again, and the new record's drawer opens.
   await sheet(page).getByRole("button", { name: "View record" }).click()
@@ -90,20 +90,19 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await expect(page.getByText("41 records")).toBeVisible()
 })
 
-test("validate: the cell's refusal lands on each field it names; fixing them commits", async ({ page }) => {
+test("validate: the cell's input refusal shows on the form, which stays on the review; fixing it commits", async ({ page }) => {
   await open(page)
   await newRecord(page, "Open a holding")
   const form = sheet(page)
   await form.getByLabel("Quantity").fill("12,5")
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  // The wizard opens the first step the cell refused something on.
-  await expect(form.getByRole("alert").first()).toContainText("The cell refused this input.")
-  await expect(form.getByLabel("Quantity")).toHaveAttribute("aria-invalid", "true")
-  await expect(form.locator('[data-pointer="/quantity"]')).toContainText("must be an exact number")
-  await expect(form.locator('[data-pointer="/resource_code"]')).toContainText("Resource code is required.")
-  await expect(form.getByRole("button", { name: /Where it is\s*, 1 problem/ })).toBeVisible()
+  // The served route names no field in an input refusal yet, so the refusal shows on the review.
+  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.getByRole("region", { name: "Review" })).toBeVisible()
+  await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await shoot(page, "refused")
+  await form.getByRole("navigation", { name: "Steps" }).getByRole("button").first().click()
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
   await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
@@ -127,7 +126,7 @@ test("edit: a transition from the record drawer carries the record's id and move
   await expect(rowFor(page, "demo/holding/0001")).toContainText("40.000")
 })
 
-test("delete: a destructive, irreversible action confirms first, then later actions on it are refused by the rule", async ({ page }) => {
+test("delete: a destructive, irreversible action confirms first, then later actions on it are refused by their precondition", async ({ page }) => {
   await open(page)
   await rowFor(page, "demo/holding/0002").click()
   await page.getByRole("button", { name: "Retire holding" }).click()
@@ -146,8 +145,8 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await sheet(page).getByLabel("Counted quantity").fill("1.000")
   await sheet(page).getByLabel("Reason").fill("Late count")
   await sheet(page).getByRole("button", { name: "Adjust quantity" }).click()
-  await expect(sheet(page).getByRole("alert").first()).toContainText("This holding is retired; it can't change any more.")
-  await expect(sheet(page).getByRole("alert").first()).toContainText("The holding is retired.")
+  // The served refusal names the precondition's failure and carries no diagnostic for this caller.
+  await expect(sheet(page).getByRole("alert").first()).toHaveText("a declared precondition does not hold")
 })
 
 test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; a retry after an outage commits once", async ({ page }) => {
@@ -176,7 +175,7 @@ test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; 
   await expect(page.getByText("41 records")).toBeVisible()
 })
 
-test("create: a parent with owned rows takes a list of records, each refused at its own pointer", async ({ page }) => {
+test("create: a parent with owned rows takes a list of records; the cell's input refusal keeps them for fixing", async ({ page }) => {
   const { actions } = await open(page)
   await newRecord(page, "Restock holding")
   const form = sheet(page)
@@ -187,25 +186,93 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await form.getByLabel("Quantity").nth(0).fill("1.250")
   await form.getByLabel("Quantity").nth(1).fill("2,0")
   await form.getByRole("button", { name: "Restock holding" }).click()
-  await expect(form.locator('[data-pointer="/lots/1/lot"]')).toContainText("Lot is required.")
-  await expect(form.locator('[data-pointer="/lots/1/quantity"]')).toContainText("must be an exact number")
+  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   await expect(form.getByRole("button", { name: "Remove lot 2" })).toBeVisible()
   await shoot(page, "rows")
   await form.getByRole("textbox", { name: "Lot", exact: true }).nth(1).fill("L-2")
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")
-  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":1.250},{"lot":"L-2","quantity":2.000}]')
+  expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":"1.250"},{"lot":"L-2","quantity":"2.000"}]')
 })
 
 test("while the cell takes no actions, New and the drawer's actions say why", async ({ page }) => {
   await session(page)
   await objectCell(page, population(10))
-  await page.route("**/api/host/v1/actions**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } }))
+  // The cell's own answer today: it serves no action catalog route.
+  await page.route("**/api/host/v1/actions**", (route) => refuse(route, "routeNotFound"))
   await page.goto("/objects/canon.Holding")
   await expect(page.getByRole("button", { name: "New holding" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "New holding" })).toHaveAttribute("title", "This cell doesn't take actions from Studio yet.")
   await page.getByRole("grid").locator('[role="row"]').nth(1).click()
   await expect(page.getByRole("dialog").getByLabel("Actions")).toContainText("This cell doesn't take actions from Studio yet.")
   await shoot(page, "unavailable")
+})
+
+const keyOf = (call: { readonly body: string }) => (JSON.parse(call.body) as { idempotencyKey: string }).idempotencyKey
+const inputOf = (call: { readonly body: string }) => JSON.stringify((JSON.parse(call.body) as { input: unknown }).input)
+
+test("sending: the form is locked while a call is out, so nothing typed can hide behind the commit", async ({ page }) => {
+  const { actions } = await open(page)
+  await rowFor(page, "demo/holding/0001").click()
+  await page.getByRole("button", { name: "Adjust quantity" }).click()
+  const form = sheet(page)
+  await form.getByLabel("Counted quantity").fill("41.000")
+  await form.getByLabel("Reason").fill("Recount")
+  const release = actions.holdNext()
+  await form.getByRole("button", { name: "Adjust quantity" }).click()
+  await expect(form.getByRole("button", { name: "Sending…" })).toBeDisabled()
+  await expect(form.getByLabel("Counted quantity")).toBeDisabled()
+  await expect(form.getByLabel("Reason")).toBeDisabled()
+  await shoot(page, "sending")
+  release()
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 adjusted · just now")
+  expect(actions.calls.filter((c) => c.actionId === "canon.holding.adjust")).toHaveLength(1)
+})
+
+test("retry: after an outage, Retry re-sends the same body under the same key; an edit after it is a new call with a new key", async ({ page }) => {
+  const { actions } = await open(page)
+  await rowFor(page, "demo/holding/0002").click()
+  await page.getByRole("button", { name: "Adjust quantity" }).click()
+  const form = sheet(page)
+  await form.getByLabel("Counted quantity").fill("12.000")
+  await form.getByLabel("Reason").fill("Recount")
+  actions.failNext()
+  await form.getByRole("button", { name: "Adjust quantity" }).click()
+  await expect(form.getByRole("button", { name: "Retry" })).toBeVisible()
+  actions.failNext()
+  await form.getByRole("button", { name: "Retry" }).click()
+  await expect(form.getByRole("button", { name: "Retry" })).toBeVisible()
+  const [first, retried] = actions.calls.slice(-2)
+  expect(retried!.body).toBe(first!.body) // the same key and the same exact body
+  await form.getByLabel("Counted quantity").fill("13.000")
+  await form.getByRole("button", { name: "Adjust quantity" }).click()
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 adjusted · just now")
+  const edited = actions.calls.at(-1)!
+  expect(keyOf(edited)).not.toBe(keyOf(first!))
+  expect(edited.body).toMatch(/"quantity":\s*"?13\.000\b/) // the raw body keeps the exact digits, however the decimal is encoded
+})
+
+test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the same key, and Another still starts a new draft", async ({ page }) => {
+  const { actions } = await open(page, 40, { undoOpen: true })
+  await newRecord(page, "Open a holding")
+  await fillHolding(page, "demo/holding/9101", "2.000")
+  await sheet(page).getByRole("button", { name: "Open a holding" }).click()
+  const form = sheet(page)
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9101 opened/)
+  actions.failNext()
+  await form.getByRole("button", { name: "Undo" }).click()
+  await expect(form.getByRole("alert")).toContainText("Couldn't confirm the undo")
+  await expect(form.getByRole("alert")).not.toContainText("Nothing was undone")
+  await shoot(page, "undo-unconfirmed")
+  await form.getByRole("button", { name: "Retry undo" }).click()
+  await expect(form.getByText(/^Undone · /)).toBeVisible()
+  const [lost, retried] = actions.calls.slice(-2)
+  expect(lost!.actionId).toBe("canon.holding.retire")
+  expect(keyOf(retried!)).toBe(keyOf(lost!))
+  expect(inputOf(retried!)).toBe('{"id":"demo/holding/9101"}')
+  await shoot(page, "undone")
+  await form.getByRole("button", { name: "Another" }).click()
+  await expect(form.getByLabel("Holding id")).toHaveValue("")
 })

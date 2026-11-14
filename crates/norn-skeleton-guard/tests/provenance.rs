@@ -495,9 +495,16 @@ const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quan
 
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
-    fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
+    // A pull_request workflow cancels its superseded PR runs and nothing else.
+    fixture.add(".github/workflows/core.yml", b"on: pull_request\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
+        "crates/norn-skeleton-guard/src/ci/mod.rs",
+        "crates/norn-skeleton-guard/src/ci/yaml.rs",
+        "verification/coverage-v1/fixtures/pull-request-concurrency.json",
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
@@ -564,6 +571,362 @@ fn index_fixture(fixture: &Fixture) {
     }
 }
 
+/// The whole guard crate is the gate: a file added under it or changed in it is a gate change.
+#[test]
+fn trusted_policy_gates_every_file_of_the_guard_crate() {
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // An unlisted file added under the crate (say a module copy to redirect to).
+    let mut candidate = policy_fixture();
+    candidate.add(
+        "crates/norn-skeleton-guard/src/ci_alt/mod.rs",
+        b"pub fn rule() {}\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+    // A changed file under the crate, with its provenance hash updated.
+    let path = "crates/norn-skeleton-guard/src/ci/mod.rs";
+    let mut candidate = policy_fixture();
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.write(path, b"pub fn rule() {}\n");
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error.contains(&format!(
+            "{path}: gate contract differs from the trusted base"
+        ))),
+        "{errors:?}"
+    );
+}
+
+/// The trusted binary's build closure is the gated crate directory (D95): the root manifest
+/// and lockfile are ordinary files, so a candidate that swaps a guard dependency in the root
+/// `Cargo.lock` needs no `/approve-gates`, and cannot change the binary. The guard's own
+/// lockfile and the Cargo configuration it builds under are gates.
+#[test]
+fn the_trusted_build_closure_is_the_gated_guard_directory() {
+    let mut base = policy_fixture();
+    base.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+    base.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+    base.add("Cargo.lock", b"version = 4\n", "code");
+    base.add(
+        "crates/norn-skeleton-guard/Cargo.lock",
+        b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+        "code",
+    );
+    base.save();
+    index_fixture(&base);
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    let changed = |path: &str, data: &[u8]| {
+        let mut candidate = policy_fixture();
+        candidate.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+        candidate.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+        candidate.add("Cargo.lock", b"version = 4\n", "code");
+        candidate.add(
+            "crates/norn-skeleton-guard/Cargo.lock",
+            b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+            "code",
+        );
+        let record = candidate
+            .records
+            .iter()
+            .position(|record| record["path"] == path)
+            .expect("fixture record");
+        candidate.write(path, data);
+        candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+        candidate.save();
+        index_fixture(&candidate);
+        norn_skeleton_guard::ci::run(candidate.root(), base.root())
+    };
+    // Root manifest and lockfile: a substituted guard dependency is not a gate change.
+    let substituted = b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.0\"\nsource = \"git+https://example.invalid/syn\"\n";
+    assert_eq!(changed("Cargo.lock", substituted), Vec::<String>::new());
+    assert_eq!(
+        changed("Cargo.toml", b"[workspace]\nmembers = [\"crates/x\"]\n"),
+        Vec::<String>::new()
+    );
+    // The guard's own lockfile and the Cargo configuration are gates.
+    for (path, data) in [
+        ("crates/norn-skeleton-guard/Cargo.lock", &substituted[..]),
+        (
+            ".cargo/config.toml",
+            b"[patch.crates-io]\nsyn = { path = \"x\" }\n",
+        ),
+    ] {
+        let errors = changed(path, data);
+        assert!(
+            errors.iter().any(|error| error.contains(&format!(
+                "{path}: gate contract differs from the trusted base"
+            ))),
+            "{path}: {errors:?}"
+        );
+    }
+}
+
+/// What the trusted build reads besides the guard crate is a gate (#1258 round 4): `.cargo/`
+/// (Cargo config applies whatever `--manifest-path` says) and the toolchain files, which
+/// must stay absent while the base has none. A gate file's mode is part of its contract.
+#[test]
+fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
+    let refused = |candidate: &Fixture, base: &Fixture, wanted: &str| {
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+        assert!(
+            errors.iter().any(|error| error.contains(wanted)),
+            "{wanted}: {errors:?}"
+        );
+    };
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // Adding a toolchain file where the base has none.
+    for path in ["rust-toolchain.toml", "rust-toolchain"] {
+        let mut candidate = policy_fixture();
+        candidate.add(path, b"[toolchain]\npath = \"/tmp/evil\"\n", "code");
+        candidate.save();
+        index_fixture(&candidate);
+        refused(
+            &candidate,
+            &base,
+            &format!("{path}: gate contract differs from the trusted base"),
+        );
+    }
+    // Adding `.cargo/config.toml` with a rustc wrapper where the base has none.
+    let mut candidate = policy_fixture();
+    candidate.add(
+        ".cargo/config.toml",
+        b"[build]\nrustc-wrapper = \"/tmp/wrap\"\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    refused(
+        &candidate,
+        &base,
+        ".cargo/: gate inventory differs from the trusted base",
+    );
+    // Changing `[env]` in an existing `.cargo/config.toml`.
+    let config = |env: &[u8]| {
+        let mut fixture = policy_fixture();
+        let record = fixture.add(".cargo/config.toml", env, "code");
+        fixture.save();
+        index_fixture(&fixture);
+        (fixture, record)
+    };
+    let (cargo_base, _) = config(b"[alias]\nxtask = \"run\"\n");
+    assert!(norn_skeleton_guard::ci::run(cargo_base.root(), cargo_base.root()).is_empty());
+    let (mut cargo_candidate, record) = config(b"[alias]\nxtask = \"run\"\n");
+    cargo_candidate.write(
+        ".cargo/config.toml",
+        b"[alias]\nxtask = \"run\"\n[env]\nPATH = \"/tmp/bin\"\n",
+    );
+    cargo_candidate.records[record]["sha256"] =
+        cargo_candidate.reference(".cargo/config.toml")["sha256"].clone();
+    cargo_candidate.save();
+    refused(
+        &cargo_candidate,
+        &cargo_base,
+        ".cargo/config.toml: gate contract differs from the trusted base",
+    );
+    // An exec-bit flip on a gate file with identical bytes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [
+            "scripts/ci/core.sh",
+            "crates/norn-skeleton-guard/baseline.json",
+        ] {
+            let candidate = policy_fixture();
+            std::fs::set_permissions(
+                candidate.root().join(path),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod");
+            refused(
+                &candidate,
+                &base,
+                &format!("{path}: gate contract differs from the trusted base"),
+            );
+        }
+    }
+}
+
+/// Removing a file under a gate directory is a gate change, even with its record removed.
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "stage the removal in disposable policy test data"
+)]
+fn trusted_policy_refuses_removing_a_file_under_a_gate_directory() {
+    let base = policy_fixture();
+    let path = "crates/norn-skeleton-guard/src/ci/yaml.rs";
+    let mut candidate = policy_fixture();
+    std::fs::remove_file(candidate.root().join(path)).expect("remove");
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.records.remove(record);
+    candidate.save();
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(candidate.root())
+            .args(["add", "-A"])
+            .status()
+            .expect("git rm")
+            .success()
+    );
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+}
+
+/// Gated sources cannot stand an ungated file in for gated code: refused even with no gate
+/// change (a tree checked against itself), so a merged one could never be the base.
+/// Every `include!` target is scanned as Rust whatever its extension, and must be tracked.
+#[test]
+fn trusted_policy_scans_include_targets_and_requires_them_tracked() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    // An `include!` target compiles as Rust whatever its extension, so it is scanned too.
+    let data = "crates/norn-skeleton-guard/src/ci/extra.txt";
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/extra.txt\");\n", "code");
+    tree.add(
+        data,
+        b"#[path = \"../../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors
+            .iter()
+            .any(|error| error
+                == &format!("{data}: a `path` attribute is refused in a gated source")),
+        "non-.rs include: {errors:?}"
+    );
+    // An include target must be tracked: an untracked file under the crate is refused.
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/untracked.rs\");\n", "code");
+    tree.save();
+    index_fixture(&tree);
+    tree.write(
+        "crates/norn-skeleton-guard/src/ci/untracked.rs",
+        b"pub fn f() {}\n",
+    );
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors.iter().any(|error| error.contains(
+            "`include!` of crates/norn-skeleton-guard/src/ci/untracked.rs, untracked or outside every gate, is refused"
+        )),
+        "untracked include: {errors:?}"
+    );
+}
+
+#[test]
+fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    for (label, source, refusal) in [
+        (
+            "#[path] to a module outside the crate",
+            "#[path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#[path] inside cfg_attr",
+            "#[cfg_attr(test, path = \"ci_alt/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#![path] as an inner attribute",
+            "mod ci {\n    #![path = \"x\"]\n}\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "include! of an ungated file",
+            "include!(\"../../../README.md\");\n",
+            "`include!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "include_str! climbing above the repository",
+            "const X: &str = include_str!(\"../../../../outside.json\");\n",
+            "is used other than as a direct",
+        ),
+        (
+            "include! of a macro-built path",
+            "include!(concat!(\"../\", \"x.rs\"));\n",
+            "`include` is used other than as a direct",
+        ),
+        (
+            "an include inside another macro's arguments",
+            "fn f() {\n    assert!(include_str!(\"../../../README.md\").is_empty());\n}\n",
+            "`include_str!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "a renamed include macro",
+            "use std::include_str as read;\n",
+            "`include_str` is used other than as a direct",
+        ),
+        (
+            "an absolute include path",
+            "const X: usize = core::convert::identity(include_bytes!(\"/etc/hostname\").len());\n",
+            "`include_bytes` is used other than as a direct",
+        ),
+        (
+            "a raw-identifier include macro",
+            "r#include!(\"../../../README.md\");\n",
+            "`include!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "a raw-identifier path attribute",
+            "#[r#path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "a raw-identifier path attribute inside cfg_attr",
+            "#[cfg_attr(all(), r#path = \"../../../elsewhere/ci/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+    ] {
+        let mut tree = policy_fixture();
+        tree.add(lib, source.as_bytes(), "code");
+        tree.save();
+        index_fixture(&tree);
+        let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+        assert!(
+            errors.iter().any(|error| error.contains(refusal)),
+            "{label}: {errors:?}"
+        );
+    }
+    // A direct include of a gate file (or of a file inside the crate) is admitted.
+    let mut tree = policy_fixture();
+    tree.add(
+        lib,
+        b"pub const RULE: &str = include_str!(\"../../../verification/coverage-v1/validate.py\");\npub const SELF: &str = include_str!(\"ci/yaml.rs\");\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 #[test]
 fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated_hashes() {
     let base = policy_fixture();
@@ -571,6 +934,9 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
     for path in [
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
         "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
     ] {
@@ -604,6 +970,29 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
         errors
             .iter()
             .any(|error| error.contains("workflow inventory differs")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn policy_requires_pull_request_workflows_to_cancel_only_superseded_pr_runs() {
+    let mut fixture = policy_fixture();
+    let path = ".github/workflows/core.yml";
+    let record = fixture
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("workflow record");
+    fixture.write(
+        path,
+        b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n",
+    );
+    fixture.records[record]["sha256"] = fixture.reference(path)["sha256"].clone();
+    fixture.save();
+    let errors = norn_skeleton_guard::ci::run(fixture.root(), fixture.root());
+    assert!(
+        errors.iter().any(|error| error
+            == ".github/workflows/core.yml: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs"),
         "{errors:?}"
     );
 }

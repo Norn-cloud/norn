@@ -818,7 +818,7 @@ impl Rows {
             return;
         };
         let binds = match law.response {
-            LawResponse::Predicate { .. } => None,
+            LawResponse::Predicate { .. } | LawResponse::TranslationPreserves { .. } => None,
             LawResponse::Transition {
                 object_type,
                 property,

@@ -1,0 +1,374 @@
+{
+  "atlasVersion": 1,
+  "domain": "geo",
+  "entries": [
+    {
+      "id": "geojson-rfc7946",
+      "name": "GeoJSON geographic feature interchange",
+      "publisher": "IETF",
+      "kind": "protocol",
+      "domains": [
+        "geo"
+      ],
+      "version": "RFC 7946",
+      "versionDate": "2016-08",
+      "versionBasis": "RFC header; no separate authoritative JSON Schema claimed.",
+      "licence": {
+        "spdx": "LicenseRef-IETF-Trust-Legal-Provisions-BCP",
+        "text": "IETF Trust Legal Provisions / BCP 78",
+        "status": "verified",
+        "basis": "RFC copyright notice invokes BCP 78 and the Trust Legal Provisions in effect at publication. Preserve document notices; extracted Code Components use the specified BSD terms. Not a blanket BSD licence on prose.",
+        "termsUrl": "https://trustee.ietf.org/documents/trust-legal-provisions/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON",
+        "spec-HTML"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.rfc-editor.org/rfc/rfc7946",
+      "evidenceUrls": [
+        "https://www.rfc-editor.org/rfc/rfc7946",
+        "https://trustee.ietf.org/documents/trust-legal-provisions/"
+      ],
+      "norn": {
+        "overlap": "Geometry/Feature/FeatureCollection representation, WGS84 coordinates; not postal address or political boundary authority.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "RFC defines JSON representation but is not itself a JSON Schema. Third-party validators were not promoted to IETF authority; OGC JSON-FG is separately catalogued and is not identical to GeoJSON. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso3166-1-debian",
+      "name": "ISO 3166-1 country codes: Debian iso-codes snapshot",
+      "publisher": "Debian iso-codes team; underlying identifiers ISO 3166/MA",
+      "kind": "code-list",
+      "domains": [
+        "geo"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged v4.20.1 JSON verified; CHANGELOG.md gives 2026-01-01. This is a compilation release, not ISO edition date.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-1.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-1.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md",
+        "https://packages.debian.org/sid/iso-codes"
+      ],
+      "norn": {
+        "overlap": "Country code identity for Party addresses; labels are source labels, not tenant display policy.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [
+          "ValueType"
+        ],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-ir/src/entity_v2/property.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "Countries on every address, tax and customs record."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso3166-2-debian-eg",
+      "name": "ISO 3166-2 subdivisions including Egypt governorates: Debian snapshot",
+      "publisher": "Debian iso-codes team; underlying identifiers ISO 3166/MA",
+      "kind": "code-list",
+      "domains": [
+        "geo"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged artifact read as JSON; 27 EG-* rows of type Governorate observed. Release date from tagged changelog.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-2.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-2.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md",
+        "https://www.iso.org/iso-3166-country-codes.html"
+      ],
+      "norn": {
+        "overlap": "Governorate codes such as EG-ALX/EG-ASN; neither boundary geometry nor all postal locality levels.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "No assertion of current official ISO snapshot equivalence. Preserve source spellings and code versions; Arabic display labels are a separate CLDR/address-data concern. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso3166-3-debian",
+      "name": "ISO 3166-3 formerly used country codes: Debian snapshot",
+      "publisher": "Debian iso-codes team",
+      "kind": "code-list",
+      "domains": [
+        "geo"
+      ],
+      "version": "iso-codes 4.20.1",
+      "versionDate": "2026-01-01",
+      "versionBasis": "Tagged JSON and changelog verified.",
+      "licence": {
+        "spdx": "LGPL-2.1-or-later",
+        "text": "LGPL-2.1-or-later",
+        "status": "verified",
+        "basis": "REUSE.toml explicitly assigns data/*json LGPL-2.1-or-later; retain notices, licence and corresponding source/modifications under its conditions. This is Debian's compilation grant, not a licence to ISO publications.",
+        "termsUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-3.json",
+      "evidenceUrls": [
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/data/iso_3166-3.json",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/REUSE.toml",
+        "https://salsa.debian.org/iso-codes-team/iso-codes/-/raw/v4.20.1/CHANGELOG.md"
+      ],
+      "norn": {
+        "overlap": "Historic country identity and withdrawal dates; preserve partial date precision rather than fabricating complete validity intervals.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iso3166-official-collection",
+      "name": "ISO 3166 official Country Codes Collection",
+      "publisher": "ISO 3166 Maintenance Agency",
+      "kind": "code-list",
+      "domains": [
+        "geo"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Live maintained collection is distinct from 3166-1/-2/-3:2020 publication editions; no collection snapshot/date acquired.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Free use of country codes is explicit; redistribution of the complete paid collection, names, metadata and publications is not thereby granted.",
+        "termsUrl": "https://www.iso.org/iso-3166-country-codes.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV",
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.iso.org/iso-3166-country-codes.html",
+      "evidenceUrls": [
+        "https://www.iso.org/iso-3166-country-codes.html",
+        "https://www.iso.org/standard/72482.html",
+        "https://www.iso.org/obp/ui/#iso:code:3166:EG"
+      ],
+      "norn": {
+        "overlap": "Country/subdivision identifiers and historic-country identity only; not geography boundaries or address deliverability.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "OBP returned JavaScript application shell; no claim of independently verifying its current Egypt governorate table. Debian snapshot below has 27 Egypt Governorate rows. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "ogc-json-fg",
+      "name": "OGC Features and Geometries JSON (JSON-FG) schemas",
+      "publisher": "Open Geospatial Consortium",
+      "kind": "standard",
+      "domains": [
+        "geo"
+      ],
+      "version": "1.0.0",
+      "versionDate": "2026-04-30",
+      "versionBasis": "Schema description says version 1.0.0; schema repository README says posted 2026-04-30. Unversioned URLs intentionally evolve; not immutable pins.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Authoring GitHub repository has Apache-2.0 LICENSE, while official schema distribution README points to OGC policies. Exact grant/provenance linkage for the hosted schema closure must be checked before redistribution; do not infer from a general open-standards claim.",
+        "termsUrl": "https://www.ogc.org/about/policies/software-licenses/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://schemas.opengis.net/json-fg/feature.json",
+      "evidenceUrls": [
+        "https://schemas.opengis.net/json-fg/feature.json",
+        "https://schemas.opengis.net/json-fg/README.md",
+        "https://docs.ogc.org/is/21-045r1/21-045r1.html",
+        "https://raw.githubusercontent.com/opengeospatial/ogc-feat-geo-json/main/LICENSE",
+        "https://www.ogc.org/about/policies/software-licenses/"
+      ],
+      "norn": {
+        "overlap": "GeoJSON-compatible extensions for CRS, geometry and time; distinct from RFC 7946, not a Core promotion.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "un-m49",
+      "name": "UN M49 countries, areas and statistical regions",
+      "publisher": "United Nations Statistics Division",
+      "kind": "code-list",
+      "domains": [
+        "geo"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Live online list; 1999 is the last printed edition, not a date for this changing table. No snapshot release/date declared.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No artifact-specific open redistribution grant verified. Public table/export access is insufficient; do not assume CC0 or borrow a UN Comtrade licence.",
+        "termsUrl": "https://www.un.org/en/about-us/terms-of-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "CSV",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://unstats.un.org/unsd/methodology/m49/overview/",
+      "evidenceUrls": [
+        "https://unstats.un.org/unsd/methodology/m49/",
+        "https://unstats.un.org/unsd/methodology/m49/overview/",
+        "https://www.un.org/en/about-us/terms-of-use"
+      ],
+      "norn": {
+        "overlap": "Numeric geographic/statistical-region codes; groupings are statistical convenience, not assertions of political affiliation.",
+        "concepts": [
+          "location.Region"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "PostalAddress",
+          "GeoPoint"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Addresses and regions are needed on every party."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

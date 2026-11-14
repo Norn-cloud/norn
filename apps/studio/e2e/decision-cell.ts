@@ -6,6 +6,11 @@ import type { Page, Route } from "@playwright/test"
  * expired → 403 → 422, pointers in `diagnostics[].span.pointer`, display names only, replay on the
  * same key and body, and runs whose steps move on as decisions land. It stands in until RUNS
  * deploys the routes; it is not client policy.
+ *
+ * Its refusal documents are hand-written: neither norn_api nor norn-cell-do's server serves
+ * `GET /v1/decisions`, `POST /v1/decisions/{id}:decide`, `GET /v1/runs/{id}` or `POST /v1/runs` yet
+ * (the cell answers each with 404 `route.not_found`), so there is no served fixture to follow (#1215).
+ * When a route lands, its refusals move to a fixture its cell test pins, as action-cell.ts does.
  */
 
 const HOUR = 3_600_000
@@ -93,6 +98,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
   let fail = false
   const calls: { id: string; body: string }[] = []
   const keys = new Map<string, { id: string; body: string; result: unknown }>()
+  // Hand-written until the decision and run routes are served (see above).
   const refuse = (route: Route, status: number, code: string, message: string, extra: Record<string, unknown> = {}, pointer: string | null = null) =>
     route.fulfill({ status, json: { code, category: "decision", message, diagnostics: [{ code, message, span: pointer === null ? null : { pointer } }], ...extra } })
   const open = () => decisions.filter((d) => d.resolved === undefined && now < d.expiresAtMs)

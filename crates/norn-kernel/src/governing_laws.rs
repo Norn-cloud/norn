@@ -125,7 +125,10 @@ impl TypeCatalog<'_> {
     }
 }
 fn supported(law: &LawIR) -> bool {
-    law.timing.is_none()
+    // An exception tree has no commit-path semantics until the per-write fold
+    // lands; refusing keeps a law from being evaluated without its exceptions.
+    law.exceptions.is_empty()
+        && law.timing.is_none()
         && law.scope.lifecycle_states.is_empty()
         && law.scope.commitments.is_empty()
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
@@ -134,7 +137,9 @@ fn supported(law: &LawIR) -> bool {
             LawResponse::Invariant { .. } => {
                 matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
             }
-            LawResponse::Action { .. } | LawResponse::Transition { .. } => false,
+            LawResponse::Action { .. }
+            | LawResponse::Transition { .. }
+            | LawResponse::TranslationPreserves { .. } => false,
         }
 }
 
@@ -330,7 +335,9 @@ pub fn evaluate(
                         Ok(())
                     }
                 }
-                LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+                LawResponse::Action { .. }
+                | LawResponse::Transition { .. }
+                | LawResponse::TranslationPreserves { .. } => {
                     return Err(LawEvaluationError::Unsupported(law.id));
                 }
             },

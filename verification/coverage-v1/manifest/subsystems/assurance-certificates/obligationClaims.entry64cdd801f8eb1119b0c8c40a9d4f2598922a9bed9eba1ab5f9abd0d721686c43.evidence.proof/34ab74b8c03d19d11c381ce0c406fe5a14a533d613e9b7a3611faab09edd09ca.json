@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/semantics-v1/Checker/Certificates/AlgebraProof.lean",
+    "command": "scripts/verify-checker-certificates-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.proof.entry34ab74b8c03d19d11c381ce0c406fe5a14a533d613e9b7a3611faab09edd09ca.selectors"
+    }
+  }
+}

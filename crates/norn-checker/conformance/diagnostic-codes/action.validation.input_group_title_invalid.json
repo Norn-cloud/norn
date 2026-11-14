@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.input_group_title_invalid",
+  "message": "An ActionIR input group title is not a display string of 1 to {max} characters",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

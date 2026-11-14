@@ -1,7 +1,11 @@
-//! Read-only fetch dispatch over `norn_api`'s shared, authorized services.
+//! Fetch dispatch over `norn_api`'s shared, authorized services: the read
+//! routes, F2b's ad-hoc questions, the retained-definition routes
+//! (`/v1/definitions:admit`, `:install`, `:list`, `/v1/definitions/{id}` and
+//! `/v1/definitions/{id}:retire`), and the one governed action route,
+//! `POST /v1/actions/{actionId}`.
 //!
-//! The transport carries method, path, query and the `Authorization` header
-//! only. Scope comes from the explicit query and is admitted against the
+//! The transport carries method, path, query, the `Authorization` header and
+//! a bounded `POST` body only. Scope comes from the explicit query and is admitted against the
 //! physical cell; the principal comes from [`PrincipalResolver`]; authority is
 //! the host's [`norn_api::authz::Authorizer`]. No SQL, schema or table name is
 //! ever accepted or returned.
@@ -9,6 +13,11 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
+use norn_api::actions::{ActionQuery, action_denied, call_action, decode_action_request};
+use norn_api::authz::Operation;
+use norn_api::definition_routes::{
+    self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
+};
 use norn_api::host::DevHost;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_query::{MAX_CURSOR_BYTES, ObjectQueryParams};
@@ -60,6 +69,124 @@ pub struct Request<'a> {
     pub body: &'a str,
 }
 
+/// Declares [`Route`], [`Route::ALL`] and [`Route::signature`] from one list,
+/// so a route cannot exist without being in `ALL`.
+macro_rules! routes {
+    ($($(#[$doc:meta])* $name:ident => ($method:literal, $path:literal),)+) => {
+        /// Every route this host serves, and nothing else: [`handle_all`]
+        /// refuses a path that [`Route::of`] does not name. The generated
+        /// `OpenAPI` document is checked against this list (`tests/server.rs`),
+        /// so a served route is either documented or named there as
+        /// undocumented, with the reason.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum Route {
+            $($(#[$doc])* $name,)+
+        }
+
+        impl Route {
+            /// Every route, once, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$name,)+];
+
+            /// The method the route accepts and its path template, as the
+            /// `OpenAPI` document writes them.
+            #[must_use]
+            pub const fn signature(self) -> (&'static str, &'static str) {
+                match self {
+                    $(Self::$name => ($method, $path),)+
+                }
+            }
+        }
+    };
+}
+
+routes! {
+    /// `GET /v1/access`, dispatched by the published host's entry point.
+    Access => ("GET", "/v1/access"),
+    /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
+    /// route (HOST-PROVISION-1).
+    Provision => ("POST", "/v1/cell:provision"),
+    /// `POST /v1/actions/{actionId}`.
+    Action => ("POST", "/v1/actions/{actionId}"),
+    /// `GET /v1/definitions`.
+    DefinitionsCatalog => ("GET", "/v1/definitions"),
+    /// `POST /v1/definitions:admit`.
+    DefinitionsAdmit => ("POST", "/v1/definitions:admit"),
+    /// `POST /v1/definitions:install`.
+    DefinitionsInstall => ("POST", "/v1/definitions:install"),
+    /// `GET /v1/definitions:list`.
+    DefinitionsList => ("GET", "/v1/definitions:list"),
+    /// `GET /v1/definitions/{id}`.
+    Definition => ("GET", "/v1/definitions/{id}"),
+    /// `POST /v1/definitions/{id}:retire`.
+    DefinitionRetire => ("POST", "/v1/definitions/{id}:retire"),
+    /// `GET /v1/objects/{type}`.
+    Objects => ("GET", "/v1/objects/{type}"),
+    /// `GET /v1/objects/{type}/{id}`.
+    Object => ("GET", "/v1/objects/{type}/{id}"),
+    /// `GET /v1/objects/{type}/{id}/links`.
+    ObjectLinks => ("GET", "/v1/objects/{type}/{id}/links"),
+    /// `GET /v1/objects/{type}/{id}/lineage`.
+    ObjectLineage => ("GET", "/v1/objects/{type}/{id}/lineage"),
+    /// `GET /v1/questions/{question}/answer`.
+    QuestionAnswer => ("GET", "/v1/questions/{question}/answer"),
+    /// `GET /v1/questions/{question}/trace`.
+    QuestionTrace => ("GET", "/v1/questions/{question}/trace"),
+    /// `POST /v1/questions:evaluate`.
+    QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
+    /// `POST /v1/questions:trace`.
+    QuestionsTrace => ("POST", "/v1/questions:trace"),
+}
+
+impl Route {
+    /// The route a request path names, if any.
+    #[must_use]
+    pub fn of(path: &str) -> Option<Self> {
+        match path {
+            "/v1/access" => return Some(Self::Access),
+            norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
+            "/v1/definitions" => return Some(Self::DefinitionsCatalog),
+            "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
+            "/v1/questions:trace" => return Some(Self::QuestionsTrace),
+            _ => {}
+        }
+        if let Some(route) = definitions_route(path) {
+            return Some(match route {
+                DefinitionsRoute::Admit => Self::DefinitionsAdmit,
+                DefinitionsRoute::Install => Self::DefinitionsInstall,
+                DefinitionsRoute::List => Self::DefinitionsList,
+                DefinitionsRoute::Retire(_) => Self::DefinitionRetire,
+                DefinitionsRoute::Get(_) => Self::Definition,
+            });
+        }
+        if let Some((_, leaf)) = question_path(path) {
+            return match leaf {
+                "answer" => Some(Self::QuestionAnswer),
+                "trace" => Some(Self::QuestionTrace),
+                _ => None,
+            };
+        }
+        if let Some((_, id, leaf)) = path.strip_prefix("/v1/objects/").and_then(object_path) {
+            return Some(match (id, leaf) {
+                (None, _) => Self::Objects,
+                (Some(_), None) => Self::Object,
+                (Some(_), Some("links")) => Self::ObjectLinks,
+                (Some(_), Some("lineage")) => Self::ObjectLineage,
+                (Some(_), Some(_)) => return None,
+            });
+        }
+        path.strip_prefix("/v1/actions/")
+            .filter(|id| !id.is_empty() && !id.contains('/'))
+            .map(|_| Self::Action)
+    }
+}
+
+/// The question name and leaf of `/v1/questions/{question}/{leaf}`.
+fn question_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix("/v1/questions/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(name, _)| !name.is_empty() && !name.contains('/'))
+}
+
 /// Dispatch one request against the opened cell.
 pub fn handle<E: SqlEngine>(
     host: &DevHost<E>,
@@ -77,83 +204,60 @@ pub fn handle_with<E: SqlEngine>(
     questions: Option<&dyn AdHocQuestions<E>>,
     request: &Request<'_>,
 ) -> Response {
-    let Request {
-        method,
-        path,
-        query,
-        authorization,
-        now,
-        body,
-    } = *request;
+    handle_all(
+        host,
+        principals,
+        questions,
+        &DefinitionKinds::default(),
+        request,
+    )
+}
+
+/// Dispatch one request; `kinds` validates the retained definitions this
+/// cell admits (dashboards always; agents once a checker is registered).
+pub fn handle_all<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
-    let actor = principals.resolve(authorization, now);
-    let actor = actor.as_deref();
-    let question = path
-        .strip_prefix("/v1/questions/")
-        .and_then(|rest| rest.split_once('/'))
-        .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
-    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
-    let object = path.strip_prefix("/v1/objects/").and_then(object_path);
-    let known = path == "/v1/definitions"
-        || ad_hoc
-        || object.is_some()
-        || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
-    let result = if !known {
-        Err(Refusal::new(
-            StatusCode::NOT_FOUND,
-            "route.not_found",
-            "no such route",
-            "the host serves only its declared read routes",
-        ))
-    } else if ad_hoc {
-        ad_hoc_question(host, questions, actor, method, path, query, body)
-    } else if method != "GET" {
-        Err(Refusal::new(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "route.method_not_allowed",
-            "the route does not accept this method",
-            "this host's read routes take GET",
-        ))
-    } else {
-        match (question, questions) {
-            (None, _) if object.is_some() => object.map_or_else(
-                || Err(norn_api::authz::read_denied()),
-                |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
-            ),
-            (None, _) => definitions_query(query)
-                .and_then(|query| get_defs(host, &query, actor))
-                .and_then(|document| document_json(&document)),
-            (Some((name, "answer")), Some(runtime)) => parse(query, &["orgId", "environmentId"])
-                .and_then(|fields| {
-                    let scope = ScopeQuery {
-                        org_id: fields.get("orgId").cloned(),
-                        environment_id: fields.get("environmentId").cloned(),
-                    };
-                    get_answer(host, &scope, actor, name, named(runtime))
-                })
-                .and_then(|document| document_json(&document)),
-            (Some((name, _)), Some(runtime)) => {
-                parse(query, &["orgId", "environmentId", "lineageRef", "bucket"])
-                    .and_then(|mut fields| {
-                        let query = TraceQuery {
-                            org_id: fields.remove("orgId"),
-                            environment_id: fields.remove("environmentId"),
-                            lineage_ref: fields.remove("lineageRef"),
-                            bucket: fields.remove("bucket"),
-                        };
-                        get_numeric_trace(host, &query, actor, name, named(runtime))
-                    })
-                    .and_then(|document| document_json(&document))
-            }
-            (Some(_), None) => Err(Refusal::new(
-                StatusCode::NOT_FOUND,
-                "question.not_found",
-                "no such admitted question",
-                "this cell admits only its declared questions",
-            )),
-        }
-    };
+    let actor = principals.resolve(request.authorization, request.now);
+    respond(route(
+        Some(host),
+        questions,
+        kinds,
+        actor.as_deref(),
+        request,
+    ))
+}
+
+/// What a caller nobody verified gets from a scope that has no cell: exactly
+/// what [`handle_all`] answers the same request on a provisioned cell that
+/// publishes no questions, so a refusal never tells a provisioned scope from
+/// an unprovisioned one. The same routing code decides both; only the cell
+/// is absent.
+#[must_use]
+pub fn outside<E: SqlEngine>(request: &Request<'_>) -> Response {
+    outside_with::<E>(None, &DefinitionKinds::default(), request)
+}
+
+/// [`outside`] for a cell that would serve with `questions` and `kinds`: a
+/// host passes exactly what its provisioned cells are served with, so every
+/// route takes the same branch as on a provisioned cell and only the cell
+/// itself is absent.
+#[must_use]
+pub fn outside_with<E: SqlEngine>(
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
+    respond(route::<E>(None, questions, kinds, None, request))
+}
+
+pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
     match result {
         Ok(body) => Response {
             status: StatusCode::OK.as_u16(),
@@ -166,10 +270,142 @@ pub fn handle_with<E: SqlEngine>(
     }
 }
 
+/// Route one request for `actor`. `host` is `None` only for a scope with no
+/// cell, and then `actor` is `None`: every service is reached through
+/// [`cell`], which answers the denial the service itself gives nobody.
+fn route<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    let Request {
+        method,
+        path,
+        query,
+        now,
+        body,
+        ..
+    } = *request;
+    let question = question_path(path);
+    let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
+    let object = path.strip_prefix("/v1/objects/").and_then(object_path);
+    let action = path
+        .strip_prefix("/v1/actions/")
+        .filter(|id| !id.is_empty() && !id.contains('/'));
+    // `Route` is the one list of what this host serves; a path it does not
+    // name is not found. `/v1/access` is dispatched by the published host's
+    // entry point, never here.
+    let route_of = Route::of(path);
+    let served = route_of.is_some_and(|route| route != Route::Access);
+    if !served {
+        Err(Refusal::new(
+            StatusCode::NOT_FOUND,
+            "route.not_found",
+            "no such route",
+            "the host serves only its declared read routes",
+        ))
+    } else if route_of == Some(Route::Provision) {
+        provisioned(host, actor, request)
+    } else if let Some(route) = definitions_route(path) {
+        definitions(host, questions, kinds, actor, route, request)
+    } else if let Some(action) = action {
+        governed_action(host, questions, actor, (method, action, query, body), now)
+    } else if ad_hoc {
+        // A runtime that publishes no questions answers no ad-hoc question
+        // either: the base's answer, whatever the body (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        ad_hoc_question(host, published, actor, method, path, query, body)
+    } else if method != "GET" {
+        Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "this host's read routes take GET",
+        ))
+    } else {
+        // A runtime that publishes no questions (a tenant's receipt handles)
+        // has no named question to answer: the base's 404, never a refusal
+        // that depends on the caller (D84).
+        let published = questions.filter(|runtime| runtime.publishes_questions());
+        match (question, published) {
+            (None, _) if object.is_some() => object.map_or_else(
+                || Err(norn_api::authz::read_denied()),
+                |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
+            ),
+            (None, _) => definitions_query(query)
+                .and_then(|query| get_defs(cell(host)?, &query, actor))
+                .and_then(|document| document_json(&document)),
+            (Some((name, "answer")), Some(runtime)) => parse(query, &["orgId", "environmentId"])
+                .and_then(|fields| {
+                    let scope = ScopeQuery {
+                        org_id: fields.get("orgId").cloned(),
+                        environment_id: fields.get("environmentId").cloned(),
+                    };
+                    get_answer(cell(host)?, &scope, actor, name, named(runtime))
+                })
+                .and_then(|document| document_json(&document)),
+            (Some((name, _)), Some(runtime)) => {
+                parse(query, &["orgId", "environmentId", "lineageRef", "bucket"])
+                    .and_then(|mut fields| {
+                        let query = TraceQuery {
+                            org_id: fields.remove("orgId"),
+                            environment_id: fields.remove("environmentId"),
+                            lineage_ref: fields.remove("lineageRef"),
+                            bucket: fields.remove("bucket"),
+                        };
+                        get_numeric_trace(cell(host)?, &query, actor, name, named(runtime))
+                    })
+                    .and_then(|document| document_json(&document))
+            }
+            (Some(_), None) => Err(Refusal::new(
+                StatusCode::NOT_FOUND,
+                "question.not_found",
+                "no such admitted question",
+                "this cell admits only its declared questions",
+            )),
+        }
+    }
+}
+
+/// The cell a read service runs on. A scope with no cell answers the one
+/// opaque read denial, as every read service answers a caller nobody
+/// verified.
+fn cell<E: SqlEngine>(host: Option<&DevHost<E>>) -> Result<&DevHost<E>, Refusal> {
+    host.ok_or_else(norn_api::authz::read_denied)
+}
+
+/// `POST /v1/cell:provision` on a cell this dispatch already serves: a
+/// tenant host provisions a vacant scope before any cell route
+/// ([`crate::tenant::Tenant`]); a cell served here exists, so a provisioner
+/// is told so, and anyone else gets the opaque denial.
+fn provisioned<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ));
+    }
+    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
+    Err(norn_api::provision::already_provisioned())
+}
+
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
 /// string and carrying the `QuestionIR` in a JSON body.
 fn ad_hoc_question<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
     method: &str,
@@ -194,6 +430,7 @@ fn ad_hoc_question<E: SqlEngine>(
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(norn_api::authz::read_denied());
     };
+    let host = cell(host)?;
     let malformed = |error: serde_json::Error| {
         Refusal::invalid(format!(
             "the request body is not a valid submission: {error}"
@@ -206,6 +443,61 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
+/// (`orgId`, `environmentId`, optional `version` pin) with the call in a JSON
+/// body. The shared service authorizes, admits and commits; the cell's
+/// question runtime is its receipt-disclosure authority (D53), so a cell
+/// without one serves no action.
+fn governed_action<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    actor: Option<&str>,
+    (method, action, query, body): (&str, &str, &str, &str),
+    now: u64,
+) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "an action is called with POST",
+        ));
+    }
+    let mut fields = parse(query, &["orgId", "environmentId", "version"])?;
+    let version = fields
+        .remove("version")
+        .map(|version| {
+            version
+                .parse::<u64>()
+                .map_err(|error| Refusal::invalid(format!("version: {error}")))
+        })
+        .transpose()?;
+    let query = ActionQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        version,
+    };
+    // No runtime, no actor: one denial, before the body is read.
+    let (Some(runtime), Some(_)) = (questions, actor) else {
+        return Err(action_denied());
+    };
+    let host = host.ok_or_else(action_denied)?;
+    let action = percent_encoding::percent_decode_str(action)
+        .decode_utf8()
+        .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
+    let request = decode_action_request(body)?;
+    let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
+    document_json(&call_action(
+        host,
+        &query,
+        actor,
+        &action,
+        &request,
+        named(runtime),
+        now,
+    )?)
 }
 
 /// The segments of an object route after `/v1/objects/`: a type, an optional
@@ -228,7 +520,7 @@ fn object_path(rest: &str) -> Option<(&str, Option<&str>, Option<&str>)> {
 /// `GET /v1/objects/{type}/{id}` and its `/links` and `/lineage`, scoped by
 /// the query string.
 fn objects<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     actor: Option<&str>,
     (object_type, id, leaf): (&str, Option<&str>, Option<&str>),
     query: &str,
@@ -265,12 +557,13 @@ fn objects<E: SqlEngine>(
             limit: fields.remove("limit"),
             after: fields.remove("after"),
         };
+        let id = decoded(id)?;
         return document_json(&get_object_links(
-            host,
+            cell(host)?,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &params,
             &CellObjectAccess,
         )?);
@@ -281,12 +574,13 @@ fn objects<E: SqlEngine>(
             org_id: fields.get("orgId").cloned(),
             environment_id: fields.get("environmentId").cloned(),
         };
+        let id = decoded(id)?;
         return document_json(&get_object_lineage(
-            host,
+            cell(host)?,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &CellObjectAccess,
         )?);
     }
@@ -296,12 +590,13 @@ fn objects<E: SqlEngine>(
             org_id: fields.get("orgId").cloned(),
             environment_id: fields.get("environmentId").cloned(),
         };
+        let id = decoded(id)?;
         let record = get_queried_object(
-            host,
+            cell(host)?,
             &scope,
             actor,
             &object_type,
-            &decoded(id)?,
+            &id,
             &CellObjectAccess,
         )?;
         return document_json(&record);
@@ -328,7 +623,7 @@ fn objects<E: SqlEngine>(
         after: fields.remove("after"),
     };
     document_json(&get_object_query(
-        host,
+        cell(host)?,
         &scope,
         actor,
         &object_type,
@@ -337,12 +632,159 @@ fn objects<E: SqlEngine>(
     )?)
 }
 
+/// A retained-definition route; `GET /v1/definitions` (the catalog) is not one.
+#[derive(Debug, Clone, Copy)]
+enum DefinitionsRoute<'p> {
+    Admit,
+    Install,
+    List,
+    Retire(&'p str),
+    Get(&'p str),
+}
+
+fn definitions_route(path: &str) -> Option<DefinitionsRoute<'_>> {
+    match path {
+        "/v1/definitions:admit" => Some(DefinitionsRoute::Admit),
+        "/v1/definitions:install" => Some(DefinitionsRoute::Install),
+        "/v1/definitions:list" => Some(DefinitionsRoute::List),
+        _ => {
+            let rest = path.strip_prefix("/v1/definitions/")?;
+            if rest.is_empty() || rest.contains('/') {
+                return None;
+            }
+            Some(
+                rest.strip_suffix(":retire")
+                    .map_or(DefinitionsRoute::Get(rest), DefinitionsRoute::Retire),
+            )
+        }
+    }
+}
+
+/// The retained-definition routes: each is authorized, with its explicit
+/// scope, before its body or other query values are interpreted.
+fn definitions<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    actor: Option<&str>,
+    route: DefinitionsRoute<'_>,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    let write = !matches!(route, DefinitionsRoute::List | DefinitionsRoute::Get(_));
+    let expected = if write { "POST" } else { "GET" };
+    if request.method != expected {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            format!("this definitions route takes {expected}"),
+        ));
+    }
+    let allowed: &[&'static str] = match route {
+        DefinitionsRoute::List => &[
+            "orgId",
+            "environmentId",
+            "kind",
+            "include",
+            "limit",
+            "cursor",
+            "uses",
+        ],
+        DefinitionsRoute::Get(_) => &["orgId", "environmentId", "version"],
+        DefinitionsRoute::Admit | DefinitionsRoute::Install | DefinitionsRoute::Retire(_) => {
+            &["orgId", "environmentId"]
+        }
+    };
+    let mut fields = parse(request.query, allowed)?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let operation = if write {
+        Operation::WriteDefinitions
+    } else {
+        Operation::ReadDefinitions
+    };
+    let host = cell(host)?;
+    definition_routes::authorize(host, &scope, actor, operation)?;
+    let now_ms = request.now.saturating_mul(1000);
+    let number = |name: &str, value: Option<String>| {
+        value
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|error| Refusal::invalid(format!("{name}: {error}")))
+            })
+            .transpose()
+    };
+    match route {
+        DefinitionsRoute::Admit => document_json(&definition_routes::admit_definition(
+            host,
+            &scope,
+            actor,
+            kinds,
+            questions,
+            &submission(request.body)?,
+        )?),
+        DefinitionsRoute::Install => document_json(&definition_routes::install_definition(
+            host,
+            &scope,
+            actor,
+            kinds,
+            questions,
+            &submission(request.body)?,
+            now_ms,
+        )?),
+        DefinitionsRoute::Retire(id) => document_json(&definition_routes::retire_definition(
+            host,
+            &scope,
+            actor,
+            questions,
+            id,
+            &submission(request.body)?,
+            now_ms,
+        )?),
+        DefinitionsRoute::List => {
+            let limit = number("limit", fields.remove("limit"))?
+                .map(|limit| u32::try_from(limit).unwrap_or(u32::MAX));
+            let query = ListDefinitionsQuery {
+                org_id: scope.org_id,
+                environment_id: scope.environment_id,
+                kind: fields.remove("kind"),
+                include: fields.remove("include"),
+                limit,
+                cursor: fields.remove("cursor"),
+                uses: fields.remove("uses"),
+            };
+            document_json(&definition_routes::list_definitions(host, &query, actor)?)
+        }
+        DefinitionsRoute::Get(id) => {
+            let query = GetDefinitionQuery {
+                org_id: scope.org_id,
+                environment_id: scope.environment_id,
+                version: number("version", fields.remove("version"))?,
+            };
+            document_json(&definition_routes::get_definition(
+                host, &query, actor, kinds, questions, id,
+            )?)
+        }
+    }
+}
+
+fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> {
+    serde_json::from_str(body).map_err(|error| {
+        Refusal::invalid(format!(
+            "the request body is not a valid submission: {error}"
+        ))
+    })
+}
+
 /// The named-question view of the cell's question runtime.
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
 }
 
-fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
+pub(crate) fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
     serde_json::to_string(document).map_err(Refusal::host)
 }
 
@@ -365,7 +807,10 @@ fn definitions_query(query: &str) -> Result<DefinitionsQuery, Refusal> {
 }
 
 /// A bounded query string with only `allowed` keys, each at most once.
-fn parse(query: &str, allowed: &[&'static str]) -> Result<BTreeMap<&'static str, String>, Refusal> {
+pub(crate) fn parse(
+    query: &str,
+    allowed: &[&'static str],
+) -> Result<BTreeMap<&'static str, String>, Refusal> {
     parse_within(query, allowed, MAX_QUERY_BYTES)
 }
 
@@ -438,20 +883,33 @@ pub fn access<E: SqlEngine>(
     object_types: &[String],
     request: &Request<'_>,
 ) -> Response {
-    match access_document(host, principals, caller, object_types, request) {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
-            body,
-        },
-        Err(refused) => Response {
-            status: refused.status,
-            body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
-        },
-    }
+    respond(access_document(
+        Some(host),
+        principals,
+        caller,
+        object_types,
+        request,
+    ))
+}
+
+/// `GET /v1/access` on a scope that has no cell, for a caller nobody
+/// verified: what [`access`] answers it on a provisioned cell.
+#[must_use]
+pub fn access_outside<E: SqlEngine>(
+    principals: &dyn PrincipalResolver,
+    request: &Request<'_>,
+) -> Response {
+    respond(access_document::<E>(
+        None,
+        principals,
+        &CallerSlot::default(),
+        &[],
+        request,
+    ))
 }
 
 fn access_document<E: SqlEngine>(
-    host: &DevHost<E>,
+    host: Option<&DevHost<E>>,
     principals: &dyn PrincipalResolver,
     caller: &CallerSlot,
     object_types: &[String],
@@ -470,6 +928,7 @@ fn access_document<E: SqlEngine>(
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     };
+    let host = cell(host)?;
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let subject = principals.resolve(request.authorization, request.now);

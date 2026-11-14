@@ -230,6 +230,7 @@ unit establishes structural evidence only: mapping preservation requires the
 exchange admission bridge and its separately qualified source/mapping lowering.
 No successful declaration is a preservation proof. The existing exchange search
 is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
+Only a checked chase certificate (PATH-MAP-1) is a proof.
 
 Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
 
@@ -237,18 +238,51 @@ PATH-MAP-1: a `PathMapping` `F: target -> source` names a source concept per
 target concept and a functional source path per mapped target link; data moves
 by pullback. `admit_path_mapping` lowers both catalogs' PATH-EQ-1 equations,
 functional EGDs for every reachable to-one link, source totality TGDs for
-required links, and one TGD per object and link image into an `Exchange`, then
-runs the existing schema-compatibility search. Ill-typed images and overlapping
+required links, and one TGD per object and link image into an `Exchange`. It
+first looks for a chase certificate for every target dependency and accepts it
+only through the proved check (#718 U7); otherwise it runs the existing
+schema-compatibility search. A certified return validates the exchange but
+skips the search's compatibility chase, so its facts budget does not apply to
+it. Both are charged to one admission work
+allowance, and exhausting it refuses (`consistency.chase.refused`). Ill-typed images and overlapping
 catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
 refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
 substitutes images and refuses components with two images of one link.
-Admission is bounded-no-counterexample, never exhaustive. A witness is
+An admitted mapping reports `consistency.path_mapping.preserved` with its
+evidence class: `certified` (every target dependency is proved preserved on
+every source instance satisfying the source theory, given the lowering),
+`bounded-no-counterexample` (search only, never exhaustive) or
+`no target dependencies`. A witness is
 attributed to the first EGD its mapped image breaks, so equations sharing a
 witness are named once; the mapping still refuses. Target totality and
 source endpoint typing are not lowered: the first leaves existence unchecked,
 the second can only add spurious witnesses. Named scenarios reproduce #574:
 swapped roles, dropped join, non-functional image and bad composite refuse;
 identity, equivalent path and identity composites admit.
+
+### Translation preservation (TRANSLATION-PRESERVES-1, #565)
+
+A law with response `translation_preserves` states that a translation between
+two declared object types keeps one named observation:
+
+`Valid_S(x) and Admit(x) => Valid_T(f(x)) and O_T(f(x)) = O_S(x)`
+
+The law's subject is the source contract S and `targetType` is the target
+contract T. The law's condition is `Admit`. `assignments` is the executable map
+`f`: one ZEN expression over the source for every stored target property.
+`observation` names `O` and gives its source and target expressions. `Valid`
+means the type's integrity invariants. Quality invariants don't refuse writes,
+so they are never premises.
+
+Admission requires an untimed `always` law, a resolved target, a map over exactly
+the target's stored properties, and compiling expressions. The challenge adds one
+`translation_preserves` goal per law, Unknown until a backend lowers it.
+
+Status is `proved_under_assumptions` only with `unsat` plus a non-vacuity
+witness. It is `refuted` with a counterexample model, `bounded` for a finite
+profile, and otherwise `unsupported`, which stays Unknown. A proof carries its
+modelling assumptions: values are exact and unbounded, and text has no structure.
+The law isn't enforced at commit: the kernel refuses it as unsupported.
 
 ### Declared-only normative resolution (D1, #767)
 
@@ -278,6 +312,94 @@ Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
 transitive edges resolve; removing an edge refuses; cross-layer wins and protected
 defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
 three-rule groundings and generated catalog permutations preserve exact survivors.
+
+## Explain (#517)
+
+The subject of `norn explain` is an action, a law or a concept. Explaining a
+diagnostic code (`norn explain <code>`: its message, guidance and
+documentation anchor from the registry, localized through the message
+catalogs) is a separate unit and is not specified here.
+
+**EXPLAIN-CLOSURE-1:** `norn explain <action|law|concept> <id> --defs <path>`
+projects the existing admitted catalog and conservative whole-set writer closure.
+Every declaration retains its version and semantic digest. Direct writes and
+bounded read slices remain separate from the conservative writer inventory.
+In a project, `norn explain <action|law|concept> <id>` compiles the
+project's sources and calls the same checker entry point, with the input of
+`norn check`'s final pass (candidates; the installed base and the bound flow
+source map in the context), and refuses whatever that pass refuses. An explanation is neither a permission grant nor proof. It writes
+nothing and reads no cell; the project command does evaluate the project's
+modules to compile them, as `norn dev` does. Server consumers must
+supply a complete definition set already authorized for disclosure.
+
+**EXPLAIN-SUBJECT-1:** a subject that is not exactly one declaration of the
+set (a mistyped or ambiguous name) refuses with
+`explain.selector.unknown_subject`, never with a code about laws or bindings.
+
+**EXPLAIN-JSON-1:** `norn explain --json` always prints exactly one
+`norn/explain@2` response. Every entry of its `diagnostics` is
+`norn/diagnostic@2` with a registered code, whatever refused: a checker
+refusal is the checker's own findings (the ones `norn check` reports for
+those sources); a source that does not compile is
+`cli.compile.source_refused`, one per compiler finding; bad usage is
+`cli.explain.usage`; input the checker's entry point refuses to read (a
+wording requirement of the wrong shape, input over its size limit) is
+`cli.explain.input_refused`; a missing project or checker is its `cli.*`
+setup code; anything else that goes wrong is `cli.explain.failed`. The
+command has one boundary that turns whatever is thrown into such a response,
+so the rule does not depend on listing the paths. Project findings add
+`source` (file, line, column); a compile finding also adds `compiler`, the
+authoring compiler's own code and its start and end positions. Both are
+optional members beside the published ones. No unregistered code is printed
+as a `code`.
+
+**EXPLAIN-ORIGIN-1:** canonical inheritance paths terminate at the authored
+subject; containment paths retain each pinned containing pack. Authored source
+paths remain attached to laws. Mapping writers without checked interpretation
+preservation remain explicit unknown obligations, never inferred law origins.
+
+**EXPLAIN-UNKNOWN-1:** the production induction generator supplies the displayed
+obligations. Every unknown identifies its writer or footprint and required
+checked evidence. Runtime invariant enforcement is displayed separately from
+proof status. Source-only explanations have unknown proof status and infer no
+solver assumptions.
+
+**EXPLAIN-WORDING-1:** optional `--wording <path> --locale <BCP47>` binds reviewed
+structured wording to the complete law and a wording digest. Locale-map lookup
+refuses unavailable locales; there is no language fallback or EN/AR-only enum
+in the command interface. Without wording input, the report omits rendered
+wording and retains all other explanation fields.
+
+**DIAG-ADVICE-1:** every registered code supplies exactly one nonblank `fix` or
+`no_fix` reason. The build joins the code records with `conformance/diagnostic-guidance.json` into the existing registry. Registration rejects missing, conflicting, duplicate, orphaned and blank guidance.
+Guidance that is wrong is worse than none, so: a sentence shared by codes of
+more than one family is one of a listed few and sits only on codes whose name
+it fits; an integrity mismatch (a hash, a certificate, a receipt, evidence) is
+never repaired by editing the recorded value, and its guidance says to
+regenerate from the source or to obtain the unaltered input again; a code
+with no accurate guidance yet carries one exact marker sentence as its
+`no_fix`, which no reviewed guidance may resemble. A variable or command the
+guidance names exists in the source.
+**DIAG-PROJECTION-2:** diagnostic advice is emitted by the new projection only;
+historical diagnostics and receipt hashes retain their original serialization.
+`norn/diagnostic@2` adds `format`, `phase`, `retryable`, `fix` and `no_fix` to
+the existing members. `phase` is the registry tier that produced the finding
+(the same value as `tier`, named for what a reader asks: which phase refused).
+`retryable` says whether repeating the same request can succeed; it is `false`
+for every definition finding, and is there for runtime refusals to set. The
+code manifest stays `norn-checker/diagnostic-codes@1`: `fix`/`no_fix` are
+optional members added to an open object.
+
+Named scenarios: incomplete law names uncovered writer; inherited concept
+reaches authored law; containing packs retain pins; runtime enforcement remains
+separate from proof; Arabic and data-only French render through the locale map;
+missing locale refuses; reordering inputs preserves the explanation; an unknown
+subject has its own code and exactly that code's guidance; every law holds only
+its own obligations; a refused project explanation is v2 with registered codes
+on every path; historical
+receipt verification remains unchanged; oversized writer identities refuse
+before goal generation through the existing goal-byte preflight.
+
 ## Generated bounded creation profile (#565)
 
 **PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering

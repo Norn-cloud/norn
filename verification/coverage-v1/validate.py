@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import shlex
@@ -17,11 +18,35 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
-from proof_enrollment import validate as validate_enrollment  # noqa: E402
-import coverage_manifest  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+_verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
+selector_is_declared = _verification_attestation.selector_is_declared
+_proof_enrollment = _sibling("proof_enrollment", ROOT / "scripts")
+validate_enrollment = _proof_enrollment.validate
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
 
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
@@ -99,6 +124,39 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+SCCACHE_START = """set -uo pipefail
+# Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+# cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+gha=false
+[ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+export SCCACHE_GHA_ENABLED=$gha
+echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+# A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+# sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
+# cannot restart), compile again with plain rustc. A compiler failure keeps its exit
+# status and diagnostics, also after a `sccache: warning:` (a local compile).
+wrapper="$RUNNER_TEMP/sccache-rustc"
+cat > "$wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+log=$(mktemp) || exec "$@"
+sccache "$@" 2> "$log"
+status=$?
+if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
+  echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
+  rm -f "$log"
+  exec "$@"
+fi
+cat "$log" >&2
+rm -f "$log"
+exit "$status"
+WRAPPER
+chmod +x "$wrapper"
+if sccache --start-server; then
+  echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
+else
+  echo "::warning::sccache server unavailable; compiling with plain rustc"
+fi
+"""
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -428,7 +486,91 @@ def validate_expression_lengths(sources: dict[str, str]) -> None:
                             f"{length}-character expression, over the {EXPRESSION_CAP} cap (GitHub rejects 21,000)")
 
 
-def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW) -> None:
+# A pull_request workflow cancels its own superseded PR runs and nothing else. Mirrors the
+# skeleton guard's rule (crates/norn-skeleton-guard/src/ci/mod.rs, `concurrency_error`):
+# the group starts with one arm per workflow and pull request, every other event gets a
+# group of its own run, and only the main-push supersede (push limited to main) may add
+# another cancelled event.
+PR_CONCURRENCY_GROUP = ("${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+                        "format('pr-{0}', github.event.pull_request.number) || ")
+PR_CONCURRENCY = (
+    ("format('run-{0}', github.run_id) }}", "${{ github.event_name == 'pull_request' }}", False),
+    ("github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+     "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}", True),
+)
+
+
+# Every case the pull_request concurrency parity fixture
+# (fixtures/pull-request-concurrency.json) must keep: its verdict and the sha256 of its input
+# (`concurrency_case_digest`: `on`, `concurrency` and `source`). The fixture is a gate file, so
+# any edit to it needs `/approve-gates`; this list also stops an approved edit losing a case,
+# flipping a verdict or changing what a case tests without this list changing too. negative_canaries.py and the Rust parity tests in
+# crates/norn-skeleton-guard/src/ci/mod.rs (inside the gated guard-crate directory) both read this block, one
+# `"name": ["verdict", "sha256"],` per line; core.sh's cheap phase requires those two Rust
+# tests to have run and passed.
+PULL_REQUEST_CONCURRENCY_CASES = {
+    "codeql.yml as checked in": ["accept", "b9ff70930617fc3d64a9fc05eda0c13bfe8ce57c530923148c6de6654f5d2d27"],
+    "ci-policy.yml as checked in": ["accept", "9f544a43f09451c0ab8052bd1b952241c3566dd7119020574d71b09903b5f3d7"],
+    "folded multi-line group": ["accept", "60e1b9381e3b3cf8a50068f08697d21476530c5e1d0e1f52a5b53245b361dbb3"],
+    "out of scope: pull_request_target without concurrency": ["accept", "3782cd52452ef89a759540b54f49d82f2d0799fed2d7862111c7fdad8e139509"],
+    "out of scope: pull_request_target with an unconditional cancel": ["accept", "37cde653d1840effad301cb48d5c28de88e1a8a44f944de2ae6596e152c2eaed"],
+    "out of scope: push and workflow_run list": ["accept", "96da782a84912fedbdeba7b97a2a10ea8c27bd3f6439d5426d24099cddcac439"],
+    "out of scope: workflow_run mapping": ["accept", "6ab032d5a92d7b6e910ba6c848ddfc37ce73f763f3d8047fee3c7f54d577e43f"],
+    "pull_request string without concurrency": ["reject", "2351a6441a6a6e2e7881690887a9d0d70b1e93a9528e9462213b2b1706b04fe3"],
+    "pull_request in a list without concurrency": ["reject", "ef8c2661e74787e56dbf71c5b806a9f1612bc3084d866dbd57cabd7be10ec152"],
+    "pull_request mapping without concurrency": ["reject", "9b8ccd4b59ed81ee820e9280e7dbd50c6fa360fa9706de072c904c4b1084ac4e"],
+    "codeql: no concurrency": ["reject", "93e0f9974b23e309bccf14fb89b2acf360f7c0c85e53c039afeb2e27865c33db"],
+    "codeql: group-only concurrency string": ["reject", "f8b2e7bb77b920c243fd2ae622c41ca833e072922ad5848f66e4ba59441a9a51"],
+    "codeql: PR number replaced by the ref": ["reject", "251a43522ee79f8913e71ecf2a732d00a8c07a29b8077c6c99af2c2f38fe5271"],
+    "codeql: PR number dropped": ["reject", "4a9e2fb3a3d430da8796bf88ea956d9c4c4be075c62ee72d520e74f569957830"],
+    "codeql: one shared group": ["reject", "d8f7fa17d22343ea14d311fbc8bbd5badb8454174b4313deff59d7bd53d94a30"],
+    "codeql: no workflow prefix": ["reject", "2b6866668278f1403fefa4ef41ce2dfa713865a00c948de75d03f25c6799051b"],
+    "codeql: other events share a group": ["reject", "f77a9d3f72ce40b619538e717b2232dad3d52328b81e35b7c9e9fc5c8937ff99"],
+    "codeql: unconditional cancel": ["reject", "23b9ab9740c3cc1d2ca58e7644668f3da3af9a0bca6b8cf40367c2451591dec1"],
+    "codeql: main pushes cancelled without the main-push group": ["reject", "bff87c15cc8f04c49a6df5d2d106e1f1db027525877d422674cc54c708551da9"],
+    "codeql: no cancel-in-progress": ["reject", "13e1935e93997bfdf930b4182128e4260d62d1aa92d3d379eed9e38b2ea48893"],
+    "codeql: cancel disabled": ["reject", "88132c4cc01407fbbf0e055dba162cae0807934c7079345646e8aec39c0cca0c"],
+    "codeql: extra concurrency key": ["reject", "415cba09d48065a6fe2f4065b03a8b80d7046b5cdf9b827dfc5080d2d64152f3"],
+    "ci-policy: every push branch superseded": ["reject", "6585afdb837a4199a357382b366e85daea39af036d20529a2f1a832150e8b3ba"],
+    "ci-policy: release pushes superseded": ["reject", "c1c936aa6d22f10bdc0a48731d63e25ea8eb225916e4a506adfd4e0ea3ccb1af"],
+    "ci-policy: main-push cancel without its own group": ["reject", "62207b22e6b3ccf5f8605895f215d3adaf64e86d72c24ac87661f30289c87747"],
+    "ci-policy: main-push group with a PR-only cancel": ["reject", "d50e2e2da1fbb56b17983035b0e361bad66c0aa9ed6baf43186b4013c6fd1645"],
+    "ci-policy: merge groups cancelled": ["reject", "36279f89d2c2b2f3865ff351652ea483f63a3dd7323c1f456a866abb159c77a4"],
+}
+
+
+def concurrency_case_digest(case: dict) -> str:
+    """sha256 of a parity case's input: compact JSON of `[on, concurrency, source]` (null when absent)."""
+    return hashlib.sha256(json.dumps([case.get("on"), case.get("concurrency"), case.get("source")],
+                                     separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
+    for path, text in sources.items():
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        trigger = workflow.get("on", workflow.get(True))
+        if not (trigger == "pull_request" or (isinstance(trigger, (list, dict)) and "pull_request" in trigger)):
+            continue
+        concurrency = workflow.get("concurrency")
+        require(isinstance(concurrency, dict) and set(concurrency) <= {"group", "cancel-in-progress"},
+                f"{path}: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs")
+
+        def squash(value: object) -> str | None:
+            return " ".join(value.split()) if isinstance(value, str) else None
+        shapes = [shape for shape in PR_CONCURRENCY
+                  if squash(concurrency.get("group")) == PR_CONCURRENCY_GROUP + shape[0]]
+        require(len(shapes) == 1,
+                f"{path}: concurrency group must be per workflow and pull request "
+                "(github.event.pull_request.number) and give every other event its own run group")
+        _, cancel, main_push = shapes[0]
+        require(squash(concurrency.get("cancel-in-progress")) == cancel,
+                f"{path}: cancel-in-progress must be `{cancel}`: superseded pull_request runs are cancelled and no other event is")
+        require(not main_push or (isinstance(trigger, dict) and trigger.get("push") == {"branches": ["main"]}),
+                f"{path}: superseding main pushes needs the push trigger limited to branches [main]")
+
+
+def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW,
+                                workflows: Path = ROOT / ".github/workflows") -> None:
     source = formal_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
     for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
@@ -438,6 +580,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    validate_pull_request_concurrency({**{f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
+                                          for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])},
+                                       ".github/workflows/ci-policy.yml": source})
     validate_expression_lengths({formal_path.name: source,
                                  "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
@@ -494,10 +639,10 @@ await github.rest.repos.createCommitStatus({
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+    cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
@@ -527,8 +672,11 @@ echo "$plan"''',
         {"uses": "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
          "with": {"toolchain": "1.98.0", "components": "rustfmt, clippy", "targets": "wasm32-unknown-unknown"}},
         {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
+        # No post-job stats: their failure would fail a build that succeeded without sccache.
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
-         "with": {"version": "v0.19.0"}},
+         "with": {"version": "v0.19.0", "disable_annotations": True}},
+        # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        {"name": "Start sccache or compile without it", "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
@@ -540,6 +688,27 @@ echo "$plan"''',
          "with": {"path": "~/.cache/norn-interop",
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
+    # Same-repository pull requests that fell back to hosted runners say so on their checks;
+    # forks run hosted by design and stay quiet.
+    hosted_warning = {
+        "name": "Warn that pull request CI fell back to hosted runners",
+        "if": "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}",
+        "run": """echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+"""}
+    # Boat's base image has only libclang-18.so.18; clang-sys needs the unversioned libclang.so.
+    libclang = {"name": "Make libclang loadable on Boat runners",
+                "if": "${{ runner.environment == 'self-hosted' }}",
+                "run": """set -euo pipefail
+libclang_dev_version='1:18.1.3-1ubuntu1'
+library=/usr/lib/llvm-18/lib/libclang.so
+if [ -e "$library" ]; then
+  echo "$library is already present"
+elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+  echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+  sudo ln -sfn libclang-18.so.18 "$library"
+fi
+ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
+"""}
     cleanup = {"name": "Reclaim runner disk space",
                "if": "${{ runner.environment == 'github-hosted' }}",
                "run": """set -euo pipefail
@@ -552,8 +721,21 @@ fi
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
 """}
+    # Disposable Boat VMs drop only image content no Norn job uses, then fail fast
+    # unless the bundle has room to build (b1 needs ~50 GiB at peak).
+    boat_cleanup = {"name": "Reclaim Boat runner disk space",
+                    "if": "${{ runner.environment == 'self-hosted' }}",
+                    "run": """set -euo pipefail
+minimum=$((40 * 1024 * 1024))
+available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+df -h /
+docker system prune --all --force
+rustup toolchain uninstall stable nightly-2025-03-01
+df -h /
+[ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
+"""}
     nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
-               "with": {"tool": "nextest@0.9.150"}}
+               "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
@@ -576,6 +758,9 @@ df -h /
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
             preparation.insert(0, reclaim)
+            preparation.insert(1, copy.deepcopy(boat_cleanup))
+            after_checkout = preparation.index(checkout) + 1
+            preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -585,7 +770,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
+        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 6, "test": 5}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -654,17 +839,37 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
+    # Bundles may drop only Cargo build outputs, between tasks and when disk is low;
+    # target/verification-* evidence and tools and any other target content stay.
+    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
+    contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
+    require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
+            "bundle may prune only Cargo build outputs, between tasks and when disk is low")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
-    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      cargo install --locked wasm-bindgen-cli --version 0.2.129\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
+    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
     require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
-            "browser phase must run the Studio Playwright rows and refuse missing or empty tests")
+            "browser phase must run the Studio Playwright rows and the checker-admission test, and refuse missing or empty tests")
+    # The Rust parity tests (crates/norn-skeleton-guard/src/ci/mod.rs) must have run and passed in
+    # the cheap phase, which every plan runs: nextest's JUnit report, not their source text.
+    require_passed = '# Fails unless each named test of binary $2 ran and passed in nextest\'s JUnit report $1:\n# absent (renamed, deleted, ignored, cfg\'d out), skipped, failed or an unreadable report fails.\nrequire_passed() {\n  python3 - "$@" << \'PY\'\nimport sys\nimport xml.etree.ElementTree as ET\nreport, binary, *names = sys.argv[1:]\ncases = {case.get("name"): case for suite in ET.parse(report).getroot().iter("testsuite")\n         if suite.get("name") == binary for case in suite.iter("testcase")}\nbad = [name for name in names if name not in cases or any(\n    child.tag in ("failure", "error", "skipped", "flakyFailure", "rerunFailure") for child in cases[name])]\nif not names or bad:\n    sys.exit(f"{report}: {binary} tests did not run and pass: {bad or \'none named\'}")\nPY\n}\n'
+    rust_parity = '      cargo xtask ci provenance\n      # The Rust half of the concurrency parity check runs on every plan, whatever packages the\n      # plan selects, and its two named tests must have run and passed.\n      ensure_nextest\n      # nextest keeps its reports under the workspace root\'s target/nextest, whatever\n      # CARGO_TARGET_DIR says, and the guard\'s workspace root is its own directory (D95).\n      parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c \'import json, sys; print(json.load(sys.stdin)["workspace_root"])\')/target/nextest/ci/junit.xml"\n      rm -f "$parity_report"\n      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E \'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)\'\n      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture\n      ;;\n    test)'
+    require(runner.count(require_passed) == 1 and runner.count(rust_parity) == 1,
+            "cheap phase must require the two Rust concurrency parity tests to have run and passed")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
     require('"${nextest[@]}" run --no-fail-fast "${selection[@]}"' in runner and "--ignore-default-filter" in runner,
             "full workspace tests must run")
     require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
     require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
+    # The guard is its own workspace (D95): no test shard or workspace command reaches it, so
+    # its suite, clippy, docs and doctests run by name in phases every plan selects or full runs.
+    require("guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)\n" in runner
+            and '"${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"\n' in runner
+            and 'cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings\n' in runner
+            and 'cargo test --locked "${guard[@]}" --doc\n' in runner
+            and 'RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps\n' in runner,
+            "the guard workspace's suite, clippy, doctests and docs must run")
 
 
 def validate_timeout_budgets(

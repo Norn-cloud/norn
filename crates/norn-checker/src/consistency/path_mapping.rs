@@ -1,8 +1,14 @@
 //! PATH-MAP-1: preservation admission for declared path mappings (#712).
 //!
 //! A [`PathMapping`] `F: target -> source` lowers, with both catalogs' path
-//! equations, to an [`Exchange`]; preservation is the existing bounded
-//! schema-compatibility search. No rule is hand-authored by the caller.
+//! equations, to an [`Exchange`]. Preservation is first attempted by chase
+//! certificates (`preservation.rs`, #718 U7): the production check is proved
+//! (`Checker/Preservation/Proof.lean`, `check_sound`) to accept only
+//! certificates that imply preservation on every source instance.
+//! Otherwise it is the existing bounded schema-compatibility search, whose
+//! clean result is only bounded evidence. The exchange is validated and the
+//! certificate search is charged to the admission's work before either
+//! answer. No rule is hand-authored by the caller.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,8 +26,33 @@ use crate::{Diagnostic, DiagnosticSeverity};
 /// Refusal code for malformed mappings and compositions.
 pub const PATH_MAPPING_INVALID: &str = "consistency.path_mapping.invalid";
 
-/// What an admitted mapping establishes: no counterexample to any lowered
-/// target dependency within the exchange search bound. Never exhaustive.
+/// The kind of evidence behind an admitted mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PreservationClass {
+    /// Every lowered target dependency has a chase certificate the proved
+    /// check accepted, so it holds on every source instance satisfying the
+    /// source theory.
+    Certified,
+    /// The exchange search found no counterexample within its bound.
+    BoundedNoCounterexample,
+    /// The target declares no dependency, so there is nothing to preserve.
+    NoTargetDependencies,
+}
+
+impl PreservationClass {
+    /// The class as it appears at the start of the evidence message.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Certified => "certified",
+            Self::BoundedNoCounterexample => "bounded-no-counterexample",
+            Self::NoTargetDependencies => "no target dependencies",
+        }
+    }
+}
+
+/// What an admitted mapping establishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PreservationEvidence {
@@ -29,6 +60,8 @@ pub struct PreservationEvidence {
     pub obligations: usize,
     /// Dependencies in the lowered exchange.
     pub dependencies: usize,
+    /// Whether the obligations are certified or only searched.
+    pub evidence: PreservationClass,
 }
 
 fn var(name: &str) -> Term {
@@ -281,20 +314,44 @@ pub(crate) fn admit_with_work(
             }
         }
     }
+    let dependencies = [&source_theory, &lowered, &target_theory]
+        .iter()
+        .map(|theory| theory.dependencies.len())
+        .sum();
     let exchange = Exchange {
         source_schema: &schema,
         source: &source_theory,
         mapping: &lowered,
         target: &target_theory,
     };
+    let obligations = target_theory.dependencies.len();
+    if obligations > 0 {
+        // Validate before certifying, so a malformed exchange refuses as it
+        // does under the search. A certified mapping preserves every target
+        // dependency on every source instance, so the search is skipped.
+        exchange
+            .validate()
+            .map_err(|error| vec![super::refusal(&lowered, &error)])?;
+        if super::preservation::certified(&source_theory, &lowered, &target_theory, work)
+            .map_err(|error| vec![super::refusal(&lowered, &error)])?
+        {
+            return Ok(PreservationEvidence {
+                obligations,
+                dependencies,
+                evidence: PreservationClass::Certified,
+            });
+        }
+    }
     let findings = check_schema_compatibility_with_work(&exchange, budget, work);
     if findings.is_empty() {
         Ok(PreservationEvidence {
-            obligations: target_theory.dependencies.len(),
-            dependencies: [&source_theory, &lowered, &target_theory]
-                .iter()
-                .map(|theory| theory.dependencies.len())
-                .sum(),
+            obligations,
+            dependencies,
+            evidence: if obligations == 0 {
+                PreservationClass::NoTargetDependencies
+            } else {
+                PreservationClass::BoundedNoCounterexample
+            },
         })
     } else {
         Err(findings)
@@ -374,4 +431,159 @@ pub fn compose_path_mappings(
         });
     }
     Ok(PathMapping { id, objects, links })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "fixture construction")]
+
+    use super::{AdmissionWork, ChaseBudget, PathMapping, PreservationClass, admit_with_work};
+    use crate::consistency::codes;
+    use norn_ir::ArtifactEnvelope;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+
+    /// `D` with two required functional links to `P`, equated by a path
+    /// equation in both catalogs, so the identity mapping is certifiable.
+    fn catalog(ns: &str) -> Vec<ArtifactEnvelope> {
+        let link = |id: &str| {
+            json!({"id": id, "target": format!("{ns}.P"),
+                "cardinality": {"to": "one", "from": "many", "required": true}})
+        };
+        [("D", json!([link("a"), link("b")])), ("P", json!([]))]
+            .into_iter()
+            .map(|(name, links)| {
+                let mut payload = json!({"entityVersion": "2.0",
+                    "objectType": {"name": format!("{ns}.{name}"), "links": links}});
+                if name == "D" {
+                    payload["extensions"] = json!({"norn.path-equations/1.0.0":
+                        [{"id": "same", "left": ["a"], "right": ["b"]}]});
+                }
+                serde_json::from_value(json!({
+                    "irVersion": "0.1", "artifactId": format!("{ns}.{name}.entity"),
+                    "kind": "entity", "namespace": ns, "name": name, "version": "0.1.0",
+                    "lifecycle": "draft", "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                    "dependencies": [],
+                    "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                    "payload": payload
+                }))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    /// Exhausted admission work refuses a certifiable mapping: the certificate
+    /// search is charged to the same allowance as the bounded search.
+    #[test]
+    fn a_certifiable_mapping_refuses_once_admission_work_is_exhausted() {
+        let (source, target) = (catalog("s"), catalog("t"));
+        let mapping: PathMapping = serde_json::from_value(json!({
+            "id": "identity", "objects": {"t.D": "s.D", "t.P": "s.P"},
+            "links": [{"concept": "t.D", "link": "a", "path": ["a"]},
+                      {"concept": "t.D", "link": "b", "path": ["b"]}]
+        }))
+        .unwrap();
+        let admit = |steps: usize| {
+            admit_with_work(
+                &source,
+                &target,
+                &mapping,
+                &BTreeSet::new(),
+                ChaseBudget::default(),
+                &AdmissionWork::new(steps),
+            )
+        };
+        assert_eq!(
+            admit(10_000_000).unwrap().evidence,
+            PreservationClass::Certified
+        );
+        // Ample for reading the input, with a few units left for the search:
+        // the refusal comes from the certificate path, not input metering.
+        let input = input_len(&source, &target, &mapping);
+        work_refusal(&admit(input.saturating_add(16)).unwrap_err());
+    }
+
+    /// The bytes admission meters for this input before any search: the same
+    /// verbatim encoding `admit_with_work` charges to the work allowance.
+    fn input_len(
+        source: &[ArtifactEnvelope],
+        target: &[ArtifactEnvelope],
+        mapping: &PathMapping,
+    ) -> usize {
+        norn_canonical::serialize_json_verbatim(&(source, target, mapping))
+            .unwrap()
+            .len()
+    }
+
+    /// Exactly one refusal, from the exhausted admission work allowance.
+    fn work_refusal(findings: &[crate::Diagnostic]) {
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        let refusal = findings.first().unwrap();
+        assert_eq!(refusal.code.as_str(), codes::CHASE_REFUSED);
+        assert!(
+            refusal
+                .message
+                .starts_with("the chase exceeded its whole-admission work budget"),
+            "{refusal:?}"
+        );
+    }
+
+    /// One 128-atom target equation over a self-link whose image is the empty
+    /// path, beside a 64-link image that widens every rule: the single case
+    /// starts with both ends already merged, so the chase is free and nearly
+    /// all the work is setting the case up (256 merges over 8,449 classes,
+    /// done by the search and again by the check). That setup is charged, so
+    /// an allowance well under its cost refuses instead of doing it unmetered.
+    #[test]
+    fn case_setup_is_charged_to_admission_work() {
+        let node = |ns: &str, equations: serde_json::Value| -> Vec<ArtifactEnvelope> {
+            let link = |id: &str| {
+                json!({"id": id, "target": format!("{ns}.Node"),
+                    "cardinality": {"to": "one", "from": "many", "required": true}})
+            };
+            let mut payload = json!({"entityVersion": "2.0", "objectType": {
+                "name": format!("{ns}.Node"), "links": [link("next"), link("far")]}});
+            if !equations.is_null() {
+                payload["extensions"] = json!({"norn.path-equations/1.0.0": equations});
+            }
+            vec![
+                serde_json::from_value(json!({
+                    "irVersion": "0.1", "artifactId": format!("{ns}.Node.entity"),
+                    "kind": "entity", "namespace": ns, "name": "Node", "version": "0.1.0",
+                    "lifecycle": "draft", "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                    "dependencies": [],
+                    "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                    "payload": payload
+                }))
+                .unwrap(),
+            ]
+        };
+        let long = vec!["next"; 64];
+        let source = node("s", serde_json::Value::Null);
+        let target = node("t", json!([{"id": "loop", "left": long, "right": long}]));
+        let mapping: PathMapping = serde_json::from_value(json!({
+            "id": "collapse", "objects": {"t.Node": "s.Node"},
+            "links": [{"concept": "t.Node", "link": "next", "path": []},
+                      {"concept": "t.Node", "link": "far", "path": long}]
+        }))
+        .unwrap();
+        let admit = |steps: usize| {
+            admit_with_work(
+                &source,
+                &target,
+                &mapping,
+                &BTreeSet::new(),
+                ChaseBudget::default(),
+                &AdmissionWork::new(steps),
+            )
+        };
+        let input = input_len(&source, &target, &mapping);
+        // The setup alone costs over four million iterations.
+        work_refusal(&admit(input.saturating_add(1_000_000)).unwrap_err());
+        // With the work to do it, the same mapping is certified.
+        assert_eq!(
+            admit(1_000_000_000).unwrap().evidence,
+            PreservationClass::Certified
+        );
+    }
 }

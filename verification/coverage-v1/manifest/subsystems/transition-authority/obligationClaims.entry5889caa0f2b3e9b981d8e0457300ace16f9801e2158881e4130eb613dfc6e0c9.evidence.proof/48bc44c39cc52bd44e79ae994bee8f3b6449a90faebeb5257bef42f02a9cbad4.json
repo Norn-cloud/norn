@@ -1,0 +1,10 @@
+{
+  "order": 3,
+  "value": {
+    "artifact": "verification/kernel-proof-v1/Decider/FoldProof.lean",
+    "command": "scripts/verify-kernel-decider-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry5889caa0f2b3e9b981d8e0457300ace16f9801e2158881e4130eb613dfc6e0c9.evidence.proof.entry48bc44c39cc52bd44e79ae994bee8f3b6449a90faebeb5257bef42f02a9cbad4.selectors"
+    }
+  }
+}

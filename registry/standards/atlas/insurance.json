@@ -1,0 +1,51 @@
+{
+  "atlasVersion": 1,
+  "domain": "insurance",
+  "entries": [
+    {
+      "id": "acord-data-standards",
+      "name": "ACORD insurance data standards (licensed discovery only)",
+      "publisher": "ACORD",
+      "kind": "standard",
+      "domains": [
+        "insurance"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Catalog lists standards families; no entitled P&C, L&A or GRLC release/package inspected. Not one combined downloadable schema.",
+      "licence": {
+        "spdx": "LicenseRef-ACORD-proprietary-terms-artifact-specific",
+        "text": "ACORD proprietary terms; artifact-specific agreement unverified",
+        "status": "unverified",
+        "basis": "Website terms prohibit copying/distribution absent explicit written permission; no program-specific exception verified. Terms also restrict AI/model uses.",
+        "termsUrl": "https://www.acord.org/terms-of-use",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://www.acord.org/standards-architecture/acord-data-standards/standards-downloads",
+      "evidenceUrls": [
+        "https://www.acord.org/standards-architecture/acord-data-standards/standards-downloads",
+        "https://www.acord.org/terms-of-use"
+      ],
+      "norn": {
+        "overlap": "Insurance parties, policies, claims and premiums are future vertical records; ACORD is not Core authority.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Web reader returned 403, direct HTTP returned catalog/terms. No licensed standard payload fetched; discovery does not prove schema availability or reuse rights. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

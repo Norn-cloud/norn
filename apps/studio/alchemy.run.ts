@@ -55,6 +55,8 @@ export const studio = await Vite("studio", {
     AUTH_DB: authDb,
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
+    // Cloudflare sets cf-connecting-ip itself; the Worker refuses auth without this (#1328).
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),

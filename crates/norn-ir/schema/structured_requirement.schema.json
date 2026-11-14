@@ -69,7 +69,7 @@
         "exceptions": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/RuleException"
+            "$ref": "#/$defs/LawException"
           }
         },
         "law": {
@@ -98,6 +98,40 @@
         "0.1"
       ]
     },
+    "LawException": {
+      "description": "One declared exception. When its condition holds and no exception that\noverrides it applies, the node it overrides does not apply. It has no other\nconsequence: lifting is its only effect.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Boolean ZEN predicate over the law subject's `self` environment.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, unique within the tree and distinct from the law id.",
+          "type": "string"
+        },
+        "overrides": {
+          "description": "The law's own id, or the id of another exception in the same tree.",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source location of the declaration.",
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "overrides",
+        "condition",
+        "rationale",
+        "source"
+      ]
+    },
     "LawIR": {
       "description": "One protected law; its predicates use the subject's `self` environment.",
       "type": "object",
@@ -105,6 +139,14 @@
         "condition": {
           "description": "Optional pointwise activation predicate (not an edge trigger).",
           "$ref": "#/$defs/ZenExpression"
+        },
+        "exceptions": {
+          "description": "The law owner's declared exception tree. Omitted when empty, and an\nexplicit `[]` is refused, so a law without exceptions has exactly one\nencoding and keeps its canonical bytes and pin.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LawException"
+          },
+          "minItems": 1
         },
         "id": {
           "description": "Stable identity, preserved by all authoring faces.",
@@ -349,6 +391,38 @@
             "objectType",
             "property",
             "transitionId"
+          ]
+        },
+        {
+          "description": "TRANSLATION-PRESERVES-1: the subject is the source contract, the law's\ncondition is admission, and `self` in each assignment is the source record.",
+          "type": "object",
+          "properties": {
+            "assignments": {
+              "description": "Total executable map from target property id to ZEN over the source.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ZenExpression"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "translation_preserves"
+            },
+            "observation": {
+              "description": "The named observation this law protects.",
+              "$ref": "#/$defs/TranslationObservation"
+            },
+            "targetType": {
+              "description": "Exact target object type, the target contract.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "targetType",
+            "assignments",
+            "observation"
           ]
         }
       ]
@@ -824,27 +898,6 @@
         "end"
       ]
     },
-    "RuleException": {
-      "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
-      "type": "object",
-      "properties": {
-        "condition": {
-          "$ref": "#/$defs/ZenExpression"
-        },
-        "id": {
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/$defs/RuleSourceSpan"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "condition",
-        "source"
-      ]
-    },
     "RuleSourceSpan": {
       "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
       "type": "object",
@@ -877,6 +930,30 @@
       "enum": [
         "ltr",
         "rtl"
+      ]
+    },
+    "TranslationObservation": {
+      "description": "One named observation, read on each side of a translation and compared exactly.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable observation identity.",
+          "type": "string"
+        },
+        "source": {
+          "description": "ZEN over the source record.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "target": {
+          "description": "ZEN over the translated target record.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "target"
       ]
     },
     "WithinTiming": {

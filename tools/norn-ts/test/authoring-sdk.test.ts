@@ -58,6 +58,10 @@ describe("Effect-profile business expressions through Rust admission and eval", 
     ["negated date comparison", '!Norn.dateBefore("2026-11-08", "2026-11-06")'],
     ["compared date comparison", 'Norn.dateBefore("2026-11-08", "2026-11-06") === false'],
     ["conditional", 'input.event.kind === "start" ? true : false'],
+    ["closures", "[1, 2, 3].some((n) => n > 2) && [1, 2, 3].every((n) => n > 0) && [1, 2, 3].filter((n) => n > 1).length === 2"],
+    ["sum over map", "Norn.sum([1, 2, 3].map((n) => n * 2)) === 12"],
+    ["nested closures", "[1, 2].every((a) => [3, 4].some((b) => b > a))"],
+    ["calendar days", 'Norn.daysBetween("2026-11-01", "2026-11-08") === 7 && Norn.addDays("2026-11-01", 7) >= Norn.parseDate("2026-11-08")'],
   ] as const
   for (const [name, expression] of examples) test(name, () => {
     const result = compile(program(expression))

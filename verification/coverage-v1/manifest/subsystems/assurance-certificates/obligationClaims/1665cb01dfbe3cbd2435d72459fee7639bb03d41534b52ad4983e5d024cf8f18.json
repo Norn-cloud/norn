@@ -5,7 +5,7 @@
     "runtime": "missing",
     "model": "missing",
     "proof": "reference_proved",
-    "residual": "The abstract rational measure is invariant on reachable steps provided every step faithfully realizes its weighted delta and every delta balances (#711/#729). Declaration lowering, Rust correspondence, initial-state validity and non-vacuity are not covered.",
+    "residual": "The abstract rational measure is invariant on reachable steps provided every step faithfully realizes its weighted delta and every delta balances (#711/#729). Declaration lowering, Rust correspondence, initial-state validity and non-vacuity are not covered. Aeneas/Lean (scripts/verify-checker-certificates-aeneas.sh) proves, for every input, that the extracted production per-writer decision (obligations/conservation/decision.rs) accepts only balanced weighted class columns, hence every accepted writer and every run of them conserves each scope/unit class sum, for any instance exact where it succeeds; the Rational instance's exactness (#718 U2), the partition labelling glue and the source-bound lowering stay trusted, and the claim stays reference_proved until runner receipts admit implementation proofs (#969).",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.runtime"

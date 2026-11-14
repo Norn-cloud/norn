@@ -37,15 +37,32 @@ const MAX_IN_VALUES: usize = 50;
 pub(crate) const CURSOR_KEY: &[u8] = b"norn.object-cursor/1";
 
 /// The raw query string fields of `GET /v1/objects/{type}`.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ObjectQueryParams {
-    /// `limit`, 1..=200.
+    /// Page size, 1 to 200; 50 when absent.
+    #[param(value_type = Option<u32>, minimum = 1, maximum = 200, nullable = false)]
     pub limit: Option<String>,
-    /// `sort=prop:dir[,…]`.
+    /// Up to three sort keys, `property:asc` or `property:desc`, comma separated.
+    /// A property sorts only when it has a comparable type; missing and
+    /// withheld values sort last in both directions.
+    #[param(nullable = false, example = "name:asc")]
     pub sort: Option<String>,
-    /// `filter={"all":[…]}`.
+    /// A JSON document `{"all":[clause, ...]}` of at most eight clauses, each
+    /// `{"property", "op", "value"}`. Operators by property type: text `eq`,
+    /// `ne`, `in`, `contains`, `prefix`; integer and decimal `eq`, `ne`, `in`,
+    /// `lt`, `lte`, `gt`, `gte`, `between`; date, timestamp and duration the
+    /// same without `in`; boolean `eq`; enum `eq`, `ne`, `in`; `empty` and
+    /// `present` on any comparable type. `in` takes at most 50 values. A
+    /// withheld row matches no clause.
+    #[param(
+        nullable = false,
+        example = r#"{"all":[{"property":"name","op":"prefix","value":"A"}]}"#
+    )]
     pub filter: Option<String>,
-    /// `after`, an opaque cursor from a prior page's `next`.
+    /// An opaque cursor from a previous page's `next`, valid only for the same
+    /// type, query, scope and caller, and only until the cell next commits.
+    #[param(nullable = false)]
     pub after: Option<String>,
 }
 
@@ -187,7 +204,11 @@ impl ObjectQuery {
             .iter()
             .map(|key| crate::objects::NornSortKey {
                 property: key.property.clone(),
-                direction: if key.descending { "desc" } else { "asc" }.to_owned(),
+                direction: if key.descending {
+                    crate::objects::NornSortDirection::Desc
+                } else {
+                    crate::objects::NornSortDirection::Asc
+                },
             })
             .collect()
     }
@@ -208,7 +229,7 @@ impl ObjectQuery {
     pub(crate) fn digest(&self, object_type: &str) -> String {
         let normalized = serde_json::json!({
             "type": object_type,
-            "sort": self.sort_document().iter().map(|key| format!("{}:{}", key.property, key.direction)).collect::<Vec<_>>(),
+            "sort": self.sort_document().iter().map(|key| format!("{}:{}", key.property, key.direction.as_str())).collect::<Vec<_>>(),
             "filter": self.filter_document(),
         });
         norn_cell::compute::lineage::keyed_lineage_handle(CURSOR_KEY, &normalized.to_string())
@@ -227,6 +248,7 @@ impl Findings {
             span: Some(RefusalSpan {
                 pointer: pointer.into(),
             }),
+            law: None,
         });
     }
 }
@@ -261,6 +283,7 @@ pub(crate) fn cursor_invalid() -> Refusal {
         span: Some(RefusalSpan {
             pointer: "/after".to_owned(),
         }),
+        law: None,
     }])
 }
 
