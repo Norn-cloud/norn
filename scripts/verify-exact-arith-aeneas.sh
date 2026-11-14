@@ -127,8 +127,9 @@ generated() {
 # Mathlib's prebuilt files for the revision the pinned Aeneas manifest locks (a no-op once
 # present), and require the module the proofs import. The cache unpacks by renaming files into
 # the project, so it lives on the tool root's filesystem: a ~/.cache on another mount fails every
-# rename with EXDEV and leaves a half-unpacked Mathlib.
-export MATHLIB_CACHE_DIR="${MATHLIB_CACHE_DIR:-$tool_root/mathlib-cache}"
+# rename with EXDEV and leaves a half-unpacked Mathlib. An inherited override is ignored for the
+# same reason.
+export MATHLIB_CACHE_DIR="$tool_root/mathlib-cache"
 (cd "$lean_root" && lake exe cache get)
 (cd "$lean_root" && lake build Aeneas)
 test -f "$lean_root/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean"
