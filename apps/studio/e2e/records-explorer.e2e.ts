@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
 import { objectCell, population, session, viewsCell } from "./object-cell.ts"
 
@@ -101,4 +102,33 @@ test("facets that never arrive: the rail stops counting after its deadline, says
   held = false
   await side.getByRole("button", { name: "Count again" }).click()
   await expect(rail(page)).toContainText("30 records, counted by the cell")
+})
+
+test("connections: a cell without the connection type says 'No connections yet' and never asks for it; with the type, a refused read is said quietly with a retry", async ({ page }) => {
+  await session(page)
+  await objectCell(page, population(3))
+  await viewsCell(page)
+  const asked: string[] = []
+  await page.route("**/api/host/v1/objects/source.Connection**", (route) => {
+    asked.push(route.request().url())
+    return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized", reason: null } })
+  })
+  // The recorded three systems declare no source.Connection: nothing to read, and nothing is asked.
+  await page.goto("/sources")
+  await expect(page.getByText("No connections yet")).toBeVisible()
+  await expect(page.getByText("Couldn't read the connections.")).toHaveCount(0)
+  expect(asked).toHaveLength(0)
+  // Once the cell declares the type, a refused read is the cell's answer: shown, quietly, never as "empty".
+  const artifacts = JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown[]
+  const connection = { artifactId: "source.Connection.entity", dependencies: [], irVersion: "0.1", kind: "entity", lifecycle: "active", name: "Connection", namespace: "source", version: "0.1.0",
+    payload: { entityVersion: "2.0", objectType: { name: "source.Connection", implements: [], properties: [{ id: "status", type: { kind: "text" } }] } } }
+  await page.route("**/api/host/v1/definitions?**", (route) => route.fulfill({ json: { artifacts: [...artifacts, connection] } }))
+  await page.reload()
+  const unread = page.locator('[data-connections="unread"]')
+  await expect(unread).toContainText("Couldn't read the connections.")
+  await expect(unread).toContainText("the read request is not authorized")
+  await expect(unread.getByRole("button", { name: "Read again" })).toBeVisible()
+  await expect(page.getByText("No connections yet")).toHaveCount(0)
+  await expect(page.getByRole("alert").filter({ hasText: "not authorized" })).toHaveCount(0)
+  expect(asked.length).toBeGreaterThan(0)
 })
