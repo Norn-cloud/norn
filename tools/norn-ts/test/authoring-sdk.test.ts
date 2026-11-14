@@ -55,7 +55,13 @@ describe("Effect-profile business expressions through Rust admission and eval", 
     ["membership", '["ready", "open"].includes("open") && "norn".includes("or")'],
     ["nullable", '((true ? null : "value") ?? "fallback") === "fallback"'],
     ["date comparison", 'Norn.dateBefore("2026-11-06", "2026-11-08")'],
+    ["negated date comparison", '!Norn.dateBefore("2026-11-08", "2026-11-06")'],
+    ["compared date comparison", 'Norn.dateBefore("2026-11-08", "2026-11-06") === false'],
     ["conditional", 'input.event.kind === "start" ? true : false'],
+    ["closures", "[1, 2, 3].some((n) => n > 2) && [1, 2, 3].every((n) => n > 0) && [1, 2, 3].filter((n) => n > 1).length === 2"],
+    ["sum over map", "Norn.sum([1, 2, 3].map((n) => n * 2)) === 12"],
+    ["nested closures", "[1, 2].every((a) => [3, 4].some((b) => b > a))"],
+    ["calendar days", 'Norn.daysBetween("2026-11-01", "2026-11-08") === 7 && Norn.addDays("2026-11-01", 7) >= Norn.parseDate("2026-11-08")'],
   ] as const
   for (const [name, expression] of examples) test(name, () => {
     const result = compile(program(expression))
@@ -177,6 +183,14 @@ test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
 })
 
 
+test("#1109: dateBefore renders as a comparison, so a negated or compared one is parenthesised", () => {
+  const scope = new Map()
+  const before = E.call("dateBefore", E.lit("2026-11-08"), E.lit("2026-11-06"))
+  expect(E.render(before, scope)).toBe("date('2026-11-08') < date('2026-11-06')")
+  expect(E.render(E.not(before), scope)).toBe("not (date('2026-11-08') < date('2026-11-06'))")
+  expect(E.render(E.eq(before, E.lit(false)), scope)).toBe("(date('2026-11-08') < date('2026-11-06')) == false")
+})
+
 test("declared array indexes refuse while bounded inline lists retain item typing", () => {
   const schema = S.record({rows: S.array(S.record({value: S.number}))})
   const scope = new Map([["input", {zen: "", schema}]])
@@ -189,6 +203,17 @@ test("declared array indexes refuse while bounded inline lists retain item typin
   expect(E.render(E.ref("input", "rows", "0", "value"), inline)).toBe("7")
   expect(E.typeOf(E.ref("input", "rows", "0", "value"), inline)).toEqual(S.number)
   for (const index of ["1", "-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), inline)).toThrow()
+})
+
+// VAL-DECIMAL-BIND-1: compiling an interface preserves an unresolved group, never a scalar.
+test("interface Decimal groups survive the admitted authoring profile", () => {
+  const result = compile(`import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Conversion = Norn.interfaceType({name: "toy.Conversion", title: "Conversion", version: "1.0.0",
+  properties: Schema.Struct({quantity: Norn.boundDecimal("conversion")})})`)
+  expect(result).toMatchObject({ok: true, artifacts: [{payload: {interface: {
+    properties: [{id: "quantity", type: {kind: "decimal-binding", group: "conversion"}}],
+  }}}]})
 })
 
 test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {

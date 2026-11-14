@@ -1,0 +1,7 @@
+{
+  "code": "mapping.interpretation.unsupported",
+  "message": "law interpretations require member conformance and preservation obligations",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

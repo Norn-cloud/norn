@@ -1,0 +1,10 @@
+{
+  "order": 2,
+  "value": {
+    "artifact": "verification/exact-arith-v1/QuotientProof.lean",
+    "command": "scripts/verify-exact-arith-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryd4b961a3477119ffba3d50b376bdd6ad68d705f6555057adf72c4948facb6fd4.evidence.proof.entry667df2edcf0ec85ffe4f36949f50022a8a4a8c4ade96f3b5bc4c473ad9bf71e9.selectors"
+    }
+  }
+}

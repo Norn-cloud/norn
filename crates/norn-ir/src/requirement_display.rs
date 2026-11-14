@@ -2,7 +2,8 @@
 use crate::deontic::{
     DeonticModality, LocalizedRequirement, RequirementTiming, StructuredRequirement,
 };
-use crate::{LawModality, LawResponse, LawRoot};
+use crate::reviewed_locale::{isolate, visible};
+use crate::{LawModality, LawResponse, LawRoot, LawTiming};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -15,28 +16,14 @@ pub struct RequirementView {
     pub locale: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct RequirementSlot {
     /// Law identity plus a stable semantic slot path, independent of locale.
     pub id: String,
     pub label: String,
     pub text: String,
-}
-
-fn visible(text: &str) -> String {
-    let mut out = String::new();
-    for c in text.chars() {
-        if matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
-        {
-            out.extend(c.escape_unicode());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-fn isolate(text: &str) -> String {
-    format!("\u{2068}{}\u{2069}", visible(text))
 }
 
 impl RequirementView {
@@ -47,6 +34,9 @@ impl RequirementView {
     }
 
     // LAW-WORDING-LOCALE-1 applies to every declared locale before either view.
+    // Admission-level checks (`within` shape, every locale's `within` term)
+    // live in norn-checker's `render_requirement`; this projection only
+    // refuses what it cannot render.
     fn wording(&self) -> Result<&LocalizedRequirement, &'static str> {
         let wording = self.requirement.wording.locale(&self.locale)?;
         if matches!(self.requirement.norm.law.scope.root, LawRoot::Pack(_))
@@ -70,14 +60,27 @@ impl RequirementView {
     pub fn slots(&self) -> Result<Vec<RequirementSlot>, &'static str> {
         let r = &self.requirement;
         let law = &r.norm.law;
-        if law.timing.is_some()
-            || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-        {
-            return Err("law.validation.unsupported_temporal");
-        }
-        if matches!(r.norm.modality, DeonticModality::Prohibition)
-            != matches!(law.modality, LawModality::Never {})
-        {
+        // Render preconditions only: the temporal wrapper must have a template.
+        let window = match (&r.timing, &law.modality, &law.timing) {
+            (
+                RequirementTiming::Within(w),
+                LawModality::Eventually {},
+                Some(LawTiming::Within { millis }),
+            ) => Some((w, millis)),
+            (RequirementTiming::Within(_), _, _) => {
+                return Err("law.validation.unsupported_temporal");
+            }
+            (_, LawModality::Always {} | LawModality::Never {}, None) => None,
+            _ => return Err("law.validation.unsupported_temporal"),
+        };
+        let grade_matches = match window {
+            Some(_) => r.norm.modality == DeonticModality::Obligation,
+            None => {
+                matches!(r.norm.modality, DeonticModality::Prohibition)
+                    == matches!(law.modality, LawModality::Never {})
+            }
+        };
+        if !grade_matches {
             return Err("law.validation.invalid_document");
         }
         let w = self.wording()?;
@@ -136,9 +139,19 @@ impl RequirementView {
             DeonticModality::Permission => visible(&w.terms.permission),
             DeonticModality::Prohibition => visible(&w.terms.prohibition),
         };
-        let timing = match r.timing {
+        let timing = match &r.timing {
             RequirementTiming::SameCommit => visible(&w.terms.same_commit),
             RequirementTiming::EveryCommittedState => visible(&w.terms.every_committed_state),
+            RequirementTiming::Within(_) => {
+                let (within, millis) = window.ok_or("law.validation.unsupported_temporal")?;
+                let term = w
+                    .terms
+                    .within
+                    .as_ref()
+                    .ok_or("law.wording.incomplete_locale")?;
+                let window = format!("{millis} ms; {}", within.trigger);
+                format!("{}; {}", visible(term), isolate(&window))
+            }
         };
         let source = format!(
             "{}@{}; {}#{}",
@@ -175,22 +188,37 @@ impl RequirementView {
                 preferred,
             ),
         ];
+        // One home for exceptions: the rule's list or the law's, never both.
+        let (home, declared) = match (r.norm.exceptions.is_empty(), law.exceptions.is_empty()) {
+            (false, false) => return Err("law.validation.invalid_document"),
+            (true, false) => ("/norm/law/exceptions", &law.exceptions),
+            (_, true) => ("/norm/exceptions", &r.norm.exceptions),
+        };
         let mut exceptions = std::collections::BTreeSet::new();
-        for e in &r.norm.exceptions {
+        for e in declared {
             if !exceptions.insert(&e.id) {
                 return Err("law.validation.invalid_document");
             }
             slots.push(slot(
                 &law.id,
                 &format!(
-                    "/norm/exceptions/by-id/{}",
+                    "{home}/by-id/{}",
                     e.id.replace('~', "~0").replace('/', "~1")
                 ),
                 &w.labels.exception,
-                isolate(&format!(
-                    "{}; {}#{}",
-                    e.condition.0, e.source.artifact_id, e.source.pointer
-                )),
+                // A nested exception names the exception it lifts; a
+                // top-level one lifts the law and renders as before.
+                isolate(&if e.overrides == law.id {
+                    format!(
+                        "{}; {}#{}",
+                        e.condition.0, e.source.artifact_id, e.source.pointer
+                    )
+                } else {
+                    format!(
+                        "{}; overrides {}; {}#{}",
+                        e.condition.0, e.overrides, e.source.artifact_id, e.source.pointer
+                    )
+                }),
             ));
         }
         Ok(slots)

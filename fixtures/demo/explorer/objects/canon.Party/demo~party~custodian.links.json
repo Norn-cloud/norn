@@ -1,0 +1,31 @@
+{
+  "objectType": "canon.Party",
+  "id": "demo/party/custodian",
+  "items": [
+    {
+      "sourceType": "canon.Holding",
+      "link": "custodian",
+      "source": "demo/holding/owner/north/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/custodian",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.Holding",
+      "link": "custodian",
+      "source": "demo/holding/owner/south/gold",
+      "targetType": "canon.Party",
+      "target": "demo/party/custodian",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.PartyRole",
+      "link": "agent",
+      "source": "demo/party/custodian/role/custodian",
+      "targetType": "canon.Party",
+      "target": "demo/party/custodian",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}

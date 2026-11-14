@@ -4,54 +4,130 @@ use http::StatusCode;
 use norn_cell::{InstalledDefinitionSet, engine::SqlEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
 use norn_ir::{ResourceLimitProfile, RuntimeValue};
 
 /// Explicit scope and optional retained definition version.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
 pub struct DefinitionsQuery {
     /// Required organization.
+    #[param(required = true, nullable = false)]
     pub org_id: Option<String>,
     /// Required environment.
+    #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
-    /// Absent selects the active revision.
+    /// A retained revision; absent selects the active one.
+    #[param(nullable = false)]
     pub version: Option<u64>,
 }
 
 /// An admitted document; source and receipt travel as exact JSON text.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = NornDefinitionsCatalog)]
 pub struct DefsResponse {
-    /// Always true.
+    /// Always `true`.
+    #[schema(schema_with = always_true_schema)]
     pub admitted: bool,
     /// Retained definition revision.
     pub version: u64,
     /// Editor sidecar revision.
     pub layout_revision: u64,
     /// Editor sidecar.
+    #[schema(schema_with = layout_schema)]
     pub layout: norn_ir::LayoutSidecar,
-    /// Not retained; null rather than a new check at read time.
+    /// Always null.
+    #[schema(required = true, schema_with = layout_diagnostics_schema)]
     pub layout_diagnostics: Option<serde_json::Value>,
     /// Original checker receipt, without host reinterpretation.
+    #[schema(schema_with = receipt_schema)]
     pub receipt: Box<RawValue>,
     /// Original receipt digest.
     pub receipt_sha256: String,
-    /// Finding text is not retained; the original receipt carries its digest.
+    /// Always null.
+    #[schema(required = true, schema_with = diagnostics_schema)]
     pub diagnostics: Option<serde_json::Value>,
     /// Selected registry releases.
     pub registry: Vec<String>,
     /// Read-only base artifact identities.
     pub base_artifact_ids: Vec<String>,
     /// Admitted semantic documents, preserving exact numeric values.
+    #[schema(schema_with = artifacts_schema)]
     pub artifacts: Vec<Box<RawValue>>,
+}
+
+fn layout_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("LayoutSidecar")
+}
+
+fn always_true_schema() -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::SchemaType::Type(
+            utoipa::openapi::Type::Boolean,
+        ))
+        .enum_values(Some([true]))
+        .description(Some(
+            "Always `true`: this route serves only an admitted revision. The member is kept \
+             because readers of this route already rely on its shape.",
+        ))
+        .build()
+}
+
+fn always_null(description: &str) -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::SchemaType::Type(
+            utoipa::openapi::Type::Null,
+        ))
+        .description(Some(description))
+        .build()
+}
+
+fn layout_diagnostics_schema() -> utoipa::openapi::schema::Object {
+    always_null(
+        "Always null: layout diagnostics are not retained with a revision, and this read does \
+         not re-run the checker. Kept for the shape readers already rely on; `null` is frozen, \
+         so real diagnostics would arrive as a new member.",
+    )
+}
+
+fn diagnostics_schema() -> utoipa::openapi::schema::Object {
+    always_null(
+        "Always null: finding text is not retained with a revision; `receipt` carries the \
+         admission's digest. Kept for the shape readers already rely on; `null` is frozen, so \
+         real diagnostics would arrive as a new member.",
+    )
+}
+
+fn receipt_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The original checker receipt, without host reinterpretation.",
+        false,
+    )
+}
+
+fn artifacts_schema() -> utoipa::openapi::schema::Array {
+    utoipa::openapi::schema::ArrayBuilder::new()
+        .items(crate::objects::free_form(
+            "One admitted artifact, preserving exact numeric values.",
+            false,
+        ))
+        .description(Some(
+            "Every admitted artifact of the revision, in one unpaged array: references between \
+             artifacts resolve only against the whole set, so the set is not split. Its size is \
+             the installed set's; this read applies no count bound of its own.",
+        ))
+        .build()
 }
 
 /// Read under one definition epoch; scope and authorization precede store access.
 ///
 /// # Errors
 /// Missing/mismatched scope, denied actor, absent version or host failure.
+#[utoipa::path(get, path = "/v1/definitions", operation_id = "get_definitions_catalog", params(DefinitionsQuery), responses((status = 200, description = "The admitted definitions at the active or requested revision.", body = DefsResponse), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a version that does not parse.", body = Refusal), (status = 403, description = "The request was refused: a missing or foreign scope, or denied authority, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`defs.version_not_found`): the requested version was never installed, or no version was asked for and nothing is installed yet.", body = Refusal), (status = 409, description = "The request was refused (`defs.receipt_context_unavailable`): this host cannot resolve the retained admission context (the receipt's external base, limit profile or checker version).", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn get_defs<E: SqlEngine>(
     host: &DevHost<E>,
     query: &DefinitionsQuery,
@@ -93,7 +169,7 @@ pub fn get_defs<E: SqlEngine>(
 }
 
 fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsResponse, Refusal> {
-    verify_retained(&set, scope)?;
+    let base_artifact_ids = verify_retained(&set, scope)?;
     let receipt = set
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
@@ -113,12 +189,18 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
         receipt_sha256: set.receipt_sha256,
         diagnostics: None,
         registry: set.registry,
-        base_artifact_ids: Vec::new(),
+        base_artifact_ids,
         artifacts: serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?,
     })
 }
 
-fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Result<(), Refusal> {
+/// Verify the retained set against its receipt. A receipt's base must be
+/// retained in the same set: it is verified there, never resolved from a
+/// release pin. Returns the base artifact ids.
+pub(crate) fn verify_retained(
+    installed: &InstalledDefinitionSet,
+    scope: &CellScope,
+) -> Result<Vec<String>, Refusal> {
     let receipt = installed
         .admission_receipt
         .as_deref()
@@ -131,13 +213,18 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
     let limits = ResourceLimitProfile::norn_limits_v1();
     let profile =
         serde_json::to_value(limits.reference().map_err(Refusal::host)?).map_err(Refusal::host)?;
-    // Release pins never grant type authority; verify self-contained sources only.
-    if retained
+    let base_refs = retained
         .pointer("/artifactSet/base")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|base| !base.is_empty())
-        || retained.get("limitProfile") != Some(&profile)
-    {
+        .map_or_else(Vec::new, |base| {
+            base.iter()
+                .map(|entry| {
+                    let text = |key| entry.get(key).and_then(serde_json::Value::as_str);
+                    (text("artifactId"), text("version"))
+                })
+                .collect()
+        });
+    if retained.get("limitProfile") != Some(&profile) {
         return Err(context_unavailable());
     }
     let RuntimeValue::Array(sources) =
@@ -147,21 +234,36 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
             "retained definitions must be an artifact array",
         ));
     };
-    for source in &sources {
+    let (mut candidates, mut base, mut base_ids) = (Vec::new(), Vec::new(), Vec::new());
+    for source in sources {
         let artifact: norn_ir::ArtifactEnvelope =
-            norn_ir::runtime::decode(source).map_err(Refusal::host)?;
+            norn_ir::runtime::decode(&source).map_err(Refusal::host)?;
         if norn_checker::scope_conflict(&scope.as_scope_ref(), &artifact.scope).is_some() {
             return Err(Refusal::host("retained artifact outside cell scope"));
         }
+        let identity = (
+            Some(artifact.artifact_id.as_str()),
+            Some(artifact.version.as_str()),
+        );
+        if base_refs.contains(&identity) {
+            base_ids.push(artifact.artifact_id);
+            base.push(source);
+        } else {
+            candidates.push(source);
+        }
+    }
+    // An external base (absent from the retained set) cannot be verified here.
+    if base.len() != base_refs.len() {
+        return Err(context_unavailable());
     }
     norn_checker::receipt::verify_admission_receipt_sources(
         receipt,
         &installed.receipt_sha256,
-        &sources,
-        &[],
+        &candidates,
+        &base,
         &limits,
     )
-    .map(drop)
+    .map(|_| base_ids)
     .map_err(|error| {
         if matches!(
             &error,
@@ -352,6 +454,130 @@ mod tests {
             host.cell().unwrap().store().verified_head().unwrap()
         );
     }
+    /// The three-systems set admitted over its `core`/`std` base: the wire
+    /// artifacts, the base ids and one retained set builder per artifact list.
+    struct OverBase {
+        artifacts: Vec<serde_json::Value>,
+        base_ids: Vec<String>,
+        receipt: String,
+        digest: String,
+    }
+    impl OverBase {
+        fn admit() -> Self {
+            let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
+                "../../../fixtures/demo/explorer/three-systems.definitions.json"
+            ))
+            .unwrap();
+            let value = |a: &norn_ir::ArtifactEnvelope| {
+                RuntimeValue::from_json(serde_json::to_value(a).unwrap()).unwrap()
+            };
+            let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(|a| {
+                a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
+            });
+            let checked = check_artifact_set_with_receipt(
+                &ReceiptSources::new(
+                    &candidates.iter().map(value).collect::<Vec<_>>(),
+                    &base.iter().map(value).collect::<Vec<_>>(),
+                )
+                .unwrap(),
+                &EntityArtifactSetContext {
+                    registry: &BTreeSet::new(),
+                    base: &base,
+                    tenant: None,
+                },
+                &ResourceLimitProfile::norn_limits_v1(),
+            )
+            .unwrap();
+            assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+            Self {
+                artifacts: artifacts
+                    .iter()
+                    .map(|a| serde_json::to_value(a).unwrap())
+                    .collect(),
+                base_ids: base.iter().map(|a| a.artifact_id.clone()).collect(),
+                receipt: String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
+                digest: checked.receipt.content_sha256().unwrap(),
+            }
+        }
+        /// The same receipt and digest over `artifacts` as the retained set.
+        fn retained(&self, artifacts: Vec<serde_json::Value>) -> InstalledDefinitionSet {
+            let set = RuntimeValue::from_json(serde_json::Value::Array(artifacts)).unwrap();
+            InstalledDefinitionSet {
+                canonical_set: String::from_utf8(set.canonical_json().unwrap()).unwrap(),
+                admission_receipt: Some(self.receipt.clone()),
+                receipt_sha256: self.digest.clone(),
+                ..installed(&host())
+            }
+        }
+        fn position(&self, id: &str) -> usize {
+            self.artifacts
+                .iter()
+                .position(|a| a["artifactId"] == id)
+                .unwrap()
+        }
+        fn verify(&self, artifacts: Vec<serde_json::Value>) -> Result<Vec<String>, Refusal> {
+            verify_retained(&self.retained(artifacts), host().scope())
+        }
+    }
+
+    /// A receipt whose base is retained in the same set verifies here and
+    /// names that base, in any retained order; the base is never resolved
+    /// from outside the cell.
+    #[test]
+    fn retained_base_definitions_verify_and_are_listed() {
+        let admitted = OverBase::admit();
+        let mut expected = admitted.base_ids.clone();
+        expected.sort();
+        let mut listed = admitted.verify(admitted.artifacts.clone()).unwrap();
+        listed.sort();
+        assert_eq!(listed, expected);
+        assert!(!listed.is_empty());
+        let mut reordered = admitted.artifacts.clone();
+        reordered.reverse();
+        let mut listed = admitted.verify(reordered).unwrap();
+        listed.sort();
+        assert_eq!(listed, expected);
+    }
+
+    /// Every substitution of a retained base artifact refuses against the
+    /// original receipt and digest; an incomplete base is context-unavailable.
+    #[test]
+    fn substituted_replayed_or_missing_base_artifacts_refuse() {
+        let admitted = OverBase::admit();
+        let (a, b) = (
+            admitted.position(&admitted.base_ids[0]),
+            admitted.position(&admitted.base_ids[1]),
+        );
+        let unavailable = "defs.receipt_context_unavailable";
+        // (a) Same id and version, other content: the content hash differs.
+        let mut substituted = admitted.artifacts.clone();
+        substituted[a]["lifecycle"] = "deprecated".into();
+        assert_eq!(admitted.verify(substituted).unwrap_err().code, "host.error");
+        // (b) Another version of a base artifact is not the receipt's base.
+        let mut versioned = admitted.artifacts.clone();
+        versioned[a]["version"] = "0.2.0".into();
+        assert_eq!(admitted.verify(versioned).unwrap_err().code, unavailable);
+        // (c) An older base artifact replayed against the newer receipt.
+        let mut replayed = admitted.artifacts.clone();
+        replayed[a]["version"] = "0.0.1".into();
+        replayed[a]["lifecycle"] = "superseded".into();
+        assert_eq!(admitted.verify(replayed).unwrap_err().code, unavailable);
+        // (d) Base B missing, replaced by a duplicate of A: the base count
+        // still matches, but the base set is not the receipt's.
+        let mut duplicated = admitted.artifacts.clone();
+        duplicated[b] = duplicated[a].clone();
+        assert_eq!(admitted.verify(duplicated).unwrap_err().code, "host.error");
+        // A partly missing base is the generic context-unavailable refusal.
+        let mut partial = admitted.artifacts.clone();
+        partial.remove(b);
+        let refused = admitted.verify(partial).unwrap_err();
+        assert_eq!((refused.status, refused.code.as_str()), (409, unavailable));
+        assert_eq!(
+            serde_json::to_string(&refused).unwrap(),
+            serde_json::to_string(&context_unavailable()).unwrap()
+        );
+    }
+
     #[test]
     fn retained_receipt_checks_sources_and_context_without_readmission() {
         let host = host();

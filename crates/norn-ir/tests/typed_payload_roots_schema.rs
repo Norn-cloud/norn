@@ -15,7 +15,7 @@ use norn_ir::{
 
 const UPDATE_SCHEMAS_ENV: &str = "NORN_IR_UPDATE_PAYLOAD_SCHEMAS";
 
-fn payload_root_cases() -> [(&'static str, ArtifactKind); 15] {
+fn payload_root_cases() -> [(&'static str, ArtifactKind); 16] {
     [
         ("entity.schema.json", ArtifactKind::Entity),
         ("relation.schema.json", ArtifactKind::Relation),
@@ -32,6 +32,7 @@ fn payload_root_cases() -> [(&'static str, ArtifactKind); 15] {
         ("mapping.schema.json", ArtifactKind::Mapping),
         ("law.schema.json", ArtifactKind::Law),
         ("defined_concept.schema.json", ArtifactKind::DefinedConcept),
+        ("labels.schema.json", ArtifactKind::Labels),
     ]
 }
 
@@ -515,7 +516,7 @@ fn setting_schema_types_value_by_value_type() {
             ),
             (
                 serde_json::json!("number"),
-                serde_json::json!({ "type": "number", "format": "double" })
+                serde_json::json!({ "$ref": "#/$defs/DecimalLiteral" })
             ),
             (
                 serde_json::json!("boolean"),
@@ -597,6 +598,7 @@ fn envelope_kind_selects_its_closed_payload_root() {
             ArtifactKind::DefinedConcept => {
                 assert!(matches!(payload, ArtifactPayload::DefinedConcept(_)));
             }
+            ArtifactKind::Labels => assert!(matches!(payload, ArtifactPayload::Labels(_))),
         }
     }
 }

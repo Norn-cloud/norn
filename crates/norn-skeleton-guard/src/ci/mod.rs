@@ -9,9 +9,38 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 /// The only repository whose own branches may change workflows or gate files.
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
-/// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 11] = [
+/// Directories pinned to the trusted base, besides every workflow: the set of tracked files
+/// under each, and every such file's type, mode and bytes. The guard crate is one: it is the
+/// trusted lane's own source (rule, wiring, manifest, tests), so no file in it, present or
+/// added, changes without `/approve-gates`. `.cargo/` is the other: Cargo reads its config
+/// from the working directory and every parent whatever `--manifest-path` says, so a
+/// `linker`, `rustc-wrapper` or `[env]` entry there would apply to the trusted build.
+/// [`gate_source_errors`] keeps the guard's sources from reaching outside.
+const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
+
+/// Gate files pinned to the trusted base, besides every workflow and [`GATE_DIRECTORIES`].
+/// A gate file absent from the base must stay absent. The toolchain files are gates although
+/// none exists, as defence in depth: rustup reads them from the working directory, but the
+/// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
+const GATE_FILES: [&str; 26] = [
+    // Python isolation (#513): the base-owned check and its canaries, and every file a gated
+    // Python file loads by explicit path, so none of them can change what a gate decides.
+    "scripts/ci/python_isolation.py",
+    "scripts/ci/test_python_isolation.py",
+    "scripts/verification_attestation.py",
+    "scripts/quint_apalache.py",
+    "scripts/write-verification-result.py",
+    "verification/coverage-v1/validate_result.py",
+    "scripts/importers/erpnext_runtime.py",
+    "verification/kernel-v2/validate.py",
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
+    "scripts/ci/contract_diff.py",
+    "scripts/ci/test_contract_diff.py",
+    "scripts/ci/contract-breaks.json",
+    "scripts/ci/implementation_receipts.py",
     ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
     "scripts/proof_enrollment.py",
@@ -25,19 +54,502 @@ const GATE_FILES: [&str; 11] = [
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
-const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+/// Boat runs merge groups and same-repository pull requests: a fork head never reaches
+/// a Boat VM. The pull-request arm requires Boat CI's public-repository allowlist
+/// (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
+/// another user's pull request runs hosted instead of queueing forever. Trusted-policy
+/// jobs stay hosted.
+const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
-            && matches!(job, "core" | "plan" | "test" | "phase" | "full")
-            && runner == Some(MERGE_RUNNER))
+            && matches!(job, "core" | "plan" | "test" | "full")
+            && runner == Some(BOAT_RUNNER))
+}
+
+/// The pull-request arm every admitted concurrency group starts with: one group per
+/// workflow and pull request, so a newer push supersedes only that PR's older run.
+const PR_GROUP: &str = "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || ";
+
+/// The admitted workflow-level concurrency shapes of a `pull_request` workflow, as
+/// (group tail after [`PR_GROUP`], `cancel-in-progress`). Every other event gets a
+/// group of its own run, so nothing but a superseded PR run is cancelled or held
+/// back; the second shape also supersedes older main pushes (each main commit was
+/// already gated by its merge group), which needs `push` limited to `main`.
+const PR_CONCURRENCY: [(&str, &str, bool); 2] = [
+    (
+        "format('run-{0}', github.run_id) }}",
+        "${{ github.event_name == 'pull_request' }}",
+        false,
+    ),
+    (
+        "github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+        "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+        true,
+    ),
+];
+
+/// True when the workflow's `on` names `pull_request` (string, list or mapping form).
+fn triggers_pull_request(document: &yaml::Value) -> bool {
+    match document.get("on") {
+        Some(yaml::Value::Str(event)) => event == "pull_request",
+        Some(yaml::Value::Seq(events)) => events
+            .iter()
+            .any(|event| event.as_str() == Some("pull_request")),
+        Some(on @ yaml::Value::Map(_)) => on.get("pull_request").is_some(),
+        None => false,
+    }
+}
+
+/// A `pull_request` workflow must cancel its own superseded PR runs and nothing else:
+/// workflow-level `concurrency` is exactly one of [`PR_CONCURRENCY`] (whitespace
+/// aside). Workflows without a `pull_request` trigger are out of scope.
+fn concurrency_error(path: &str, document: &yaml::Value) -> Option<String> {
+    if !triggers_pull_request(document) {
+        return None;
+    }
+    let squash = |value: &yaml::Value| {
+        value
+            .as_str()
+            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let Some(concurrency @ yaml::Value::Map(_)) = document.get("concurrency") else {
+        return Some(format!(
+            "{path}: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs"
+        ));
+    };
+    if concurrency
+        .keys()
+        .any(|key| key != "group" && key != "cancel-in-progress")
+    {
+        return Some(format!(
+            "{path}: workflow concurrency may set only group and cancel-in-progress"
+        ));
+    }
+    let group = concurrency.get("group").and_then(squash);
+    let cancel = concurrency.get("cancel-in-progress").and_then(squash);
+    let Some((_, expected_cancel, main_push)) = PR_CONCURRENCY.iter().find(|(tail, _, _)| {
+        group
+            .as_deref()
+            .and_then(|group| group.strip_prefix(PR_GROUP))
+            == Some(*tail)
+    }) else {
+        return Some(format!(
+            "{path}: concurrency group must be per workflow and pull request (github.event.pull_request.number) and give every other event its own run group"
+        ));
+    };
+    if cancel.as_deref() != Some(*expected_cancel) {
+        return Some(format!(
+            "{path}: cancel-in-progress must be `{expected_cancel}`: superseded pull_request runs are cancelled and no other event is"
+        ));
+    }
+    let push = document.get("on").and_then(|on| on.get("push"));
+    let main_only = yaml::Value::Map(vec![(
+        "branches".to_owned(),
+        yaml::Value::Seq(vec![yaml::Value::Str("main".to_owned())]),
+    )]);
+    if *main_push && push != Some(&main_only) {
+        return Some(format!(
+            "{path}: superseding main pushes needs the push trigger limited to branches [main]"
+        ));
+    }
+    None
+}
+
+/// A same-repository pull request that fell back to hosted runners says so on its
+/// checks; fork pull requests run hosted by design and stay quiet.
+const HOSTED_PR_WARNING: &str = r#"name: Warn that pull request CI fell back to hosted runners
+if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
+run: |
+  echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
+"#;
+
+/// Boat's base image has only `libclang-18.so.18`; clang-sys loads `libclang.so`.
+const BOAT_LIBCLANG: &str = r#"name: Make libclang loadable on Boat runners
+if: ${{ runner.environment == 'self-hosted' }}
+run: |
+  set -euo pipefail
+  libclang_dev_version='1:18.1.3-1ubuntu1'
+  library=/usr/lib/llvm-18/lib/libclang.so
+  if [ -e "$library" ]; then
+    echo "$library is already present"
+  elif ! { timeout 120 sudo apt-get update -qq && timeout 300 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libclang-18-dev=$libclang_dev_version"; }; then
+    echo "::warning::could not install libclang-18-dev=$libclang_dev_version; linking the image's libclang-18.so.18"
+    sudo ln -sfn libclang-18.so.18 "$library"
+  fi
+  ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
+"#;
+
+/// The sccache action without its post-job stats, whose failure would fail a build
+/// that succeeded through the plain-rustc fallback.
+const SCCACHE_ACTION: &str =
+    "uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+with:
+  version: v0.19.0
+  disable_annotations: true
+";
+
+/// Steps `ci-policy.yml` carries exactly once per job: the Boat-capable jobs make
+/// libclang loadable on Boat and set up sccache without fatal post-job stats, and
+/// `core` warns when pull request CI fell back to hosted runners.
+const PINNED_STEPS: [(&str, &str); 5] = [
+    ("core", HOSTED_PR_WARNING),
+    ("core", BOAT_LIBCLANG),
+    ("core", SCCACHE_ACTION),
+    ("test", BOAT_LIBCLANG),
+    ("test", SCCACHE_ACTION),
+];
+
+fn pinned_step_errors(path: &str, document: &yaml::Value) -> Vec<String> {
+    if path != ".github/workflows/ci-policy.yml" {
+        return Vec::new();
+    }
+    let mut errors = Vec::new();
+    for (job, pinned) in PINNED_STEPS {
+        let expected = match yaml::parse(pinned) {
+            Ok(step) => step,
+            Err(error) => {
+                errors.push(format!("{path}::{job}: pinned step: {error}"));
+                continue;
+            }
+        };
+        let count = document
+            .get("jobs")
+            .and_then(|jobs| jobs.get(job))
+            .and_then(|job| job.get("steps"))
+            .map_or(0, |steps| {
+                steps
+                    .items()
+                    .iter()
+                    .filter(|step| **step == expected)
+                    .count()
+            });
+        if count != 1 {
+            let name = expected
+                .get("name")
+                .or_else(|| expected.get("uses"))
+                .and_then(yaml::Value::as_str)
+                .unwrap_or_default();
+            errors.push(format!(
+                "{path}::{job}: needs exactly one unchanged `{name}` step"
+            ));
+        }
+    }
+    errors
 }
 
 /// The longest merge-queue group the trusted lane walks; longer groups fail closed.
 const MAX_MERGE_GROUP: usize = 64;
 
 /// Validate every workflow using only candidate data, plus exact provenance.
+/// Each [`GATE_DIRECTORIES`] entry whose tracked-file set, or any file's bytes, differs from
+/// the trusted base.
+fn gate_directory_contract(
+    root: &Path,
+    base: &Path,
+    previous: &[String],
+    current: &[String],
+) -> Vec<String> {
+    let mut contract = Vec::new();
+    for directory in GATE_DIRECTORIES {
+        let inside = |path: &&String| path.starts_with(directory);
+        let old: BTreeSet<_> = previous.iter().filter(inside).collect();
+        let new: BTreeSet<_> = current.iter().filter(inside).collect();
+        if old != new {
+            contract.push(format!(
+                "{directory}: gate inventory differs from the trusted base"
+            ));
+        }
+        for path in old.intersection(&new) {
+            if !same_entry(&base.join(path), &root.join(path)) {
+                contract.push(format!(
+                    "{path}: gate contract differs from the trusted base"
+                ));
+            }
+        }
+    }
+    contract
+}
+
+/// Refusals no approval lifts (#513): a symlink anywhere in a gate (a workflow, a gate file, a
+/// gate directory or a file under one) points the trusted lane at bytes outside it, and so
+/// does Cargo configuration that names another file. The trusted build's `.cargo/config.toml`
+/// (or legacy `.cargo/config`) may hold only `[alias]`, and no alias may pass `--config` or
+/// `-Z`: `include`, `paths`, `[patch]`, `[source]`, wrappers, linkers and runners are refused.
+fn gate_entry_errors(root: &Path, current: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    // Every component, not only the last: `scripts/ci` as a symlink redirects `core.sh`.
+    let symlink = |path: &str| {
+        let mut at = root.to_path_buf();
+        Path::new(path).components().any(|component| {
+            at.push(component);
+            at.symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_symlink())
+        })
+    };
+    for directory in GATE_DIRECTORIES {
+        if symlink(directory.trim_end_matches('/')) {
+            errors.push(format!(
+                "{directory}: a gate directory that is a symlink is refused, even with approval"
+            ));
+        }
+    }
+    for path in current.iter().filter(|path| {
+        path.starts_with(".github/workflows/")
+            || GATE_FILES.contains(&path.as_str())
+            || GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory))
+    }) {
+        if symlink(path) {
+            errors.push(format!(
+                "{path}: a symlink in a gate is refused, even with approval"
+            ));
+        }
+    }
+    for path in [".cargo/config.toml", ".cargo/config"] {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        match toml::from_str::<toml::Table>(&text) {
+            Err(error) => errors.push(format!("{path}: Cargo config does not parse: {error}")),
+            Ok(table) => {
+                for key in table.keys().filter(|key| key.as_str() != "alias") {
+                    errors.push(format!(
+                        "{path}: `{key}` is refused in the trusted build's Cargo config, even with approval; only `[alias]` is admitted"
+                    ));
+                }
+                let aliases = table.get("alias").and_then(toml::Value::as_table);
+                for (name, value) in aliases.into_iter().flatten() {
+                    let words: Vec<&str> = match value {
+                        toml::Value::String(text) => text.split_whitespace().collect(),
+                        toml::Value::Array(items) => {
+                            items.iter().filter_map(toml::Value::as_str).collect()
+                        }
+                        toml::Value::Integer(_)
+                        | toml::Value::Float(_)
+                        | toml::Value::Boolean(_)
+                        | toml::Value::Datetime(_)
+                        | toml::Value::Table(_) => vec!["--config"],
+                    };
+                    if words
+                        .iter()
+                        .any(|word| word.starts_with("--config") || word.starts_with("-Z"))
+                    {
+                        errors.push(format!(
+                            "{path}: alias `{name}` passes `--config` or `-Z`, refused even with approval"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    errors
+}
+
+/// Whether `before` and `after` are the same entry: both absent, or both regular files with the
+/// same executable bit and bytes, or both symlinks with the same target. A symlink to identical
+/// content, an exec-bit flip, or a file appearing or disappearing is a difference, as in the
+/// merge-group check's git tree comparison.
+fn same_entry(before: &Path, after: &Path) -> bool {
+    use std::io::ErrorKind;
+    match (before.symlink_metadata(), after.symlink_metadata()) {
+        (Err(old), Err(new)) => {
+            old.kind() == ErrorKind::NotFound && new.kind() == ErrorKind::NotFound
+        }
+        (Ok(old), Ok(new)) if old.is_symlink() && new.is_symlink() => {
+            matches!((std::fs::read_link(before), std::fs::read_link(after)), (Ok(a), Ok(b)) if a == b)
+        }
+        (Ok(old), Ok(new)) if old.is_file() && new.is_file() => {
+            executable(&old) == executable(&new)
+                && matches!((std::fs::read(before), std::fs::read(after)), (Ok(a), Ok(b)) if a == b)
+        }
+        _ => false,
+    }
+}
+
+#[cfg(unix)]
+fn executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// A gated Rust source reaches outside its gate directory only through a direct `include!`,
+/// `include_str!` or `include_bytes!` of one string literal naming a file in a gate directory
+/// or [`GATE_FILES`] that is tracked. Any `path` attribute (`#[path]`, also inside `cfg_attr`),
+/// any other use of an include macro (a `use` rename, a macro-built argument) and a file that
+/// does not tokenize are refused; raw identifiers (`r#include!`, `#[r#path]`) count as the
+/// plain ones. Every `include!` target is scanned too, whatever its extension, since it
+/// compiles as Rust. A macro that builds an attribute (say `#[$m]` with `path = ...`) has to
+/// be defined in a gated file, which is a gated edit, or come from a dependency, which
+/// resolves through the root lockfile: that is the remaining build-closure gap (D95, #513).
+fn gate_source_errors(root: &Path, files: &[String]) -> Vec<String> {
+    let tracked: BTreeSet<&str> = files.iter().map(String::as_str).collect();
+    let mut errors = Vec::new();
+    let mut queue: Vec<String> = files
+        .iter()
+        .filter(|path| {
+            Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+                && GATE_DIRECTORIES
+                    .iter()
+                    .any(|directory| path.starts_with(directory))
+        })
+        .cloned()
+        .collect();
+    let mut scanned = BTreeSet::new();
+    while let Some(path) = queue.pop() {
+        if !scanned.insert(path.clone()) {
+            continue;
+        }
+        match std::fs::read_to_string(root.join(&path))
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                text.parse::<proc_macro2::TokenStream>()
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(tokens) => {
+                let mut scan = Scan {
+                    path: &path,
+                    tracked: &tracked,
+                    errors: &mut errors,
+                    included: Vec::new(),
+                };
+                scan.tokens(tokens, false);
+                queue.extend(scan.included);
+            }
+            Err(error) => errors.push(format!("{path}: gated source does not tokenize: {error}")),
+        }
+    }
+    errors
+}
+
+/// One gated source's token walk: refusals go to `errors`, `include!` targets to `included`.
+struct Scan<'a> {
+    path: &'a str,
+    tracked: &'a BTreeSet<&'a str>,
+    errors: &'a mut Vec<String>,
+    included: Vec<String>,
+}
+
+impl Scan<'_> {
+    fn tokens(&mut self, tokens: proc_macro2::TokenStream, in_attribute: bool) {
+        use proc_macro2::{Delimiter, TokenTree};
+        let path = self.path;
+        let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+        for (index, token) in tokens.iter().enumerate() {
+            let next = tokens.get(index.saturating_add(1));
+            let name = match token {
+                TokenTree::Ident(ident) => {
+                    let text = ident.to_string();
+                    text.strip_prefix("r#")
+                        .map_or_else(|| text.clone(), str::to_owned)
+                }
+                TokenTree::Group(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => String::new(),
+            };
+            match token {
+                TokenTree::Ident(_) if in_attribute && name == "path" => {
+                    if matches!(next, Some(TokenTree::Punct(punct)) if punct.as_char() == '=') {
+                        self.errors.push(format!(
+                            "{path}: a `path` attribute is refused in a gated source"
+                        ));
+                    }
+                }
+                TokenTree::Ident(_)
+                    if ["include", "include_str", "include_bytes"].contains(&name.as_str()) =>
+                {
+                    let ident = &name;
+                    let argument = match (next, tokens.get(index.saturating_add(2))) {
+                        (Some(TokenTree::Punct(bang)), Some(TokenTree::Group(group)))
+                            if bang.as_char() == '!' =>
+                        {
+                            let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+                            match inner.as_slice() {
+                                [TokenTree::Literal(literal)] => {
+                                    syn::parse_str::<syn::LitStr>(&literal.to_string())
+                                        .ok()
+                                        .map(|literal| literal.value())
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    match argument.map(|target| included_path(path, &target)) {
+                        Some(Some(target)) if is_gated(&target, self.tracked) => {
+                            if ident == "include" {
+                                self.included.push(target);
+                            }
+                        }
+                        Some(Some(target)) => self.errors.push(format!(
+                            "{path}: `{ident}!` of {target}, untracked or outside every gate, is refused"
+                        )),
+                        _ => self.errors.push(format!(
+                            "{path}: `{ident}` is used other than as a direct `{ident}!(\"<gated file>\")`"
+                        )),
+                    }
+                }
+                TokenTree::Group(group) => {
+                    // `#[...]`, or `#![...]`: the bracket group right after `#` or `#!`.
+                    let punct = |offset: usize, wanted: char| {
+                        index
+                            .checked_sub(offset)
+                            .and_then(|at| tokens.get(at))
+                            .is_some_and(|token| {
+                                matches!(token, TokenTree::Punct(punct) if punct.as_char() == wanted)
+                            })
+                    };
+                    let attribute = matches!(group.delimiter(), Delimiter::Bracket)
+                        && (punct(1, '#') || (punct(1, '!') && punct(2, '#')));
+                    self.tokens(group.stream(), in_attribute || attribute);
+                }
+                TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+            }
+        }
+    }
+}
+
+/// `target`, as `include*!` in `source` resolves it, relative to the repository root; `None`
+/// for an absolute path or one that climbs above the root.
+fn included_path(source: &str, target: &str) -> Option<String> {
+    use std::path::Component;
+    if Path::new(target).is_absolute() {
+        return None;
+    }
+    let mut parts: Vec<String> = Path::new(source)
+        .parent()?
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    for component in Path::new(target).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// A tracked file in [`GATE_FILES`] or a gate directory.
+fn is_gated(path: &str, tracked: &BTreeSet<&str>) -> bool {
+    tracked.contains(path)
+        && (GATE_FILES.contains(&path)
+            || GATE_DIRECTORIES
+                .iter()
+                .any(|directory| path.starts_with(directory)))
+}
+
 /// A fork never runs on a self-hosted runner or receives a repository secret.
 #[must_use]
 pub fn run(root: &Path, base: &Path) -> Vec<String> {
@@ -49,20 +561,7 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
 /// (see [`maintainer_approval`]). Every other check is unchanged.
 #[must_use]
 pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
-    policy_contract(
-        root,
-        base,
-        evidence,
-        provenance::check_against(root, base).errors(),
-    )
-}
-
-fn policy_contract(
-    root: &Path,
-    base: &Path,
-    evidence: Option<&Path>,
-    mut errors: Vec<String>,
-) -> Vec<String> {
+    let mut errors = provenance::check_against(root, base).errors();
     if !errors.is_empty() {
         return errors;
     }
@@ -90,27 +589,24 @@ fn policy_contract(
         contract.push("workflow inventory differs from the trusted base".to_owned());
     }
     for path in old.intersection(&new) {
-        match (
-            std::fs::read(base.join(path)),
-            std::fs::read(root.join(path)),
-        ) {
-            (Ok(before), Ok(after)) if before == after => {}
-            _ => contract.push(format!(
+        if !same_entry(&base.join(path), &root.join(path)) {
+            contract.push(format!(
                 "{path}: workflow contract differs from the trusted base"
-            )),
+            ));
         }
     }
+    // A gate file absent from the base must stay absent (and untracked bytes count: the
+    // trusted build reads the working tree, not the index).
     for path in GATE_FILES {
-        match (
-            std::fs::read(base.join(path)),
-            std::fs::read(root.join(path)),
-        ) {
-            (Ok(before), Ok(after)) if before == after => {}
-            _ => contract.push(format!(
+        if !same_entry(&base.join(path), &root.join(path)) {
+            contract.push(format!(
                 "{path}: gate contract differs from the trusted base"
-            )),
+            ));
         }
     }
+    contract.extend(gate_directory_contract(root, base, &previous, &current));
+    errors.extend(gate_source_errors(root, &current));
+    errors.extend(gate_entry_errors(root, &current));
     let approval = evidence
         .filter(|_| !contract.is_empty())
         .map(|path| approval_of(path, root));
@@ -128,6 +624,8 @@ fn policy_contract(
             .and_then(|text| yaml::parse(&text));
         match result {
             Ok(doc) => {
+                errors.extend(concurrency_error(path, &doc));
+                errors.extend(pinned_step_errors(path, &doc));
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
                         if !runner_is_admitted(
@@ -231,6 +729,7 @@ pub fn merge_group_approval(evidence: &serde_json::Value, root: &Path) -> Result
         .ok_or("merge group evidence has no pull requests")?;
     let gates: Vec<&str> = [".github/workflows"]
         .into_iter()
+        .chain(GATE_DIRECTORIES)
         .chain(GATE_FILES)
         .collect();
     let mut approvers = Vec::new();
@@ -532,61 +1031,518 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Symlinks in a gate and Cargo config indirection are refused whatever the approval.
+    #[cfg(unix)]
     #[test]
-    fn runner_routing_replaces_custom_labels_with_merge_only_boat() {
+    fn gate_entries_refuse_symlinks_and_cargo_indirection() {
+        use std::os::unix::fs::symlink;
+        let tree = |config: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir_all(dir.path().join(".cargo")).expect("mkdir");
+            std::fs::write(dir.path().join(".cargo/config.toml"), config).expect("write");
+            dir
+        };
+        let run = |dir: &tempfile::TempDir, current: &[&str]| {
+            let current: Vec<String> = current.iter().map(|path| (*path).to_owned()).collect();
+            super::gate_entry_errors(dir.path(), &current)
+        };
+        let plain = tree("[alias]\nxtask = \"run --locked --bin xtask --\"\n");
+        assert_eq!(run(&plain, &[".cargo/config.toml"]), Vec::<String>::new());
+        for (config, wanted) in [
+            ("include = \"other.toml\"\n", "`include` is refused"),
+            (
+                "[[include]]\npath = \"other.toml\"\n",
+                "`include` is refused",
+            ),
+            ("paths = [\"../syn\"]\n", "`paths` is refused"),
+            (
+                "[patch.crates-io]\nsyn = { path = \"x\" }\n",
+                "`patch` is refused",
+            ),
+            (
+                "[build]\nrustc-wrapper = \"/tmp/w\"\n",
+                "`build` is refused",
+            ),
+            ("[env]\nPATH = \"/tmp\"\n", "`env` is refused"),
+            (
+                "[alias]\nxtask = \"run --config other.toml\"\n",
+                "alias `xtask` passes",
+            ),
+            (
+                "[alias]\nxtask = [\"run\", \"-Zunstable-options\"]\n",
+                "alias `xtask` passes",
+            ),
+        ] {
+            let errors = run(&tree(config), &[".cargo/config.toml"]);
+            assert!(
+                errors.iter().any(|error| error.contains(wanted)),
+                "{config}: {errors:?}"
+            );
+        }
+        // A symlink as a file in a gate directory, as a gate file, as a workflow, and as the
+        // gate directory itself.
+        let linked = tree("[alias]\n");
+        std::fs::write(linked.path().join("target.txt"), b"x").expect("write");
+        for path in [
+            ".cargo/linked.toml",
+            "scripts/ci/core.sh",
+            ".github/workflows/core.yml",
+        ] {
+            if path == "scripts/ci/core.sh" {
+                // A symlinked parent directory, the file itself real.
+                let real = linked.path().join("real-ci");
+                std::fs::create_dir_all(&real).expect("mkdir");
+                std::fs::write(real.join("core.sh"), b"x").expect("write");
+                std::fs::create_dir_all(linked.path().join("scripts")).expect("mkdir");
+                symlink(&real, linked.path().join("scripts/ci")).expect("symlink");
+                let errors = run(&linked, &[path]);
+                assert!(
+                    errors
+                        .iter()
+                        .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                    "parent {path}: {errors:?}"
+                );
+                continue;
+            }
+            std::fs::create_dir_all(linked.path().join(path).parent().expect("parent"))
+                .expect("mkdir");
+            symlink(linked.path().join("target.txt"), linked.path().join(path)).expect("symlink");
+            let errors = run(&linked, &[path]);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains(&format!("{path}: a symlink in a gate"))),
+                "{path}: {errors:?}"
+            );
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(directory.path().join("real")).expect("mkdir");
+        symlink(
+            directory.path().join("real"),
+            directory.path().join(".cargo"),
+        )
+        .expect("symlink");
+        let errors = super::gate_entry_errors(directory.path(), &[]);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(".cargo/: a gate directory that is a symlink")),
+            "{errors:?}"
+        );
+    }
+
+    /// An entry is the same only with the same type, exec bit and bytes, or link target;
+    /// both absent is the same, one absent is not.
+    #[cfg(unix)]
+    #[test]
+    fn same_entry_compares_type_mode_and_bytes() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let at = |name: &str| dir.path().join(name);
+        std::fs::write(at("a"), b"x").expect("write");
+        std::fs::write(at("b"), b"x").expect("write");
+        std::fs::write(at("c"), b"y").expect("write");
+        std::fs::write(at("x"), b"x").expect("write");
+        std::fs::set_permissions(at("x"), std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        symlink(at("a"), at("l")).expect("symlink");
+        symlink(at("a"), at("m")).expect("symlink");
+        assert!(super::same_entry(&at("a"), &at("b")));
+        assert!(super::same_entry(&at("l"), &at("m")));
+        assert!(super::same_entry(&at("absent"), &at("gone")));
+        assert!(!super::same_entry(&at("a"), &at("c")), "bytes");
+        assert!(!super::same_entry(&at("a"), &at("x")), "exec bit");
+        assert!(
+            !super::same_entry(&at("a"), &at("l")),
+            "symlink to identical bytes"
+        );
+        assert!(!super::same_entry(&at("absent"), &at("a")), "appears");
+        assert!(!super::same_entry(&at("a"), &at("absent")), "disappears");
+    }
+
+    #[test]
+    fn runner_routing_rejects_superseded_runner_contracts() {
         let path = ".github/workflows/ci-policy.yml";
         let legacy = r#"${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}"#;
-        for job in ["core", "plan", "test", "phase", "full"] {
+        let merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+        for job in ["core", "plan", "test", "phase", "full", "trusted-policy"] {
+            for runner in ["boat", "self-hosted", legacy, merge_only] {
+                assert!(!super::runner_is_admitted(path, job, Some(runner)));
+            }
+            assert!(super::runner_is_admitted(path, job, Some("ubuntu-24.04")));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/other.yml",
+            "core",
+            Some(super::BOAT_RUNNER)
+        ));
+    }
+
+    #[test]
+    fn runner_routing_admits_same_repository_allowlisted_pulls_on_boat() {
+        let path = ".github/workflows/ci-policy.yml";
+        let reject = |job: &str, changed: &str| {
+            assert_ne!(changed, super::BOAT_RUNNER, "no-op mutation");
+            assert!(
+                !super::runner_is_admitted(path, job, Some(changed)),
+                "{job}: {changed}"
+            );
+        };
+        for job in ["core", "plan", "test", "full"] {
             assert!(super::runner_is_admitted(
                 path,
                 job,
-                Some(super::MERGE_RUNNER)
+                Some(super::BOAT_RUNNER)
             ));
             for removed in [
                 "github.event_name == 'merge_group' && ",
-                "vars.NORN_MERGE_RUNNER == 'boat' && ",
+                " && vars.NORN_MERGE_RUNNER == 'boat'",
+                "github.event_name == 'pull_request' && ",
+                // A fork head must never reach a Boat VM.
+                "github.event.pull_request.head.repo.full_name == github.repository && ",
+                " && vars.NORN_PR_RUNNER == 'boat'",
+                // Boat CI runs public-repository jobs only for its allowlisted user.
+                " && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                " && github.actor == 'Youssef-Tarek-Ali-26'",
+                " && github.triggering_actor == 'Youssef-Tarek-Ali-26'",
             ] {
-                let changed = super::MERGE_RUNNER.replace(removed, "");
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+                reject(job, &super::BOAT_RUNNER.replace(removed, ""));
             }
             for event in [
-                "pull_request",
                 "pull_request_target",
                 "issue_comment",
                 "push",
                 "workflow_dispatch",
             ] {
-                let changed = super::MERGE_RUNNER.replace("merge_group", event);
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
-            }
-            for runner in ["boat", "self-hosted", legacy] {
-                assert!(!super::runner_is_admitted(path, job, Some(runner)));
+                reject(
+                    job,
+                    &super::BOAT_RUNNER.replace("'merge_group'", &format!("'{event}'")),
+                );
+                reject(
+                    job,
+                    &super::BOAT_RUNNER.replace("'pull_request'", &format!("'{event}'")),
+                );
             }
             for (before, after) in [
                 ("== 'boat'", "== 'self-hosted'"),
                 ("|| 'ubuntu-24.04'", "|| 'boat'"),
+                ("== github.repository", "!= ''"),
+                ("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                ("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
+                (
+                    "github.actor == 'Youssef-Tarek-Ali-26'",
+                    "github.actor != 'dependabot[bot]'",
+                ),
+                (
+                    "github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                    "github.event.pull_request.user.type != 'Bot'",
+                ),
             ] {
-                let changed = super::MERGE_RUNNER.replace(before, after);
-                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+                reject(job, &super::BOAT_RUNNER.replace(before, after));
             }
         }
-        for job in ["trusted-policy", "unknown"] {
+        // Trusted-policy evaluation stays hosted.
+        for job in ["trusted-policy", "phase", "unknown"] {
             assert!(!super::runner_is_admitted(
                 path,
                 job,
-                Some(super::MERGE_RUNNER)
+                Some(super::BOAT_RUNNER)
             ));
         }
         assert!(!super::runner_is_admitted(
-            ".github/workflows/other.yml",
+            ".github/workflows/trusted-merge-group.yml",
             "core",
-            Some(super::MERGE_RUNNER)
+            Some(super::BOAT_RUNNER)
         ));
-        assert!(super::runner_is_admitted(
-            path,
-            "trusted-policy",
-            Some("ubuntu-24.04")
+    }
+
+    fn concurrency(path: &str, source: &str) -> Option<String> {
+        let parsed = super::yaml::parse(source);
+        assert_eq!(parsed.as_ref().err(), None, "{path}: fixture did not parse");
+        let document = parsed.unwrap_or(super::yaml::Value::Map(Vec::new()));
+        super::concurrency_error(path, &document)
+    }
+
+    fn workflow(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.github/workflows")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    #[test]
+    fn every_checked_in_workflow_meets_the_pull_request_concurrency_rule() {
+        for name in [
+            "ci-policy.yml",
+            "codeql.yml",
+            "cla.yml",
+            "trusted-merge-group.yml",
+        ] {
+            let source = workflow(name);
+            assert!(!source.is_empty(), "{name} is missing");
+            assert_eq!(concurrency(name, &source), None, "{name}");
+        }
+    }
+
+    /// The verdicts `validate.py`'s `validate_pull_request_concurrency` must also reach
+    /// (`negative_canaries.py --workflow-contract` checks that side). The fixture is a gate
+    /// file, so any edit to it needs `/approve-gates`; `validate.py`'s gate-pinned
+    /// `PULL_REQUEST_CONCURRENCY_CASES` also stops an approved edit losing a case, flipping a
+    /// verdict or changing a case's input without that list changing too. This file is in
+    /// a gate directory, and `core.sh`'s cheap phase requires both parity tests to run and pass.
+    const CONCURRENCY_CASES: &str =
+        include_str!("../../../../verification/coverage-v1/fixtures/pull-request-concurrency.json");
+    const VALIDATOR: &str = include_str!("../../../../verification/coverage-v1/validate.py");
+
+    /// `validate.py`'s `PULL_REQUEST_CONCURRENCY_CASES`, one `"name": ["verdict", "sha256"],`
+    /// per line: name to (verdict, input digest).
+    fn pinned_concurrency_cases() -> super::BTreeMap<String, (String, String)> {
+        let block = VALIDATOR
+            .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
+            .and_then(|(_, rest)| rest.split_once("\n}\n"))
+            .map(|(block, _)| block)
+            .unwrap_or_default();
+        let entries = block
+            .lines()
+            .map(|line| line.trim().trim_end_matches(','))
+            .collect::<Vec<_>>();
+        let parsed = serde_json::from_str::<super::BTreeMap<String, (String, String)>>(&format!(
+            "{{{}}}",
+            entries.join(",")
         ));
+        assert!(parsed.is_ok(), "PULL_REQUEST_CONCURRENCY_CASES: {parsed:?}");
+        let pinned = parsed.unwrap_or_default();
+        // One entry per line, no duplicate names: the parsed pin is the whole block.
+        assert!(
+            !pinned.is_empty() && pinned.len() == entries.len(),
+            "PULL_REQUEST_CONCURRENCY_CASES: {} entries parsed from {} lines",
+            pinned.len(),
+            entries.len()
+        );
+        pinned
+    }
+
+    /// `validate.py`'s `concurrency_case_digest`: sha256 of compact JSON
+    /// `[on, concurrency, source]`, null when absent.
+    fn concurrency_case_digest(case: &Value) -> String {
+        use sha2::{Digest, Sha256};
+        let input = Value::Array(vec![
+            case["on"].clone(),
+            case["concurrency"].clone(),
+            case["source"].clone(),
+        ])
+        .to_string();
+        format!("{:x}", Sha256::digest(input.as_bytes()))
+    }
+
+    /// Each gate-pinned case the fixture lost, flipped or changed, as `"<name>: <problem>"`.
+    /// Every copy of a pinned name must match; unpinned cases are free.
+    fn pinned_case_problems(cases: &[Value]) -> Vec<String> {
+        pinned_concurrency_cases()
+            .into_iter()
+            .filter_map(|(name, (expect, digest))| {
+                let found = cases
+                    .iter()
+                    .filter(|case| case["name"].as_str() == Some(name.as_str()))
+                    .collect::<Vec<_>>();
+                let problem = if found.is_empty() {
+                    "lost"
+                } else if found.iter().any(|case| case["expect"] != expect.as_str()) {
+                    "flipped"
+                } else if found
+                    .iter()
+                    .any(|case| concurrency_case_digest(case) != digest)
+                {
+                    "input changed"
+                } else {
+                    return None;
+                };
+                Some(format!("{name}: {problem}"))
+            })
+            .collect()
+    }
+
+    fn fixture_cases() -> Vec<Value> {
+        let parsed = serde_json::from_str::<Value>(CONCURRENCY_CASES);
+        assert!(parsed.is_ok(), "parity fixture: {parsed:?}");
+        parsed.unwrap_or_default()["cases"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_parity_fixture_keeps_every_gate_pinned_case() {
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
+        // The fixture may gain correct, unpinned cases first and last; every canary below
+        // runs on that grown list too, choosing its case by name, never by position.
+        let mut extra = cases.first().cloned().unwrap_or_default();
+        extra["name"] = Value::from("an unpinned case added later");
+        let mut grown = vec![extra.clone()];
+        grown.extend(cases.iter().cloned());
+        grown.push(extra);
+        assert_eq!(pinned_case_problems(&grown), Vec::<String>::new());
+        for list in [&cases, &grown] {
+            for name in pinned_concurrency_cases().into_keys() {
+                let named = |case: &Value| case["name"].as_str() == Some(name.as_str());
+                let deleted = list
+                    .iter()
+                    .filter(|case| !named(case))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    pinned_case_problems(&deleted),
+                    vec![format!("{name}: lost")]
+                );
+                let mut flipped = list.clone();
+                for case in flipped.iter_mut().filter(|case| named(case)) {
+                    let other = if case["expect"] == "accept" {
+                        "reject"
+                    } else {
+                        "accept"
+                    };
+                    case["expect"] = Value::from(other);
+                }
+                assert_eq!(
+                    pinned_case_problems(&flipped),
+                    vec![format!("{name}: flipped")]
+                );
+                // Changing any part of the input (dropping `source` included) is caught.
+                for field in ["on", "concurrency", "source"] {
+                    let mut changed = list.clone();
+                    for case in changed.iter_mut().filter(|case| named(case)) {
+                        case[field] = if case[field].is_null() {
+                            Value::from("changed\n")
+                        } else {
+                            Value::Null
+                        };
+                    }
+                    assert_eq!(
+                        pinned_case_problems(&changed),
+                        vec![format!("{name}: input changed")],
+                        "{field}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pull_request_concurrency_matches_the_shared_parity_fixture() {
+        let cases = fixture_cases();
+        assert_eq!(pinned_case_problems(&cases), Vec::<String>::new());
+        let mut verdicts = std::collections::BTreeSet::new();
+        for case in &cases {
+            let text = |key: &str| case[key].as_str().unwrap_or_default().to_owned();
+            let name = text("name");
+            assert!(
+                case.as_object()
+                    .is_some_and(|object| object.keys().all(|key| matches!(
+                        key.as_str(),
+                        "name" | "on" | "concurrency" | "expect" | "source"
+                    )))
+                    && !name.is_empty()
+                    && case["on"].is_string()
+                    && (case["concurrency"].is_string() || case["concurrency"].is_null()),
+                "malformed parity case {case}"
+            );
+            let source = format!("{}{}", text("on"), text("concurrency"));
+            if case.get("source").is_some() {
+                let checked_in = workflow(
+                    text("source")
+                        .strip_prefix(".github/workflows/")
+                        .unwrap_or_default(),
+                );
+                assert!(
+                    checked_in.contains(&text("on")) && checked_in.contains(&text("concurrency")),
+                    "{name}: drifted from {}",
+                    text("source")
+                );
+            }
+            let verdict = if concurrency(&name, &source).is_some() {
+                "reject"
+            } else {
+                "accept"
+            };
+            assert!(
+                matches!(text("expect").as_str(), "accept" | "reject"),
+                "{name}: expect must be accept or reject"
+            );
+            assert_eq!(verdict, text("expect"), "{name}");
+            verdicts.insert(verdict);
+        }
+        assert_eq!(
+            verdicts.len(),
+            2,
+            "the fixture needs accepted and rejected cases"
+        );
+    }
+
+    fn pinned_steps(source: &str) -> Vec<String> {
+        let parsed = super::yaml::parse(source);
+        assert_eq!(parsed.as_ref().err(), None, "ci-policy.yml did not parse");
+        let document = parsed.unwrap_or(super::yaml::Value::Map(Vec::new()));
+        super::pinned_step_errors(".github/workflows/ci-policy.yml", &document)
+    }
+
+    #[test]
+    fn pinned_steps_reject_a_missing_libclang_step_or_hosted_warning() {
+        let source = workflow("ci-policy.yml");
+        assert_eq!(pinned_steps(&source), Vec::<String>::new());
+        let warning = "      - name: Warn that pull request CI fell back to hosted runners\n";
+        let libclang = "      - name: Make libclang loadable on Boat runners\n";
+        assert_eq!(source.matches(warning).count(), 1);
+        assert_eq!(source.matches(libclang).count(), 2);
+        for (label, before, after) in [
+            ("no hosted warning", warning, "      - name: Renamed\n"),
+            (
+                "fork pull requests warn",
+                " && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat'",
+                " && vars.NORN_PR_RUNNER != 'boat'",
+            ),
+            (
+                "warning on Boat",
+                "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request'",
+                "${{ github.event_name == 'pull_request'",
+            ),
+            ("no libclang step", libclang, "      - name: Renamed\n"),
+            (
+                "libclang never verified",
+                "ls -l \"$library\" && [ -e \"$library\" ] || { echo \"::error::$library is missing: clang-sys cannot load libclang\"; exit 1; }",
+                "true",
+            ),
+            (
+                "libclang on hosted runners",
+                "if: ${{ runner.environment == 'self-hosted' }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
+                "if: ${{ always() }}\n        run: |\n          set -euo pipefail\n          libclang_dev_version",
+            ),
+            (
+                "fatal sccache stats",
+                "          disable_annotations: true\n",
+                "",
+            ),
+            (
+                "sccache stats re-enabled",
+                "disable_annotations: true",
+                "disable_annotations: false",
+            ),
+        ] {
+            let mutated = source.replacen(before, after, 1);
+            assert_ne!(mutated, source, "{label}: no-op mutation");
+            assert!(!pinned_steps(&mutated).is_empty(), "{label} was admitted");
+        }
+        let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
+        assert_eq!(pinned_steps(&test_only).len(), 2);
+        let stats = "          disable_annotations: true\n";
+        assert_eq!(source.matches(stats).count(), 2);
+        assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);
+        assert!(
+            super::pinned_step_errors(
+                ".github/workflows/codeql.yml",
+                &super::yaml::Value::Map(Vec::new())
+            )
+            .is_empty()
+        );
     }
 
     use super::{compare_artifact_variants, contract_errors, maintainer_approval};
@@ -750,483 +1706,4 @@ mod tests {
             assert!(compare_artifact_variants(IR, &proof).is_err());
         }
     }
-}
-
-/// Base-owned admission: rights review and gate approval are independent authorities.
-#[must_use]
-pub fn run_with_rights(
-    root: &Path,
-    base: &Path,
-    head: &str,
-    repository: &str,
-    gate_evidence: Option<&Path>,
-    rights_evidence: &Path,
-) -> Vec<String> {
-    check_with_rights(root, base, head, repository, gate_evidence, rights_evidence).errors
-}
-
-/// Complete trusted gate result, retained outside tracked records.
-#[derive(serde::Serialize)]
-pub struct TrustedReport {
-    /// Exact bytes, rights record inventory and admission identity.
-    pub provenance: provenance::Report,
-    /// Policy and review refusals; an empty list is necessary for success.
-    pub errors: Vec<String>,
-}
-
-/// Check trusted review and contract policy, reporting the identity actually inspected.
-#[must_use]
-pub fn check_with_rights(
-    root: &Path,
-    base: &Path,
-    head: &str,
-    repository: &str,
-    gate_evidence: Option<&Path>,
-    rights_evidence: &Path,
-) -> TrustedReport {
-    let source = provenance::BoundSource {
-        source: root,
-        head,
-        base,
-        repository,
-    };
-    let provenance = provenance::check_bound(root, &source, false);
-    let mut errors = provenance.errors();
-    let rights = std::fs::read(rights_evidence)
-        .map_err(|e| e.to_string())
-        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
-        .and_then(|doc| rights_admission(&doc, root, base, head));
-    if let Err(e) = rights {
-        errors.push(format!("rights acknowledgment: {e}"));
-    }
-    let errors = policy_contract(root, base, gate_evidence, errors);
-    TrustedReport { provenance, errors }
-}
-
-/// Validate one global rights ledger for an immutable head and tree.
-/// The latest recorded acknowledgment is never replaced by an older review
-/// when its source comment is removed. Every pending event blocks the target.
-///
-/// # Errors
-/// Refuses wrong identities, missing history, unreconciled or withdrawn reviews.
-pub fn rights_acknowledgment(
-    evidence: &serde_json::Value,
-    head: &str,
-    tree: &str,
-) -> Result<String, String> {
-    if evidence
-        .get("repository")
-        .and_then(serde_json::Value::as_str)
-        != Some(MAINTAINED_REPOSITORY)
-        || commit_sha(evidence, "head_sha").as_deref() != Some(head)
-        || evidence
-            .get("head_repository")
-            .and_then(serde_json::Value::as_str)
-            .is_none()
-        || commit_sha(evidence, "base_sha").is_none()
-    {
-        return Err("wrong repository/base/head rights identity".into());
-    }
-    let entries = rights_entries(evidence, head, tree)?;
-    let mut ids = BTreeSet::new();
-    let mut boundary = None;
-    let mut latest: Option<(u64, bool, String, String)> = None;
-    for entry in entries {
-        let id = entry
-            .get("id")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("missing rights receipt ID")?;
-        if !ids.insert(id) {
-            return Err("duplicate rights receipt ID".into());
-        }
-        let at = entry
-            .get("recorded_at")
-            .and_then(serde_json::Value::as_str)
-            .filter(|at| rights_timestamp(at))
-            .ok_or("invalid rights receipt timestamp")?;
-        match entry.get("kind").and_then(serde_json::Value::as_str) {
-            Some("revoke" | "withdraw") => {
-                boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
-            }
-            Some("ack") => {
-                let review = rights_review(entry, head)?;
-                if latest.as_ref().is_none_or(|prior| review.0 > prior.0) {
-                    latest = Some(review);
-                }
-            }
-            Some("ignore") => {}
-            _ => return Err("invalid rights ledger decision".into()),
-        }
-    }
-    match latest {
-        Some((_, true, reviewer, created)) if boundary.is_none_or(|at| created.as_str() > at) => {
-            Ok(reviewer)
-        }
-        _ => Err(format!(
-            "missing, edited, deleted or revoked /ack-rights {head}"
-        )),
-    }
-}
-
-/// Canonical digest used by the base-owned checkpoint and publisher.
-///
-/// # Errors
-/// Refuses numbers outside GitHub's safe integer range or oversized framing.
-pub fn rights_digest(value: &serde_json::Value) -> Result<String, String> {
-    use sha2::{Digest as _, Sha256};
-    fn count(hash: &mut Sha256, value: usize) -> Result<(), String> {
-        hash.update(
-            u64::try_from(value)
-                .map_err(|error| format!("checkpoint length overflow: {error}"))?
-                .to_be_bytes(),
-        );
-        Ok(())
-    }
-    fn walk(hash: &mut Sha256, value: &serde_json::Value) -> Result<(), String> {
-        match value {
-            serde_json::Value::Null => hash.update([0]),
-            serde_json::Value::Bool(value) => hash.update([if *value { 2 } else { 1 }]),
-            serde_json::Value::Number(value) => {
-                let number = value
-                    .as_i64()
-                    .filter(|value| value.unsigned_abs() <= 9_007_199_254_740_991)
-                    .ok_or("unsafe checkpoint number")?
-                    .to_string();
-                hash.update([3]);
-                count(hash, number.len())?;
-                hash.update(number.as_bytes());
-            }
-            serde_json::Value::String(value) => {
-                hash.update([4]);
-                count(hash, value.len())?;
-                hash.update(value.as_bytes());
-            }
-            serde_json::Value::Array(values) => {
-                hash.update([5]);
-                count(hash, values.len())?;
-                for value in values {
-                    walk(hash, value)?;
-                }
-            }
-            serde_json::Value::Object(values) => {
-                let ordered: std::collections::BTreeMap<_, _> = values.iter().collect();
-                hash.update([6]);
-                count(hash, ordered.len())?;
-                for (key, value) in ordered {
-                    walk(hash, &serde_json::Value::String(key.clone()))?;
-                    walk(hash, value)?;
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut hash = Sha256::new();
-    hash.update(b"norn-rights-checkpoint-v4\0");
-    walk(&mut hash, value)?;
-    Ok(hex::encode(hash.finalize()))
-}
-
-fn rights_projection(value: &serde_json::Value, digest: Option<&str>) -> Result<(), String> {
-    let statuses = value
-        .get("verdicts")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing publication history")?;
-    let version = value
-        .get("failure_version")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or("missing failure version")?;
-    let latest = statuses.iter().max_by_key(|status| {
-        status
-            .get("id")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or_default()
-    });
-    let failure = statuses
-        .iter()
-        .filter(|status| {
-            matches!(
-                status.get("state").and_then(serde_json::Value::as_str),
-                Some("failure" | "error")
-            )
-        })
-        .filter_map(|status| status.get("id").and_then(serde_json::Value::as_u64))
-        .max()
-        .unwrap_or_default();
-    if version != failure {
-        return Err("wrong failure version".into());
-    }
-    if let Some(status) = latest
-        .filter(|status| status.get("state").and_then(serde_json::Value::as_str) == Some("success"))
-    {
-        let row: serde_json::Value = serde_json::from_str(
-            status
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .ok_or("missing success checkpoint")?,
-        )
-        .map_err(|error| format!("unbound success checkpoint: {error}"))?;
-        if row.get("v").and_then(serde_json::Value::as_u64) != Some(4)
-            || row.get("f").and_then(serde_json::Value::as_u64) != Some(failure)
-            || !row
-                .get("d")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|value| {
-                    value.len() == 64
-                        && value
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                })
-            || digest.is_some_and(|expected| {
-                row.get("d").and_then(serde_json::Value::as_str) != Some(expected)
-            })
-        {
-            return Err("stale success cannot override a newer failure or ledger".into());
-        }
-    }
-    Ok(())
-}
-
-fn rights_publication(evidence: &serde_json::Value, root: &Path, head: &str) -> Result<(), String> {
-    let publication = evidence
-        .get("publication")
-        .ok_or("missing publication checkpoint")?;
-    let tree = git::tree_oid(root, head)?;
-    if commit_sha(publication, "head_sha").as_deref() != Some(head)
-        || commit_sha(publication, "tree_sha").as_deref() != Some(tree.as_str())
-    {
-        return Err("wrong publication target".into());
-    }
-    let mut targets = serde_json::Map::new();
-    for (head, trees) in evidence
-        .get("rights")
-        .and_then(serde_json::Value::as_object)
-        .ok_or("missing publication rights")?
-    {
-        let trees = trees
-            .as_object()
-            .filter(|trees| trees.len() == 1)
-            .ok_or("ambiguous publication tree")?;
-        let ledger = trees.values().next().ok_or("missing target checkpoint")?;
-        let digest = ledger
-            .get("checkpoint")
-            .and_then(|value| value.get("digest"))
-            .and_then(serde_json::Value::as_str)
-            .ok_or("missing target digest")?;
-        targets.insert(head.clone(), digest.into());
-    }
-    if publication.get("targets") != Some(&serde_json::Value::Object(targets)) {
-        return Err("wrong publication coverage".into());
-    }
-    let data = serde_json::json!({"head_sha":head,"tree_sha":tree,"failure_version":publication.get("failure_version"),"targets":publication.get("targets")});
-    let digest = rights_digest(&data)?;
-    if publication
-        .get("digest")
-        .and_then(serde_json::Value::as_str)
-        != Some(digest.as_str())
-    {
-        return Err("publication digest mismatch".into());
-    }
-    rights_projection(publication, Some(&digest))
-}
-
-fn rights_entries<'a>(
-    evidence: &'a serde_json::Value,
-    head: &str,
-    tree: &str,
-) -> Result<&'a Vec<serde_json::Value>, String> {
-    let targets = evidence
-        .get("rights")
-        .and_then(|v| v.get(head))
-        .and_then(serde_json::Value::as_object)
-        .ok_or("missing target rights ledger")?;
-    let ledger = targets
-        .get(tree)
-        .filter(|_| targets.len() == 1)
-        .ok_or("wrong rights tree identity")?;
-    if commit_sha(ledger, "head_sha").as_deref() != Some(head)
-        || commit_sha(ledger, "tree_sha").as_deref() != Some(tree)
-    {
-        return Err("wrong rights ledger target".into());
-    }
-    let data = serde_json::json!({"head_sha":ledger.get("head_sha"),"tree_sha":ledger.get("tree_sha"),
-        "pending":ledger.get("pending"),"entries":ledger.get("entries"),"failure_version":ledger.get("failure_version")});
-    let digest = rights_digest(&data)?;
-    if ledger
-        .get("checkpoint")
-        .and_then(|value| value.get("digest"))
-        .and_then(serde_json::Value::as_str)
-        != Some(digest.as_str())
-    {
-        return Err("target checkpoint digest mismatch".into());
-    }
-    rights_projection(ledger, None)?;
-    let pending = ledger
-        .get("pending")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing pending rights history")?;
-    if !pending.is_empty() {
-        return Err("unreconciled target rights events".into());
-    }
-    ledger
-        .get("entries")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "missing rights ledger entries".into())
-}
-
-fn rights_review(
-    entry: &serde_json::Value,
-    head: &str,
-) -> Result<(u64, bool, String, String), String> {
-    let id = entry
-        .get("comment_id")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or("missing rights comment ID")?;
-    let created = entry
-        .get("created_at")
-        .and_then(serde_json::Value::as_str)
-        .filter(|at| rights_timestamp(at))
-        .ok_or("invalid rights review timestamp")?;
-    let comment = entry.get("comment").unwrap_or(&serde_json::Value::Null);
-    let valid = comment.get("id").and_then(serde_json::Value::as_u64) == Some(id)
-        && comment
-            .get("permission")
-            .and_then(serde_json::Value::as_str)
-            == Some("admin")
-        && comment
-            .get("created_at")
-            .and_then(serde_json::Value::as_str)
-            == Some(created)
-        && comment
-            .get("updated_at")
-            .and_then(serde_json::Value::as_str)
-            == Some(created)
-        && comment
-            .get("body")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|body| body.trim() == format!("/ack-rights {head}"));
-    let user = comment
-        .get("user")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    Ok((
-        id,
-        valid && !user.is_empty(),
-        user.to_owned(),
-        created.to_owned(),
-    ))
-}
-
-// GitHub API timestamps use canonical UTC seconds, so lexical order is time order.
-fn rights_timestamp(at: &str) -> bool {
-    at.len() == 20
-        && at.bytes().enumerate().all(|(index, byte)| match index {
-            4 | 7 => byte == b'-',
-            10 => byte == b'T',
-            13 | 16 => byte == b':',
-            19 => byte == b'Z',
-            _ => byte.is_ascii_digit(),
-        })
-}
-
-/// Verify constituent reviews and independently recompute each clean merge.
-///
-/// # Errors
-/// Refuses uncovered heads and any integration-only content or metadata.
-pub fn rights_admission(
-    evidence: &serde_json::Value,
-    root: &Path,
-    base_root: &Path,
-    head: &str,
-) -> Result<(), String> {
-    if git::head(root)? != head {
-        return Err("candidate differs from rights head".into());
-    }
-    let base = git::head(base_root)?;
-    rights_publication(evidence, root, head)?;
-    if let Some(group) = evidence.get("merge_group") {
-        if evidence
-            .get("repository")
-            .and_then(serde_json::Value::as_str)
-            != Some(MAINTAINED_REPOSITORY)
-            || commit_sha(group, "head_sha").as_deref() != Some(head)
-            || commit_sha(group, "base_sha").as_deref() != Some(base.as_str())
-        {
-            return Err("wrong merge-group rights identity".into());
-        }
-        let pulls = evidence
-            .get("pull_requests")
-            .and_then(serde_json::Value::as_array)
-            .ok_or("missing constituent rights evidence")?;
-        let mut current = head.to_owned();
-        let mut covered = BTreeSet::new();
-        for _ in 0..MAX_MERGE_GROUP {
-            if current == base {
-                break;
-            }
-            let [previous, pull] = <[String; 2]>::try_from(git::parents(root, &current)?)
-                .map_err(|_parents| "rights group requires two-parent merges")?;
-            let mut found = false;
-            for constituent in pulls
-                .iter()
-                .filter(|p| commit_sha(p, "head_sha").as_deref() == Some(pull.as_str()))
-            {
-                let mut doc = constituent.clone();
-                doc.as_object_mut()
-                    .ok_or("malformed constituent rights evidence")?
-                    .insert("repository".into(), MAINTAINED_REPOSITORY.into());
-                doc.as_object_mut()
-                    .ok_or("malformed rights evidence")?
-                    .insert(
-                        "rights".into(),
-                        evidence
-                            .get("rights")
-                            .cloned()
-                            .ok_or("missing global rights ledger")?,
-                    );
-                if rights_acknowledgment(&doc, &pull, &git::tree_oid(root, &pull)?).is_ok() {
-                    found = true;
-                }
-            }
-            if !found {
-                return Err(format!("unacknowledged constituent head {pull}"));
-            }
-            covered.insert(pull.clone());
-            git::clean_merge(root, &previous, &pull, &current)?;
-            current = previous;
-        }
-        if current != base
-            || pulls
-                .iter()
-                .any(|p| commit_sha(p, "head_sha").is_none_or(|h| !covered.contains(&h)))
-        {
-            return Err("unaccounted merge-group head or excessive group length".into());
-        }
-    } else {
-        if commit_sha(evidence, "base_sha").as_deref() != Some(base.as_str()) {
-            return Err("rights base differs from trusted base".into());
-        }
-        rights_acknowledgment(evidence, head, &git::tree_oid(root, head)?)?;
-    }
-    Ok(())
-}
-
-/// Candidate diagnostic gate. The trusted lane separately requires live rights evidence.
-#[must_use]
-pub fn run_local(root: &Path) -> Vec<String> {
-    let head = match git::head(root) {
-        Ok(h) => h,
-        Err(e) => return vec![e],
-    };
-    let source = provenance::BoundSource {
-        source: root,
-        head: &head,
-        base: root,
-        repository: MAINTAINED_REPOSITORY,
-    };
-    policy_contract(
-        root,
-        root,
-        None,
-        provenance::check_bound(root, &source, false).errors(),
-    )
 }

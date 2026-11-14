@@ -1,0 +1,224 @@
+{
+  "atlasVersion": 1,
+  "domain": "capabilities-routing",
+  "entries": [
+    {
+      "id": "arazzo-specification",
+      "name": "Arazzo Specification",
+      "publisher": "OpenAPI Initiative (OAI)",
+      "kind": "standard",
+      "domains": [
+        "capabilities-routing",
+        "process-rules"
+      ],
+      "version": "1.1.0",
+      "versionDate": "2026-05-18",
+      "versionBasis": "spec.openapis.org/arazzo/latest.html is 'The Arazzo Specification v1.1.0', matching GitHub release 1.1.0 (2026-05-18); 1.0.1 was 2025-01-20.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "GitHub licence metadata for the official OAI/Arazzo-Specification repo reports Apache-2.0, from its LICENSE file.",
+        "termsUrl": "https://github.com/OAI/Arazzo-Specification/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://spec.openapis.org/arazzo/v1.1.0.html",
+      "evidenceUrls": [
+        "https://spec.openapis.org/arazzo/latest.html",
+        "https://github.com/OAI/Arazzo-Specification"
+      ],
+      "norn": {
+        "overlap": "multi-step API workflows, step dependencies, success/failure criteria",
+        "concepts": [],
+        "irTargets": [
+          "ConnectorIR"
+        ],
+        "proposedConcepts": [
+          "Capability"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Capability and routing design (Norn-cloud/norn#1217)."
+      },
+      "notes": "The 1.1 JSON Schema URL could not be found (spec.openapis.org/arazzo/1.1/schema/ returned 404). Arazzo 1.1 adds async step coordination guidance.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "asyncapi-specification",
+      "name": "AsyncAPI Specification",
+      "publisher": "AsyncAPI Initiative",
+      "kind": "standard",
+      "domains": [
+        "capabilities-routing",
+        "infra-it"
+      ],
+      "version": "3.1.0",
+      "versionDate": "2026-01-31",
+      "versionBasis": "asyncapi/spec GitHub release v3.1.0 (2026-01-31); spec/asyncapi.md reads 'Version 3.1.0', and asyncapi.com's 'latest' reference redirects to v3.1.0.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "Read the asyncapi/spec LICENSE (Apache License 2.0) and the spec text 'The AsyncAPI Specification is licensed under The Apache License, Version 2.0'; the spec-json-schemas repo is also Apache-2.0.",
+        "termsUrl": "https://github.com/asyncapi/spec/blob/master/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "AsyncAPI",
+        "JSON-Schema",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/asyncapi/spec-json-schemas",
+      "evidenceUrls": [
+        "https://github.com/asyncapi/spec",
+        "https://github.com/asyncapi/spec-json-schemas",
+        "https://www.asyncapi.com/docs/reference/specification/latest"
+      ],
+      "norn": {
+        "overlap": "event/message channel descriptions, operations, message schemas, broker bindings",
+        "concepts": [],
+        "irTargets": [
+          "ConnectorIR"
+        ],
+        "proposedConcepts": [
+          "Capability",
+          "Endpoint"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Capability and routing design (Norn-cloud/norn#1217)."
+      },
+      "notes": "The JSON Schemas ship as a separate package (spec-json-schemas v6.11.1, 2026-01-30).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "openapi-specification",
+      "name": "OpenAPI Specification",
+      "publisher": "OpenAPI Initiative (OAI)",
+      "kind": "standard",
+      "domains": [
+        "capabilities-routing",
+        "infra-it"
+      ],
+      "version": "3.2.1",
+      "versionDate": "2026-09-10",
+      "versionBasis": "spec.openapis.org/oas/latest.html is 'OpenAPI Specification v3.2.1' (publishDate 2026-09-10), matching GitHub release 3.2.1; 3.1.2 was the last 3.1.x (2025-09-19).",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "The published 3.2.1 spec states 'This document is licensed under The Apache License, Version 2.0', and the OAI/OpenAPI-Specification repo licence is Apache-2.0.",
+        "termsUrl": "https://github.com/OAI/OpenAPI-Specification/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OpenAPI",
+        "JSON-Schema",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://spec.openapis.org/oas/3.2/schema/2025-09-17",
+      "evidenceUrls": [
+        "https://spec.openapis.org/oas/latest.html",
+        "https://github.com/OAI/OpenAPI-Specification",
+        "https://spec.openapis.org/oas/3.2/schema/2025-09-17"
+      ],
+      "norn": {
+        "overlap": "HTTP API descriptions, operations, schemas, security schemes",
+        "concepts": [],
+        "irTargets": [
+          "ActionIR",
+          "ConnectorIR"
+        ],
+        "proposedConcepts": [
+          "Capability",
+          "Provider",
+          "Endpoint"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-api/src/contracts.rs"
+        ],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Norn emits OpenAPI; connectors and capabilities need OpenAPI ingress."
+      },
+      "notes": "The OAS 3.2 JSON Schema id is dated 2025-09-17 and returns HTTP 200. We did not check whether a newer schema iteration exists for 3.2.1.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "w3c-ssn-sosa",
+      "name": "Semantic Sensor Network Ontology (SSN) incl. SOSA",
+      "publisher": "W3C and OGC",
+      "kind": "ontology",
+      "domains": [
+        "capabilities-routing",
+        "iot-buildings"
+      ],
+      "version": "W3C Recommendation 2017-10-19",
+      "versionDate": "2017-10-19",
+      "versionBasis": "w3.org/TR/vocab-ssn/ is the 'W3C Recommendation 19 October 2017 (Link errors corrected 08 December 2017)'; a 'Semantic Sensor Network Ontology - 2023 Edition' exists only as a draft at w3c.github.io/sdw-sosa-ssn.",
+      "licence": {
+        "spdx": "W3C-20150513",
+        "text": "W3C Software and Document License (2015) for ontology files, also OGC Software licence; W3C document use rules for the spec",
+        "status": "verified",
+        "basis": "Read the SOSA ontology at w3.org/ns/sosa/ (dcterms:license <http://www.w3.org/Consortium/Legal/2015/copyright-software-and-document> and <http://www.opengeospatial.org/ogc/Software>, rights 'Copyright 2017 W3C/OGC') and the Recommendation's copyright notice.",
+        "termsUrl": "https://www.w3.org/Consortium/Legal/2015/copyright-software-and-document",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "OWL",
+        "RDF",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "http://www.w3.org/ns/sosa/",
+      "evidenceUrls": [
+        "https://www.w3.org/TR/vocab-ssn/",
+        "http://www.w3.org/ns/sosa/",
+        "https://w3c.github.io/sdw-sosa-ssn/ssn/"
+      ],
+      "norn": {
+        "overlap": "sensors, observations, samples, actuations, observable properties, platforms",
+        "concepts": [
+          "core.Process"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Observation",
+          "Device",
+          "Capability"
+        ],
+        "mapping": "planned",
+        "mappingEvidence": [],
+        "importerIssue": "Norn-cloud/norn#1217"
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Assay and scale observations are SOSA observations."
+      },
+      "notes": "The 2023-edition draft (OGC/W3C, copyright 2026) adds new version IRIs and is not yet a Recommendation. The W3C licence page was not opened separately; the SPDX id comes from the licence IRI in the ontology.",
+      "origin": "atlas-2026-11-11"
+    }
+  ]
+}

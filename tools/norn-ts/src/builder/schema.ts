@@ -14,26 +14,44 @@ import type { Json } from "../canonical.ts"
 
 export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
 
-export interface StringSchema {
+/**
+ * Display-only labels (D66). The checker admits them on ActionIR input
+ * schemas only; they never change the parsed type.
+ */
+export interface Labels {
+  readonly title?: string
+  readonly description?: string
+}
+
+/** One wizard step over an ActionIR input: fields are RFC 6901 pointers. */
+export interface InputGroup {
+  readonly id: string
+  readonly title: string
+  readonly fields: ReadonlyArray<string>
+}
+
+export interface StringSchema extends Labels {
   readonly type: "string"
   readonly enum?: ReadonlyArray<string>
 }
 
-export interface ScalarSchema {
+export interface ScalarSchema extends Labels {
   readonly type: "integer" | "number" | "boolean" | "null"
   readonly nornType?: Extract<PropertyType, {readonly kind: "decimal"}>
 }
 
-export interface ArraySchema {
+export interface ArraySchema extends Labels {
   readonly type: "array"
   readonly items: ValueSchema
 }
 
-export interface ObjectSchema {
+export interface ObjectSchema extends Labels {
   readonly type: "object"
   readonly properties: Readonly<Record<string, ValueSchema>>
   readonly required?: ReadonlyArray<string>
   readonly additionalProperties: false
+  /** ActionIR input roots only. */
+  readonly "x-norn"?: { readonly groups: ReadonlyArray<InputGroup> }
 }
 
 /** RuleIR-only nullable shape; other closed-schema profiles reject it. */

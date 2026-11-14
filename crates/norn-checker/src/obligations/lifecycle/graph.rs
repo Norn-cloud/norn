@@ -125,13 +125,14 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
             ));
         };
         if law.timing.is_some()
+            || !law.exceptions.is_empty()
             || !law.scope.lifecycle_states.is_empty()
             || !law.scope.commitments.is_empty()
             || law.severity != LawSeverity::Error
             || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         {
             return Err(format!(
-                "unsupported lifecycle law {identity}: timing, scope, modality or advisory severity"
+                "unsupported lifecycle law {identity}: timing, exceptions, scope, modality or advisory severity"
             ));
         }
         let condition = law

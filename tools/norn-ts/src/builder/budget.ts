@@ -63,6 +63,14 @@ export class ExpansionBudget {
     } finally { this.active.delete(value) }
   }
 
+  /**
+   * Start the next root module of a pack (#1110): work is bounded per module,
+   * while the output byte bound and the deadline stay pack-wide.
+   */
+  beginModule(): void { this.work = 0 }
+  /** Work charged since the last `beginModule`. */
+  get workUsed(): number { return this.work }
+
   assert(value: unknown): void { this.charge(this.cost(value)) }
   /** Reserve `work` units for data about to be materialized (measured on a shared DAG by the caller). */
   reserve(work: number): void { this.charge({ work: this.capWork(work), bytes: 0, lines: 0, height: 0 }) }
@@ -125,6 +133,7 @@ export class ExpansionBudget {
         case "Binary": case "Compare": case "Logical": child(expr.left); child(expr.right); break
         case "Unsafe": bytes = this.capBytes(bytes + utf8(expr.text)); break
         case "Call": for (const arg of expr.args) child(arg); break
+        case "Closure": bytes = this.capBytes(bytes + utf8(expr.fn) + utf8(expr.alias) * 2); child(expr.list); child(expr.body); break
         case "Conditional": child(expr.condition); child(expr.yes); child(expr.no); break
         case "Coalesce": child(expr.value); child(expr.fallback); break
         case "Not": child(expr.operand); break

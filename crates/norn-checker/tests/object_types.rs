@@ -23,7 +23,8 @@
 use std::collections::BTreeSet;
 
 use norn_checker::{
-    Diagnostic, check_object_type_defs, check_property_type_defs, object_types::codes,
+    Diagnostic, DiagnosticSeverity, EntityContext, EntityModel, Span, check_entity_model,
+    check_object_type_defs, check_property_type_defs, object_types::codes,
     property_types::codes as property_codes,
 };
 use norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES;
@@ -521,7 +522,48 @@ fn every_code_has_a_negative_case() {
             ),
         ),
     ];
-    let covered: BTreeSet<&str> = cases.iter().map(|(code, _, _)| *code).collect();
+    // Exercise the real model validator before including its observed code in
+    // coverage. This catalog exceeds the 4,096 registered-type profile and
+    // contains a self-cycle with descendants; no ancestry pass may follow it.
+    let budget_defs: Vec<ObjectTypeDef> = (0..4_097)
+        .map(|index| {
+            serde_json::from_value(serde_json::json!({
+                "name": format!("test.T{index:04}"), "extends": "test.T0000",
+            }))
+            .expect("budget negative case decodes")
+        })
+        .collect();
+    let budget_registry = registry();
+    let budget_findings = check_entity_model(
+        &EntityModel {
+            object_types: &budget_defs,
+            ..EntityModel::EMPTY
+        },
+        &EntityContext {
+            catalog: &[],
+            registry: &budget_registry,
+            base: EntityModel::EMPTY,
+            tenant: None,
+        },
+    );
+    assert_eq!(budget_findings.len(), 1);
+    let budget_finding = budget_findings.first().expect("observed budget refusal");
+    assert_eq!(
+        budget_finding.code.as_str(),
+        "object_type.validation.inheritance_budget_exhausted"
+    );
+    assert_eq!(budget_finding.severity, DiagnosticSeverity::Error);
+    assert_eq!(budget_finding.span, Some(Span::pointer("/objectTypes")));
+    assert!(
+        budget_finding
+            .message
+            .contains("catalog validation stopped before ancestry resolution")
+    );
+    let covered: BTreeSet<&str> = cases
+        .iter()
+        .map(|(code, _, _)| *code)
+        .chain(std::iter::once(budget_finding.code.as_str()))
+        .collect();
     let registered: BTreeSet<&str> = norn_checker::codes::REGISTRY
         .iter()
         .map(|entry| entry.code)

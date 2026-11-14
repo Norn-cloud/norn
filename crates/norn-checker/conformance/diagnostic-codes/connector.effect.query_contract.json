@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.query_contract",
+  "message": "a query binding is safe to retry and declares no providerKey or reconcile; only a command does",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

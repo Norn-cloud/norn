@@ -127,9 +127,32 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
     })
 }
 
+fn decimal_wire_schema(schema: &mut JsonObject) {
+    if schema.get("type").and_then(JsonValue::as_string) == Some("number")
+        && schema
+            .get("nornType")
+            .and_then(JsonValue::as_object)
+            .and_then(|site| site.get("kind"))
+            .and_then(JsonValue::as_string)
+            == Some("decimal")
+    {
+        schema.insert("type".to_owned(), JsonValue::String("string".to_owned()));
+        schema.entry("description".to_owned()).or_insert_with(|| {
+            JsonValue::String("Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number.".to_owned())
+        });
+    } else {
+        for value in schema.values_mut() {
+            if let JsonValue::Object(child) = value {
+                decimal_wire_schema(child);
+            }
+        }
+    }
+}
+
 /// Project caller requirements without evaluating or parsing ZEN.
 fn caller_input_schema(action: &ActionRoot) -> JsonObject {
     let mut input_schema = action.input_schema.clone();
+    decimal_wire_schema(&mut input_schema);
     if action.derive.iter().any(|step| step.input_required) {
         let required = input_schema
             .entry("required".to_owned())

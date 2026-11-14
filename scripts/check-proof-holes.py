@@ -9,7 +9,30 @@ import re
 import sys
 from pathlib import Path
 
-import coverage_manifest
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+coverage_manifest = _sibling("coverage_manifest")
 
 
 ROOT = Path(__file__).resolve().parents[1]

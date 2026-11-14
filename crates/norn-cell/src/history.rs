@@ -2007,8 +2007,10 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
+        let cell_id = crate::cell_identity::from_bindings(&first.bindings)?.ok_or_else(refused)?;
         let mut store =
-            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?)?;
+            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?, &cell_id)?;
+        store.require_cell_id(&cell_id)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }
@@ -2103,7 +2105,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            let head = store.read().head_command()?.ok_or_else(mismatch)?;
+            let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
             if head.position != position
                 || head.commit_seq != commit_seq
                 || head.command != command
@@ -2154,6 +2156,23 @@ pub(crate) fn restore_input<E: SqlEngine>(
         return Err(mismatch());
     }
     Ok(())
+}
+
+/// PARKED-1: the pending command a retained result consumption names: a
+/// parked command at its own position, any other only as the FIFO head.
+fn replayed_result<E: SqlEngine>(
+    store: &CellStore<E>,
+    position: u64,
+) -> Result<Option<crate::read::PendingCommand>, CellError> {
+    let reader = store.read();
+    let Some(row) = reader.pending_at(position)? else {
+        return Ok(None);
+    };
+    if crate::read::is_parked(&row.command) {
+        return Ok(Some(row));
+    }
+    let fifo_head = reader.head_command()?.map(|head| head.position);
+    Ok((fifo_head == Some(row.position)).then_some(row))
 }
 
 fn restore_run_history<E: SqlEngine>(

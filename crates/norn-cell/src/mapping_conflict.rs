@@ -206,6 +206,7 @@ pub(crate) struct SourceDisputeIndex {
     identities: BTreeSet<[String; 5]>,
     conflicts: BTreeSet<[String; 5]>,
     roots_by_key: BTreeMap<String, BTreeSet<String>>,
+    pub(crate) claim_endpoints: BTreeMap<String, BTreeMap<(u64, String), u64>>,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -239,6 +240,41 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &guard.bundle.input,
             )?);
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
+        }
+        let rows = self.conn.query(&format!("SELECT observation_id, consumed_commit_seq, octet_length(observed), json_extract(record.value, '$.key'), record.value FROM {INBOX}, json_each(observed, '$.input.records') AS record WHERE observation_id LIKE 'mapping-bundle:%' AND consumed_commit_seq IS NOT NULL AND (json_array_length(json_extract(record.value, '$.links')) > 0 OR json_array_length(json_extract(record.value, '$.clearedLinks')) > 0)"), params![])?;
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let id: String = row.get(0)?;
+            let seq = crate::read::to_u64(row.get(1)?, "claim sequence")?;
+            let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
+            let record: serde_json::Value = serde_json::from_str(&row.get::<String>(4)?)?;
+            let mut endpoints = BTreeSet::new();
+            if record
+                .get("clearedLinks")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|links| !links.is_empty())
+            {
+                endpoints.insert(row.get::<String>(3)?);
+            }
+            for link in record
+                .get("links")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                for field in ["key", "targetKey"] {
+                    if let Some(key) = link.get(field).and_then(serde_json::Value::as_str) {
+                        endpoints.insert(key.to_owned());
+                    }
+                }
+            }
+            for key in endpoints {
+                index
+                    .claim_endpoints
+                    .entry(key)
+                    .or_default()
+                    .insert((seq, id.clone()), bytes);
+            }
         }
         Ok(index)
     }
@@ -278,7 +314,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
-    fn with_source_dispute_index<T>(
+    pub(crate) fn with_source_dispute_index<T>(
         &self,
         read: impl FnOnce(&SourceDisputeIndex) -> T,
     ) -> Result<T, CellError> {
@@ -327,6 +363,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             findings
         })
+    }
+
+    /// QUERY-ENGINE-1: bounded member cache tokens from the rechecked source index.
+    /// Tokens include roots and complete finding contents; they grant no authority.
+    pub(crate) fn question_source_pins(
+        &self,
+        members: &BTreeSet<String>,
+    ) -> Result<BTreeMap<String, String>, CellError> {
+        if members.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        self.with_source_dispute_index(|index| {
+            let mut grouped = BTreeMap::<&str, Vec<_>>::new();
+            for ((root, key), findings) in &index.subjects {
+                if members.contains(key) {
+                    grouped
+                        .entry(key.as_str())
+                        .or_default()
+                        .push((root, findings));
+                }
+            }
+            grouped
+                .into_iter()
+                .map(|(key, findings)| Ok((key.to_owned(), crate::codec::hash_json(&findings)?)))
+                .collect()
+        })?
     }
 
     pub(crate) fn indexed_source_dispute(

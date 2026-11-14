@@ -1,0 +1,169 @@
+{
+  "description": "Shared verdicts for the pull_request concurrency rule. crates/norn-skeleton-guard/src/ci/mod.rs (concurrency_error) and verification/coverage-v1/validate.py (validate_pull_request_concurrency) must both reach `expect` for every case. A case's workflow is `on` followed by `concurrency` (null: none). A case with `source` holds that workflow's exact checked-in text. validate.py (a gate file) pins every case's name, verdict and input digest in PULL_REQUEST_CONCURRENCY_CASES: cases may be added anywhere, but losing, flipping or changing a pinned one needs /approve-gates.",
+  "cases": [
+    {
+      "name": "codeql.yml as checked in",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "accept",
+      "source": ".github/workflows/codeql.yml"
+    },
+    {
+      "name": "ci-policy.yml as checked in",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
+      "expect": "accept",
+      "source": ".github/workflows/ci-policy.yml"
+    },
+    {
+      "name": "folded multi-line group",
+      "on": "on: pull_request\n",
+      "concurrency": "concurrency:\n  group: >-\n    ${{ github.workflow }}-${{ github.event_name == 'pull_request' &&\n    format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "accept"
+    },
+    {
+      "name": "out of scope: pull_request_target without concurrency",
+      "on": "on: pull_request_target\n",
+      "concurrency": null,
+      "expect": "accept"
+    },
+    {
+      "name": "out of scope: pull_request_target with an unconditional cancel",
+      "on": "on:\n  pull_request_target:\n  issue_comment:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}\n  cancel-in-progress: true\n",
+      "expect": "accept"
+    },
+    {
+      "name": "out of scope: push and workflow_run list",
+      "on": "on: [push, workflow_run]\n",
+      "concurrency": null,
+      "expect": "accept"
+    },
+    {
+      "name": "out of scope: workflow_run mapping",
+      "on": "on:\n  workflow_run:\n    workflows: [Public core]\n    types: [requested]\n",
+      "concurrency": null,
+      "expect": "accept"
+    },
+    {
+      "name": "pull_request string without concurrency",
+      "on": "on: pull_request\n",
+      "concurrency": null,
+      "expect": "reject"
+    },
+    {
+      "name": "pull_request in a list without concurrency",
+      "on": "on: [push, pull_request]\n",
+      "concurrency": null,
+      "expect": "reject"
+    },
+    {
+      "name": "pull_request mapping without concurrency",
+      "on": "on:\n  pull_request:\n",
+      "concurrency": null,
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: no concurrency",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": null,
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: group-only concurrency string",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency: codeql\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: PR number replaced by the ref",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: PR number dropped",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && 'pr' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: one shared group",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: no workflow prefix",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: other events share a group",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: unconditional cancel",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: true\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: main pushes cancelled without the main-push group",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: no cancel-in-progress",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: cancel disabled",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: false\n",
+      "expect": "reject"
+    },
+    {
+      "name": "codeql: extra concurrency key",
+      "on": "on:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: \"23 4 * * 1\"\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  queue: max\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "ci-policy: every push branch superseded",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "ci-policy: release pushes superseded",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main, release]\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "ci-policy: main-push cancel without its own group",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "ci-policy: main-push group with a PR-only cancel",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+      "expect": "reject"
+    },
+    {
+      "name": "ci-policy: merge groups cancelled",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
+      "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}\n",
+      "expect": "reject"
+    }
+  ]
+}

@@ -32,7 +32,7 @@ use norn_ir::{
 use crate::cell_host::{
     CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
     FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, WrittenLinkVersion, WrittenVersion,
+    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
@@ -40,6 +40,8 @@ use crate::cell_host::{
 const MAX_LINK_READ_TARGETS: usize = 1_000;
 /// Maximum aggregate target-key bytes bound to a complete link read.
 const MAX_LINK_READ_BYTES: usize = 262_144;
+use crate::commit_order::{CommitStage, CommitStages, run_stages};
+use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
 use crate::snapshot_observe::ObservationAuthorization;
 
@@ -51,6 +53,11 @@ pub struct CommitModel<'m, 'a> {
 }
 
 impl<'m, 'a> CommitModel<'m, 'a> {
+    /// Whether `object_type` is a stored object type (not an interface).
+    pub(crate) fn is_object_type(self, object_type: &ObjectTypeName) -> bool {
+        self.catalog.contains(object_type)
+    }
+
     /// The model of `catalog`.
     #[must_use]
     pub const fn new(catalog: &'m TypeCatalog<'a>) -> Self {
@@ -274,6 +281,25 @@ pub trait CommitView {
         Ok(None)
     }
 
+    /// Every live object matching `predicate`, as members in canonical key
+    /// order, at most `limit` of them ([`crate::predicate_read`]). Hosts
+    /// enumerate the queried type and apply [`PredicateQuery::matches`].
+    /// `None` means enumeration is incomplete or this host cannot prove the
+    /// set complete (for example, the type spans owners); a commit
+    /// containing a predicate read is then refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host read failure.
+    fn predicate_members(
+        &self,
+        predicate: &PredicateQuery,
+        limit: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        let _ = (predicate, limit);
+        Ok(None)
+    }
+
     /// Whether a live outgoing target survives the excluded removals.
     /// A bounded existence proof need not enumerate a large complete adjacency.
     /// `None` means the host cannot complete the proof within its read limits.
@@ -303,6 +329,10 @@ pub trait CommitView {
 }
 
 /// The admission check every host runs before applying a commit.
+///
+/// The stage order below lives in one straight-line driver,
+/// `commit_order::run_stages`, which is proved to run exactly this order and to
+/// stop at the first refusal (`scripts/verify-kernel-commit-aeneas.sh`).
 ///
 /// Pure and host-independent: the model comes from the shared catalog, the
 /// state from the host's view, so every host refuses the same commits with
@@ -378,6 +408,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
         // cannot remove or alter any read sealed by kernel preparation.
         || proof.reads().iter().any(|read| !commit.reads.contains(read))
         || proof.link_reads() != commit.link_reads.as_slice()
+        || proof.predicate_reads() != commit.predicate_reads.as_slice()
         || proof.writes().len() != commit.writes.len()
         || proof.links().len() != commit.links.len()
     {
@@ -469,6 +500,62 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
     trusted_owned_rows: bool,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
+    run_stages(&mut LocalStages {
+        commit,
+        model,
+        view,
+        authorization,
+        trusted_owned_rows,
+        links: BTreeMap::new(),
+    })?;
+    next_versions(commit)
+}
+
+/// The stage bodies of one local admission. [`run_stages`] fixes their order.
+struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
+    commit: &'c CellCommit<E, C, T>,
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+    authorization: Option<&'v ObservationAuthorization>,
+    trusted_owned_rows: bool,
+    /// The live links once the commit applies, set by [`CommitStage::Endpoints`]
+    /// before [`CommitStage::Cardinality`] reads them.
+    links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
+}
+
+impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
+    for LocalStages<'_, '_, '_, '_, E, C, T, V>
+{
+    fn run(&mut self, stage: CommitStage) -> Result<(), CommitError<V::Error>> {
+        let (commit, model, view, authorization) =
+            (self.commit, self.model, self.view, self.authorization);
+        match stage {
+            CommitStage::EventLimit => check_event_limit(commit, authorization),
+            CommitStage::Shape => check_shape(commit, model, view, self.trusted_owned_rows),
+            CommitStage::Accounting => check_accounting_postings(commit, model, view),
+            CommitStage::Delivery => check_delivery(commit, view),
+            CommitStage::Immutable => check_immutable(commit, model, view),
+            CommitStage::Versions => check_versions(commit, model, view, authorization),
+            CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
+            CommitStage::Endpoints => {
+                self.links = live_links_after(commit, model, view)?;
+                check_endpoints(commit, model, view, &self.links)
+            }
+            CommitStage::LinkValues => check_link_values(commit, model, view),
+            CommitStage::Cardinality => check_cardinality(commit, model, view, &self.links),
+            CommitStage::RequiredLinks => check_required_links(commit, model, view, authorization),
+            CommitStage::Acyclic => check_acyclic_links(commit, model, view),
+            CommitStage::Invariants => check_invariants(commit, model.catalog, authorization)
+                .map_err(InvariantAdmissionError::into_commit_error),
+            CommitStage::Laws => check_governing_laws(commit, model, authorization),
+        }
+    }
+}
+
+fn check_event_limit<E, C, T, X>(
+    commit: &CellCommit<E, C, T>,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<X>> {
     if let Some(authorization) = authorization
         && commit.events.len() > authorization.event_limit()
     {
@@ -477,8 +564,13 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             actual: commit.events.len(),
         });
     }
-    check_shape(commit, model, view, trusted_owned_rows)?;
-    check_accounting_postings(commit, model, view)?;
+    Ok(())
+}
+
+fn check_delivery<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
     if let Some(consumed) = &commit.consumes {
         let is_pending = view.pending(consumed).map_err(CommitError::Host)?;
         if !is_pending {
@@ -487,46 +579,54 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view, authorization)?;
-    check_link_authority(commit, model, view, authorization)?;
-    let links = live_links_after(commit, model, view)?;
-    check_endpoints(commit, model, view, &links)?;
+    Ok(())
+}
+
+/// A write that observed an object already present and immutable can never
+/// succeed on retry, so `ImmutableObject` outranks the stale-version
+/// `Conflict`. A write whose expectation differs from the current version (an
+/// absent object that a concurrent create has since made present) is a
+/// retryable `Conflict` that `check_versions` reports, so creates can still
+/// re-read and replay or allocate the next number.
+fn check_immutable<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
+    for write in &commit.writes {
+        let key = model.canonical(&write.key);
+        let concrete = view.concrete(&key).map_err(CommitError::Host)?;
+        if concrete
+            .as_ref()
+            .is_some_and(|concrete| model.catalog.immutable(concrete))
+            && view.version(&key).map_err(CommitError::Host)? == write.expected
+        {
+            return Err(CommitError::ImmutableObject {
+                key: write.key.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn check_link_values<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+) -> Result<(), CommitError<V::Error>> {
     for write in &commit.links {
         if let LinkMutation::Add { values } = &write.mutation {
             model.effective_link_values(commit, view, &write.key, values)?;
         }
     }
-    check_cardinality(commit, model, view, &links)?;
-    check_required_links(commit, model, view, authorization)?;
-    check_acyclic_links(commit, model, view)?;
-    check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
-        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
-        InvariantAdmissionError::EffectiveValues { key, reason } => {
-            CommitError::EffectiveValues { key, reason }
-        }
-        InvariantAdmissionError::BudgetExceeded { key, limit } => {
-            CommitError::InvariantBudgetExceeded { key, limit }
-        }
-        InvariantAdmissionError::MissingInterface { key, interface } => {
-            CommitError::InvariantModel { key, interface }
-        }
-        InvariantAdmissionError::Violation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        },
-        InvariantAdmissionError::ObservationAuthorization => CommitError::ObservationAuthorization,
-    })?;
+    Ok(())
+}
+
+fn check_governing_laws<E, C, T, X>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<X>> {
     let mut remaining = EvaluationBudget::default().units();
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
@@ -548,7 +648,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    next_versions(commit)
+    Ok(())
 }
 
 /// Outgoing links share the source's authority, not their target's authority.
@@ -776,7 +876,7 @@ pub enum InvariantEvaluationError {
     MissingInterface(String),
 }
 
-/// Evaluate every implicit temporal property check and effective invariant of
+/// Evaluate every implicit temporal/decimal property check and effective invariant of
 /// `key` over the exact complete final values using one cumulative per-commit
 /// budget. The caller shares `remaining` across all object writes in the
 /// commit.
@@ -809,7 +909,7 @@ pub(crate) fn evaluate_named_invariant(
     evaluate_invariants_for_class(catalog, key, values, remaining, None, Some(id))
 }
 
-/// Evaluate only integrity invariants and intrinsic temporal property checks.
+/// Evaluate only integrity invariants and intrinsic temporal/decimal property checks.
 ///
 /// Command admission uses this path so quality expectations consume no
 /// dispatch or expression fuel. Observation preparation continues to call
@@ -856,7 +956,7 @@ fn evaluate_invariants_for_class(
     }
 
     let mut failures = if selected.is_none() {
-        evaluate_temporal_properties(catalog, key, &values, remaining)?
+        evaluate_typed_properties(catalog, key, &values, remaining)?
     } else {
         Vec::new()
     };
@@ -977,12 +1077,21 @@ fn evaluate_invariants_for_class(
     Ok(failures)
 }
 
-fn evaluate_temporal_properties(
+/// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check, including Record members, before commit.
+fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
+    if catalog.effective_view_refused(&key.object_type) {
+        return Err(InvariantEvaluationError::InvalidEffectiveValues(
+            crate::EffectiveValuesError::Unsupported {
+                property: key.object_type.as_str().to_owned(),
+                feature: "the effective type view is refused".to_owned(),
+            },
+        ));
+    }
     let properties = catalog
         .effective_type(&key.object_type)
         .into_iter()
@@ -991,7 +1100,12 @@ fn evaluate_temporal_properties(
             !property.computed
                 && matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Date {} | PropertyType::Timestamp { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Date {}
+                            | PropertyType::Timestamp { .. }
+                            | PropertyType::Decimal { .. }
+                            | PropertyType::Record { .. }
+                    )
                 )
         })
         .collect::<Vec<_>>();
@@ -1001,12 +1115,29 @@ fn evaluate_temporal_properties(
     }
     *remaining = (*remaining).saturating_sub(units);
 
-    Ok(properties
+    properties
         .into_iter()
         .filter_map(|property| {
             let value = values.get(property.id.as_str())?;
-            property.check_runtime_value(value).err().map(|_| {
+            let error = property.check_runtime_value(value).err()?;
+            if let norn_checker::entity_instance::InstanceError::Unsupported(reason) = error {
+                return Some(Err(InvariantEvaluationError::InvalidEffectiveValues(
+                    crate::EffectiveValuesError::Unsupported {
+                        property: property.id.as_str().to_owned(),
+                        feature: reason,
+                    },
+                )));
+            }
+            Some(Ok({
                 let (kind, reason) = match &property.kind {
+                    EffectiveKind::Base(PropertyType::Decimal { .. }) => (
+                        "decimal",
+                        "must satisfy its declared decimal scale and bounds",
+                    ),
+                    EffectiveKind::Base(PropertyType::Record { .. }) => (
+                        "record",
+                        "must satisfy its declared member types and bounds",
+                    ),
                     EffectiveKind::Base(PropertyType::Date {}) => {
                         ("date", "must be a valid calendar date in YYYY-MM-DD form")
                     }
@@ -1023,7 +1154,13 @@ fn evaluate_temporal_properties(
                     message: format!("property `{}` must be a valid {kind}", property.id.as_str()),
                     outcome: DataQualityOutcome::NotSatisfied,
                     classification: ConstraintClass::Integrity,
-                    finding_outcome: Some(DataQualityOutcome::InvalidTemporalObservation {
+                    finding_outcome: (!matches!(
+                        &property.kind,
+                        EffectiveKind::Base(
+                            PropertyType::Decimal { .. } | PropertyType::Record { .. }
+                        )
+                    ))
+                    .then(|| DataQualityOutcome::InvalidTemporalObservation {
                         property: property.id.clone(),
                         value: value
                             .as_str()
@@ -1031,9 +1168,9 @@ fn evaluate_temporal_properties(
                         reason: reason.to_owned(),
                     }),
                 }
-            })
+            }))
         })
-        .collect())
+        .collect()
 }
 
 /// The existing per-commit invariant evaluation fuel ceiling.
@@ -1079,6 +1216,37 @@ enum InvariantAdmissionError {
         outcome: Box<DataQualityOutcome>,
     },
     ObservationAuthorization,
+}
+
+impl InvariantAdmissionError {
+    fn into_commit_error<X>(self) -> CommitError<X> {
+        match self {
+            Self::Law { key, reason } => CommitError::Law { key, reason },
+            Self::EffectiveValues { key, reason } => CommitError::EffectiveValues { key, reason },
+            Self::BudgetExceeded { key, limit } => {
+                CommitError::InvariantBudgetExceeded { key, limit }
+            }
+            Self::MissingInterface { key, interface } => {
+                CommitError::InvariantModel { key, interface }
+            }
+            Self::Violation {
+                key,
+                owner,
+                version,
+                id,
+                message,
+                outcome,
+            } => CommitError::InvariantViolation {
+                key,
+                owner,
+                version,
+                id,
+                message,
+                outcome,
+            },
+            Self::ObservationAuthorization => CommitError::ObservationAuthorization,
+        }
+    }
 }
 
 fn evaluate_commit_invariants(
@@ -1331,6 +1499,7 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
         }
     }
     check_link_read_shapes(&commit.link_reads, model)?;
+    crate::predicate_read::check_predicate_read_shapes(&commit.predicate_reads, model)?;
     for write in &commit.links {
         let admitted = model
             .link(&write.key.source.object_type, &write.key.link)
@@ -1522,6 +1691,17 @@ pub fn check_commit_identifiers<E, C, T, X>(
             });
         }
     }
+    for read in &commit.predicate_reads {
+        if read.members.len() > crate::predicate_read::MAX_PREDICATE_MEMBERS {
+            return Err(CommitError::InvalidPredicateRead {
+                object_type: read.predicate.object_type.clone(),
+                reason: "too many members",
+            });
+        }
+        for member in &read.members {
+            check_fact_key_identity(&member.key)?;
+        }
+    }
     Ok(())
 }
 
@@ -1593,27 +1773,25 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             }
         }
     }
-    let expectations = commit
+    let reads: Vec<(&FactKey, u64)> = commit
         .reads
         .iter()
-        .map(|read| (&read.key, read.expected))
-        .chain(
-            commit
-                .writes
-                .iter()
-                .map(|write| (&write.key, write.expected)),
-        );
-    for (key, expected) in expectations {
-        let current = view
-            .version(&model.canonical(key))
-            .map_err(CommitError::Host)?;
-        if current != expected {
-            return Err(CommitError::Conflict {
-                key: key.clone(),
-                expected,
-                current,
-            });
-        }
+        .map(|read| (&read.key, read.expected.0))
+        .collect();
+    let writes: Vec<(&FactKey, u64)> = commit
+        .writes
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut ObjectVersions { model, view }, &reads, &writes)
+            .map_err(CommitError::Host)?
+    {
+        return Err(CommitError::Conflict {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for write in &commit.writes {
         if !matches!(write.mutation, FactMutation::Put { .. }) {
@@ -1630,17 +1808,19 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    for write in &commit.links {
-        let current = view
-            .link_version(&model.canonical_link(&write.key))
-            .map_err(CommitError::Host)?;
-        if current != write.expected {
-            return Err(CommitError::LinkConflict {
-                key: Box::new(write.key.clone()),
-                expected: write.expected,
-                current,
-            });
-        }
+    let links: Vec<(&LinkKey, u64)> = commit
+        .links
+        .iter()
+        .map(|write| (&write.key, write.expected.0))
+        .collect();
+    if let Some((key, expected, current)) =
+        first_conflict(&mut LinkVersions { model, view }, &links, &[]).map_err(CommitError::Host)?
+    {
+        return Err(CommitError::LinkConflict {
+            key: Box::new(key.clone()),
+            expected: FactVersion(expected),
+            current: FactVersion(current),
+        });
     }
     for read in &commit.link_reads {
         let source = model.canonical(&read.source);
@@ -1676,7 +1856,32 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
+    crate::predicate_read::recheck_predicate_reads(&commit.predicate_reads, model, view)?;
     Ok(())
+}
+
+/// Each read or written object's current version, by canonical identity.
+struct ObjectVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&FactKey, V::Error> for ObjectVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&FactKey) -> Result<u64, V::Error> {
+        Ok(self.view.version(&self.model.canonical(key))?.0)
+    }
+}
+
+/// Each written link's current version, by canonical identity.
+struct LinkVersions<'m, 'a, 'v, V: ?Sized> {
+    model: CommitModel<'m, 'a>,
+    view: &'v V,
+}
+
+impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions<'_, '_, '_, V> {
+    fn current(&mut self, key: &&LinkKey) -> Result<u64, V::Error> {
+        Ok(self.view.link_version(&self.model.canonical_link(key))?.0)
+    }
 }
 
 /// The canonical live links of every object the commit's links and deletes
