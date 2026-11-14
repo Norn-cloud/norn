@@ -952,7 +952,10 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
 /// the retained canonical set of the new revision, so a member's read of
 /// `canon.Party.display_name` is still the pseudonym.
 #[test]
-#[allow(clippy::too_many_lines, reason = "one provisioned cell, one apply, one read")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one provisioned cell, one apply, one read"
+)]
 fn an_applied_pack_keeps_the_privacy_markings() {
     use norn_api::cell_definitions::{apply_definitions, plan_definitions};
     use norn_ir::ArtifactEnvelope;
