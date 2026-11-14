@@ -52,11 +52,11 @@ test("the breadcrumbs name the section, the item and the record id", async () =>
   expect(crumbs).toContain("demo/item/gold")
 })
 
-test("the page bar holds search, the view toggle, shortcuts and notifications; the sidebar names the workspace and the viewer", async () => {
+test("the page bar holds search, shortcuts and notifications (the view and language live in the account menu); the sidebar names the workspace and the viewer", async () => {
   const html = await at("/sources", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("Search…")
-  expect(html).toContain('aria-label="Business or technical view"')
-  expect(html).toMatch(/aria-checked="true"[^>]*>Business</)
+  expect(html).not.toContain('aria-label="Business or technical view"')
+  expect(html).toContain("Language and view")
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
   expect(html).toContain("Jewelry")

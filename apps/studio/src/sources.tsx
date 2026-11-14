@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
-import { KpiTile } from "@/components/kpi-tile"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { Chip } from "@/components/chip"
+import { cn } from "@/lib/utils"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,37 +42,46 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   const outside = catalog.systems.filter((system) => !cellOwned(system))
   const own = catalog.systems.filter(cellOwned)
   return (
-    <div className="grid items-start gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+    <div className="space-y-3">
+      <StatStrip>
+        <KpiTile icon={Database} label="Connected systems" value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
+        <KpiTile icon={Shapes} label="One business model" value={concepts.length} sub={`object types, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
+        <KpiTile icon={ArrowRight} label="Links between them" value={relationships} sub="declared once, read the same from every system" />
+      </StatStrip>
       <Panel icon={Database} label="Connected systems">
-        <Well className="divide-y">
+        <Well className="divide-y divide-border/70">
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
-          {outside.map((system) => (
-            <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
-              <span className="min-w-0">
-                <span className="font-medium">{system.name}</span>
+          {outside.map((system, index) => (
+            <div key={system.id} className="flex items-center gap-3 px-4 py-2.5">
+              <span aria-hidden className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">{system.name}</span>
                 {system.schema && <span className="block truncate text-xs text-muted-foreground">
                   {[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}
                 </span>}
               </span>
-              <span className="shrink-0 text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} object types</span>
+              <span className="flex shrink-0 flex-wrap justify-end gap-1.5 tabular-nums" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
+                <Chip tone="gray">{system.datasets.length} kinds of record</Chip>
+                <Chip tone="violet" icon={ArrowRight}>{system.feeds.length} object types</Chip>
+              </span>
             </div>
           ))}
         </Well>
         {own.length > 0 && (
-          <p className="px-1 pt-2 text-meta text-muted-foreground">
+          <p className="border-t border-border/70 px-4 py-2 text-meta text-muted-foreground">
             Kept by Norn: {own.map((system) => `${system.datasets.length} kinds of record about its own syncs (${system.feeds.length} object types)`).join("; ")}. Not a connected system.
           </p>
         )}
       </Panel>
-      <ArrowRight aria-hidden className="mx-auto size-5 self-center text-muted-foreground max-md:rotate-90" />
-      {/* Its own height, not the systems list's: one figure needs no tall box. */}
-      <div>
-        <KpiTile icon={Shapes} label="One business model" value={concepts.length}
-          sub={`object types, ${relationships} links between them, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
-      </div>
     </div>
   )
 }
+
+/** One tone per connected system's monogram, in the order the catalog lists them. */
+const MONOGRAM = [
+  "bg-tone-blue/12 text-tone-blue", "bg-tone-green/12 text-tone-green", "bg-tone-violet/12 text-tone-violet",
+  "bg-tone-orange/12 text-tone-orange", "bg-tone-teal/12 text-tone-teal", "bg-tone-pink/12 text-tone-pink",
+] as const
 
 /** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
 const about = (concept: Concept, view: View): { readonly text: string; readonly lang: string } | undefined => {

@@ -2,6 +2,13 @@ import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
 
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
+
 // Typed transforms (ViewIR v1, #341): the list, a transform's rows, one row's lineage, the plan
 // graph and checking a query. The cell routes are stubbed with test/fixtures/transforms.json, which
 // crates/norn-api/tests/transform_studio.rs checks byte for byte against what the routes serve.
@@ -81,7 +88,7 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   // Technical: the header is the column's name with its contract on a second line, and the bucket is
   // its exact date. The wider
   // headers overflow: the hidden columns are signalled, and scrolled to the end the first column stays put.
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(page.getByRole("columnheader", { name: /^revenue/ })).toContainText("additive")
   await expect(page.getByRole("cell", { name: "2026-10-26" }).first()).toBeVisible()
   await expect(page.locator("[data-edge=right]")).toBeVisible()
@@ -90,7 +97,7 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   await expect(page.locator("[data-edge=right]")).toHaveCount(0)
   await expect(page.getByRole("cell", { name: "east" }).first()).toBeInViewport()
   await shoot(page, "rows-scrolled")
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
 })
 
 test("view: a row's lineage lists the records it derives from, each a link to its record", async ({ page }) => {
@@ -120,9 +127,9 @@ test("view: the plan draws every admitted operator and the output's column linea
   await expect(page.getByRole("heading", { name: "Node weekly" })).toBeVisible()
   // Business says what the operator does; Technical shows its declaration.
   await expect(page.getByLabel("What weekly does")).toContainText("Totals of regional per region, placed at by week and currency")
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(page.getByLabel("Definition of weekly")).toContainText("groupBy")
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
   await expect(page.locator("[data-node=weekly][data-selected]")).toBeVisible()
   // Selecting in the graph selects in the list.
   await page.locator("[data-node=joined]").click()
@@ -156,9 +163,9 @@ test("check: a query summing amounts across currencies is refused with the reaso
   await expect(reasons).toContainText("sum of o.amount mixes currencies: group by its currency o.currency")
   await shoot(page, "check-refused")
   // Technical readers see the registered code the checker refused with.
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(reasons).toContainText("metric.validation.mixed_currency")
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
   await query.fill(admitted?.sql ?? "")
   await expect(page.getByText("Refused", { exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Check", exact: true }).click()

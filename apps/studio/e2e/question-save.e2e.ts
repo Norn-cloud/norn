@@ -3,6 +3,13 @@ import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
 import type { Page, Route } from "@playwright/test"
 
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
+
 /** The definitions routes' refusals (test/fixtures/definition-call.json, pinned to the routes by crates/norn-cell-do/tests/definitions.rs). */
 type Served = "signoffUnavailable" | "signoffMismatch" | "notFound"
 const SERVED = JSON.parse(readFileSync(new URL("../test/fixtures/definition-call.json", import.meta.url), "utf8")) as Record<Served, object> & { readonly status: Record<Served, number> }
@@ -113,10 +120,10 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled()
   await expect(page.locator("main")).not.toContainText("user:analyst-id")
   await expect(page.locator(`span[title="${newHash}"]`)).toHaveCount(0)
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(page.locator("main")).toContainText("user:analyst-id")
   await expect(page.locator(`span[title="${newHash}"]`)).toBeVisible()
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
   // A later cell restatement cannot inherit the old sign-off.
   returnedWords = currentWords = "The cell now reads the question differently."
   await page.getByRole("button", { name: "Open", exact: true }).click()

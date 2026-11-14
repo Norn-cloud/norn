@@ -1,8 +1,9 @@
+import { Chip } from "@/components/chip"
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { CircleAlert, CircleCheck, CircleDashed, CircleDot, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
 import { readFindings, type Evidence, type Finding, type RuleRef } from "./review.ts"
@@ -41,9 +42,9 @@ export function Findings({ objectType, id, actionFor }: { readonly objectType: s
   }
   const { quarantined, findings, evidence } = read.data.document
   return (
-    <Panel icon={quarantined ? ShieldAlert : ShieldCheck} label="Findings" action={quarantined ? "Held out of authoritative reads" : undefined}>
+    <Panel icon={quarantined ? ShieldAlert : ShieldCheck} label="Findings" action={quarantined ? <Chip tone="amber" dot title="Held out of authoritative reads">Held out of authoritative reads</Chip> : undefined}>
       <Well className="space-y-3 p-3">
-        {findings.length === 0 && <EmptyState icon={ShieldCheck} title="No findings">Every law the cell checks held when this record was imported.</EmptyState>}
+        {findings.length === 0 && <p className="flex flex-wrap items-center gap-2 text-sm"><Chip tone="green" icon={ShieldCheck}>No findings</Chip><span className="text-muted-foreground">Every law the cell checks held when this record was imported.</span></p>}
         {quarantined && <p className="text-sm">This record is quarantined: an open finding keeps it out of answers and totals until a correction satisfies the law. Its source values stay readable here.</p>}
         {findings.map((finding) => (
           <article key={finding.id} className="space-y-1 rounded-md border bg-card p-3">
@@ -55,7 +56,7 @@ export function Findings({ objectType, id, actionFor }: { readonly objectType: s
             <p className="text-sm">{finding.message}</p>
           </article>
         ))}
-        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
+        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta font-medium text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
       </Well>
     </Panel>
   )

@@ -57,9 +57,13 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const sources = metric.unitPartition ?? []
   const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
   return (
-    <Panel icon={Sigma} label={<span>{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</span>}
-      action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span> : undefined}>
-      <Well className="space-y-4 p-4">
+    // One question, one section: its title, its controls, then the answer's own surfaces (no card around cards).
+    <section data-slot="panel" className="min-w-0 space-y-4">
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
+        <h2 className="text-[1.625rem] font-normal tracking-[-0.025em]">{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</h2>
+        {view === "technical" && <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}
+      </header>
+      <div className="space-y-4">
         {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
         {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
         {profile.data && profile.data.document.rows === 0 && (
@@ -78,11 +82,11 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
             <div className="min-w-0 flex-1"><Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} /></div>
           </div>
           {sources.length === 0
-            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} />
+            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" />
             : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} />}
         </>}
-      </Well>
-    </Panel>
+      </div>
+    </section>
   )
 }
 
@@ -116,7 +120,7 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
   const weekly = open && ({ ...asked, filter: [...(asked.filter ?? []).filter(({ path }) => !sources.includes(path.property)), ...sources.map((property) => ({ path: { property }, operator: "eq", value: open.values[property] ?? null }))] } as Question)
   return (
     <div className="space-y-4">
-      {groups.length === 0 ? <EmptyState icon={Sigma}>No records in this window match.</EmptyState> : (
+      {groups.length === 0 ? <EmptyState icon={Sigma}>No records in this window match.</EmptyState> : groups.length === 1 ? null : (
         <div className="space-y-2">
           <p className={groups.length === 1 ? "sr-only" : "text-meta text-muted-foreground"}>{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${window.grain}.`}</p>
           <TableCard><Table>
@@ -133,7 +137,8 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
           </Table></TableCard>
         </div>
       )}
-      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} />}
+      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none"
+        total={{ label: `Total, ${period(totals.window)}`, value: figure(open.bucket, open.unit) }} />}
     </div>
   )
 }

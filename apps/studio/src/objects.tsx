@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
-import { Clock, GitCommitHorizontal } from "lucide-react"
+import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { Braces, Database, GitBranch, History as HistoryIcon, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -12,7 +12,7 @@ import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
 import { useInspector } from "@/lib/inspector"
 import { KINDS, STATUS } from "@/lib/kinds"
-import { ViewToggle, useCardView, useView } from "@/lib/view"
+import { useView } from "@/lib/view"
 import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
@@ -25,7 +25,7 @@ import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef } from "./evidence/review.ts"
+import { readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { stamp } from "./lib/format.ts"
@@ -61,6 +61,8 @@ export function ObjectPage() {
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
   const evidence = review.data?.document.evidence ?? []
+  const broken = review.data?.document.findings.filter(({ status }) => status === "open") ?? []
+  const heldBack = review.data?.document.quarantined === true
   const corrections = useEvidenceActions(name, id)
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
@@ -78,6 +80,9 @@ export function ObjectPage() {
             <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             <Chip tone="violet" icon={TypeIcon}>{concept?.title ?? conceptTitle(name)}</Chip>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+            {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
+            {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
+            {data?.source?.document && <Chip tone="teal" title="The connected system this record was read from">{systemName(data.source.document.sourceRecordRef.system)}</Chip>}
           </div>
           {data && <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
             <CopyId value={id} />
@@ -89,6 +94,7 @@ export function ObjectPage() {
           {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={() => void reads.refetch()} /></div>}
         </div>
       </header>
+      {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
       {data && concept && <KeyFacts concept={concept} reads={data} onLineage={() => setTab("lineage")} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
@@ -104,7 +110,7 @@ export function ObjectPage() {
           <TabsContent value="overview" className="pt-4">
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
               <div className="min-w-0 space-y-6">
-                <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>
+                {view === "technical" && <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>}
                 {concept.lifecycles.map((lifecycle) => (
                   <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
                     <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
@@ -169,6 +175,39 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
         <FactChip icon={Clock} label="as of"><time dateTime={new Date(entry.logicalTime).toISOString()} title={new Date(entry.logicalTime).toISOString()}>{stamp(entry.logicalTime)}</time></FactChip>
       </> : null}
     </span>
+  )
+}
+
+/**
+ * The rule this record breaks, as the one thing on the page: for a law that holds two facts equal,
+ * the two values side by side with ≠ between them (the record's own values, as the cell sent them);
+ * otherwise the law's sentence. The finding is the cell's: nothing here evaluates the law.
+ */
+function Broken({ concept, reads, finding, heldBack }: { readonly concept: Concept; readonly reads: ObjectReads; readonly finding: Finding; readonly heldBack: boolean }) {
+  const { view } = useView()
+  const law = finding.ruleRef.kind === "law" ? concept.laws.find(({ id }) => id === (finding.ruleRef as { lawId: string }).lawId) : undefined
+  const fields = law?.compares?.map((id) => concept.fields.find((field) => field.id === id))
+  const pair = fields?.every((field) => field !== undefined) ? fields as readonly Concept["fields"][number][] : undefined
+  const label = (field: Concept["fields"][number]) => field.label ?? field.id.replaceAll("_", " ")
+  const value = (field: Concept["fields"][number]) => factDisplay(field, reads.object.document, reads.object.numbers, "", view)
+  return (
+    <section aria-label="The rule this record breaks" className="rounded-2xl bg-card p-6 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:px-7">
+      {pair ? (
+        <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-6">
+          {pair.map((field, index) => <Fragment key={field.id}>
+            {index === 1 && <span aria-label="does not equal" className="flex size-11 items-center justify-center rounded-full bg-tone-red/12 text-xl text-tone-red">≠</span>}
+            <div className="min-w-0">
+              <div className="text-meta text-muted-foreground">{label(field)}</div>
+              <div className={cn("truncate pt-2 text-[2.75rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[3.25rem]", index === 0 && "text-tone-red")}>{value(field)}</div>
+            </div>
+          </Fragment>)}
+        </div>
+      ) : <p className="text-section font-medium text-pretty">{law?.rationale ?? finding.message}</p>}
+      <div className="mt-5 flex flex-wrap items-start gap-x-3 gap-y-2 border-t border-border pt-4">
+        <Chip tone="red" icon={ShieldX}>{heldBack ? "Kept out of answers" : "Rule broken"}</Chip>
+        <p className="min-w-0 flex-1 text-pretty">{pair && law ? law.rationale : finding.message}{pair && <span className="block pt-1 text-meta text-muted-foreground">{finding.message}</span>}</p>
+      </div>
+    </section>
   )
 }
 
@@ -307,17 +346,16 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 
 /** The record's facts in words, or, in the technical view, the exact document the server sent. */
 function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
-  const card = useCardView()
+  const { view } = useView()
   const { catalog } = useCatalog()
   // Scan provenance (the bytes a record was read from and the extractor) is not what the record
   // says: the evidence beside each value and the Technical view carry it.
   const provenance = new Set(concept.parents.includes(SOURCE_DOCUMENT) ? catalog?.byName.get(SOURCE_DOCUMENT)?.fields.map((field) => field.id) ?? [] : [])
-  const toggle = <ViewToggle view={card.view} onChange={card.setView} label="View of this card" />
-  if (card.view === "technical") {
-    return <Panel icon={Braces} label="Record document" action={toggle}><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
+  if (view === "technical") {
+    return <Panel icon={Braces} label="Record document"><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
   }
   return (
-    <Panel icon={Rows3} label="Facts" action={toggle}><Well className="p-1.5">
+    <Panel icon={Rows3} label="Facts"><Well className="p-1.5">
       <dl className="divide-y divide-border/60 text-sm">
         {concept.fields.filter((field) => !provenance.has(field.id)).map((field) => (
           <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">
