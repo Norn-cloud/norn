@@ -13,7 +13,7 @@ import { RunQuestion } from "./run.tsx"
 export interface QuestionCatalog {
   readonly objectSet: string | null
   readonly properties: readonly { readonly name: string; readonly kind: string; readonly unit: string | null }[]
-  readonly metrics: readonly { readonly name: string; readonly label: string; readonly display?: string; readonly type: string }[]
+  readonly metrics: readonly { readonly name: string; readonly label: string; readonly type: string }[]
   readonly grains: readonly string[]
   readonly operators: readonly string[]
   /** The cell's admitted question: its IR version, calendar and freshness are reused as they are. */

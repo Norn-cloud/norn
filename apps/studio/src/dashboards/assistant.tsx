@@ -54,19 +54,16 @@ export const dollars = (micro: number) => micro < 10_000 ? "under $0.01" : `$${(
 /** A catalog label in words: an object type's id inside it (`canon.Holding`) reads as its title (`Holding`). */
 export const inWords = (label: string): string => label.replace(/\b(?:[a-z][a-z0-9_]*\.)+[A-Z][A-Za-z0-9]*\b/g, (id) => conceptTitle(id))
 
-/** How a request names a metric: the server's display words, else its label with type ids as titles. */
-const spoken = (metric: QuestionCatalog["metrics"][number]) => metric.display ?? inWords(metric.label)
-
-/** Three requests the catalog can answer, worded from the server's own names: never a name it does not declare. */
+/** Three requests the catalog can answer, worded from its own labels: never a name it does not declare. */
 export function examples(catalog: QuestionCatalog): readonly string[] {
-  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio").map(spoken)
+  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio").map((metric) => ({ ...metric, label: inWords(metric.label) }))
   const found = catalog.metrics.find(({ type }) => type === "ratio")
-  const ratio = found && spoken(found)
+  const ratio = found && { ...found, label: inWords(found.label) }
   const category = catalog.properties.find(({ kind }) => kind === "text" || kind === "enum")?.name.replaceAll("_", " ")
   return [
-    first && `A weekly view of ${first}${second ? ` and ${second}` : ""}`,
-    ratio && category && `${ratio[0]?.toUpperCase() ?? ""}${ratio.slice(1)} by ${category}, week by week`,
-    first && category && `Which ${category} has the most ${first}?`,
+    first && `A weekly overview of ${first.label}${second ? ` and ${second.label}` : ""}, with a headline total for each`,
+    ratio && category && `${ratio.label} by ${category}, and how it moved week by week`,
+    first && category && `Which ${category} contributes most to ${first.label}?`,
   ].filter((text): text is string => typeof text === "string")
 }
 

@@ -12,8 +12,6 @@ interface PropertyType { readonly kind?: string; readonly unit?: { readonly code
 export interface CellMetric {
   readonly name: string
   readonly label: string
-  /** How a person names it in a sentence; the checker sets it on the metrics it derives. */
-  readonly display?: string
   readonly type: string
   readonly type_params?: { readonly expr?: string; readonly numerator?: string; readonly denominator?: string; readonly metric_aggregation_params?: { readonly semantic_model?: string } }
 }
@@ -67,7 +65,7 @@ export function studioCatalog(cell: CellCatalog) {
   return {
     objectSet: type?.name ?? null,
     properties: (type?.properties ?? []).map(({ id, type: declared }) => ({ name: id, kind: declared?.kind ?? "unknown", unit: declared?.unit?.code ?? null })),
-    metrics: metrics.map(({ name, label, display, type: kind }) => ({ name, label, ...(display === undefined ? {} : { display }), type: kind })),
+    metrics: metrics.map(({ name, label, type: kind }) => ({ name, label, type: kind })),
     grains: cell.grains,
     operators: cell.operators,
     example: QUESTION_DEFAULTS,

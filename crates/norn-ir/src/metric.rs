@@ -33,15 +33,6 @@ pub struct MetricDefinition {
     pub name: String,
     /// Human-readable MetricFlow label.
     pub label: String,
-    /// How a person would name the metric in a sentence ("quantity at period end"), for
-    /// prompts and suggestions. Generated metrics set it; it never changes what the metric means.
-    #[serde(
-        default,
-        deserialize_with = "present_non_null",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "String")]
-    pub display: Option<String>,
     /// MetricFlow metric type.
     #[serde(rename = "type")]
     pub metric_type: MetricType,

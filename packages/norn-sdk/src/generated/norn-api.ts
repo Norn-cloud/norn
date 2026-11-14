@@ -6976,11 +6976,6 @@ export interface components {
          *     Norn-specific policy is isolated in `x-norn`.
          */
         NornIrMetricDefinition: {
-            /**
-             * @description How a person would name the metric in a sentence ("quantity at period end"), for
-             *     prompts and suggestions. Generated metrics set it; it never changes what the metric means.
-             */
-            display?: string;
             /** @description Human-readable MetricFlow label. */
             label: string;
             /** @description Stable metric identifier. */

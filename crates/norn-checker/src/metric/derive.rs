@@ -378,7 +378,6 @@ fn declared_ratios(
             denominator.as_str(),
             definition.label
         );
-        definition.display = Some(in_words(&property.id));
         definition.metric_type = MetricType::Ratio;
         definition.type_params = MetricTypeParams {
             numerator: Some(numerator_name.clone()),
@@ -423,11 +422,6 @@ fn conserved_ratios(
                 source.law,
                 source.digest
             );
-            definition.display = Some(format!(
-                "{} per {}",
-                in_words(output),
-                in_words(&source.input)
-            ));
             definition.metric_type = MetricType::Ratio;
             definition.type_params = MetricTypeParams {
                 numerator: Some(numerator.clone()),
@@ -578,7 +572,6 @@ fn sum(
             }
         ),
         label: format!("sum({}); conservation [{proof}]", property.as_str()),
-        display: Some(format!("total {}", in_words(property))),
         metric_type: MetricType::Simple,
         type_params: MetricTypeParams {
             expr: Some(property.as_str().to_owned()),
@@ -627,7 +620,6 @@ fn snapshot(
         time.property.as_str(),
         object.name.as_str()
     );
-    definition.display = Some(format!("{} at period end", in_words(property)));
     if let Some(params) = definition.type_params.metric_aggregation_params.as_mut() {
         params.non_additive_dimension = Some(NonAdditiveDimension {
             name: params.agg_time_dimension.clone(),
@@ -640,11 +632,6 @@ fn snapshot(
         aggregate: Reaggregate::Last,
     };
     definition
-}
-
-/// A property as a person says it in a sentence: `stock_cost` reads "stock cost".
-fn in_words(property: &PropertyId) -> String {
-    property.as_str().replace('_', " ")
 }
 
 fn encoded_name(name: &str) -> String {

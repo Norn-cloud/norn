@@ -298,7 +298,6 @@ pub fn check_metrics_and_questions(
                 all.push(MetricDefinition {
                     name: inline.name.clone(),
                     label: inline.name.clone(),
-                    display: None,
                     metric_type: MetricType::Simple,
                     type_params: norn_ir::metric::MetricTypeParams {
                         expr: inline.property.as_ref().map(|p| p.0.clone()),
