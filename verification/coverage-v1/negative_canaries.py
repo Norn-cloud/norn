@@ -822,6 +822,12 @@ def studio_browser_phase_canaries() -> None:
         build.chmod(0o755)
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
         wasm_libdir = Path(directory) / "wasm32-lib"
+        # core.sh stamps the tree it builds (refresh_sources) before any phase, so
+        # the sandbox is a repository with one commit, as every checkout is.
+        git = ["git", "-c", "user.email=canary@example.invalid", "-c", "user.name=canary", "-c", "commit.gpgsign=false"]
+        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-q", "--allow-empty", "-m", "sandbox"]):
+            subprocess.run([*git, *argv], cwd=tree, check=True, capture_output=True, timeout=30,
+                           env={"PATH": os.environ.get("PATH", ""), "HOME": directory})
         wasm_libdir.mkdir()
         for label, has_config, has_tests, listed, run_status, expected, libdir, ran in (
                 ("no config, no tests", False, False, "0", 0, 0, "", "0"),
