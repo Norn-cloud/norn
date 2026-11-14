@@ -107,7 +107,7 @@ lists the records Norn holds back and norn_get_findings says why (the law, the v
 action tools that fix it); norn_answer answers an admitted question with its freshness, and \
 norn_question_catalog says what else can be asked; norn_trace_answer, norn_trace_evaluated and \
 norn_trace_object trace a value to its source records; norn_explain turns any refusal or diagnostic code \
-into guidance. Actions change state only through their own tools: each call is decided by the workspace's \
+into guidance. Actions change state only through their own tools (or norn_call_action with an action id, for one installed during the conversation): each call is decided by the workspace's \
 laws and policy and comes back accepted with a receipt or refused with the reason; a refusal is an answer, \
 so read it, fix the input and call again rather than guessing. Decimal values travel as exact strings; \
 never round them. There is no SQL or table access.";
@@ -580,7 +580,7 @@ fn generic_tools(
             json!({
                 "name": "norn_apply_definitions",
                 "title": "Apply a planned definitions change",
-                "description": "Install the artifacts a plan checked, compare-and-set on the plan's baseVersion: refused with nothing written if the workspace moved, the checker refuses, or stored records break the new laws. The answer is the installed version and its receipt.",
+                "description": "Install the artifacts a plan checked, compare-and-set on the plan's baseVersion: refused with nothing written if the workspace moved, the checker refuses, or stored records break the new laws. The answer is the installed version and its receipt. The pack's actions are callable at once with norn_call_action, before their own tools appear.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["artifacts", "expectedVersion"], "properties": {
                     "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}},
                     "expectedVersion": {"type": "integer", "minimum": 0, "description": "The baseVersion norn_plan_definitions returned."}
@@ -676,6 +676,19 @@ fn generic_tools(
                 "annotations": read_only(),
             }),
             Some(View::Dashboard),
+        )?);
+        tools.push(tool(
+            json!({
+                "name": "norn_call_action",
+                "title": "Call an action by id",
+                "description": "Call any governed action you may call, by its action id (norn_catalog lists them; an action installed during this conversation is callable here before its own tool appears). The input is the action's input object; fields the server fills (the actor, the clock) are not yours to send. The workspace's laws and policy decide it: the answer is a receipt or a refusal with its reason.",
+                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action", "input"], "properties": {
+                    "action": {"type": "string", "description": "An action id, for example jewelry.melt.record."},
+                    "input": {"type": "object", "description": "The action's input; decimals as exact strings."}
+                }},
+                "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false},
+            }),
+            Some(View::Receipt),
         )?);
     }
     Ok(tools)
@@ -925,28 +938,56 @@ impl<E: SqlEngine> Loopback<'_, E> {
                     ),
                 ]))?,
             },
+            "norn_call_action" => {
+                let action = required(arguments, "action")?;
+                if !self.actions.values().any(|callable| *callable == action) {
+                    let mut callable: Vec<&str> = self.actions.values().map(String::as_str).collect();
+                    callable.sort_unstable();
+                    return Err(Refusal::invalid(format!(
+                        "{action} is not an action you may call here; you may call: {}",
+                        if callable.is_empty() { "none".to_owned() } else { callable.join(", ") }
+                    )));
+                }
+                let Some(RuntimeValue::Object(input)) = arguments.get("input") else {
+                    return Err(Refusal::invalid("input must be the action's input object"));
+                };
+                self.action_call(&action, input, metadata, scoped)?
+            }
             _ => {
                 let action = self
                     .actions
                     .get(name)
                     .ok_or_else(|| Refusal::invalid("unknown tool"))?;
-                let key =
-                    if let Some(RuntimeValue::String(key)) = metadata.get("norn/idempotencyKey") {
-                        key.clone()
-                    } else {
-                        idempotency_key(action, arguments)?
-                    };
-                scoped.push(("version", self.version.to_string()));
-                Routed {
-                    method: "POST",
-                    path: format!("/v1/actions/{}", segment(action)),
-                    query: scoped,
-                    body: json_text(&object(vec![
-                        ("input", RuntimeValue::Object(arguments.clone())),
-                        ("idempotencyKey", RuntimeValue::String(key)),
-                    ]))?,
-                }
+                self.action_call(action, arguments, metadata, scoped)?
             }
+        })
+    }
+}
+
+impl<E: SqlEngine> Loopback<'_, E> {
+    /// One governed action call through `/v1/actions/{action}`, pinned to the
+    /// definitions version this catalog was built from.
+    fn action_call(
+        &self,
+        action: &str,
+        input: &RuntimeObject,
+        metadata: &RuntimeObject,
+        mut scoped: Vec<(&'static str, String)>,
+    ) -> Result<Routed, Refusal> {
+        let key = if let Some(RuntimeValue::String(key)) = metadata.get("norn/idempotencyKey") {
+            key.clone()
+        } else {
+            idempotency_key(action, input)?
+        };
+        scoped.push(("version", self.version.to_string()));
+        Ok(Routed {
+            method: "POST",
+            path: format!("/v1/actions/{}", segment(action)),
+            query: scoped,
+            body: json_text(&object(vec![
+                ("input", RuntimeValue::Object(input.clone())),
+                ("idempotencyKey", RuntimeValue::String(key)),
+            ]))?,
         })
     }
 }
