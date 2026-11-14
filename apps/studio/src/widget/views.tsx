@@ -17,7 +17,7 @@ import { documentText, type Bridge, type ToolResult } from "./bridge"
  * a refusal is shown in the server's words; more detail is asked of the same server tools.
  */
 
-export type View = "answer" | "lineage" | "dashboard" | "receipt" | "records" | "findings" | "plan"
+export type View = "answer" | "lineage" | "dashboard" | "receipt" | "records" | "findings" | "plan" | "inbox"
 
 /** The tool's input and result as the host delivered them. */
 export interface Delivery {
@@ -417,6 +417,58 @@ function PlanCard({ plan, title }: { readonly plan: Plan; readonly title?: strin
   )
 }
 
+interface InboxRecord {
+  readonly id: string
+  readonly finding?: { readonly words?: string; readonly message?: string } | null
+  readonly suggestedFix?: { readonly title?: string; readonly label?: string; readonly needs?: readonly string[] } | null
+}
+interface Inbox {
+  readonly items: readonly ({ readonly kind: "held_back"; readonly title: string; readonly objectType: string; readonly count: number; readonly approximate?: boolean; readonly records: readonly InboxRecord[] }
+    | { readonly kind: "decision"; readonly decision: { readonly question?: string; readonly risk?: unknown } }
+    | { readonly kind: "source_error"; readonly id: string; readonly values?: Record<string, unknown> })[]
+  readonly sections: readonly { readonly kind: string; readonly count: number; readonly approximate?: boolean }[]
+}
+
+const SECTION_LABEL: Readonly<Record<string, string>> = { held_back: "held back", decision: "decisions", source_error: "source errors" }
+
+/** What needs the caller's attention: held-back records by law with the server's fix, decisions, failing sources. */
+function InboxCard({ read }: { readonly read: Read<Inbox> }) {
+  const { items, sections } = read.document
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>What needs your attention</CardTitle>
+        <CardAction className="flex flex-wrap justify-end gap-1">
+          {sections.map((section) => <Chip key={section.kind} tone={section.count > 0 ? (section.kind === "decision" ? "warn" : "bad") : "ok"}>{section.count}{section.approximate ? "+" : ""} {SECTION_LABEL[section.kind] ?? section.kind}</Chip>)}
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {items.length === 0 && <p className="text-sm text-muted-foreground">Nothing needs you right now.</p>}
+        {items.map((item, index) => {
+          if (item.kind === "held_back") return (
+            <div key={index} className="space-y-1">
+              <div className="text-sm font-medium">{item.title} <span className="font-normal text-muted-foreground">· {item.count}{item.approximate ? "+" : ""} {item.objectType}</span></div>
+              <Table>
+                <TableHeader><TableRow><TableHead>Record</TableHead><TableHead>Finding</TableHead><TableHead>Fix</TableHead></TableRow></TableHeader>
+                <TableBody>{item.records.map((record) => (
+                  <TableRow key={record.id}>
+                    <TableCell className="font-mono text-xs">{record.id}</TableCell>
+                    <TableCell className="tabular-nums">{record.finding?.words ?? "—"}</TableCell>
+                    <TableCell>{record.suggestedFix ? <span title={record.suggestedFix.title}>{record.suggestedFix.label}{record.suggestedFix.needs?.length ? <span className="text-muted-foreground"> · needs {record.suggestedFix.needs.join(", ")}</span> : null}</span> : "—"}</TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table>
+            </div>
+          )
+          if (item.kind === "decision") return <div key={index} className="text-sm"><Chip tone="warn">decision</Chip> {item.decision.question ?? "A decision waits on you."}</div>
+          return <div key={index} className="text-sm"><Chip tone="bad">source</Chip> <span className="font-mono text-xs">{item.id}</span> last sync failed</div>
+        })}
+      </CardContent>
+      <CardFooter className="text-xs text-muted-foreground">Fixes are the server's suggestions; each is applied only through its action tool, and the laws decide again.</CardFooter>
+    </Card>
+  )
+}
+
 interface Admission {
   readonly admitted: boolean
   readonly diagnostics?: readonly { readonly code: string; readonly severity?: string; readonly message: string; readonly span?: { readonly pointer?: string } }[]
@@ -533,6 +585,7 @@ export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonl
   if (view === "receipt" && typeof document.outcome === "string") return <ReceiptCard read={read as Read<Receipt>} tool={tool} />
   if (view === "records" && Array.isArray(document.records)) return <RecordsCard read={read as Read<RecordsPage>} />
   if (view === "findings" && (Array.isArray(document.findings) || Array.isArray(document.items))) return <FindingsCard read={read as Read<Findings>} />
+  if (view === "inbox" && Array.isArray(document.items) && Array.isArray(document.sections)) return <InboxCard read={read as Read<Inbox>} />
   if (view === "plan" && typeof document.baseVersion === "number") return <PlanCard plan={document as unknown as Plan} />
   return <p className="p-3 text-sm text-muted-foreground">Norn answered with a document this view does not draw.</p>
 }

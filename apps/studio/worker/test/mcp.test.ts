@@ -259,7 +259,7 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   expect((await mcp(withWidget, null, { jsonrpc: "2.0", id: 1, method: "resources/list" })).status).toBe(401)
 
   const list = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 2, method: "resources/list" })).json()) as { result: { resources: { uri: string; mimeType: string }[] } }
-  expect(list.result.resources.map(({ uri }) => uri)).toEqual(["ui://norn/answer.html", "ui://norn/lineage.html", "ui://norn/dashboard.html", "ui://norn/receipt.html", "ui://norn/records.html", "ui://norn/findings.html", "ui://norn/plan.html"])
+  expect(list.result.resources.map(({ uri }) => uri)).toEqual(["ui://norn/answer.html", "ui://norn/lineage.html", "ui://norn/dashboard.html", "ui://norn/receipt.html", "ui://norn/records.html", "ui://norn/findings.html", "ui://norn/plan.html", "ui://norn/inbox.html"])
   expect(list.result.resources.every(({ mimeType }) => mimeType === "text/html;profile=mcp-app")).toBe(true)
 
   const read = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "ui://norn/lineage.html" } })).json()) as { result: { contents: { uri: string; text: string; _meta: { ui: { csp: { connectDomains: string[] } } } }[] } }
@@ -281,4 +281,21 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   expect(refused.error.code).toBe(-32002)
   // Static pages are the edge's; nothing about them reaches the cell.
   expect(env.forwarded).toHaveLength(0)
+})
+
+test("a store that cannot be read is a retryable 503, never the person's token being wrong", async () => {
+  const env = stage()
+  const { cookie } = await person(env, "fi@example.com")
+  const { accessToken } = await grant(env, cookie)
+  expect((await mcp(env, accessToken, INIT)).status).toBe(200)
+  // An assistant drops a connector for the session on 401 invalid_token: a hiccup must not look like one.
+  for (const table of ["jwks", "member"]) {
+    db(env).run(`alter table "${table}" rename to "${table}_away"`)
+    const busy = await mcp(env, accessToken, INIT)
+    expect(busy.status).toBe(503)
+    expect(busy.headers.get("retry-after")).toBe("2")
+    expect(busy.headers.get("www-authenticate")).toBeNull()
+    db(env).run(`alter table "${table}_away" rename to "${table}"`)
+    expect((await mcp(env, accessToken, INIT)).status).toBe(200)
+  }
 })
