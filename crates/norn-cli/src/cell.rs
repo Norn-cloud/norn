@@ -249,22 +249,26 @@ fn text(value: &Value, key: &str) -> String {
 }
 
 /// Append one line to `out`.
-fn line(out: &mut String, text: String) {
-    out.push_str(&text);
+fn line(out: &mut String, text: &str) {
+    out.push_str(text);
     out.push('\n');
 }
 
 fn plan_summary(plan: &Value) -> String {
     let mut out = String::new();
-    line(&mut out, format!("plan over revision {} -> {}{}",
-        text(plan, "baseVersion"),
-        text(plan, "nextVersion"),
-        if plan.get("unchanged") == Some(&Value::Bool(true)) {
-            " (unchanged: the pack is already installed)"
-        } else {
-            ""
-        }
-    ));
+    line(
+        &mut out,
+        &format!(
+            "plan over revision {} -> {}{}",
+            text(plan, "baseVersion"),
+            text(plan, "nextVersion"),
+            if plan.get("unchanged") == Some(&Value::Bool(true)) {
+                " (unchanged: the pack is already installed)"
+            } else {
+                ""
+            }
+        ),
+    );
     for (key, mark) in [("added", "+"), ("changed", "~")] {
         for artifact in plan
             .get(key)
@@ -277,11 +281,15 @@ fn plan_summary(plan: &Value) -> String {
                 .and_then(Value::as_str)
                 .map(|from| format!("{from} -> "))
                 .unwrap_or_default();
-            line(&mut out, format!("  {mark} {} ({} {from}{})",
-                text(artifact, "artifactId"),
-                text(artifact, "kind"),
-                text(artifact, "toVersion")
-            ));
+            line(
+                &mut out,
+                &format!(
+                    "  {mark} {} ({} {from}{})",
+                    text(artifact, "artifactId"),
+                    text(artifact, "kind"),
+                    text(artifact, "toVersion")
+                ),
+            );
         }
     }
     for id in plan
@@ -290,7 +298,10 @@ fn plan_summary(plan: &Value) -> String {
         .into_iter()
         .flatten()
     {
-        line(&mut out, format!("  = {}", id.as_str().unwrap_or_default()));
+        line(
+            &mut out,
+            &format!("  = {}", id.as_str().unwrap_or_default()),
+        );
     }
     let types: Vec<&str> = plan
         .get("newObjectTypes")
@@ -300,11 +311,15 @@ fn plan_summary(plan: &Value) -> String {
         .filter_map(Value::as_str)
         .collect();
     if !types.is_empty() {
-        line(&mut out, format!("  new types: {}", types.join(", ")));
+        line(&mut out, &format!("  new types: {}", types.join(", ")));
     }
-    line(&mut out, format!("  checked {} stored object(s) under the new laws",
-        text(plan, "checkedObjects")
-    ));
+    line(
+        &mut out,
+        &format!(
+            "  checked {} stored object(s) under the new laws",
+            text(plan, "checkedObjects")
+        ),
+    );
     diagnostics(&mut out, plan);
     out.trim_end().to_owned()
 }
@@ -321,11 +336,15 @@ fn diagnostics(out: &mut String, document: &Value) {
             .and_then(Value::as_str)
             .map(|pointer| format!(" at {pointer}"))
             .unwrap_or_default();
-        line(out, format!("  {} {}{at}: {}",
-            text(finding, "severity"),
-            text(finding, "code"),
-            text(finding, "message")
-        ));
+        line(
+            out,
+            &format!(
+                "  {} {}{at}: {}",
+                text(finding, "severity"),
+                text(finding, "code"),
+                text(finding, "message")
+            ),
+        );
     }
 }
 
@@ -359,10 +378,10 @@ fn answer(
 
 fn body(paths: &[PathBuf], expected_version: Option<u64>) -> Result<String, String> {
     let artifacts = artifacts(paths)?;
-    let mut body = json!({ "artifacts": artifacts });
-    if let Some(version) = expected_version {
-        body["expectedVersion"] = json!(version);
-    }
+    let body = match expected_version {
+        Some(version) => json!({ "artifacts": artifacts, "expectedVersion": version }),
+        None => json!({ "artifacts": artifacts }),
+    };
     let body = body.to_string();
     if body.len() > MAX_BODY {
         return Err("the pack exceeds the cell's 1 MiB bound".into());
