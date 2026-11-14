@@ -127,7 +127,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FUNCTION-HOST-1-BUILTINS-ONLY:** Core 07 reserves host for engine built-ins, denies authored/pack installation even with a copied built-in namespace, and retains exact pins, scoped capabilities, recorded receipts and proposal-only outputs. Runtime conformance is the separate #731 admission cut.
 - **AUTHORED-HOST-REFUSED:** A fully pinned authored host manifest refuses `function.manifest.authored_host` at `implementation.format` through both shared manifest admission and its public ABI; supported WASM and external-worker manifests retain their admitted identities.
 - **BUILTIN-NAMESPACE-NO-BYPASS:** Copying an engine-shaped function ID, crate name, version or digest into authored data cannot authorize host code.
-- **ENGINE-BUILTIN-AVAILABLE (unsupported):** No engine-owned Host registry currently ships. Public manifest admission refuses Host under every execution profile; genuine built-in availability and exact-pin dispatch qualification are deferred to #761.
+- **ENGINE-BUILTIN-AVAILABLE (partial):** `norn-builtins` ships the compiled-in registry with `norn.decision@1` (BUILTIN-PIN-1, DECISION-1). Public manifest admission still refuses Host under every execution profile. Exact-pin dispatch from the cell host remains part of #761.
 - **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
@@ -144,7 +144,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,function}.rs`, `crates/norn-kernel/src/effect.rs`, `crates/norn-cell/src/host.rs`, `registry/packs/{erpnext,shopify,odoo}/`. Source contracts and outbox/freshness machinery exist, not complete CDC/quarantine/reconciliation or public Function execution. #69's `norn-metrics` temporal tables are pending, not general ML publication. #270/#308–#312 host/surfaces must use this same authority boundary.
 
-## Work breakdown (each PR ≤400 lines; demo priority first)
+## Work breakdown (one coherent unit per PR; demo priority first)
 
 1. **Demo priority:** feed/cursor/observation contract, then atomic dedup/checkpoint capture, then FEED-RESTART tests.
 2. **Demo priority:** ERPNext/Shopify synthetic mappings + role/provenance/gap declarations, then OBS-BAD quarantine/finding evaluation; [beat 6](../acceptance/data-engineering.md).
@@ -157,7 +157,95 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 
 FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format: host` is reserved for Norn-owned, versioned built-in Functions distributed in the engine and identified by the engine's own built-in namespace. Authored and pack definitions cannot install host Functions, including by imitating that namespace; admission refuses fail-closed with a stable diagnostic. Built-ins are reviewed and qualified like kernel code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The engine must resolve its shipped built-in implementation by these exact pins or refuse.
 
+HOST-TREE-1: `implementation.digest` of a host Function is the source-tree digest
+of its implementing crate directory. The tree is every regular file below that
+directory. Each directory entry is judged in this order, and the first rule that
+applies decides: (1) a name that is not valid UTF-8 refuses, even one that would be
+hidden; (2) an entry whose name starts with `.` is skipped whatever its kind, so a
+hidden file, directory or symlink is never read, followed or refused, and nothing
+below a hidden directory counts; (3) a directory named `target` is skipped at any
+depth, while a regular file named `target` counts and a symlink named `target`
+refuses, because a symlink is never a directory; (4) any other symlink, or any
+entry that is neither a directory nor a regular file, refuses. Each file is
+named by its relative `/`-separated path, which is non-empty, relative, and has
+no empty, `.` or `..` component, backslash or control character. Each file
+contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
+its exact bytes, with no line-ending or encoding normalization. The entries are
+sorted by raw path bytes (UTF-8 bytes, which is code-point order), and the digest
+is `sha256:` followed by the hex SHA-256 of `norn.function/source-tree/v1\0` and the
+exact canonical JSON of that array: sorted keys, compact, strings kept byte for byte
+with no NFC normalization, so an NFC-equivalent rename is a different tree. An empty tree
+or a duplicate path refuses. `norn_ir::source_tree::source_tree_digest` is the
+pure implementation, and `norn source-digest <dir>` walks a clean checkout. The
+golden vector in `crates/norn-ir/tests/fixtures/source-tree.digest` was computed
+by an independent reimplementation (Python `hashlib` and `json.dumps` with sorted
+keys and compact separators). Any change to the algorithm needs a new domain
+version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
+**HOST-TREE-PINNED**, **HOST-TREE-UNICODE** (a precomposed and a decomposed
+spelling differ; a second golden vector pins raw-byte order),
+**HOST-TREE-EXCLUDE** (`crates/norn-cli/src/main.rs`: the exclusion order
+above, for hidden entries, `target` and symlinks), **HOST-TREE-SENSITIVE** (an edit, rename, removal,
+addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
+(listing order is irrelevant) and **HOST-TREE-REFUSE**.
+
+BUILTIN-PIN-1: the engine's compiled-in registry is the crate `norn-builtins`.
+Each built-in's manifest pins `runtime.id`/`runtime.version` to that crate and
+`implementation.digest` and `runtime.digest` to its HOST-TREE-1 digest, recorded
+in `registry/builtins/norn-builtins.json` outside the digested tree. The locator
+is `norn-builtins/<version>@<digest>`. The crate's build script recomputes the
+digest from its sources and fails the build until a reviewed change re-pins it,
+and the registry refuses `builtin.pin_mismatch` unless the pin equals the digest
+it was built from. Only this table registers built-ins: `resolve(id, version)`
+answers nothing for any other id or version, and authored or pack `host`
+manifests keep refusing `function.manifest.authored_host`. The decision functions
+accept only a manifest the registry handed out (`Registered`), and bind only a
+dispatch pinned to its exact digest.
+
+DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
+built-in, then `route` on `choice` with `otherwise` failing; the run waits in
+`awaiting_perform_<step>`. The input is one canonical-JSON blob named `request`,
+a closed record `{question, risk: low|medium|high, options: [{id, label,
+effect: {action}|{binding}, scope}], agentPick?, decider: {roles, law?},
+expiresInMs?}`. The cell enforces the bounds the closed schema cannot carry:
+question, note, option label and option scope at most 500 characters, one to
+nine options, option ids `[a-z][a-z0-9_]*`, at most 64 characters and unique, exactly one effect member, `agentPick` naming an
+option (a recommendation, never a decision), at least one decider role, and
+`expiresInMs` at most seven days, which the cell turns into the command's
+deadline. The output is `{choice, note?}`, where `choice` must name an option;
+these bounds keep every accepted answer within the receipt summary bound, and the
+cell refuses `decision.summary_too_large` if one ever would not.
+The errors are `{_tag: "Expired" | "Withdrawn"}`.
+
+Only the cell resolves the command, by issuing the Function receipt itself and
+delivering it as the pending perform's result. The existing reconciliation and
+route path then applies it, and the result's single consumption follows the
+ordinary delivery fence (Core 04). Issuing requires the verified caller to be an
+Actor holding one of `decider.roles`; when `decider.law` is set, the server must
+also have evaluated that law as satisfied. The receipt's `provenance.executor` is
+the deciding Actor and its placement is `norn.cell`. DECISION-TERMINAL-1: the command is open strictly before its deadline. Before
+it, the cell may issue a decision or a `Withdrawn` receipt; at or after it, only
+`Expired`. The windows never overlap, so reconciliation accepts exactly one
+terminal receipt per decision: the first issued. A withdrawer is the run's own
+dispatching authority or an Actor holding a decider role; an empty or other
+withdrawer refuses `decision.not_a_decider`. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
+receipts the cell issued and retained. A client-supplied result, even
+byte-identical to an issued receipt the cell has no record of, refuses
+`decision.receipt_not_cell_issued`. Refusals: `decision.not_a_decider`,
+`decision.law_not_satisfied`, `decision.unknown_choice`, `decision.note_too_long`,
+`decision.expired`, `decision.not_this_command` and the `decision.*` request
+bounds; a request blob over the manifest's 64 KiB `max_input_bytes` refuses
+`decision.request_too_large` before it is parsed or hashed. An action-based decide route can instead consume the receipt through
+RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
+**DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
+**DECISION-BOUNDS**, **DECISION-EXPIRE**, **DECISION-WITHDRAW**,
+**DECISION-TERMINAL** (any interleaving accepts exactly one terminal receipt),
+**DECISION-REGISTERED** (a recomputed manifest digest binds nothing),
+**DECISION-SUMMARY-BOUND**, **BUILTIN-PIN-DRIFT** (an edit without a new pin
+fails the build check).
+
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of a conservative retained declaration closure (inherited, referenced-type and interface constraints, plus every catalog interface, shared property type and extension, so changing any of them invalidates the pin), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
 in-memory subject index only while the native engine's private SQLite change
@@ -185,6 +273,50 @@ Interface-typed governed link targets resolve their concrete identity roots in t
 requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
+
+## Receipt consumption (RECEIPT-CONSUME-1)
+
+RECEIPT-CONSUME-1: a `fire_transition` action that declares `acceptReceipt`
+(Core 04 RECEIPT-EFFECT-1) consumes one authenticated Function receipt and fires
+its run's resolving transition in one cell commit. Action input names the receipt
+only by its content digest (`FunctionReceipt::content_digest` under
+`RECEIPT_DOMAIN`); a body, object or mutable id refuses
+`action.receipt_body_forbidden` or `action.receipt_reference_invalid`. The cell
+host resolves the digest within its scope, world and the declared manifest, and
+re-runs RECEIPT-AUTH-BIND-1 against the persisted reconciliation acceptance. A
+host without receipt support refuses `action.receipt_effect_unsupported`.
+
+The kernel then checks the pins it can see. The receipt's manifest equals the
+declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
+its `run.generation` equals both the reconciled record's generation and the
+command's current generation; any other run or generation refuses
+`action.receipt_run_mismatch` or `action.receipt_binding_mismatch`. A failure
+outcome refuses `action.receipt_not_accepted`, and a summary missing a bound member
+refuses `action.receipt_result_type`. Receipts whose acceptance pins predicates,
+collections or a written destination refuse `action.receipt_effect_unsupported`
+until those fences are qualified on this path.
+
+The commit carries, together: the declared transition, a `set` of the digest
+property to the receipt digest, a `set` of each bound property from the accepted
+summary, the action call record, every reconciliation pin as a compare-and-swap
+read, and the acceptance's delivery (`consumes: Result { command, generation }`).
+The host's pending-delivery check is the only consumption record. A second
+consumption, or a delivery of another generation, refuses
+`action.receipt_not_pending`. A refused transition guard, precondition or CAS
+leaves the delivery pending. A refused consumption fires no transition. An exact
+retry under the same idempotency key replays the original outcome and consumes
+nothing. A call that already consumes a delivery, or that is bound to a
+synchronous rule writer, refuses `action.unsupported_effect`. The receipt is
+evidence, not authority: the action's ordinary authorization, preconditions and
+lifecycle guards still decide.
+
+Named scenarios: **RECEIPT-CONSUME-ONCE** commits the transition, the bound values
+and the consumption as one ledger commit and replays an exact retry;
+**RECEIPT-CONSUME-REPLAY** refuses a consumed receipt under a new idempotency key
+with no commit; **RECEIPT-CONSUME-RUN** refuses a receipt of another run or
+generation with the delivery still pending; **RECEIPT-CONSUME-ATOMIC** shows no
+transition without consumption and no consumption without transition
+(`crates/norn-kernel/tests/receipt_effect.rs`).
 
 ## Observed canonical relation claims (#823)
 

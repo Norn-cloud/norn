@@ -15,6 +15,102 @@ pub struct ScaledArithmetic {
     pub rounding: Rounding,
 }
 
+/// FOLD-ARITHMETIC: why an exact signed quotient refuses. Typed so the rounding
+/// core extracts to Lean (#717); callers still receive the same messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuotientRefusal {
+    DivisorOrOverflow,
+    RemainderOverflow,
+    Inexact,
+    RoundingOverflow,
+}
+
+impl From<QuotientRefusal> for &'static str {
+    fn from(refusal: QuotientRefusal) -> Self {
+        match refusal {
+            QuotientRefusal::DivisorOrOverflow => "zero divisor or quotient overflow",
+            QuotientRefusal::RemainderOverflow => "remainder overflow",
+            QuotientRefusal::Inexact => "inexact result refused",
+            QuotientRefusal::RoundingOverflow => "rounding overflow",
+        }
+    }
+}
+
+/// FOLD-SCALED: why the scaled-arithmetic core refuses. Typed so the core
+/// extracts to Lean (#717); the public API still returns the same messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScaledRefusal {
+    RoundingUndeclared,
+    InvalidSiteScale,
+    ExactScaleOverflow,
+    ExactScaleExceeded,
+    NeedsRoundingSite,
+    UnsupportedExactOperation,
+    ExactCoefficientOverflow,
+    DecimalRange,
+    OutsideDeclaredScale,
+    ScaledCoefficientOverflow,
+    DivisionScaleOverflow,
+    DividendOverflow,
+    DivisorOverflow,
+    ProductOverflow,
+    UnsupportedScaledOperation,
+    Quotient(QuotientRefusal),
+}
+
+impl From<QuotientRefusal> for ScaledRefusal {
+    fn from(refusal: QuotientRefusal) -> Self {
+        Self::Quotient(refusal)
+    }
+}
+
+impl From<ScaledRefusal> for &'static str {
+    fn from(refusal: ScaledRefusal) -> Self {
+        match refusal {
+            ScaledRefusal::RoundingUndeclared => "rounding must be declared",
+            ScaledRefusal::InvalidSiteScale => "invalid exact site scale",
+            ScaledRefusal::ExactScaleOverflow => "exact result scale overflow",
+            ScaledRefusal::ExactScaleExceeded => "exact result scale exceeds 18",
+            ScaledRefusal::NeedsRoundingSite => {
+                "operation requires a declared result scale and rounding"
+            }
+            ScaledRefusal::UnsupportedExactOperation => "unsupported exact operation",
+            ScaledRefusal::ExactCoefficientOverflow => "exact coefficient overflow",
+            ScaledRefusal::DecimalRange => "number exceeds the exact decimal range",
+            ScaledRefusal::OutsideDeclaredScale => "number is outside the declared exact scale",
+            ScaledRefusal::ScaledCoefficientOverflow => "scaled coefficient overflow",
+            ScaledRefusal::DivisionScaleOverflow => "division scale overflow",
+            ScaledRefusal::DividendOverflow => "dividend overflow",
+            ScaledRefusal::DivisorOverflow => "divisor overflow",
+            ScaledRefusal::ProductOverflow => "product overflow",
+            ScaledRefusal::UnsupportedScaledOperation => "unsupported scaled operation",
+            ScaledRefusal::Quotient(refusal) => refusal.into(),
+        }
+    }
+}
+
+/// The arithmetic opcode a scaled operation names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArithmeticOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Other,
+}
+
+impl ArithmeticOp {
+    fn parse(op: &str) -> Self {
+        match op {
+            "Add" => Self::Add,
+            "Subtract" => Self::Subtract,
+            "Multiply" => Self::Multiply,
+            "Divide" => Self::Divide,
+            _ => Self::Other,
+        }
+    }
+}
+
 impl ScaledArithmetic {
     /// VAL-ROUND: explicit modes override inherited sites; absent modes never round.
     pub fn rounding_site(
@@ -23,171 +119,248 @@ impl ScaledArithmetic {
         inherited: Option<Self>,
         exact: bool,
     ) -> Result<Option<Self>, &'static str> {
-        if mode.is_none() && inherited.is_none() && !exact {
-            return Ok(None);
-        }
-        let rounding = mode
-            .or_else(|| inherited.map(|site| site.rounding))
-            .ok_or("rounding must be declared")?;
-        if scale > 18 {
-            return Err("invalid exact site scale");
-        }
-        Ok(Some(Self { scale, rounding }))
+        rounding_site(scale, mode, inherited, exact).map_err(Into::into)
     }
 
     /// VAL-EXACT-1: exact operations derive their scale without a rounding site.
     pub fn exact_result_scale(op: &str, a: u32, b: u32) -> Result<u32, &'static str> {
-        let scale = match op {
-            "Add" | "Subtract" => a.max(b),
-            "Multiply" => a.checked_add(b).ok_or("exact result scale overflow")?,
-            _ => return Err("operation requires a declared result scale and rounding"),
-        };
-        (scale <= 18)
-            .then_some(scale)
-            .ok_or("exact result scale exceeds 18")
+        exact_result_scale(ArithmeticOp::parse(op), a, b).map_err(Into::into)
     }
 
     /// VAL-EXACT-1: checked addition, subtraction and multiplication never round.
     pub fn exact_binary(op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
-        let scale = Self::exact_result_scale(op, a.scale(), b.scale())?;
-        let coefficient = match op {
-            "Multiply" => a.mantissa().checked_mul(b.mantissa()),
-            "Add" | "Subtract" => {
-                let profile = Self {
-                    scale,
-                    rounding: Rounding::Refuse,
-                };
-                let (a, b) = (profile.coefficient(a)?, profile.coefficient(b)?);
-                if op == "Add" {
-                    a.checked_add(b)
-                } else {
-                    a.checked_sub(b)
-                }
-            }
-            _ => return Err("unsupported exact operation"),
-        }
-        .ok_or("exact coefficient overflow")?;
-        Decimal::try_from_i128_with_scale(coefficient, scale)
-            .map_err(|_| "number exceeds the exact decimal range")
+        exact_binary(ArithmeticOp::parse(op), a, b).map_err(Into::into)
     }
 
     /// VAL-EXACT-1: compare after checked exact scale alignment.
     pub fn exact_compare(a: Decimal, b: Decimal) -> Result<std::cmp::Ordering, &'static str> {
-        let scale = Self::exact_result_scale("Add", a.scale(), b.scale())?;
-        let profile = Self {
-            scale,
-            rounding: Rounding::Refuse,
-        };
-        Ok(profile.coefficient(a)?.cmp(&profile.coefficient(b)?))
+        exact_compare(a, b).map_err(Into::into)
     }
 
     pub fn coefficient(self, value: Decimal) -> Result<i128, &'static str> {
-        let value = value.normalize();
-        let places = self
-            .scale
-            .checked_sub(value.scale())
-            .filter(|_| self.scale <= 18)
-            .ok_or("number is outside the declared exact scale")?;
-        value
-            .mantissa()
-            .checked_mul(10_i128.pow(places))
-            .ok_or("scaled coefficient overflow")
+        coefficient(self.scale, value).map_err(Into::into)
     }
 
     /// FOLD-RESCALE / VAL-ROUND: quantize at an explicit result-scale site.
     /// Higher source precision is accepted here; inexact results obey the mode.
     /// Invalid target scales and intermediate or exact-decimal overflow refuse.
     pub fn rescale(self, value: Decimal) -> Result<Decimal, &'static str> {
-        if self.scale > 18 {
-            return Err("number is outside the declared exact scale");
-        }
-        let value = value.normalize();
-        let coefficient = if self.scale >= value.scale() {
-            value
-                .mantissa()
-                .checked_mul(10_i128.pow(self.scale - value.scale()))
-                .ok_or("scaled coefficient overflow")?
-        } else {
-            self.quotient(value.mantissa(), 10_i128.pow(value.scale() - self.scale))?
-        };
-        Decimal::try_from_i128_with_scale(coefficient, self.scale)
-            .map_err(|_| "number exceeds the exact decimal range")
+        rescale(self, value).map_err(Into::into)
     }
 
     /// VAL-ROUND: divide exact operands directly into a declared rounding site.
     pub fn divide(self, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
-        Self::exact_result_scale("Add", a.scale(), b.scale())?;
-        if self.scale > 18 {
-            return Err("number is outside the declared exact scale");
-        }
-        let exponent = i64::from(self.scale) + i64::from(b.scale()) - i64::from(a.scale());
-        let places = u32::try_from(exponent.unsigned_abs())
-            .map_err(|_overflow| "division scale overflow")?;
-        let factor = 10_i128.pow(places);
-        let (numerator, denominator) = if exponent >= 0 {
-            (
-                a.mantissa()
-                    .checked_mul(factor)
-                    .ok_or("dividend overflow")?,
-                b.mantissa(),
-            )
-        } else {
-            (
-                a.mantissa(),
-                b.mantissa().checked_mul(factor).ok_or("divisor overflow")?,
-            )
-        };
-        Decimal::try_from_i128_with_scale(self.quotient(numerator, denominator)?, self.scale)
-            .map_err(|_| "number exceeds the exact decimal range")
+        divide(self, a, b).map_err(Into::into)
     }
 
     pub fn binary(self, op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
-        let (a, b) = (self.coefficient(a)?, self.coefficient(b)?);
-        let factor = 10_i128.pow(self.scale);
-        let checked = match op {
-            "Add" => a.checked_add(b),
-            "Subtract" => a.checked_sub(b),
-            "Multiply" => Some(self.quotient(a.checked_mul(b).ok_or("product overflow")?, factor)?),
-            "Divide" => Some(self.quotient(a.checked_mul(factor).ok_or("dividend overflow")?, b)?),
-            _ => return Err("unsupported scaled operation"),
-        }
-        .ok_or("scaled coefficient overflow")?;
-        Decimal::try_from_i128_with_scale(checked, self.scale)
-            .map_err(|_| "number exceeds the exact decimal range")
+        binary(self, ArithmeticOp::parse(op), a, b).map_err(Into::into)
     }
 
-    /// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
-    fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, &'static str> {
-        let quotient = numerator
-            .checked_div(denominator)
-            .ok_or("zero divisor or quotient overflow")?;
-        let remainder = numerator
-            .checked_rem(denominator)
-            .ok_or("remainder overflow")?;
-        if remainder == 0 {
-            return Ok(quotient);
-        }
-        let round = match self.rounding {
-            Rounding::Refuse => return Err("inexact result refused"),
-            Rounding::TowardZero => false,
-            Rounding::HalfEven | Rounding::HalfAwayFromZero => {
-                let magnitude = remainder.unsigned_abs();
-                let complement = denominator.unsigned_abs() - magnitude;
-                magnitude > complement
-                    || (magnitude == complement
-                        && (self.rounding == Rounding::HalfAwayFromZero || quotient % 2 != 0))
-            }
-        };
-        if round {
-            let direction = if (numerator < 0) == (denominator < 0) {
-                1
+    /// FOLD-ARITHMETIC: the declared rounding of an exact signed quotient.
+    fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, QuotientRefusal> {
+        rounded_quotient(self.rounding, numerator, denominator)
+    }
+}
+
+/// VAL-ROUND: explicit modes override inherited sites; absent modes never round.
+fn rounding_site(
+    scale: u32,
+    mode: Option<Rounding>,
+    inherited: Option<ScaledArithmetic>,
+    exact: bool,
+) -> Result<Option<ScaledArithmetic>, ScaledRefusal> {
+    let rounding = match (mode, inherited) {
+        (Some(mode), _) => mode,
+        (None, Some(site)) => site.rounding,
+        (None, None) if exact => return Err(ScaledRefusal::RoundingUndeclared),
+        (None, None) => return Ok(None),
+    };
+    if scale > 18 {
+        return Err(ScaledRefusal::InvalidSiteScale);
+    }
+    Ok(Some(ScaledArithmetic { scale, rounding }))
+}
+
+/// VAL-EXACT-1: exact operations derive their scale without a rounding site.
+fn exact_result_scale(op: ArithmeticOp, a: u32, b: u32) -> Result<u32, ScaledRefusal> {
+    let scale = match op {
+        // Not `a.max(b)`: the pinned Aeneas library mismodels `Ord::max` (#717).
+        ArithmeticOp::Add | ArithmeticOp::Subtract => {
+            if a >= b {
+                a
             } else {
-                -1
-            };
-            quotient.checked_add(direction).ok_or("rounding overflow")
-        } else {
-            Ok(quotient)
+                b
+            }
         }
+        ArithmeticOp::Multiply => a.checked_add(b).ok_or(ScaledRefusal::ExactScaleOverflow)?,
+        ArithmeticOp::Divide | ArithmeticOp::Other => return Err(ScaledRefusal::NeedsRoundingSite),
+    };
+    if scale <= 18 {
+        Ok(scale)
+    } else {
+        Err(ScaledRefusal::ExactScaleExceeded)
+    }
+}
+
+/// An exact coefficient at a scale as a decimal, or a range refusal.
+fn to_decimal(coefficient: i128, scale: u32) -> Result<Decimal, ScaledRefusal> {
+    Decimal::try_from_i128_with_scale(coefficient, scale)
+        .ok()
+        .ok_or(ScaledRefusal::DecimalRange)
+}
+
+/// VAL-EXACT-1: checked addition, subtraction and multiplication never round.
+fn exact_binary(op: ArithmeticOp, a: Decimal, b: Decimal) -> Result<Decimal, ScaledRefusal> {
+    let scale = exact_result_scale(op, a.scale(), b.scale())?;
+    let coefficient = match op {
+        ArithmeticOp::Multiply => a.mantissa().checked_mul(b.mantissa()),
+        ArithmeticOp::Add => coefficient(scale, a)?.checked_add(coefficient(scale, b)?),
+        ArithmeticOp::Subtract => coefficient(scale, a)?.checked_sub(coefficient(scale, b)?),
+        ArithmeticOp::Divide | ArithmeticOp::Other => {
+            return Err(ScaledRefusal::UnsupportedExactOperation)
+        }
+    }
+    .ok_or(ScaledRefusal::ExactCoefficientOverflow)?;
+    to_decimal(coefficient, scale)
+}
+
+/// VAL-EXACT-1: compare after checked exact scale alignment.
+fn exact_compare(a: Decimal, b: Decimal) -> Result<std::cmp::Ordering, ScaledRefusal> {
+    let scale = exact_result_scale(ArithmeticOp::Add, a.scale(), b.scale())?;
+    Ok(coefficient(scale, a)?.cmp(&coefficient(scale, b)?))
+}
+
+/// FOLD-SCALED: a value's exact integer coefficient at a declared scale.
+fn coefficient(scale: u32, value: Decimal) -> Result<i128, ScaledRefusal> {
+    let value = value.normalize();
+    if scale > 18 {
+        return Err(ScaledRefusal::OutsideDeclaredScale);
+    }
+    let places = scale
+        .checked_sub(value.scale())
+        .ok_or(ScaledRefusal::OutsideDeclaredScale)?;
+    value
+        .mantissa()
+        .checked_mul(10_i128.pow(places))
+        .ok_or(ScaledRefusal::ScaledCoefficientOverflow)
+}
+
+/// FOLD-RESCALE / VAL-ROUND: quantize at an explicit result-scale site.
+fn rescale(profile: ScaledArithmetic, value: Decimal) -> Result<Decimal, ScaledRefusal> {
+    if profile.scale > 18 {
+        return Err(ScaledRefusal::OutsideDeclaredScale);
+    }
+    let value = value.normalize();
+    let coefficient = if profile.scale >= value.scale() {
+        value
+            .mantissa()
+            .checked_mul(10_i128.pow(profile.scale - value.scale()))
+            .ok_or(ScaledRefusal::ScaledCoefficientOverflow)?
+    } else {
+        profile.quotient(value.mantissa(), 10_i128.pow(value.scale() - profile.scale))?
+    };
+    to_decimal(coefficient, profile.scale)
+}
+
+/// VAL-ROUND: divide exact operands directly into a declared rounding site.
+fn divide(profile: ScaledArithmetic, a: Decimal, b: Decimal) -> Result<Decimal, ScaledRefusal> {
+    exact_result_scale(ArithmeticOp::Add, a.scale(), b.scale())?;
+    if profile.scale > 18 {
+        return Err(ScaledRefusal::OutsideDeclaredScale);
+    }
+    let exponent = i64::from(profile.scale) + i64::from(b.scale()) - i64::from(a.scale());
+    let places = u32::try_from(exponent.unsigned_abs())
+        .ok()
+        .ok_or(ScaledRefusal::DivisionScaleOverflow)?;
+    let factor = 10_i128.pow(places);
+    let (numerator, denominator) = if exponent >= 0 {
+        (
+            a.mantissa()
+                .checked_mul(factor)
+                .ok_or(ScaledRefusal::DividendOverflow)?,
+            b.mantissa(),
+        )
+    } else {
+        (
+            a.mantissa(),
+            b.mantissa()
+                .checked_mul(factor)
+                .ok_or(ScaledRefusal::DivisorOverflow)?,
+        )
+    };
+    to_decimal(profile.quotient(numerator, denominator)?, profile.scale)
+}
+
+/// FOLD-SCALED: one scaled operation on exact operands at the declared scale.
+fn binary(
+    profile: ScaledArithmetic,
+    op: ArithmeticOp,
+    a: Decimal,
+    b: Decimal,
+) -> Result<Decimal, ScaledRefusal> {
+    let (a, b) = (
+        coefficient(profile.scale, a)?,
+        coefficient(profile.scale, b)?,
+    );
+    let factor = 10_i128.pow(profile.scale);
+    let checked = match op {
+        ArithmeticOp::Add => a.checked_add(b),
+        ArithmeticOp::Subtract => a.checked_sub(b),
+        ArithmeticOp::Multiply => Some(profile.quotient(
+            a.checked_mul(b).ok_or(ScaledRefusal::ProductOverflow)?,
+            factor,
+        )?),
+        ArithmeticOp::Divide => Some(
+            profile.quotient(
+                a.checked_mul(factor)
+                    .ok_or(ScaledRefusal::DividendOverflow)?,
+                b,
+            )?,
+        ),
+        ArithmeticOp::Other => return Err(ScaledRefusal::UnsupportedScaledOperation),
+    }
+    .ok_or(ScaledRefusal::ScaledCoefficientOverflow)?;
+    to_decimal(checked, profile.scale)
+}
+
+/// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
+fn rounded_quotient(
+    rounding: Rounding,
+    numerator: i128,
+    denominator: i128,
+) -> Result<i128, QuotientRefusal> {
+    let quotient = numerator
+        .checked_div(denominator)
+        .ok_or(QuotientRefusal::DivisorOrOverflow)?;
+    let remainder = numerator
+        .checked_rem(denominator)
+        .ok_or(QuotientRefusal::RemainderOverflow)?;
+    if remainder == 0 {
+        return Ok(quotient);
+    }
+    let round = match rounding {
+        Rounding::Refuse => return Err(QuotientRefusal::Inexact),
+        Rounding::TowardZero => false,
+        Rounding::HalfEven | Rounding::HalfAwayFromZero => {
+            let magnitude = remainder.unsigned_abs();
+            let complement = denominator.unsigned_abs() - magnitude;
+            magnitude > complement
+                || (magnitude == complement
+                    && (rounding == Rounding::HalfAwayFromZero || quotient % 2 != 0))
+        }
+    };
+    if round {
+        let direction = if (numerator < 0) == (denominator < 0) {
+            1
+        } else {
+            -1
+        };
+        quotient
+            .checked_add(direction)
+            .ok_or(QuotientRefusal::RoundingOverflow)
+    } else {
+        Ok(quotient)
     }
 }
 

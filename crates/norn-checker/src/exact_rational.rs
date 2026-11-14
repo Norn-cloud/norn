@@ -27,14 +27,23 @@ impl Rational {
         }
         let mut a = numerator.checked_abs()?;
         let mut b = denominator;
-        while b != 0 {
-            let remainder = a.checked_rem(b)?;
-            a = b;
-            b = remainder;
-        }
+        // Euclid's algorithm. The loop leaves through `break`, not `?`, so the
+        // closure extracts to Lean (#717); a failed remainder still refuses.
+        let divisor = loop {
+            if b == 0 {
+                break Some(a);
+            }
+            match a.checked_rem(b) {
+                Some(remainder) => {
+                    a = b;
+                    b = remainder;
+                }
+                None => break None,
+            }
+        }?;
         Some(Self {
-            numerator: i64::try_from(numerator.checked_div(a)?).ok()?,
-            denominator: i64::try_from(denominator.checked_div(a)?).ok()?,
+            numerator: i64::try_from(numerator.checked_div(divisor)?).ok()?,
+            denominator: i64::try_from(denominator.checked_div(divisor)?).ok()?,
         })
     }
 

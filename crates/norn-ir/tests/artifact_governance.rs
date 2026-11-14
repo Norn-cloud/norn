@@ -32,6 +32,7 @@ fn every_authority_bearing_kind_requires_governed_approval_and_activation() {
         ArtifactKind::Mapping,
         ArtifactKind::Law,
         ArtifactKind::DefinedConcept,
+        ArtifactKind::Labels,
     ];
 
     for kind in authority_bearing {
@@ -72,6 +73,7 @@ fn non_authoritative_lifecycles_remain_directly_writable() {
         ArtifactKind::Mapping,
         ArtifactKind::Law,
         ArtifactKind::DefinedConcept,
+        ArtifactKind::Labels,
     ] {
         assert!(direct_artifact_write_allowed(
             &kind,

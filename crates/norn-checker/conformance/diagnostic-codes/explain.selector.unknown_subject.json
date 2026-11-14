@@ -1,0 +1,7 @@
+{
+  "code": "explain.selector.unknown_subject",
+  "message": "no single {kind} is named {id}; found {count}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

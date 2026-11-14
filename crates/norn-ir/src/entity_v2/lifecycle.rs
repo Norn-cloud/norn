@@ -220,6 +220,7 @@ impl Lifecycle {
                     from: ordered(&transition.from),
                     to: transition.to.clone(),
                     guards: transition.guards.clone(),
+                    guard_refusal_code: transition.guard_refusal_code.clone(),
                 })
                 .filter(|transition| !transition.from.is_empty())
                 .collect(),
@@ -263,6 +264,15 @@ pub struct Transition {
     /// kernel's. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<ZenExpression>,
+    /// GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.
+    /// Omission inherits a parent's diagnostic; guard evidence is retained.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub guard_refusal_code: Option<String>,
 }
 
 /// The effective lifecycles of object type `name`, by lifecycle property:
@@ -322,6 +332,7 @@ pub fn effective_lifecycles<'a>(
                     | PropertyType::Duration { .. }
                     | PropertyType::Record { .. }
                     | PropertyType::JsonExt { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Ref { .. } => None,
                 })
         };
@@ -351,6 +362,11 @@ pub fn effective_lifecycles<'a>(
                 }
                 for transition in &mut machine.transitions {
                     if let Some(parent) = wide.transitions.iter().find(|p| p.id == transition.id) {
+                        if parent.guard_refusal_code.is_some() {
+                            transition
+                                .guard_refusal_code
+                                .clone_from(&parent.guard_refusal_code);
+                        }
                         let own = std::mem::take(&mut transition.guards);
                         transition.guards = parent.guards.clone();
                         for guard in own {

@@ -1,0 +1,353 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.formats.xsd.scalar_types",
+  "kind": "rule",
+  "namespace": "norn.formats",
+  "name": "xsd_scalar_types",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-formats/tables/norn.formats.xsd.scalar_types.json"
+  },
+  "payload": {
+    "ruleId": "norn.formats.rule.xsd_scalar_types",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "scalar": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scalar"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "technical.Mapping"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "version"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "enum": [
+                  "norn.formats.type_table.row"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "integer",
+                  "decimal",
+                  "boolean",
+                  "timestamp",
+                  "date",
+                  "json-ext",
+                  "link"
+                ]
+              },
+              "scale": {
+                "type": "integer"
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "uri"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "utc"
+                ]
+              },
+              "code": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId",
+              "kind",
+              "scale",
+              "format",
+              "timezone",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "type key",
+          "type": "inputNode"
+        },
+        {
+          "id": "table",
+          "name": "XSD primitives; unbounded decimal stays lexical text",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "c_scalar",
+                "name": "scalar",
+                "field": "event.scalar"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_kind",
+                "name": "kind",
+                "field": "kind"
+              },
+              {
+                "id": "o_scale",
+                "name": "scale",
+                "field": "scale"
+              },
+              {
+                "id": "o_format",
+                "name": "format",
+                "field": "format"
+              },
+              {
+                "id": "o_timezone",
+                "name": "timezone",
+                "field": "timezone"
+              },
+              {
+                "id": "o_code",
+                "name": "code",
+                "field": "code"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "string",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}string'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''"
+              },
+              {
+                "_id": "boolean",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}boolean'",
+                "o_kind": "'boolean'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''"
+              },
+              {
+                "_id": "decimal",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}decimal'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.xsd.deferred'"
+              },
+              {
+                "_id": "integer",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}integer'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.xsd.deferred'"
+              },
+              {
+                "_id": "date",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}date'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.xsd.deferred'"
+              },
+              {
+                "_id": "dateTime",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}dateTime'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.xsd.deferred'"
+              },
+              {
+                "_id": "anyURI",
+                "c_scalar": "'{http://www.w3.org/2001/XMLSchema}anyURI'",
+                "o_kind": "'text'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''"
+              },
+              {
+                "_id": "unresolved",
+                "c_scalar": "",
+                "o_kind": "'json-ext'",
+                "o_scale": "0",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.xsd.deferred'"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "emit",
+          "name": "row record",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'norn.formats.type_table.row', kind: kind, scale: scale, format: format, timezone: timezone, code: code}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "row",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "table",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "table",
+          "targetId": "emit",
+          "type": "edge"
+        },
+        {
+          "id": "e3",
+          "sourceId": "emit",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}

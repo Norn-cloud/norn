@@ -356,6 +356,7 @@ fn decision_result_is_one_prepared_transition() {
         ],
         links: vec![],
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     assert_eq!(prepared, expected);
     // Preparing is pure: the same turn prepares the same commit.
@@ -2640,4 +2641,237 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
         }
         assert_eq!((host.evaluations, host.commits), (1, 1));
     }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn declared_guard_diagnostic_preserves_guard_acceptance_and_evidence(amount in -1000_i64..1000) {
+        let mut types = types();
+        types[0].lifecycles[0].transitions[0].guard_refusal_code =
+            Some(norn_checker::lifecycles::codes::PUBLICATION_GUARD.to_owned());
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = cell();
+        let row = key(ORDER, "diagnostic");
+        cell.commit(CellCommit { writes: vec![FactWrite {
+            key: row.clone(), expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: record(json!({
+                "order_no":"diagnostic", "status":"draft", "approver":"", "amount":amount
+            })) },
+        }], ..CellCommit::empty() }).unwrap();
+        let slice = load_slice(&cell, [row]).unwrap();
+        let command = output(json!({"facts":[transition(ORDER,"diagnostic","submit")], "commands":[], "timers":[]}));
+        let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("alias"), &command);
+        prop_assert_eq!(result.is_ok(), amount > 0);
+        if let Err(error) = result {
+            prop_assert_eq!(error.code(), norn_checker::lifecycles::codes::PUBLICATION_GUARD);
+            let reason = norn_kernel::Refusable::refusal(&error).reason.unwrap();
+            prop_assert_eq!(&reason.values["underlyingCode"], &JsonValue::from("decision.guard_false"));
+            prop_assert_eq!(&reason.values["guard"], &JsonValue::from("self.amount > 0"));
+        }
+    }
+}
+
+#[test]
+fn immutable_objects_use_pre_decision_existence_for_change_sequences() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let catalog = TypeCatalog::new(&definitions);
+    let key = FactKey::new(ORDER, "new-immutable");
+    for change in [
+        json!({"op":"set", "objectType":ORDER, "key":key.key, "property":"amount", "value":2}),
+        json!({"op":"transition", "objectType":ORDER, "key":key.key, "lifecycle":"status", "transition":"submit"}),
+        json!({"op":"delete", "objectType":ORDER, "key":key.key}),
+    ] {
+        let output: DecisionOutput = serde_json::from_value(json!({
+            "facts":[{"op":"create", "objectType":ORDER, "key":key.key,
+                "values":{"order_no":"new-immutable", "amount":1, "status":"draft"}}, change],
+            "commands":[], "timers":[],
+        }))
+        .unwrap();
+        prepare_decision::<Infallible>(&catalog, &FactSlice::new(), &turn("new"), &output)
+            .expect("new instances may reach their final state within one decision");
+        let existing = FactSlice::from([(
+            key.clone(),
+            FactState {
+                version: FactVersion(1),
+                values: Some(record(
+                    json!({"order_no":"new-immutable", "amount":1, "status":"draft"}),
+                )),
+            },
+        )]);
+        let output = DecisionOutput {
+            facts: vec![output.facts[1].clone()],
+            ..output
+        };
+        let error = prepare_decision::<Infallible>(&catalog, &existing, &turn("existing"), &output)
+            .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(error.to_string().contains("immutable"));
+    }
+}
+
+#[test]
+fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let before = visible(&host, std::slice::from_ref(&key));
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: before.0[0].version,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+        assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
+    }
+}
+
+#[test]
+fn an_immutable_refusal_outranks_conflict_only_when_the_write_observed_the_object_present() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let mut host = cell().with_types(definitions);
+    let key = FactKey::new(BIG, "append-only");
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    host.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let observed = host.load(&key).unwrap().version;
+    // A write that read the object present can never succeed, so the permanent
+    // refusal is reported, not a retryable conflict.
+    for mutation in [
+        FactMutation::Put {
+            values: values.clone(),
+        },
+        FactMutation::Delete,
+    ] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: observed,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.immutable_object");
+    }
+    // A create that expected the object absent lost a race with the commit above:
+    // a retryable `Conflict`, so action retry and replay can re-read the winner.
+    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), "commit.conflict");
+    }
+}
+
+proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn immutable_ancestry_controls_every_existing_instance_write(immutable in any::<bool>(), amount in 0_i64..1000) {
+        let mut definitions = types();
+        definitions[0].immutable = immutable;
+        let catalog = TypeCatalog::new(&definitions);
+        for name in [ORDER, BIG] {
+            let key = FactKey::new(name, "existing");
+            let slice = FactSlice::from([(key.clone(), FactState { version: FactVersion(1),
+                values: Some(record(json!({"order_no":"existing", "amount":1, "status":"draft", "approver":""}))) })]);
+            let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("property"),
+                &output(json!({"facts":[set(name, "existing", "amount", &json!(amount))],"commands":[],"timers":[]})));
+            prop_assert_eq!(result.is_err(), immutable);
+        }
+    }
+}
+
+// A catalog whose effective view is refused never materializes values or
+// resolves types from an empty view.
+
+fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
+    (0..count)
+        .map(|index| {
+            serde_json::from_value(serde_json::json!({ "name": format!("budget.T{index:04}") }))
+                .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn a_refused_catalog_errors_instead_of_passing_values_through() {
+    let objects = budget_types(4_097);
+    let catalog = TypeCatalog::new(&objects);
+    let refusal = catalog.effective_refusal().unwrap();
+    assert_eq!(
+        (refusal.dimension, refusal.limit),
+        ("registered types", 4_096)
+    );
+    let error = catalog
+        .effective_object_values(
+            &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+            &JsonObject::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(error, EffectiveValuesError::ViewRefused(_)));
+    assert!(
+        catalog
+            .effective_link_values(
+                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+                "any",
+                &JsonObject::new()
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn a_catalog_within_budget_has_an_effective_view() {
+    let objects = budget_types(4_096);
+    let catalog = TypeCatalog::new(&objects);
+    assert!(catalog.effective_refusal().is_none());
+    assert!(
+        catalog
+            .effective_object_values(
+                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
+                &JsonObject::new()
+            )
+            .is_ok()
+    );
 }

@@ -99,22 +99,30 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
+use norn_expr::{
+    EntityDefinitions, EnvOptions, Expression, FieldSource, RecordType, Type, ZenTypeEnv,
+};
 use norn_ir::{
-    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactKind,
-    ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority,
-    JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName,
-    SliceKey, TransitionId, UpsertWriteMode, WriteChange, ZenExpression,
+    ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
+    ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
+    EntityMutationAuthority, JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction,
+    PropertyAdditivity, PropertyId, PropertyTypeName, SliceKey, TransitionId, UpsertWriteMode,
+    WriteChange, ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
-use crate::entity_instance::{EffectiveCatalog, EffectiveLifecycle, EffectiveObjectType};
+use crate::entity_instance::{
+    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
+};
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
+use crate::predicate_property::{
+    EQUALITY, ScalarClass, WINDOW, indexed_scalar_property, scalar_class,
+};
 use crate::property_types::error;
-use crate::typed_roots::check_action_slice_preconditions;
+use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
@@ -139,6 +147,9 @@ pub mod codes {
     pub const UNKNOWN_SLICE_KIND: &str = "artifact_set.action.unknown_slice_kind";
     /// An action slice reads an unknown key property or link.
     pub const INVALID_SLICE: &str = "artifact_set.action.invalid_slice";
+    /// An action aggregate input names an unknown type or property, or a
+    /// property whose kind the fold cannot read (#1105).
+    pub const INVALID_AGGREGATE: &str = "artifact_set.action.invalid_aggregate";
     /// An effect target or declared write is not writable by a generic
     /// action: a domain-engine type, or a computed property.
     pub const TARGET_NOT_WRITABLE: &str = "artifact_set.action.target_not_writable";
@@ -153,6 +164,62 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
+    /// D66: a string-enum input writes no enum property.
+    pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
+    /// D66: a string-enum input admits a value its target property does not declare.
+    pub const INPUT_ENUM_NOT_SUBSET: &str = "action.validation.input_enum_not_subset";
+}
+
+/// Every string-enum input below `properties` as `(field, top_level, values,
+/// pointer to its enum)`; the fixed-currency schema is not an enum input.
+fn collect_input_enums(
+    properties: &BTreeMap<String, JsonValue>,
+    at: &str,
+    top_level: bool,
+    out: &mut Vec<(String, bool, Vec<String>, String)>,
+) {
+    for (field, schema) in properties {
+        let here = format!(
+            "{at}/properties/{}",
+            field.replace('~', "~0").replace('/', "~1")
+        );
+        collect_schema_enums(field, schema, &here, top_level, out);
+    }
+}
+
+/// The enums of one field's schema: its own, its nested properties', and
+/// those of its array `items`, at any depth (Fable S8).
+fn collect_schema_enums(
+    field: &str,
+    schema: &JsonValue,
+    here: &str,
+    top_level: bool,
+    out: &mut Vec<(String, bool, Vec<String>, String)>,
+) {
+    let fields = schema.as_object();
+    if let Some(nested) = fields
+        .and_then(|fields| fields.get("properties"))
+        .and_then(JsonValue::as_object)
+    {
+        collect_input_enums(nested, here, false, out);
+    }
+    if let Some(items) = fields.and_then(|fields| fields.get("items")) {
+        collect_schema_enums(field, items, &format!("{here}/items"), top_level, out);
+    }
+    if norn_expr::schema::fixed_currency_schema(schema) {
+        return;
+    }
+    if let Some(values) = fields
+        .and_then(|fields| fields.get("enum"))
+        .and_then(JsonValue::as_array)
+    {
+        let values = values
+            .iter()
+            .filter_map(JsonValue::as_string)
+            .map(str::to_owned)
+            .collect();
+        out.push((field.to_owned(), top_level, values, format!("{here}/enum")));
+    }
 }
 
 /// Check every candidate action's effect targets and declared write set over
@@ -507,15 +574,29 @@ fn action_slice_findings(
     model: &Model<'_>,
 ) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
-    if !root.slice.is_empty() {
-        let slice = action_slice_types(artifact, root, model);
+    if !root.slice.is_empty() || !root.aggregates.is_empty() {
+        // An aggregate-only action has no slice to type; its aggregates report
+        // their own findings.
+        let slice = if root.slice.is_empty() {
+            ActionSliceTypes {
+                findings: Vec::new(),
+                records: BTreeMap::new(),
+                fields: BTreeMap::new(),
+                typed_slice: true,
+            }
+        } else {
+            action_slice_types(artifact, root, model)
+        };
         findings.extend(slice.findings);
-        if slice.typed_slice {
+        let aggregates = action_aggregate_types(artifact, root, model);
+        findings.extend(aggregates.findings);
+        if slice.typed_slice && aggregates.typed {
             findings.extend(
                 check_action_slice_preconditions(
                     root,
                     slice.records,
                     slice.fields,
+                    aggregates.fields,
                     Some(&artifact.artifact_id),
                 )
                 .into_iter()
@@ -639,6 +720,231 @@ fn action_slice_types(
         fields: slice_fields,
         typed_slice,
     }
+}
+
+struct ActionAggregateTypes {
+    findings: Vec<Diagnostic>,
+    fields: BTreeMap<String, Type>,
+    typed: bool,
+}
+
+/// Resolve each aggregate input (#1105) against the effective model: its
+/// type, the scalar filter properties and their input fields, the window
+/// property, and the summed property. The result type of a sum is the summed
+/// property's type (an exact decimal keeps its scale, unit and currency); a
+/// count is an integer.
+fn action_aggregate_types(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> ActionAggregateTypes {
+    let mut types = ActionAggregateTypes {
+        findings: Vec::new(),
+        fields: BTreeMap::new(),
+        typed: true,
+    };
+    if root.aggregates.is_empty() {
+        return types;
+    }
+    let Ok(environment) = &model.expression_environment else {
+        types.findings.push(finding(
+            codes::INVALID_AGGREGATE,
+            "aggregate property types cannot be resolved".to_owned(),
+            artifact,
+            "/payload/aggregates",
+        ));
+        types.typed = false;
+        return types;
+    };
+    let input_schema = JsonValue::Object(root.input_schema.clone());
+    for (index, aggregate) in root.aggregates.iter().enumerate() {
+        let site = AggregateSite {
+            artifact,
+            aggregate,
+            path: format!("/payload/aggregates/{index}"),
+            input_schema: &input_schema,
+        };
+        match aggregate_result_type(&site, model, environment, &mut types.findings) {
+            Some(ty) => {
+                types.fields.insert(aggregate.name.clone(), ty);
+            }
+            None => types.typed = false,
+        }
+    }
+    types
+}
+
+struct AggregateSite<'a> {
+    artifact: &'a ArtifactEnvelope,
+    aggregate: &'a ActionAggregateInput,
+    path: String,
+    input_schema: &'a JsonValue,
+}
+
+impl AggregateSite<'_> {
+    fn finding(&self, suffix: &str, message: &str) -> Diagnostic {
+        finding(
+            codes::INVALID_AGGREGATE,
+            format!("aggregate {:?}: {message}", self.aggregate.name),
+            self.artifact,
+            &format!("{}{suffix}", self.path),
+        )
+    }
+}
+
+/// Whether an action input field can be compared with a stored property of
+/// `class`. Inputs carry dates and timestamps as strings.
+fn input_comparable(input: ScalarClass, property: ScalarClass) -> bool {
+    match property {
+        ScalarClass::Date | ScalarClass::Timestamp => input == ScalarClass::Text,
+        ScalarClass::Decimal => matches!(input, ScalarClass::Decimal | ScalarClass::Integer),
+        ScalarClass::Text | ScalarClass::Integer | ScalarClass::Bool => input == property,
+    }
+}
+
+/// METRIC-ADDITIVITY-1: only an explicit numeric contract admits a sum. A
+/// semi-additive property sums across objects at one instant, never across a
+/// time window.
+fn sum_admitted(property: &EffectiveProperty, windowed: bool) -> bool {
+    let EffectiveKind::Base(kind) = &property.kind else {
+        return false;
+    };
+    match kind.additivity() {
+        PropertyAdditivity::Additive {} => true,
+        PropertyAdditivity::SemiAdditive {} => !windowed,
+        PropertyAdditivity::Undeclared {}
+        | PropertyAdditivity::NonAdditive {}
+        | PropertyAdditivity::Ratio { .. } => false,
+    }
+}
+
+fn aggregate_result_type(
+    site: &AggregateSite<'_>,
+    model: &Model<'_>,
+    environment: &ZenTypeEnv,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let aggregate = site.aggregate;
+    let kind = aggregate.object_type.as_str();
+    let Some(defined) = model.object_type(kind) else {
+        findings.push(site.finding(
+            "/objectType",
+            &format!("{kind:?} is not an object type of the artifact set or the installed base"),
+        ));
+        return None;
+    };
+    findings.extend(scope_finding(
+        site.artifact,
+        defined.artifact,
+        &format!("{}/objectType", site.path),
+    ));
+    let (Some(Ok(effective)), Some(record)) =
+        (&defined.effective_object_type, environment.record(kind))
+    else {
+        findings.push(site.finding(
+            "/objectType",
+            &format!("{kind:?} has no admitted effective definition"),
+        ));
+        return None;
+    };
+    let mut admitted = true;
+    // #1104 shares this rule: predicate properties are indexed scalars.
+    let mut compare =
+        |suffix: String, property: &PropertyId, input: &str, allowed: &[ScalarClass]| {
+            let class = match indexed_scalar_property(record, effective, property.as_str(), allowed)
+            {
+                Ok((class, _)) => class,
+                Err(error) => {
+                    findings.push(site.finding(
+                        &suffix,
+                        &format!("property {:?} {}", property.as_str(), error.reason()),
+                    ));
+                    admitted = false;
+                    return;
+                }
+            };
+            let input_class = action_input_field_type(Some(site.input_schema), input)
+                .as_ref()
+                .and_then(scalar_class);
+            if input_class.is_some_and(|input_class| !input_comparable(input_class, class)) {
+                findings.push(site.finding(
+                    &suffix,
+                    &format!(
+                        "input field {input:?} cannot be compared with property {:?}",
+                        property.as_str()
+                    ),
+                ));
+                admitted = false;
+            }
+        };
+    for (property, input) in &aggregate.filter {
+        compare(
+            format!("/filter/{}", property.as_str()),
+            property,
+            input,
+            EQUALITY,
+        );
+    }
+    if let Some(window) = &aggregate.window {
+        compare(
+            "/window/start".to_owned(),
+            &window.property,
+            &window.start,
+            WINDOW,
+        );
+        compare(
+            "/window/end".to_owned(),
+            &window.property,
+            &window.end,
+            WINDOW,
+        );
+    }
+    let result = match &aggregate.aggregate {
+        AggregateFunction::Count {} => Some(Type::Integer),
+        AggregateFunction::Sum { property } => {
+            sum_result_type(site, record, effective, property, findings)
+        }
+    };
+    result.filter(|_| admitted)
+}
+
+/// The result type of a sum: the summed property's type, when it is a
+/// stored, non-nullable decimal or integer with an additive contract.
+fn sum_result_type(
+    site: &AggregateSite<'_>,
+    record: &RecordType,
+    effective: &EffectiveObjectType,
+    property: &PropertyId,
+    findings: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let id = property.as_str();
+    // Only stored properties are folded; links are never implicit reads.
+    let stored = record
+        .fields
+        .get(id)
+        .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+        .map(|field| field.ty.clone());
+    let message = match stored {
+        Some(ty @ (Type::Decimal { .. } | Type::Integer)) => {
+            let windowed = site.aggregate.window.is_some();
+            if effective
+                .property(id)
+                .is_some_and(|stored| sum_admitted(stored, windowed))
+            {
+                return Some(ty);
+            }
+            format!(
+                "summed property {id:?} must declare additive aggregation (semi-additive only without a window)"
+            )
+        }
+        Some(_) => format!("summed property {id:?} must be a non-nullable decimal or integer"),
+        None => format!(
+            "{id:?} is not a stored property of {:?}",
+            site.aggregate.object_type.as_str()
+        ),
+    };
+    findings.push(site.finding("/aggregate/property", &message));
+    None
 }
 
 fn action_slice_key_findings(
@@ -1037,6 +1343,7 @@ impl Defined<'_> {
             }
         }
         findings.extend(self.naming_series_findings(action, root, program));
+        findings.extend(self.input_enum_findings(action, root, program));
         if let (
             ActionEffectProgram::FireTransition {
                 lifecycle,
@@ -1061,6 +1368,70 @@ impl Defined<'_> {
             findings.extend(draft_write_mode_findings(
                 action, kind, lifecycles, lifecycle, state,
             ));
+        }
+        findings
+    }
+
+    /// D66: a string input may declare an `enum` only when the action writes
+    /// it to an enum property declaring every one of its values. An upsert
+    /// writes each top-level input field to the property of the same name;
+    /// no other effect writes an input field to a property, so an enum input
+    /// of any other effect, or one nested in an object, binds to none.
+    fn input_enum_findings(
+        &self,
+        action: &ArtifactEnvelope,
+        root: &ActionRoot,
+        program: &ActionEffectProgram,
+    ) -> Vec<Diagnostic> {
+        let Some(properties) = root
+            .input_schema
+            .get("properties")
+            .and_then(JsonValue::as_object)
+        else {
+            return Vec::new();
+        };
+        let view = self
+            .effective_object_type
+            .as_ref()
+            .and_then(|view| view.as_ref().ok());
+        let upsert = matches!(program, ActionEffectProgram::UpsertInputObject { .. });
+        let mut findings = Vec::new();
+        let mut enums = Vec::new();
+        collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
+        for (field, top_level, values, at) in enums {
+            let target = view
+                .filter(|_| upsert && top_level)
+                .and_then(|view| view.property(&field))
+                .and_then(|property| {
+                    if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum { values }) =
+                        &property.kind
+                    {
+                        Some(values)
+                    } else {
+                        None
+                    }
+                });
+            let Some(declared) = target else {
+                findings.push(finding(
+                    codes::INPUT_ENUM_UNBOUND,
+                    format!("input {field:?} declares an enum but writes no enum property"),
+                    action,
+                    &at,
+                ));
+                continue;
+            };
+            let missing: Vec<&String> = values
+                .iter()
+                .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
+                .collect();
+            if !missing.is_empty() {
+                findings.push(finding(
+                    codes::INPUT_ENUM_NOT_SUBSET,
+                    format!("input {field:?} admits {missing:?}, which property {field:?} does not declare"),
+                    action,
+                    &at,
+                ));
+            }
         }
         findings
     }

@@ -1,0 +1,1825 @@
+{
+  "artifactId": "locale.ar_eg.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Egyptian Arabic labels for the core and canon model",
+  "namespace": "locale",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "جهة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.Agent"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Agent",
+          "property": "display_name"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Agent",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "شخص"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Agent",
+          "property": "kind",
+          "value": "person"
+        }
+      },
+      {
+        "label": {
+          "ar": "مؤسسة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Agent",
+          "property": "kind",
+          "value": "organization"
+        }
+      },
+      {
+        "label": {
+          "ar": "نظام"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Agent",
+          "property": "kind",
+          "value": "system"
+        }
+      },
+      {
+        "label": {
+          "ar": "دور الجهة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.AgentRole"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.AgentRole",
+          "property": "role"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري من"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.AgentRole",
+          "property": "valid_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري حتى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.AgentRole",
+          "property": "valid_to"
+        }
+      },
+      {
+        "label": {
+          "ar": "مطالبة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.Claim"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Claim",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Claim",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ الاستحقاق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Claim",
+          "property": "due_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "التزام"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.Commitment"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Commitment",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "موعد الاستحقاق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Commitment",
+          "property": "due_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Commitment",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Commitment",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Commitment",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "مطلوب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Commitment",
+          "property": "status",
+          "value": "requested"
+        }
+      },
+      {
+        "label": {
+          "ar": "موعود به"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Commitment",
+          "property": "status",
+          "value": "promised"
+        }
+      },
+      {
+        "label": {
+          "ar": "منفَّذ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Commitment",
+          "property": "status",
+          "value": "fulfilled"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Commitment",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُخلّ به"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Commitment",
+          "property": "status",
+          "value": "breached"
+        }
+      },
+      {
+        "label": {
+          "ar": "حدث اقتصادي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.EconomicEvent"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحركة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.EconomicEvent",
+          "property": "action"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت الحدوث"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.EconomicEvent",
+          "property": "occurred_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.EconomicEvent",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.EconomicEvent",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.EconomicEvent",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "نقل الملكية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.EconomicEvent",
+          "property": "action",
+          "value": "transfer_ownership"
+        }
+      },
+      {
+        "label": {
+          "ar": "نقل الحيازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.EconomicEvent",
+          "property": "action",
+          "value": "transfer_custody"
+        }
+      },
+      {
+        "label": {
+          "ar": "استهلاك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.EconomicEvent",
+          "property": "action",
+          "value": "consume"
+        }
+      },
+      {
+        "label": {
+          "ar": "إنتاج"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.EconomicEvent",
+          "property": "action",
+          "value": "produce"
+        }
+      },
+      {
+        "label": {
+          "ar": "حجز"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.Hold"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Hold",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Hold",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Hold",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Hold",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت الانتهاء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Hold",
+          "property": "expires_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "مفتوح"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Hold",
+          "property": "status",
+          "value": "open"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُفرَج عنه"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Hold",
+          "property": "status",
+          "value": "released"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُستهلَك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Hold",
+          "property": "status",
+          "value": "consumed"
+        }
+      },
+      {
+        "label": {
+          "ar": "منتهٍ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Hold",
+          "property": "status",
+          "value": "expired"
+        }
+      },
+      {
+        "label": {
+          "ar": "أثر في الدفتر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.LedgerEffect"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الحساب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.LedgerEffect",
+          "property": "account_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.LedgerEffect",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.LedgerEffect",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "مورد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "core.Resource"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود المورد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Resource",
+          "property": "resource_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Resource",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Resource",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Resource",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "طريقة التقييم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "core.Resource",
+          "property": "valuation_method"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوارد أولًا يُصرف أولًا"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Resource",
+          "property": "valuation_method",
+          "value": "fifo"
+        }
+      },
+      {
+        "label": {
+          "ar": "المتوسط المتحرك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "core.Resource",
+          "property": "valuation_method",
+          "value": "moving_average"
+        }
+      },
+      {
+        "description": {
+          "ar": "بيانات وصفية للكتالوج، وليست مخزونًا"
+        },
+        "label": {
+          "ar": "كتالوج"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Catalog"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Catalog",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكود"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Catalog",
+          "property": "code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Catalog",
+          "property": "label"
+        }
+      },
+      {
+        "description": {
+          "ar": "دليل تسوية مُبلَّغ عنه"
+        },
+        "label": {
+          "ar": "تسوية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Settlement"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Settlement",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Settlement",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Settlement",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "دفعة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Settlement",
+          "property": "kind",
+          "value": "payment"
+        }
+      },
+      {
+        "label": {
+          "ar": "استرداد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Settlement",
+          "property": "kind",
+          "value": "refund"
+        }
+      },
+      {
+        "label": {
+          "ar": "صنف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Item"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Item",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكود"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Item",
+          "property": "code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Item",
+          "property": "label"
+        }
+      },
+      {
+        "description": {
+          "ar": "رصيد مقسَّم حسب المالك والموقع"
+        },
+        "label": {
+          "ar": "رصيد مخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Holding"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود المورد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "resource_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "طريقة التقييم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "valuation_method"
+        }
+      },
+      {
+        "label": {
+          "ar": "المخزن"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "location"
+        }
+      },
+      {
+        "label": {
+          "ar": "أساس الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "quantity_basis"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "stock_cost"
+        }
+      },
+      {
+        "label": {
+          "ar": "عملة التكلفة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Holding",
+          "property": "cost_currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوارد أولًا يُصرف أولًا"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Holding",
+          "property": "valuation_method",
+          "value": "fifo"
+        }
+      },
+      {
+        "label": {
+          "ar": "المتوسط المتحرك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Holding",
+          "property": "valuation_method",
+          "value": "moving_average"
+        }
+      },
+      {
+        "label": {
+          "ar": "الرصيد الفعلي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Holding",
+          "property": "quantity_basis",
+          "value": "on_hand"
+        }
+      },
+      {
+        "label": {
+          "ar": "المتاح"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Holding",
+          "property": "quantity_basis",
+          "value": "available"
+        }
+      },
+      {
+        "description": {
+          "ar": "تسليم مرصود"
+        },
+        "label": {
+          "ar": "تسليم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Delivery"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحركة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Delivery",
+          "property": "action"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت الحدوث"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Delivery",
+          "property": "occurred_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Delivery",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Delivery",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Delivery",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "نقل الملكية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Delivery",
+          "property": "action",
+          "value": "transfer_ownership"
+        }
+      },
+      {
+        "label": {
+          "ar": "نقل الحيازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Delivery",
+          "property": "action",
+          "value": "transfer_custody"
+        }
+      },
+      {
+        "label": {
+          "ar": "استهلاك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Delivery",
+          "property": "action",
+          "value": "consume"
+        }
+      },
+      {
+        "label": {
+          "ar": "إنتاج"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Delivery",
+          "property": "action",
+          "value": "produce"
+        }
+      },
+      {
+        "description": {
+          "ar": "التزام على مستوى بند الأمر"
+        },
+        "label": {
+          "ar": "بند أمر بيع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.OrderLine"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.OrderLine",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "موعد الاستحقاق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.OrderLine",
+          "property": "due_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.OrderLine",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوحدة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.OrderLine",
+          "property": "unit"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.OrderLine",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "مطلوب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.OrderLine",
+          "property": "status",
+          "value": "requested"
+        }
+      },
+      {
+        "label": {
+          "ar": "موعود به"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.OrderLine",
+          "property": "status",
+          "value": "promised"
+        }
+      },
+      {
+        "label": {
+          "ar": "منفَّذ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.OrderLine",
+          "property": "status",
+          "value": "fulfilled"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.OrderLine",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُخلّ به"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.OrderLine",
+          "property": "status",
+          "value": "breached"
+        }
+      },
+      {
+        "label": {
+          "ar": "طرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Party"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Party",
+          "property": "display_name"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Party",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "شخص"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Party",
+          "property": "kind",
+          "value": "person"
+        }
+      },
+      {
+        "label": {
+          "ar": "مؤسسة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Party",
+          "property": "kind",
+          "value": "organization"
+        }
+      },
+      {
+        "label": {
+          "ar": "نظام"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.Party",
+          "property": "kind",
+          "value": "system"
+        }
+      },
+      {
+        "description": {
+          "ar": "دور الطرف كما ورد في المصدر"
+        },
+        "label": {
+          "ar": "دور الطرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.PartyRole"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.PartyRole",
+          "property": "role"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري من"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.PartyRole",
+          "property": "valid_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري حتى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.PartyRole",
+          "property": "valid_to"
+        }
+      },
+      {
+        "description": {
+          "ar": "قيد دفتري مرصود بإشارة، وليس أمر ترحيل"
+        },
+        "label": {
+          "ar": "ترحيل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.Posting"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الحساب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Posting",
+          "property": "account_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Posting",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Posting",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدفتر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Posting",
+          "property": "book"
+        }
+      },
+      {
+        "label": {
+          "ar": "دور الحساب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.Posting",
+          "property": "account_role"
+        }
+      },
+      {
+        "description": {
+          "ar": "سياسة تقييم المخزون"
+        },
+        "label": {
+          "ar": "سياسة تقييم المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.ValuationPolicy"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "طريقة التقييم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوارد أولًا يُصرف أولًا"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method",
+          "value": "fifo"
+        }
+      },
+      {
+        "label": {
+          "ar": "المتوسط المتحرك"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.ValuationPolicy",
+          "property": "valuation_method",
+          "value": "moving_average"
+        }
+      },
+      {
+        "description": {
+          "ar": "تسوية مرصودة من المصدر"
+        },
+        "label": {
+          "ar": "تسوية مرصودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "canon.SettlementObservation"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.SettlementObservation",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.SettlementObservation",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "canon.SettlementObservation",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "دفعة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.SettlementObservation",
+          "property": "kind",
+          "value": "payment"
+        }
+      },
+      {
+        "label": {
+          "ar": "استرداد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "canon.SettlementObservation",
+          "property": "kind",
+          "value": "refund"
+        }
+      },
+      {
+        "description": {
+          "ar": "إنشاء سياسة تقييم مخزون أو تحديثها."
+        },
+        "label": {
+          "ar": "تحديد سياسة تقييم المخزون"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "actionId": "canon.valuation_policy.set",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/locale-ar/artifacts/locale.ar_eg.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

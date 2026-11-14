@@ -97,6 +97,17 @@ fn check_requirement(
             span_at(pointer, &["id"]),
         ));
     }
+    if !matches!(
+        requirement.property_type,
+        norn_ir::PropertyType::DecimalBinding { .. }
+    ) && requirement.property_type.contains_decimal_binding()
+    {
+        out.push(error(
+            property_types::codes::UNIT_BINDING_REQUIRED,
+            "Decimal binding members must be direct interface properties".to_owned(),
+            span_at(pointer, &["type"]),
+        ));
+    }
     check_type_members(pointer, &requirement.property_type, out);
     property_types::check_record_refs(pointer, &requirement.property_type, catalog, registry, out);
     let resolved = resolve_type(&requirement.property_type, catalog, registry);

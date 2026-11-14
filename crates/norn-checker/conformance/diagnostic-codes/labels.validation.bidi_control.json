@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.bidi_control",
+  "message": "a label or description contains a bidi embedding, override or isolate control",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

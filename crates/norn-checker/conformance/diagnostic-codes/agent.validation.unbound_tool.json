@@ -1,0 +1,7 @@
+{
+  "code": "agent.validation.unbound_tool",
+  "message": "tool {tool} is not a binding bound for this org, or is listed more than once",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

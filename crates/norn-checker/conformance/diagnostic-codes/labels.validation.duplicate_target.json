@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.duplicate_target",
+  "message": "a labels artifact labels one target more than once",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

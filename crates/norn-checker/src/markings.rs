@@ -195,7 +195,8 @@ fn collect_references(artifact: &ArtifactEnvelope) -> Vec<MarkingReference> {
         | ArtifactPayload::Derived(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
-        | ArtifactPayload::DefinedConcept(_) => {}
+        | ArtifactPayload::DefinedConcept(_)
+        | ArtifactPayload::Labels(_) => {}
     }
     references
 }
@@ -797,7 +798,7 @@ mod tests {
             base: EntityModel::EMPTY,
             tenant: None,
         };
-        let effective = effective_object_types(&model, &context);
+        let effective = effective_object_types(&model, &context).expect("effective view derives");
 
         let base = effective
             .get(&0)

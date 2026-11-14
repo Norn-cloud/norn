@@ -12,6 +12,7 @@ import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { ObjectSchema } from "./schema.ts"
+import type { Localized } from "./labels.ts"
 
 export type RuleContract = "decide" | "sub_decision"
 export type DecisionDependencyPin = DependencyPin
@@ -36,6 +37,7 @@ export interface SliceDecl {
     | "triggerObject"
     | { readonly property: { readonly from: string; readonly property: string } }
     | { readonly link: { readonly from: string; readonly link: string } }
+    | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<EnvelopeOptions["scope"]>; readonly defaultFrom?: string } }
   readonly optional?: boolean
 }
 
@@ -50,7 +52,7 @@ export interface JdmGraph {
 
 export const JDM_CONTENT_TYPE = "application/vnd.gorules.decision"
 
-export interface DecisionDef {
+export interface DecisionDef extends Localized {
   readonly _tag: "Decision"
   /** `ruleId`. */
   readonly id: string

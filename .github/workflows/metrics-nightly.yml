@@ -1,0 +1,56 @@
+name: Metrics nightly
+# Appends the night's measurements to the append-only `metrics` branch (scripts/metrics):
+# per-task times of every main CI run since the last sweep and the static test counts,
+# then checks the whole record and runs the KPI ratchet over the Boat series that
+# scripts/metrics/boat_nightly.py recorded earlier. A regression fails this scheduled run;
+# nothing here runs on, or can block, a pull request.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: metrics-nightly
+  cancel-in-progress: false
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # The token pushes only the metrics branch: main's ruleset refuses direct pushes.
+      contents: write
+      actions: read
+      checks: read
+    env:
+      GIT_AUTHOR_NAME: github-actions[bot]
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test the metrics tools
+        run: python3 -I scripts/metrics/test_metrics.py
+      - name: Collect main CI task times and test counts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/metrics/collect_ci.py --days 3 > "$RUNNER_TEMP/ci.jsonl"
+          python3 -I scripts/metrics/count_tests.py --by-url "$RUN_URL" > "$RUNNER_TEMP/tests.jsonl"
+          cat "$RUNNER_TEMP/ci.jsonl" "$RUNNER_TEMP/tests.jsonl" > "$RUNNER_TEMP/records.jsonl"
+          wc -l "$RUNNER_TEMP/ci.jsonl" "$RUNNER_TEMP/tests.jsonl"
+      - name: Append to the metrics branch
+        env:
+          METRICS_PUSH_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/metrics/record.py add --file "$RUNNER_TEMP/records.jsonl"
+      - name: Verify the whole record and its history
+        env:
+          METRICS_PUSH_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/metrics/record.py verify
+      - name: KPI ratchet over the Boat series
+        run: python3 -I scripts/metrics/ratchet.py --rev origin/metrics

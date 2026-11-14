@@ -5,7 +5,6 @@ use norn_checker::consistency::diagnosis::{
 use norn_checker::consistency::{
     Atom, ChaseBudget, Dependency, Egd, Fact, RuleOrigin, Term, Theory, Value,
 };
-use proptest::prelude::*;
 use std::collections::BTreeSet;
 
 fn declaration(index: usize) -> Declaration {
@@ -164,13 +163,42 @@ fn chase_matches_exhaustive_diagnosis() {
     );
 }
 
-proptest! {
-    #[test]
-    fn generated_conflicts_match_exhaustive(masks in proptest::collection::vec(1_u8..16, 0..8), editable_mask in 0_u8..16) {
-        let mut oracle = Finite(masks.into_iter().map(|mask| (0..4).filter(|i| mask & (1 << i) != 0).collect()).collect());
-        let editable = (0..4).filter(|i| editable_mask & (1 << i) != 0).collect();
-        let result = diagnose(&mut oracle, 4, &editable, 10_000).unwrap();
-        prop_assert_eq!((result.cores, result.corrections), exhaustive(&mut oracle, 4, &editable));
+/// Every oracle over four declarations is an antichain of non-empty minimal
+/// cores (Dedekind M(4) = 168, less the antichain holding the empty set).
+#[test]
+fn every_conflict_antichain_matches_exhaustive() {
+    let members =
+        |mask: u8| -> BTreeSet<usize> { (0..4).filter(|i| mask & (1 << i) != 0).collect() };
+    let masks: Vec<u8> = (1_u8..16).collect();
+    let antichains: Vec<Vec<u8>> = (0_u16..(1 << masks.len()))
+        .map(|family| {
+            masks
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| family & (1 << bit) != 0)
+                .map(|(_, mask)| *mask)
+                .collect::<Vec<u8>>()
+        })
+        .filter(|cores| {
+            !cores.iter().any(|small| {
+                cores
+                    .iter()
+                    .any(|large| small != large && small & large == *small)
+            })
+        })
+        .collect();
+    assert_eq!(antichains.len(), 167);
+    for cores in &antichains {
+        for editable_mask in 0_u8..16 {
+            let mut oracle = Finite(cores.iter().map(|mask| members(*mask)).collect());
+            let editable = members(editable_mask);
+            let result = diagnose(&mut oracle, 4, &editable, 10_000).unwrap();
+            assert_eq!(
+                (result.cores, result.corrections),
+                exhaustive(&mut oracle, 4, &editable),
+                "cores {cores:?} editable {editable:?}"
+            );
+        }
     }
 }
 

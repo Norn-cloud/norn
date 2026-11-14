@@ -179,7 +179,9 @@ impl EffectiveObjectType {
                 let mut effective = EffectiveProperty::new(
                     property,
                     match &property.property_type {
-                        PropertyType::Ref { .. } => EffectiveKind::Unresolved,
+                        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
+                            EffectiveKind::Unresolved
+                        }
                         base @ (PropertyType::Text { .. }
                         | PropertyType::Integer { .. }
                         | PropertyType::Decimal { .. }
@@ -224,6 +226,7 @@ impl EffectiveObjectType {
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Boolean { .. }
                     | PropertyType::Timestamp { .. }
                     | PropertyType::Date { .. }
@@ -594,9 +597,10 @@ impl EffectiveProperty {
             | PropertyType::Date {}
             | PropertyType::JsonExt { schema: None } => false,
             PropertyType::JsonExt { .. } => json_ext_type(base).is_none(),
-            PropertyType::Decimal { .. } | PropertyType::Duration {} | PropertyType::Ref { .. } => {
-                true
-            }
+            PropertyType::Decimal { .. }
+            | PropertyType::Duration {}
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. } => true,
         };
         if unsupported_kind {
             return Some(match base {
@@ -612,6 +616,7 @@ impl EffectiveProperty {
                 | PropertyType::Duration { .. }
                 | PropertyType::Enum { .. }
                 | PropertyType::Record { .. }
+                | PropertyType::DecimalBinding { .. }
                 | PropertyType::Ref { .. }) => format!(
                     "property kind '{}' on '{id}' (instance encoding is T3-NUM-1, #2770)",
                     other.kind().as_str()
@@ -706,6 +711,7 @@ impl EffectiveProperty {
             }
             other @ (PropertyType::Decimal { .. }
             | PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
                 "property kind '{}' on '{}'",
                 other.kind().as_str(),
@@ -814,13 +820,13 @@ impl EffectiveProperty {
             PropertyType::JsonExt { .. } => {
                 self.check_runtime_json(value, closed_json_schema, base)
             }
-            other @ (PropertyType::Duration { .. } | PropertyType::Ref { .. }) => {
-                Err(InstanceError::Unsupported(format!(
-                    "property kind '{}' on '{}'",
-                    other.kind().as_str(),
-                    self.id.as_str()
-                )))
-            }
+            other @ (PropertyType::Duration { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
+                "property kind '{}' on '{}'",
+                other.kind().as_str(),
+                self.id.as_str()
+            ))),
         }
     }
 
@@ -1702,6 +1708,7 @@ pub struct EffectiveCatalog {
     interface_names: BTreeSet<String>,
     links_by_name: BTreeMap<String, Vec<EffectiveLink>>,
     lineages: BTreeMap<String, Vec<ObjectTypeName>>,
+    conserved_metric_terms: BTreeMap<String, BTreeSet<PropertyId>>,
 }
 
 /// Codes whose findings depend on the layer an artifact is installed in.
@@ -1714,6 +1721,29 @@ pub(crate) const LAYER_DEPENDENT: &[&str] = &[
 ];
 
 impl EffectiveCatalog {
+    // Admission evidence stays separate from the value/model contract carried
+    // into the existing compute plan and checked again by the native cell.
+    pub(crate) fn record_conserved_metric_terms(
+        &mut self,
+        object_type: &str,
+        terms: &BTreeSet<PropertyId>,
+    ) {
+        self.conserved_metric_terms
+            .entry(object_type.to_owned())
+            .or_default()
+            .extend(terms.iter().cloned());
+    }
+
+    pub(crate) fn is_conserved_metric_term(
+        &self,
+        object_type: &str,
+        property: &PropertyId,
+    ) -> bool {
+        self.conserved_metric_terms
+            .get(object_type)
+            .is_some_and(|terms| terms.contains(property))
+    }
+
     /// Build the catalog of `artifacts` (see the type docs).
     #[must_use]
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
@@ -1729,7 +1759,7 @@ impl EffectiveCatalog {
         artifacts: &[ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
-        let findings: Vec<Diagnostic> = check_artifact_set_entity_model(
+        let mut findings: Vec<Diagnostic> = check_artifact_set_entity_model(
             artifacts,
             &EntityArtifactSetContext {
                 registry,
@@ -1764,7 +1794,15 @@ impl EffectiveCatalog {
             base: EntityModel::EMPTY,
             tenant: None,
         };
-        let mut effective = effective_object_types(&layer.as_model(), &context);
+        // A refused effective view is a blocking finding on every artifact; the
+        // catalog never serves an empty view as if no type were registered.
+        let mut effective = match effective_object_types(&layer.as_model(), &context) {
+            Ok(effective) => effective,
+            Err(refusal) => {
+                findings.push(refusal.diagnostic());
+                BTreeMap::new()
+            }
+        };
         let owners = Owners::new(&layer, artifacts);
         let blocking = |dependencies: &BTreeSet<&str>| {
             findings.iter().find(|finding| {
@@ -2057,21 +2095,43 @@ mod tests {
         }
     }
 
-    proptest::proptest! {
-        #[test]
-        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28, nested in proptest::bool::ANY) {
-            let mut kind = if integer { serde_json::json!({"kind":"integer"}) }
-                else { serde_json::json!({"kind":"decimal","scale":scale}) };
-            let property = |kind| if nested {
-                serde_json::json!({"id":"payload","type":{"kind":"record","members":[{"id":"amount","type":kind}]}})
-            } else { serde_json::json!({"id":"amount","type":kind}) };
-            let previous = effective_property(property(kind.clone()));
-            kind["additivity"] = serde_json::json!({"kind":"additive"});
-            let candidate = effective_property(property(kind));
-            proptest::prop_assert!(!candidate.same_contract(&previous));
-            proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
-            let value = RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value");
-            proptest::prop_assert!(candidate.check_runtime_value_from(&previous, &value).is_ok());
+    #[test]
+    fn additivity_changes_preserve_values_but_change_the_plan_contract() {
+        for integer in [false, true] {
+            for scale in 0u64..=28 {
+                for nested in [false, true] {
+                    let case = format!("integer {integer} scale {scale} nested {nested}");
+                    let mut kind = if integer {
+                        serde_json::json!({"kind":"integer"})
+                    } else {
+                        serde_json::json!({"kind":"decimal","scale":scale})
+                    };
+                    let property = |kind| {
+                        if nested {
+                            serde_json::json!({"id":"payload","type":{"kind":"record","members":[{"id":"amount","type":kind}]}})
+                        } else {
+                            serde_json::json!({"id":"amount","type":kind})
+                        }
+                    };
+                    let previous = effective_property(property(kind.clone()));
+                    kind["additivity"] = serde_json::json!({"kind":"additive"});
+                    let candidate = effective_property(property(kind));
+                    assert!(!candidate.same_contract(&previous), "{case}");
+                    assert!(
+                        candidate.narrowing_reasons_from(&previous).is_empty(),
+                        "{case}"
+                    );
+                    let value =
+                        RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" })
+                            .expect("exact value");
+                    assert!(
+                        candidate
+                            .check_runtime_value_from(&previous, &value)
+                            .is_ok(),
+                        "{case}"
+                    );
+                }
+            }
         }
     }
 
@@ -2389,8 +2449,10 @@ mod tests {
 mod declared_rounding_tests {
     use super::*;
     proptest::proptest! {
+        // Half the cases sit within 0.015 of the 1.005 max (either sign), where
+        // half-away-from-zero rounding crosses the bound.
         #[test]
-        fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in -10000_i32..10000) {
+        fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in proptest::prop_oneof![2 => -10000_i32..10000, 1 => 990_i32..1020, 1 => -1020_i32..-990]) {
             let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
             let effective = EffectiveProperty::from_declared_property(&property,&[]);
             let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);

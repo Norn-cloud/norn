@@ -53,20 +53,25 @@
 )]
 
 pub mod action;
+mod action_aggregate;
 pub mod action_commit;
 pub mod authz;
 mod authz_action;
 pub mod cell_host;
 mod commit_check;
+mod commit_order;
+mod commit_versions;
 mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
 pub mod flow_identity;
 pub mod governing_laws;
+mod guard_diagnostic;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
+pub mod predicate_read;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
@@ -74,7 +79,9 @@ pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
+mod receipt_decision;
 pub mod refusal;
+mod replay_decision;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
 pub mod timer_schedule;
@@ -101,8 +108,9 @@ pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
     FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, Provenance,
-    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
+    PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance, SerializationLane,
+    WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
@@ -135,3 +143,7 @@ mod action_quantity;
 pub mod execution_profile;
 
 mod profile_ownership;
+
+/// Versioned single-cell read evidence and context validation.
+pub mod read_envelope;
+mod read_token_check;

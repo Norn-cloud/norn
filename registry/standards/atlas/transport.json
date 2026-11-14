@@ -1,0 +1,147 @@
+{
+  "atlasVersion": 1,
+  "domain": "transport",
+  "entries": [
+    {
+      "id": "gtfs-realtime",
+      "name": "GTFS Realtime Protocol Buffers schema",
+      "publisher": "GTFS Specifications Authors",
+      "kind": "protocol",
+      "domains": [
+        "transport"
+      ],
+      "version": "2.0 specification; git:3c9e7b904b5035349622f03e11851e25c16d1d99",
+      "versionDate": "2026-09-16",
+      "versionBasis": "Reference identifies specification 2.0; repository commit timestamp is 2026-09-16T19:54:06Z, not the original 2.0 release date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Selected proto has Apache-2.0 notice and repository LICENSE agrees; retain notices and licence. No feed-data rights inferred.",
+        "termsUrl": "https://raw.githubusercontent.com/google/transit/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/google/transit/3c9e7b904b5035349622f03e11851e25c16d1d99/gtfs-realtime/proto/gtfs-realtime.proto",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/google/transit/3c9e7b904b5035349622f03e11851e25c16d1d99/gtfs-realtime/proto/gtfs-realtime.proto",
+        "https://github.com/google/transit/blob/master/gtfs-realtime/spec/en/reference.md",
+        "https://raw.githubusercontent.com/google/transit/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Trip updates, vehicle positions and alerts are transport source events; they are not automatically Norn execution-ledger events.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "gtfs-schedule",
+      "name": "GTFS Schedule feed specification",
+      "publisher": "GTFS community / MobilityData; google/transit publication repository",
+      "kind": "standard",
+      "domains": [
+        "transport"
+      ],
+      "version": "git:3c9e7b904b5035349622f03e11851e25c16d1d99",
+      "versionDate": "2026-09-16",
+      "versionBasis": "Snapshot commit timestamp 2026-09-16T19:54:06Z; Schedule is maintained incrementally, not assigned an invented semver.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (specification repository)",
+        "status": "verified",
+        "basis": "Repository Apache licence covers specification material, not arbitrary agency feeds; preserve licence/notices and mark modifications.",
+        "termsUrl": "https://raw.githubusercontent.com/google/transit/master/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "CSV",
+        "JSON"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://raw.githubusercontent.com/google/transit/3c9e7b904b5035349622f03e11851e25c16d1d99/gtfs/spec/en/reference.md",
+      "evidenceUrls": [
+        "https://github.com/google/transit",
+        "https://raw.githubusercontent.com/google/transit/3c9e7b904b5035349622f03e11851e25c16d1d99/gtfs/spec/en/reference.md",
+        "https://raw.githubusercontent.com/google/transit/master/LICENSE"
+      ],
+      "norn": {
+        "overlap": "Stops, routes, trips, timetables, fares and accessibility; source table extraction fidelity must be established separately.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "netex",
+      "name": "NeTEx public transport XML schema",
+      "publisher": "CEN TC278 WG3 / Transmodel ecosystem maintainers",
+      "kind": "standard",
+      "domains": [
+        "transport"
+      ],
+      "version": "2.0.0",
+      "versionDate": "2026-02-24",
+      "versionBasis": "GitHub release v2.0.0 published_at 2026-02-24T13:52:41Z; NeTEx-CEN/NeTEx resolves to TransmodelEcosystem/NeTEx.",
+      "licence": {
+        "spdx": "GPL-3.0-only",
+        "text": "GPL-3.0 (repository LICENSE; per-file applicability to review)",
+        "status": "verified",
+        "basis": "Repository supplies GPL v3 text; preserve notices and comply with covered-source obligations when distributing derivatives. Do not treat this as a permissive licence or a grant over all referenced CEN material.",
+        "termsUrl": "https://raw.githubusercontent.com/TransmodelEcosystem/NeTEx/v2.0.0/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/TransmodelEcosystem/NeTEx/v2.0.0/xsd/NeTEx_publication.xsd",
+      "evidenceUrls": [
+        "https://github.com/TransmodelEcosystem/NeTEx/releases/tag/v2.0.0",
+        "https://raw.githubusercontent.com/TransmodelEcosystem/NeTEx/v2.0.0/xsd/NeTEx_publication.xsd",
+        "https://raw.githubusercontent.com/TransmodelEcosystem/NeTEx/v2.0.0/LICENSE",
+        "https://github.com/TransmodelEcosystem/NeTEx"
+      ],
+      "norn": {
+        "overlap": "Network topology, scheduled timetables, fares and alternative modes remain transport-domain models.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

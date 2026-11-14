@@ -73,10 +73,10 @@ use norn_expr::{
     check_expression_with_root_bounds,
 };
 use norn_ir::{
-    ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot, ArtifactDependency,
-    ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic, DiagnosticRemediation,
-    DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, SliceDeclaration,
-    SliceKey, ZenExpression,
+    ActionAggregateInput, ActionCommand, ActionCommandOperation, ActionInputDerivation, ActionRoot,
+    ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, Diagnostic,
+    DiagnosticRemediation, DiagnosticSeverity, JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile,
+    SliceDeclaration, SliceKey, ZenExpression,
 };
 
 use crate::envelope::{
@@ -257,6 +257,7 @@ pub(crate) fn validate_action_typed_members(
 
     let derivations = validate_action_derivations(payload, diagnostics, artifact_id);
     validate_action_slice(payload, &derivations, diagnostics, artifact_id);
+    validate_action_aggregates(payload, &derivations, diagnostics, artifact_id);
     let precondition_cost = validate_action_preconditions(payload, diagnostics, artifact_id);
     let turn_fuel = ResourceLimitProfile::norn_limits_v1().turn.fuel_units;
     if derivations.cost.saturating_add(precondition_cost) > turn_fuel {
@@ -388,6 +389,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
+            SliceKey::Parameter { .. } => {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    "parameter slice execution is not qualified in this cut",
+                    format!("{path}.key"),
+                    artifact_id,
+                ));
+                0
+            }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -441,6 +451,94 @@ fn validate_action_slice(
                 format!("{path}.optional"),
                 artifact_id,
             ));
+        }
+    }
+}
+
+/// Validate an action's bounded aggregate inputs (#1105): names, bounds, and
+/// the input fields they read. Object types and property kinds are checked
+/// over the artifact set ([`crate::action_set`]).
+fn validate_action_aggregates(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(aggregates) = decode_member!(
+        Vec<ActionAggregateInput>,
+        payload,
+        "aggregates",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) else {
+        return;
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1().slice;
+    let total_items = aggregates.iter().fold(0_u64, |total, aggregate| {
+        total.saturating_add(u64::from(aggregate.max_items))
+    });
+    if total_items > u64::from(limits.max_records) {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "aggregates may match {total_items} objects in total, above the profile's slice record cap of {}",
+                limits.max_records
+            ),
+            "payload.aggregates",
+            artifact_id,
+        ));
+    }
+    let slice_names: BTreeSet<&str> = payload
+        .get("slice")
+        .and_then(JsonValue::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.as_object()?.get("name")?.as_string())
+        .collect();
+    let mut names = BTreeSet::new();
+    for (index, aggregate) in aggregates.iter().enumerate() {
+        let path = format!("payload.aggregates[{index}]");
+        if !is_action_member_name(&aggregate.name)
+            || slice_names.contains(aggregate.name.as_str())
+            || !names.insert(aggregate.name.as_str())
+        {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!(
+                    "aggregate name {:?} is empty, repeated, or also a slice entry",
+                    aggregate.name
+                ),
+                format!("{path}.name"),
+                artifact_id,
+            ));
+        }
+        if aggregate.max_items == 0 {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "aggregate maxItems must be at least 1",
+                format!("{path}.maxItems"),
+                artifact_id,
+            ));
+        }
+        for field in aggregate.input_fields() {
+            if action_input_field_type(payload.get("inputSchema"), field).is_none() {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!("aggregate input field {field:?} is not declared in inputSchema"),
+                    path.clone(),
+                    artifact_id,
+                ));
+            } else if !action_input_key_is_guaranteed(payload, field, derivations) {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!(
+                        "aggregate input field {field:?} may be absent; require its final input value"
+                    ),
+                    path.clone(),
+                    artifact_id,
+                ));
+            }
         }
     }
 }
@@ -672,10 +770,7 @@ fn validate_action_derivation_steps(
             ));
             continue;
         };
-        let Some(environment) = fields
-            .clone()
-            .and_then(|fields| ZenTypeEnv::input_only(fields, EnvOptions::default()).ok())
-        else {
+        let Some(environment) = fields.clone().and_then(action_derivation_environment) else {
             diagnostics.push(invalid_diagnostic(
                 codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
                 "derivation expressions require an object input schema with a derivable expression environment",
@@ -773,11 +868,13 @@ fn validate_action_preconditions(
             artifact_id,
         ));
     }
-    if payload
-        .get("slice")
-        .and_then(JsonValue::as_array)
-        .is_none_or(<[JsonValue]>::is_empty)
-    {
+    let declares = |member: &str| {
+        payload
+            .get(member)
+            .and_then(JsonValue::as_array)
+            .is_some_and(|entries| !entries.is_empty())
+    };
+    if !declares("slice") && !declares("aggregates") {
         return check_action_input_preconditions(payload, preconditions, diagnostics, artifact_id);
     }
     0
@@ -821,13 +918,15 @@ fn check_action_input_preconditions(
     aggregate_cost
 }
 
-/// Type-check action preconditions over the resolved slice object records.
-/// Entity type resolution belongs to the artifact-set checker; this helper
-/// only assembles the closed ZEN environment and checks boolean expressions.
+/// Type-check action preconditions over the resolved slice object records
+/// and aggregate result types. Entity type resolution belongs to the
+/// artifact-set checker; this helper only assembles the closed ZEN
+/// environment and checks boolean expressions.
 pub(crate) fn check_action_slice_preconditions(
     root: &ActionRoot,
     records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
     artifact_id: Option<&str>,
 ) -> Vec<Diagnostic> {
     if root.preconditions.is_empty() {
@@ -847,10 +946,12 @@ pub(crate) fn check_action_slice_preconditions(
             artifact_id,
         )];
     }
-    let Some(environment) = action_slice_environment(root, &schema, records, slice_fields) else {
+    let Some(environment) =
+        action_slice_environment(root, &schema, records, slice_fields, aggregate_fields)
+    else {
         return vec![invalid_diagnostic(
             codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
-            "preconditions require every declared slice object to have a resolved, closed property record",
+            "preconditions require every declared slice object and aggregate to have a resolved, closed type",
             "payload.slice",
             artifact_id,
         )];
@@ -959,7 +1060,7 @@ fn action_post_derivation_fields(
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
     for step in derive {
-        let environment = ZenTypeEnv::input_only(fields.clone(), EnvOptions::default()).ok()?;
+        let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
         let checked = check_expression_with_root_bounds(
@@ -984,10 +1085,15 @@ fn action_slice_environment(
     input_schema: &JsonValue,
     mut records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
+    aggregate_fields: BTreeMap<String, Type>,
 ) -> Option<ZenTypeEnv> {
     let (fields, _) = action_post_derivation_fields(input_schema, &root.derive)?;
     let slice_record = "norn:ActionSlice".to_owned();
     records.insert(slice_record.clone(), slice_fields);
+    let aggregate_record = "norn:ActionAggregates".to_owned();
+    if !root.aggregates.is_empty() {
+        records.insert(aggregate_record.clone(), aggregate_fields);
+    }
     let mut environment = ZenTypeEnv::input_only_with_records(
         records,
         fields,
@@ -997,6 +1103,11 @@ fn action_slice_environment(
     environment = environment
         .bind_operand("slice", Type::Record(slice_record))
         .ok()?;
+    if !root.aggregates.is_empty() {
+        environment = environment
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .ok()?;
+    }
     bind_flat_input_aliases(environment)
 }
 
@@ -1269,12 +1380,21 @@ fn action_input_environment(
     }
 }
 
+// ACTION-ACTOR-1: only the authenticated principal identity is available here.
+// Other general actor members have no trusted action-call binding and refuse typing.
+fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTypeEnv> {
+    ZenTypeEnv::action_derivation_with_records(BTreeMap::new(), fields, EnvOptions::default()).ok()
+}
+
 fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
     let input = environment.record(INPUT_RECORD)?;
     let aliases: Vec<(String, Type)> = input
         .fields
         .iter()
         .filter(|(name, _)| name.as_str() != "input" && name.as_str() != "slice")
+        // A declared operand (`aggregates` when the action declares any)
+        // keeps its name; the input field stays reachable as `input.<name>`.
+        .filter(|(name, _)| !environment.variables().contains_key(name.as_str()))
         .map(|(name, field)| (name.clone(), field.ty.clone()))
         .collect();
     for (name, ty) in aliases {
@@ -1316,7 +1436,10 @@ fn action_input_fields(
 }
 
 /// Translate an action schema property to its final value type.
-fn action_input_field_type(input_schema: Option<&JsonValue>, field: &str) -> Option<Type> {
+pub(crate) fn action_input_field_type(
+    input_schema: Option<&JsonValue>,
+    field: &str,
+) -> Option<Type> {
     let properties = input_schema?.as_object()?.get("properties")?.as_object()?;
     action_schema_type(properties.get(field)?)
 }
@@ -1782,7 +1905,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, Relation, or `DefinedConcept` artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, `DefinedConcept` or `Labels` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1878,6 +2001,7 @@ pub(crate) fn check_typed_root(
                 ));
             }
         }
+        ArtifactPayload::Labels(_) => crate::labels::check_local(payload, diagnostics, artifact_id),
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
 }
@@ -1919,7 +2043,21 @@ fn check_document_root(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
-    if matches!(payload, ArtifactPayload::Mapping(_)) {
+    if matches!(payload, ArtifactPayload::Mapping(_))
+        && object.get("format").is_some_and(
+            |value| matches!(value, JsonValue::String(format) if format == "norn.interpretation/1"),
+        )
+    {
+        check_root!(
+            norn_ir::mapping::LawInterpretationIr,
+            "mapping.validation.invalid_document",
+            object,
+            diagnostics,
+            artifact_id,
+            members {}
+            arrays {}
+        );
+    } else if matches!(payload, ArtifactPayload::Mapping(_)) {
         check_root!(
             norn_ir::mapping::MappingIr,
             "mapping.validation.invalid_document",
@@ -2854,6 +2992,110 @@ mod tests {
     }
 
     #[test]
+    fn action_actor_binding_is_typed_and_unsupported_principal_claims_refuse() {
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"code":{"type":"string"}},"required":["code"]});
+        action["payload"]["derive"] = json!([
+            {"field":"code","expression":"actor.subjectId","inputRequired":false}
+        ]);
+        assert_eq!(findings(action.clone()), []);
+        let mut decimal = action.clone();
+        let amount = json!({"type":"number","nornType":{"kind":"decimal","scale":2}});
+        for field in ["amount", "base", "discount"] {
+            decimal["payload"]["inputSchema"]["properties"][field] = amount.clone();
+        }
+        decimal["payload"]["inputSchema"]["required"] = json!(["code", "base", "discount"]);
+        decimal["payload"]["derive"] = json!([{"field":"amount",
+            "expression":"actor.subjectId == 'person:vip' ? input.discount : input.base",
+            "inputRequired":false}]);
+        assert_eq!(findings(decimal), []);
+        for unsupported in ["actor.roles", "actor.agentSessionId", "actor.approved"] {
+            action["payload"]["derive"][0]["expression"] = json!(unsupported);
+            assert!(has(
+                &findings(action.clone()),
+                "action.validation.invalid_payload",
+                "payload.derive[0].expression"
+            ));
+        }
+    }
+
+    fn action_with_nested_input_field(field: &str, arrays: &[bool]) -> (Value, String) {
+        let mut schema = json!({"type":"object","additionalProperties":false,
+            "properties":{(field):{"type":"string"}},"required":[field]});
+        let mut path = format!(".properties.{field}");
+        for array in arrays {
+            if *array {
+                schema = json!({"type":"array","items":schema});
+                path = format!(".items{path}");
+            } else {
+                schema = json!({"type":"object","additionalProperties":false,
+                    "properties":{"node":schema},"required":["node"]});
+                path = format!(".properties.node{path}");
+            }
+        }
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["preconditions"] = json!([]);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"details":schema},"required":["details"]});
+        (
+            action,
+            format!("payload.inputSchema.properties.details{path}"),
+        )
+    }
+
+    #[test]
+    fn action_actor_reserved_input_schemas_refuse_at_nested_object_and_array_paths() {
+        for arrays in [vec![], vec![false], vec![true], vec![true, false, true]] {
+            for field in ["actor", "approved", "subjectId", "recorded_by"] {
+                let (action, path) = action_with_nested_input_field(field, &arrays);
+                let found = findings(action);
+                if matches!(field, "actor" | "approved") {
+                    assert_eq!(
+                        found,
+                        [("action.validation.invalid_schema".to_owned(), path)]
+                    );
+                } else {
+                    assert!(found.is_empty(), "{found:?}");
+                }
+            }
+        }
+        for field in ["actor", "approved"] {
+            let mut action = fixture(ACTION_FIXTURE);
+            action["payload"]["preconditions"] = json!([]);
+            action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+                "properties":{(field):{"type":"string"}},"required":[field]});
+            action["payload"]["derive"] = json!([
+                {"field":field,"expression":"actor.subjectId","inputRequired":false}
+            ]);
+            assert!(has(
+                &findings(action),
+                "action.validation.invalid_schema",
+                &format!("payload.inputSchema.properties.{field}")
+            ));
+        }
+        let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
+        action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
+        assert!(findings(action).is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn action_actor_reserved_schema_names_refuse_under_generated_containers(
+            field in proptest::sample::select(vec!["actor", "approved", "subjectId", "recorded_by"]),
+            arrays in proptest::collection::vec(proptest::bool::ANY, 0..12),
+        ) {
+            let (action, path) = action_with_nested_input_field(field, &arrays);
+            let expected = if matches!(field, "actor" | "approved") {
+                vec![("action.validation.invalid_schema".to_owned(), path)]
+            } else { vec![] };
+            proptest::prop_assert_eq!(findings(action), expected);
+        }
+    }
+
+    #[test]
     fn action_derivations_are_ordered_typed_and_require_consistent_input_flags() {
         let mut action = fixture(ACTION_FIXTURE);
         action["payload"]["inputSchema"] = json!({
@@ -3148,6 +3390,7 @@ mod tests {
                 &root,
                 records.clone(),
                 slice_fields.clone(),
+                BTreeMap::new(),
                 None,
             )
             .is_empty()
@@ -3159,6 +3402,7 @@ mod tests {
             &invalid,
             records,
             slice_fields,
+            BTreeMap::new(),
             Some("fashion.set-season-brand"),
         );
         assert!(
@@ -3474,192 +3718,177 @@ mod tests {
         }
     }
 
-    #[test]
-    fn action_commands_check_required_names_without_an_input_environment() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["inputSchema"] = json!({ "type": "string" });
-        action["payload"]["commands"] = json!([
-            { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
-        ]);
-        let found = findings(action);
-        assert!(has(
-            &found,
-            codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
-            "payload.inputSchema"
-        ));
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].name",
-            "payload.commands[2].name",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{found:?}"
-            );
-        }
-    }
+    /// `(label, commands, input-schema patch, expected (code, path) findings)`.
+    type ActionCommandCase = (
+        &'static str,
+        Value,
+        fn(&mut Value),
+        &'static [(&'static str, &'static str)],
+    );
 
+    /// Every malformed command list is refused at each listed path; the patch
+    /// sets the input environment the commands are checked against.
     #[test]
-    fn action_commands_reject_invalid_expressions_and_missing_input_members() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "submit",
-                "doctype": "Sales Order",
-                "name": "input.quantity"
-            },
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer": "input.unknown" }
-            },
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer": "input.skuId +" }
-            }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].fields.customer",
-            "payload.commands[2].fields.customer",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_reject_expected_modified_for_submit_and_cancel() {
-        for operation in ["submit", "cancel"] {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table row per refused command shape"
+    )]
+    fn action_commands_refuse_at_their_paths() {
+        const INVALID: &str = "action.validation.invalid_payload";
+        const UNDERIVABLE: &str = codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE;
+        let cases: [ActionCommandCase; 9] = [
+            (
+                "required names are checked without an input environment",
+                json!([
+                    { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
+                ]),
+                |schema: &mut Value| *schema = json!({ "type": "string" }),
+                &[
+                    (UNDERIVABLE, "payload.inputSchema"),
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].name"),
+                    (INVALID, "payload.commands[2].name"),
+                ],
+            ),
+            (
+                "invalid expressions and missing input members",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "submit",
+                        "doctype": "Sales Order",
+                        "name": "input.quantity"
+                    },
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer": "input.unknown" }
+                    },
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer": "input.skuId +" }
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].fields.customer"),
+                    (INVALID, "payload.commands[2].fields.customer"),
+                ],
+            ),
+            (
+                "expectedModified on submit",
+                json!([{
+                    "connector": "erpnext", "operation": "submit",
+                    "doctype": "Sales Order", "name": "\"SO-1\"",
+                    "expectedModified": "\"2026-10-02 12:00:00\""
+                }]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0].expectedModified")],
+            ),
+            (
+                "expectedModified on cancel",
+                json!([{
+                    "connector": "erpnext", "operation": "cancel",
+                    "doctype": "Sales Order", "name": "\"SO-1\"",
+                    "expectedModified": "\"2026-10-02 12:00:00\""
+                }]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0].expectedModified")],
+            ),
+            (
+                "submit, update and cancel require names",
+                json!([
+                    { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
+                    { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].name"),
+                    (INVALID, "payload.commands[1].name"),
+                    (INVALID, "payload.commands[2].name"),
+                ],
+            ),
+            (
+                "blank connector, doctype and field names",
+                json!([
+                    {
+                        "connector": "  ",
+                        "operation": "create",
+                        "doctype": "",
+                        "fields": { " ": "input.skuId" }
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[
+                    (INVALID, "payload.commands[0].connector"),
+                    (INVALID, "payload.commands[0].doctype"),
+                    (INVALID, "payload.commands[0].fields"),
+                ],
+            ),
+            (
+                "unknown operation",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "delete",
+                        "doctype": "Sales Order"
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0]")],
+            ),
+            (
+                "unknown member",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "unexpected": "member"
+                    }
+                ]),
+                |_: &mut Value| {},
+                &[(INVALID, "payload.commands[0]")],
+            ),
+            (
+                "expressions do not read nested opaque input objects",
+                json!([
+                    {
+                        "connector": "erpnext",
+                        "operation": "create",
+                        "doctype": "Sales Order",
+                        "fields": { "customer_name": "input.customer.name" }
+                    }
+                ]),
+                |schema: &mut Value| {
+                    schema["properties"]["customer"] = json!({
+                        "type": "object",
+                        "properties": { "name": { "type": "string" } },
+                        "additionalProperties": false
+                    });
+                },
+                &[(INVALID, "payload.commands[0].fields.customer_name")],
+            ),
+        ];
+        for (label, commands, input_schema_patch, expected_paths) in cases {
             let mut action = fixture(ACTION_FIXTURE);
-            action["payload"]["commands"] = json!([{
-                "connector": "erpnext", "operation": operation,
-                "doctype": "Sales Order", "name": "\"SO-1\"",
-                "expectedModified": "\"2026-10-02 12:00:00\""
-            }]);
+            input_schema_patch(&mut action["payload"]["inputSchema"]);
+            action["payload"]["commands"] = commands;
             let found = findings(action);
-            assert!(
-                has(
-                    &found,
-                    "action.validation.invalid_payload",
-                    "payload.commands[0].expectedModified"
-                ),
-                "{operation}: {found:?}"
-            );
+            for &(code, path) in expected_paths {
+                assert!(
+                    has(&found, code, path),
+                    "{label}: expected {code} at {path}, got {found:?}"
+                );
+            }
         }
-    }
-
-    #[test]
-    fn action_commands_require_names_for_submit_update_and_cancel() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            { "connector": "erpnext", "operation": "submit", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "update", "doctype": "Sales Order" },
-            { "connector": "erpnext", "operation": "cancel", "doctype": "Sales Order" }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].name",
-            "payload.commands[1].name",
-            "payload.commands[2].name",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_require_non_empty_connector_doctype_and_field_names() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "  ",
-                "operation": "create",
-                "doctype": "",
-                "fields": { " ": "input.skuId" }
-            }
-        ]);
-
-        let found = findings(action);
-        for path in [
-            "payload.commands[0].connector",
-            "payload.commands[0].doctype",
-            "payload.commands[0].fields",
-        ] {
-            assert!(
-                has(&found, "action.validation.invalid_payload", path),
-                "{path}: {found:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn action_commands_reject_unknown_operation_and_members() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "delete",
-                "doctype": "Sales Order"
-            }
-        ]);
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0]"
-        ));
-
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "unexpected": "member"
-            }
-        ]);
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0]"
-        ));
-    }
-
-    #[test]
-    fn action_command_expressions_do_not_read_nested_opaque_input_objects() {
-        let mut action = fixture(ACTION_FIXTURE);
-        action["payload"]["inputSchema"]["properties"]["customer"] = json!({
-            "type": "object",
-            "properties": { "name": { "type": "string" } },
-            "additionalProperties": false
-        });
-        action["payload"]["commands"] = json!([
-            {
-                "connector": "erpnext",
-                "operation": "create",
-                "doctype": "Sales Order",
-                "fields": { "customer_name": "input.customer.name" }
-            }
-        ]);
-
-        assert!(has(
-            &findings(action),
-            "action.validation.invalid_payload",
-            "payload.commands[0].fields.customer_name"
-        ));
     }
 
     #[test]

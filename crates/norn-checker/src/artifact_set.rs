@@ -54,7 +54,7 @@
 //! | `customization` | every kind but `business_pack` | A constrained overlay on any definition; packs are composed, not customized. |
 //! | `business_pack` | every kind | A pack composes any artifact, including other packs. |
 //! | `source_schema` | nothing | Discovery evidence (T8-SRC-1): what a source declares and what Norn measured. |
-//! | `mapping` | `entity`, `source_schema` | Maps one source schema onto interfaces and object types (T8-MAP-1a); it binds its source by hash and names its targets by artifact id. |
+//! | `mapping` | `entity`, `source_schema`, `business_pack` | Source mappings bind a schema by hash and name entity targets; law interpretations pin their source and target ontology packs. |
 //!
 //! # Cycles
 //!
@@ -152,12 +152,14 @@ pub struct ResolvedArtifactSet<'a> {
 #[must_use]
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
-        Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Law,
-        Mapping, Policy, Relation, Rule, Setting, SourceSchema, Widget,
+        Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Labels,
+        Law, Mapping, Policy, Relation, Rule, Setting, SourceSchema, Widget,
     };
     match from {
         Entity => matches!(to, Entity),
         DefinedConcept => matches!(to, Entity | DefinedConcept),
+        // A catalog labels definitions; nothing references a catalog.
+        Labels => matches!(to, Entity | Action | Rule | Law | Widget),
         Relation => matches!(to, Entity | Relation),
         Derived => matches!(to, Entity | Relation | Derived),
         Setting => matches!(to, Entity | Relation | Setting),
@@ -184,7 +186,7 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         Customization => !matches!(to, BusinessPack),
         BusinessPack => true,
         SourceSchema => false,
-        Mapping => matches!(to, Entity | SourceSchema),
+        Mapping => matches!(to, Entity | SourceSchema | BusinessPack),
         Law => matches!(
             to,
             Entity
@@ -377,6 +379,10 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_base,
                     normalized_context.registry,
+                ))
+                .chain(crate::labels::check_label_set(
+                    &normalized_artifacts,
+                    &normalized_base,
                 ))
                 .collect::<Vec<_>>()
         }
@@ -675,6 +681,7 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::Mapping => ArtifactKind::Mapping,
         PackArtifactKind::Law => ArtifactKind::Law,
         PackArtifactKind::DefinedConcept => ArtifactKind::DefinedConcept,
+        PackArtifactKind::Labels => ArtifactKind::Labels,
     }
 }
 
@@ -791,6 +798,7 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
+        ArtifactKind::Labels => "labels",
     }
 }
 

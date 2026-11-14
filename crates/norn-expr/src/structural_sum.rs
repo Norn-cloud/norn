@@ -45,7 +45,7 @@ pub fn structural_sum_equality(source: &str) -> Result<Option<StructuralSumEqual
             else {
                 return None;
             };
-            let total = property(left)?;
+            let total = property(unwrapped(left))?;
             let mut terms = Vec::new();
             collect(right, &mut terms)?;
             (terms.len() >= 2
@@ -104,6 +104,8 @@ mod tests {
         for source in [
             "self.input == self.output + self.loss",
             "(self['input'] == ((self.output) + self['loss']))",
+            // The total side unwraps its parentheses too.
+            "((self.input)) == self.output + self.loss",
         ] {
             assert_eq!(structural_sum_equality(source), Ok(expected.clone()));
         }

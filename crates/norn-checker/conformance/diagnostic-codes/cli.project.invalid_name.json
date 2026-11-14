@@ -1,0 +1,7 @@
+{
+  "code": "cli.project.invalid_name",
+  "message": "Invalid namespace; use a lowercase letter followed by lowercase letters, digits or underscores.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

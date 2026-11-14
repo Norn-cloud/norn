@@ -4,7 +4,11 @@ use crate::{
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
-use norn_cell::{CellStore, engine::SqlEngine};
+use http::StatusCode;
+use norn_cell::{
+    CellError, CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model,
+    engine::SqlEngine,
+};
 use norn_ir::RuntimeObject;
 use norn_kernel::{Command, FactEvent};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
@@ -53,6 +57,12 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn definition_read(&self) -> Result<RwLockReadGuard<'_, ()>, Refusal> {
         self.definitions.read().map_err(Refusal::host)
     }
+    /// Hold the epoch exclusively while a definition install commits.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn definition_write(&self) -> Result<std::sync::RwLockWriteGuard<'_, ()>, Refusal> {
+        self.definitions.write().map_err(Refusal::host)
+    }
     /// HOST-READ-1: authorize and check explicit scope before opening storage.
     /// # Errors
     /// Every policy or scope failure has the same opaque 403 document.
@@ -96,5 +106,72 @@ impl<E: SqlEngine> DevHost<E> {
     }
     pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
         self.cell.lock().map_err(Refusal::host)
+    }
+
+    /// The active definitions version alone (no set is read), or `None` for
+    /// a cell with nothing installed: cheap enough to check per request.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn active_definitions_version(&self) -> Result<Option<u64>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .active_definitions_version()
+            .map_err(Refusal::host)
+    }
+
+    /// The active definitions revision, read under the definition epoch, or
+    /// `None` for a cell with nothing installed. Never writes.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn active_definitions(&self) -> Result<Option<InstalledDefinitionSet>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .installed_definitions(None)
+            .map_err(Refusal::host)
+    }
+
+    /// Install a checker-admitted definition set as the next revision, only
+    /// if the active revision is still `expected_version`. The trusted host
+    /// process calls this (`norn dev`); no network route reaches it.
+    ///
+    /// The definition epoch is held exclusively, so no read or action sees a
+    /// half-installed revision. A refusal leaves the active revision, its
+    /// ledger and every object exactly as they were.
+    /// # Errors
+    /// `defs.stale` (409) when another revision was installed since the
+    /// caller planned; `defs.migration_refused` (409) when the candidate
+    /// cannot carry the cell's live data; `host.error` otherwise.
+    pub fn install_definitions(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+    ) -> Result<InstalledDefinitionSet, Refusal> {
+        let _epoch = self.definition_write()?;
+        let mut cell = self.cell()?;
+        cell.install_definitions(candidate_model, input, expected_version)
+            .map_err(|error| {
+                if let CellError::DefinitionVersionConflict { expected, actual } = &error {
+                    return Refusal::new(
+                        StatusCode::CONFLICT,
+                        "defs.stale",
+                        "the definitions changed since this revision was planned",
+                        format!("planned against {expected:?}, the cell is at {actual:?}; re-plan against the active revision"),
+                    );
+                }
+                if let CellError::DefinitionMigrationRefused(reason) = &error {
+                    return Refusal::new(
+                        StatusCode::CONFLICT,
+                        "defs.migration_refused",
+                        "the candidate definitions cannot carry the cell's live data",
+                        reason.clone(),
+                    );
+                }
+                Refusal::host(error)
+            })
     }
 }

@@ -11,6 +11,12 @@ pub enum Operation {
     ReadDefinitions,
     /// Invoke the named admitted action.
     CallAction(String),
+    /// Admit, install or retire a retained (non-kernel) definition.
+    WriteDefinitions,
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -93,6 +99,16 @@ pub trait Authorizer: Send + Sync {
         Err(norn_kernel::ActionDenial::Invisible)
     }
 
+    /// DEFS-REOPEN-1: whether this policy can serve a cell whose model has
+    /// `object_types`, checked before an install writes it. A model the
+    /// policy cannot serve would leave the cell unopenable after a restart.
+    ///
+    /// # Errors
+    /// The policy does not compile for the candidate model.
+    fn admits_model(&self, _object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
+        Ok(())
+    }
+
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
     /// Action/read grants do not imply this decision; absent policy denies.
     fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {
@@ -106,7 +122,10 @@ pub trait Authorizer: Send + Sync {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal>;
 }
 
-pub(crate) fn read_denied() -> Refusal {
+/// The one opaque read denial: the same document whatever was denied, so a
+/// refusal never tells an ungranted resource from an absent one.
+#[must_use]
+pub fn read_denied() -> Refusal {
     Refusal::new(
         http::StatusCode::FORBIDDEN,
         codes::AUTHZ_DENIED,
@@ -174,6 +193,8 @@ mod tests {
             for operation in [
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
+                Operation::WriteDefinitions,
+                Operation::ProvisionCell,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

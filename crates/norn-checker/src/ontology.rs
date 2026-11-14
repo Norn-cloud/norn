@@ -481,6 +481,15 @@ pub(crate) fn validate_ontology_pack_payload(
     validate_shapes(pack.get("shapes"), &terms, diagnostics, artifact_id);
 }
 
+/// Reuse the canonical source policy for licensed schema-import profiles.
+/// This does not widen the reviewed redistribution policy.
+pub(crate) fn check_source_admission(source: &JsonValue) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let sources = JsonValue::Array(vec![source.clone()]);
+    validate_sources(Some(&sources), &mut diagnostics, None);
+    diagnostics
+}
+
 /// Validates the source manifest; returns each source id with its import
 /// mode (absent when the mode itself is invalid).
 fn validate_sources(

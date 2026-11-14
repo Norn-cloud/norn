@@ -1,0 +1,10 @@
+# The guard is its own Cargo workspace (D95), and nextest reads its config at the workspace
+# root, so the guard keeps the root's pinned `ci` profile here. The guard's tests require the
+# two `[profile.ci]` tables to be equal.
+[profile.ci]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "120s" }
+
+[profile.ci.junit]
+path = "junit.xml"

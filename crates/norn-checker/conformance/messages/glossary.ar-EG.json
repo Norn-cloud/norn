@@ -1,0 +1,487 @@
+{
+  "format": "norn.glossary/1",
+  "source": "en",
+  "locale": "ar-EG",
+  "terms": [
+    {
+      "en": "invoice",
+      "ar": [
+        "فاتورة",
+        "فواتير"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "sales order",
+      "ar": [
+        "أمر بيع",
+        "أوامر بيع"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "purchase order",
+      "ar": [
+        "أمر شراء",
+        "أوامر شراء"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "issue voucher",
+      "ar": [
+        "إذن صرف",
+        "أذون صرف"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "receiving voucher",
+      "ar": [
+        "إذن استلام",
+        "أذون استلام"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "treasury",
+      "ar": [
+        "خزينة",
+        "خزائن"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "cash box",
+      "ar": [
+        "خزينة",
+        "خزائن"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "customer",
+      "ar": [
+        "عميل",
+        "عملاء"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "supplier",
+      "ar": [
+        "مورّد",
+        "موردين",
+        "مورد"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "credit note",
+      "ar": [
+        "إشعار دائن"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "debit note",
+      "ar": [
+        "إشعار مدين"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "chart of accounts",
+      "ar": [
+        "دليل حسابات"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "journal entry",
+      "ar": [
+        "قيد يومية",
+        "قيود يومية"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "tax registration number",
+      "ar": [
+        "رقم تسجيل ضريبي"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "value added tax",
+      "ar": [
+        "ضريبة قيمة مضافة"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "price list",
+      "ar": [
+        "قائمة أسعار",
+        "قوائم أسعار"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "quotation",
+      "ar": [
+        "عرض سعر",
+        "عروض أسعار"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "delivery note",
+      "ar": [
+        "إذن تسليم",
+        "أذون تسليم"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "warehouse",
+      "ar": [
+        "مخزن",
+        "مخازن"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "stock",
+      "ar": [
+        "مخزون"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "payment",
+      "ar": [
+        "دفعة",
+        "دفعات",
+        "سداد"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "bank",
+      "ar": [
+        "بنك",
+        "بنوك"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "employee",
+      "ar": [
+        "موظف",
+        "موظفين",
+        "موظفون"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "annual leave",
+      "ar": [
+        "إجازة سنوية"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "leave request",
+      "ar": [
+        "طلب إجازة",
+        "طلبات إجازة"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "payroll",
+      "ar": [
+        "مسير رواتب",
+        "رواتب"
+      ],
+      "domain": "business"
+    },
+    {
+      "en": "ledger",
+      "ar": [
+        "دفتر"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "account",
+      "ar": [
+        "حساب",
+        "حسابات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "tenant",
+      "ar": [
+        "مستأجر"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "property",
+      "ar": [
+        "خاصية",
+        "خصائص"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "object type",
+      "ar": [
+        "نوع كائن",
+        "أنواع كائنات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "interface",
+      "ar": [
+        "واجهة",
+        "واجهات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "lifecycle",
+      "ar": [
+        "دورة حيا",
+        "دورات حيا"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "transition",
+      "ar": [
+        "انتقال",
+        "انتقالات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "action",
+      "ar": [
+        "إجراء",
+        "إجراءات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "law",
+      "ar": [
+        "قانون",
+        "قوانين"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "rule",
+      "ar": [
+        "قاعدة",
+        "قواعد",
+        "قاعدت"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "decision",
+      "ar": [
+        "قرار",
+        "قرارات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "mapping",
+      "ar": [
+        "تعيين",
+        "تعيينات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "artifact",
+      "ar": [
+        "أداة",
+        "أدوات",
+        "أدات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "receipt",
+      "ar": [
+        "إيصال",
+        "إيصالات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "unit",
+      "ar": [
+        "وحدة",
+        "وحدات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "currency",
+      "ar": [
+        "عملة",
+        "عملات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "invariant",
+      "ar": [
+        "ثابت",
+        "ثوابت"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "link",
+      "ar": [
+        "رابط",
+        "روابط"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "enum",
+      "ar": [
+        "تعداد"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "namespace",
+      "ar": [
+        "نطاق أسماء"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "metric",
+      "ar": [
+        "مقياس",
+        "مقاييس"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "question",
+      "ar": [
+        "سؤال",
+        "أسئلة"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "label",
+      "ar": [
+        "تسمية",
+        "تسميات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "widget",
+      "ar": [
+        "أداة رسومية"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "dialog",
+      "ar": [
+        "مربع حوار",
+        "مربعات حوار",
+        "مربعات الحوار"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "source schema",
+      "ar": [
+        "مخطط مصدر"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "dataset",
+      "ar": [
+        "مجموعة بيانات",
+        "مجموعات بيانات"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "connector",
+      "ar": [
+        "موصل"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "seal",
+      "ar": [
+        "ختم"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "supertype",
+      "ar": [
+        "نوع أعلى",
+        "أنواع أعلى"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "subtype",
+      "ar": [
+        "نوع فرعي",
+        "أنواع فرعية",
+        "أنواعا فرعية",
+        "نوعًا فرعيًا"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "template",
+      "ar": [
+        "قالب",
+        "قوالب"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "posting",
+      "ar": [
+        "ترحيل"
+      ],
+      "domain": "norn"
+    },
+    {
+      "en": "certificate",
+      "ar": [
+        "شهادة",
+        "شهادات"
+      ],
+      "domain": "norn"
+    }
+  ]
+}

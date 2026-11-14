@@ -490,15 +490,26 @@ async fn property_lineage_keeps_exact_operands_unknowns_and_restore() {
         exporter.append(&record).await.expect("export");
     }
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        definitions(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            definitions(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore property operands");
     let restored =
         CellStore::open(&target, definitions(), StoreOptions::default()).expect("restored");
@@ -637,15 +648,26 @@ async fn reference_lineage_preserves_occurrence_unknown_full_reads_and_restore()
             .expect("export");
     }
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        reference_model(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            reference_model(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore exact reference lineage");
     let restored =
         CellStore::open(&target, reference_model(), StoreOptions::default()).expect("restored");
@@ -2183,15 +2205,26 @@ async fn canonical_fact_provenance_survives_declassification_restart_and_restore
             .expect("export");
     }
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        evidence_model(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            evidence_model(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("typed replay restores");
     let restored = CellStore::open(&target, evidence_model(), StoreOptions::default())
         .expect("restored store");
@@ -2500,15 +2533,26 @@ async fn public_and_classified_delete_recreate_preserve_tombstone_lineage_after_
             .expect("export");
     }
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        reincarnation_model(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            reincarnation_model(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore");
     let restored =
         CellStore::open(&target, reincarnation_model(), StoreOptions::default()).expect("restored");
@@ -3301,15 +3345,26 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
             .expect("export");
     }
     let target = directory.path().join("restored.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        model.clone(),
-        SCOPE,
-        &BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]),
-        StoreOptions::default(),
-    )
-    .await
+    {
+        let expected_bindings = {
+            let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
+            let source = exporter.verify().await.expect("source identity");
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
+            expected
+        };
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model.clone(),
+            SCOPE,
+            &expected_bindings,
+            StoreOptions::default(),
+        )
+        .await
+    }
     .expect("restore");
     let restored = CellStore::open(&target, model, StoreOptions::default()).expect("restored");
     assert_eq!(restored.read().dump().expect("restored state"), expected);

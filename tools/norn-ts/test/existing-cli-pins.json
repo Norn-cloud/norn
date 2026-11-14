@@ -1,0 +1,56 @@
+[
+  {
+    "command": "check",
+    "input": "tools/norn-ts/fixtures/quickstart",
+    "status": 0,
+    "sha256": "c20ef8f0ba655961bcefb5bf5794d5f5bdef7b74eee2652efa46814a5e7a4b66"
+  },
+  {
+    "command": "check",
+    "input": "tools/norn-ts/fixtures/core",
+    "status": 1,
+    "sha256": "cebef4cd59f49697480cbb92907ae6363cff0bb312ac538f15254e5132f3e576"
+  },
+  {
+    "command": "check",
+    "input": "scripts/demo/jewelry.source.ts",
+    "status": 1,
+    "sha256": "4ba8fa9fe2eff28063eef55dd0fe7806c9ed915d195e1895dc464f0f1b60f9c3"
+  },
+  {
+    "command": "compile",
+    "input": "tools/norn-ts/fixtures/quickstart",
+    "status": 0,
+    "sha256": "1d0a8db7eaab0e2e8ba8e447475a528343e677333d81d142f4266feee801e02b"
+  },
+  {
+    "command": "compile",
+    "input": "tools/norn-ts/fixtures/core",
+    "status": 0,
+    "sha256": "1dfadf0e60d35236a7f06d6c1043630659d013ffdde5592a5ae1c31e8366d1cb"
+  },
+  {
+    "command": "compile",
+    "input": "scripts/demo/jewelry.source.ts",
+    "status": 0,
+    "sha256": "c9b353cabc138f70c34035dcc8669c9b2903a387068b4acff4606aae7202e3b5"
+  },
+  {
+    "command": "profile",
+    "input": "tools/norn-ts/fixtures/quickstart",
+    "status": 1,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "command": "profile",
+    "input": "tools/norn-ts/fixtures/core",
+    "status": 1,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "command": "profile",
+    "input": "scripts/demo/jewelry.source.ts",
+    "status": 0,
+    "sha256": "0b1cfe7960153208864b1cc069441bdd670cd8d42a74adcc85bc7f1ca998b92a"
+  }
+]

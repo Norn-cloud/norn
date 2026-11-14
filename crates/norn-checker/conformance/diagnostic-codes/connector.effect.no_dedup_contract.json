@@ -1,0 +1,7 @@
+{
+  "code": "connector.effect.no_dedup_contract",
+  "message": "a command binding needs providerKey or reconcile, so an unknown outcome is never retried blind",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -201,6 +201,15 @@ fn legacy_tokens(path: &str) -> Vec<LegacyToken<'_>> {
     tokens
 }
 
+/// A structural check label, not a certified proof or an authorization decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructuralEvidence {
+    /// Identity of the fixed admitted AST rule producing this finding.
+    pub rule_id: &'static str,
+    /// Input completeness boundary; no claim about raw partial IR projections.
+    pub basis: &'static str,
+}
+
 /// One checker finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -264,6 +273,48 @@ impl Diagnostic {
         codes::lookup(self.code.as_str())
     }
 
+    /// DIAG-PROJECTION-2: advice is projection metadata, never historical receipt input.
+    #[must_use]
+    pub fn to_json_v2(&self) -> serde_json::Value {
+        let mut value = self.to_json();
+        if let Some(fields) = value.as_object_mut() {
+            let additions: [(&str, serde_json::Value); 5] = [
+                ("format", "norn/diagnostic@2".into()),
+                (
+                    "phase",
+                    self.registration().map(|entry| entry.tier.as_str()).into(),
+                ),
+                ("retryable", false.into()),
+                (
+                    "fix",
+                    self.registration().and_then(|entry| entry.fix).into(),
+                ),
+                (
+                    "no_fix",
+                    self.registration().and_then(|entry| entry.no_fix).into(),
+                ),
+            ];
+            fields.extend(
+                additions
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value)),
+            );
+        }
+        value
+    }
+
+    /// Structural rule label available to common checker/editor/CLI consumers.
+    /// No derivation-height, proof-certificate or permission claim is implied.
+    #[must_use]
+    pub fn structural_evidence(&self) -> Option<StructuralEvidence> {
+        (self.code.as_str() == crate::object_types::codes::INHERITANCE_CYCLE).then_some(
+            StructuralEvidence {
+                rule_id: crate::inheritance::CYCLE_RULE_ID,
+                basis: "complete_registered_catalog",
+            },
+        )
+    }
+
     /// This finding as one stable JSON object (see [`diagnostics_to_json`]).
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
@@ -279,7 +330,7 @@ impl Diagnostic {
             .as_ref()
             .and_then(|remediation| serde_json::to_value(remediation).ok())
             .unwrap_or(serde_json::Value::Null);
-        serde_json::json!({
+        let mut output = serde_json::json!({
             "code": self.code.as_str(),
             "tier": self.registration().map(|entry| entry.tier.as_str()),
             "severity": severity_str(&self.severity),
@@ -287,7 +338,20 @@ impl Diagnostic {
             "span": span,
             "artifactId": self.artifact_id,
             "remediation": remediation,
-        })
+        });
+        if let Some(evidence) = self.structural_evidence()
+            && let Some(object) = output.as_object_mut()
+        {
+            object.insert(
+                "evidence".to_owned(),
+                serde_json::json!({
+                    "kind": "structural",
+                    "ruleId": evidence.rule_id,
+                    "basis": evidence.basis,
+                }),
+            );
+        }
+        output
     }
 }
 
@@ -304,7 +368,8 @@ pub const DIAGNOSTICS_FORMAT: &str = "norn-checker/diagnostics@1";
 ///     "artifactId": "…", "remediation": "upgrade_ir" }] }
 /// ```
 ///
-/// Every key is always present (`null` when absent); diagnostics keep the
+/// The optional `evidence` key labels fixed structural-rule findings. Existing
+/// keys are always present (`null` when absent); diagnostics keep the
 /// order the checker produced them in.
 #[must_use]
 pub fn diagnostics_to_json(diagnostics: &[Diagnostic]) -> serde_json::Value {

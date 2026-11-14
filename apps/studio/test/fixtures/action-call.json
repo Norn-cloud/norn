@@ -1,0 +1,89 @@
+{
+  "committed": {
+    "outcome": "committed",
+    "objectType": "constitution.Melt",
+    "objectId": "melt-1",
+    "version": 1,
+    "receipt": { "receiptHash": "<keyed receipt handle>", "commitSeq": 2, "recordedAtMs": 1700000000000 }
+  },
+  "conflict": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "action.idempotency_conflict",
+    "category": "conflict",
+    "message": "the request conflicts with current state",
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+  },
+  "status": {
+    "conflict": 409,
+    "invalidKey": 400,
+    "denied": 403,
+    "invalidInput": 400,
+    "precondition": 422,
+    "stale": 409,
+    "routeNotFound": 404
+  },
+  "denied": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "authz.denied",
+    "category": "permission",
+    "message": "the action request is not authorized",
+    "explanation": "access to the requested action is denied"
+  },
+  "invalidInput": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "action.invalid_input",
+    "category": "invalid",
+    "message": "the request is invalid",
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+  },
+  "precondition": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "action.precondition_failed",
+    "category": "precondition",
+    "message": "a declared precondition does not hold",
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+  },
+  "stale": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "defs.stale",
+    "category": "conflict",
+    "message": "the definitions changed; refresh the action catalog",
+    "explanation": "the call pins a definitions version that is no longer active"
+  },
+  "routeNotFound": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "route.not_found",
+    "category": "visibility",
+    "message": "no such route",
+    "explanation": "the host serves only its declared read routes"
+  },
+  "invalidKey": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "request.invalid",
+    "category": "invalid",
+    "message": "the request is malformed",
+    "explanation": "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
+    "diagnostics": [
+      {
+        "code": "request.invalid",
+        "severity": "error",
+        "message": "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
+        "span": { "pointer": "/idempotencyKey" }
+      }
+    ]
+  }
+}

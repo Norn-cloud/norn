@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
-import { recordedTransport } from "./lib/transport.ts"
+import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
@@ -25,6 +25,8 @@ const hidden = "!opacity-0 !border-0 !bg-transparent"
 /** The tree's fixed zoom and padding: readable at any width, scrolled sideways when wider than the page. */
 const ZOOM = 0.85
 const PAD = 24
+/** The page renders at 90% (root font-size), so the px layout scales with it; the cards (rem) already do. */
+const SCALE = 0.9
 
 /**
  * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
@@ -65,7 +67,7 @@ function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
     <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
-      <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[11px] tabular-nums">{data.order}</span>{data.label}</div>
+      <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[0.6875rem] tabular-nums">{data.order}</span>{data.label}</div>
       <div className="truncate text-meta text-muted-foreground">{data.sub}</div>
     </button>
   )
@@ -115,7 +117,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
-    const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
+    const position = { x: ((node.column >> 1) * 420 + (node.column % 2) * 230) * SCALE, y: node.row * 120 * SCALE }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
       return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, description: workflow.description, laws: workflow.laws.length,
@@ -126,8 +128,8 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${fields.join(", ")}`) } }
   })
   if (folded > 0) {
-    const right = Math.max(...nodes.map(({ position }) => position.x)) + 260
-    nodes.push({ id: "more", type: "more", position: { x: right, y: 8 }, data: { count: folded, onExpand: () => setExpanded(true) } })
+    const right = Math.max(...nodes.map(({ position }) => position.x)) + 260 * SCALE
+    nodes.push({ id: "more", type: "more", position: { x: right, y: 8 * SCALE }, data: { count: folded, onExpand: () => setExpanded(true) } })
   }
   const edges: Edge[] = tree.edges.filter(({ source, target }) => shown.has(source) && shown.has(target)).map(({ source, target }) => ({
     id: `${source}>${target}`, source, target, type: "default",
@@ -145,15 +147,15 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     if (next) { setHover(next); pin(next) }
   }
   // The tree at one readable zoom, as wide as it needs: the page scrolls it sideways instead of cutting it off or shrinking it.
-  const width = Math.max(...nodes.map(({ position }) => position.x)) + 280 + 2 * PAD
-  const height = Math.max(...nodes.map(({ position }) => position.y)) + 200 + 2 * PAD
+  const width = Math.max(...nodes.map(({ position }) => position.x)) + (280 + 2 * PAD) * SCALE
+  const height = Math.max(...nodes.map(({ position }) => position.y)) + (200 + 2 * PAD) * SCALE
   return (
     <div ref={frame} role="group" className="w-full overflow-x-auto rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       <div style={{ width: width * ZOOM, height: height * ZOOM, minWidth: "100%" }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
           // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
           onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-          colorMode="system" defaultViewport={{ x: PAD * ZOOM, y: PAD * ZOOM, zoom: ZOOM }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
+          colorMode="system" defaultViewport={{ x: PAD * SCALE * ZOOM, y: PAD * SCALE * ZOOM, zoom: ZOOM }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
           nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
           <Background />
         </ReactFlow>
@@ -289,13 +291,13 @@ const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workfl
 
 /** The admitted lifecycles, for the submenu island. */
 export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
   return definitions.data && workflows(definitions.data.map(({ document }) => document))
     .map((workflow) => ({ href: `#${anchor(workflow)}`, label: words(workflow.objectType) }))
 }
 
 export function WorkflowsPage() {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
