@@ -5,7 +5,7 @@ Rust compiles in the `core` and `bundle` jobs go through sccache. Where the cach
 | Runner | Cache | Who writes |
 |---|---|---|
 | GitHub-hosted | GitHub Actions cache (`SCCACHE_GHA_ENABLED=true`) | every run, in its own ref's scope |
-| Boat, bucket keys present | local disk (`SCCACHE_CACHE_SIZE`), then the shared R2 bucket (`SCCACHE_MULTILEVEL_CHAIN=disk,s3`) | pushes to main only, and only when they run on Boat (see below) |
+| Boat, bucket keys present | local disk (`SCCACHE_CACHE_SIZE`), then the shared R2 bucket (`SCCACHE_MULTILEVEL_CHAIN=disk,s3`) | pushes to main only; none run on Boat yet (see below) |
 | Boat, no bucket keys | local disk only | the VM itself |
 
 Boat never uses the GitHub Actions cache: its egress limit is account-wide, and a Boat bundle once failed on "Egress is over the account limit".
@@ -23,7 +23,7 @@ A compiler cache maps an input hash to an output. Anyone who can write it can ma
 
 ## Who writes today
 
-A push to `main` runs on Boat, and so writes, only while the repository variable `NORN_MAIN_RUNNER` is `boat`. Unset, or any other value, keeps main pushes on GitHub-hosted runners, where the shared cache is never used: then nobody writes, the bucket stays empty, and Boat pull-request builds only add lookups that miss. Setting the variable is a maintainer decision; it also moves main's post-merge CI onto Boat.
+Nobody yet. Pushes to `main` run on GitHub-hosted runners, where the shared cache is never used, so the bucket stays empty and Boat pull-request builds only add lookups that miss. That is safe: an unwritten cache is only a cache that never hits. Routing main pushes to Boat changes the runner boundary, which the skeleton guard owns and which has to change guard-first; the sequence is tracked in #1369.
 
 The bucket has no object expiry configured, so an object stays until it is deleted by hand.
 

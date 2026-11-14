@@ -672,11 +672,11 @@ await github.rest.repos.createCommitStatus({
         "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
         "with": {"retries": 3, "script": trusted_reporter + "\n"},
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
-    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
-                f"{name}: runner must preserve the merge-group, main-push and same-repository pull-request Boat opt-ins and hosted fallback")
+                f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
