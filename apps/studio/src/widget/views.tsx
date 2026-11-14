@@ -495,7 +495,7 @@ function RefusalBody({ refusal }: { readonly refusal: Refusal }) {
   return (
     <div className="space-y-1 text-sm">
       {reason?.law && <div className="font-mono text-xs text-muted-foreground">{reason.law}</div>}
-      {reason?.values && <div className="tabular-nums">{Object.entries(reason.values).map(([key, value], index) => <span key={key}>{index > 0 ? " · " : ""}{key} <b>{grouped(String(value))}</b></span>)}</div>}
+      {reason?.values && <div className="tabular-nums">{Object.entries(reason.values).map(([key, value], index) => <span key={key}>{index > 0 ? " · " : ""}{key} <b>{Array.isArray(value) ? value.map((item) => grouped(String(item))).join(" + ") : grouped(String(value))}</b></span>)}</div>}
       <div className="text-muted-foreground">{explanation ?? refusal.message}</div>
     </div>
   )
