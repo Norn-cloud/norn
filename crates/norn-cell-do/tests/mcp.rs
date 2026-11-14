@@ -199,6 +199,7 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
         .collect();
     for expected in [
         "norn_catalog",
+        "norn_inbox",
         "norn_query_objects",
         "norn_get_object",
         "norn_trace_object",
@@ -364,6 +365,15 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
         assert_eq!(
             call_tool(&cell, auth, "norn_catalog", &json!({"detail": "full"}))["isError"],
             true
+        );
+
+        let (_, inbox) = direct(&cell, "/v1/inbox", SCOPE, auth);
+        let listed = call_tool(&cell, auth, "norn_inbox", &json!({}));
+        assert_eq!(listed["structuredContent"], inbox);
+        assert_eq!(
+            inbox["sections"].as_array().map(Vec::len),
+            Some(3),
+            "{inbox}"
         );
     }
 }

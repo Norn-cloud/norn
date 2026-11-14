@@ -97,6 +97,7 @@ impl View {
 /// What the model is told about this server in `initialize`.
 const INSTRUCTIONS: &str = "Norn is the system of record for this workspace. \
 Read it only through these tools: norn_catalog summarizes its object types, laws, actions and questions; \
+norn_inbox lists what needs the caller's attention (held-back records with their fixes, decisions, failing sources); \
 norn_query_objects, norn_get_object and norn_profile_type read records the caller may see; norn_list_held \
 lists the records Norn holds back and norn_get_findings says why (the law, the values it compared and the \
 action tools that fix it); norn_answer answers an admitted question with its freshness, and \
@@ -425,6 +426,16 @@ fn generic_tools(
                     "detail": {"type": "string", "enum": ["summary", "full"], "description": "summary (the default) or full artifacts; full needs names."},
                     "names": {"type": "array", "maxItems": 20, "items": {"type": "string"}, "description": "With detail full: artifact ids or names to return, matched by substring, for example docs.ScannedDocument."}
                 }},
+                "annotations": read_only(),
+            }),
+            None,
+        )?,
+        tool(
+            json!({
+                "name": "norn_inbox",
+                "title": "What needs attention",
+                "description": "The caller's work queue: records a law holds back, grouped by the law with counts (each record with the finding in plain words and, when the caller may make it, the fix the server computed: the governed action and its arguments), decisions waiting on the caller, and connected sources whose last sync failed. Every item is what the caller may read, and each names the Studio page to act at. Apply a fix only through its action tool.",
+                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
                 "annotations": read_only(),
             }),
             None,
@@ -769,6 +780,7 @@ impl<E: SqlEngine> Loopback<'_, E> {
         };
         Ok(match name {
             "norn_catalog" => get("/v1/definitions".into(), scoped),
+            "norn_inbox" => get("/v1/inbox".into(), scoped),
             "norn_list_definitions" => {
                 optional(&mut scoped, "kind", "kind")?;
                 optional(&mut scoped, "limit", "limit")?;

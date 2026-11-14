@@ -25,6 +25,7 @@ use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
 use norn_api::host::DevHost;
+use norn_api::inbox::{InboxQuery, get_inbox};
 use norn_api::object_facets::{ObjectFacetParams, get_object_facets};
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
 use norn_api::object_profile::get_object_profile;
@@ -217,6 +218,8 @@ routes! {
     TransformsCompile => ("POST", "/v1/transforms:compile"),
     /// `POST /v1/transforms/{transform}:refresh`.
     TransformRefresh => ("POST", "/v1/transforms/{transform}:refresh"),
+    /// `GET /v1/inbox` (INBOX-1).
+    Inbox => ("GET", "/v1/inbox"),
 }
 
 impl Route {
@@ -240,6 +243,10 @@ impl Route {
 
     /// The route a request path names, if any.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table from every served path to its route, read top to bottom"
+    )]
     pub fn of(path: &str) -> Option<Self> {
         match path {
             "/v1/access" => return Some(Self::Access),
@@ -261,6 +268,7 @@ impl Route {
             "/v1/datasets:load" => return Some(Self::DatasetLoad),
             "/v1/transforms:compile" => return Some(Self::TransformsCompile),
             "/v1/guard:prompt" => return Some(Self::GuardPrompt),
+            "/v1/inbox" => return Some(Self::Inbox),
             _ => {}
         }
         if path
@@ -630,6 +638,10 @@ fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
 /// Route one request for `actor`. `host` is `None` only for a scope with no
 /// cell, and then `actor` is `None`: every service is reached through
 /// [`cell`], which answers the denial the service itself gives nobody.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dispatch chain over every served route, in precedence order"
+)]
 fn route<E: SqlEngine>(
     host: Option<&DevHost<E>>,
     questions: Option<&dyn AdHocQuestions<E>>,
@@ -687,6 +699,13 @@ fn route<E: SqlEngine>(
         ad_hoc_question(host, published, actor, method, path, query, body)
     } else if path == "/v1/questions:catalog" {
         ad_hoc_catalog(cell(host)?, questions, actor, method, query)
+    } else if route_of == Some(Route::Inbox) {
+        inbox(
+            cell(host)?,
+            questions.is_some(),
+            actor,
+            (method, query, now),
+        )
     } else if path == "/v1/transforms:compile" {
         compile(cell(host)?, actor, method, query, body)
     } else if let Some(transform) = transform_refresh_path(path) {
@@ -929,6 +948,38 @@ fn ad_hoc_catalog<E: SqlEngine>(
         return Err(norn_api::authz::read_denied());
     };
     document_json(&question_catalog(host, &scope, actor, runtime)?)
+}
+
+/// INBOX-1: `GET /v1/inbox`, scoped by the query string. A cell without a
+/// question runtime decides nothing, so it lists no decision either, as
+/// `GET /v1/decisions` refuses there.
+fn inbox<E: SqlEngine>(
+    host: &DevHost<E>,
+    decides: bool,
+    actor: Option<&str>,
+    (method, query, now): (&str, &str, u64),
+) -> Result<String, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the inbox is read with GET",
+        ));
+    }
+    let mut fields = parse(query, &["orgId", "environmentId"])?;
+    let query = InboxQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
+    document_json(&get_inbox(
+        host,
+        &query,
+        actor,
+        &CellObjectAccess,
+        (decides, now),
+    )?)
 }
 
 /// HOST-ACTION-1: `POST /v1/actions/{actionId}`, scoped by the query string
