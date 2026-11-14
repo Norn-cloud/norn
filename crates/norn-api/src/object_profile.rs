@@ -58,7 +58,8 @@ pub struct NornObjectProfile {
     pub approximate: bool,
     /// The visible-row scan bound.
     pub scan_limit: u64,
-    /// The engine that computed the profile: `cell`, the native exact engine.
+    /// The engine that computed the profile: `cell`, the native exact engine,
+    /// or `duckdb`, the tenant analytics engine.
     pub engine: String,
     /// One profile per declared property, in declared order.
     pub properties: Vec<NornPropertyProfile>,
