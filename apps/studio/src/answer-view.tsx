@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
 import { Chip } from "@/components/chip"
 import { cn } from "@/lib/utils"
@@ -401,15 +401,18 @@ function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; re
  * A question asked of the cell as soon as it is shown, answered, refused, or why it was not run. The
  * answer is read with `declared`'s metric and type declarations.
  */
-export function AskedAnswer({ question, title, unit, declared, heading = "h3", total }: {
+export function AskedAnswer({ question, title, unit, declared, heading = "h3", total, onSettled }: {
   readonly question: Question
   readonly title: string
   readonly unit?: string | null
   readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
   readonly heading?: "h2" | "h3" | "none"
   readonly total?: { readonly label: string; readonly value: string }
+  /** Called once the cell has answered (or refused): the page asks the next question only then. */
+  readonly onSettled?: () => void
 }) {
   const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
+  useEffect(() => { if (!run.isPending) onSettled?.() }, [run.isPending, onSettled])
   const result = run.data
   if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
   if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>

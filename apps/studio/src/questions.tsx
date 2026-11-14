@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { CalendarRange, ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
 import { FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
@@ -30,7 +30,7 @@ import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, wi
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
-import { readProfile } from "./lib/profile.ts"
+import { ProfileTimedOut, readProfile } from "./lib/profile.ts"
 import { useLiveRefresh } from "./lib/live-reads.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
@@ -48,25 +48,34 @@ function useSeen<T extends Element>() {
   return [ref, seen] as const
 }
 
-function MetricCard({ metric }: { readonly metric: MetricSummary }) {
+function MetricCard({ metric, turn, onSettled }: {
+  readonly metric: MetricSummary
+  /** Whether every question above this one has its answer: the cell answers one at a time, top first. */
+  readonly turn: boolean
+  /** Called once this question is settled (answered, refused, or nothing to ask). */
+  readonly onSettled: () => void
+}) {
   const { view } = useView()
-  // A question further down asks the cell only when it scrolls near view: the engine answers one at a time.
+  // A question asks the cell only once it is near view and the ones above it have their answers.
   const [ref, seen] = useSeen<HTMLElement>()
+  const active = seen && turn
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const [conditions, setConditions] = useState<readonly Condition[]>([])
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false, enabled: seen })
+  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false, enabled: active })
   const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
   // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
   // cell declares them; the window then spans every date that type carries.
   const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
-  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: seen && timeType !== undefined && timeType !== metric.objectType })
+  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
   const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
-  const assumed = profiledWindow === undefined && metric.timeProperty !== null && (profile.data?.document.rows ?? 0) > 0 && (timeDocument !== undefined || timeProfile.isError)
+  // A profile that did not settle within its budget is not waited for either: the latest 52 weeks are asked, and the chip says why.
+  const late = profile.error instanceof ProfileTimedOut || timeProfile.error instanceof ProfileTimedOut
+  const assumed = profiledWindow === undefined && metric.timeProperty !== null && (late || ((profile.data?.document.rows ?? 0) > 0 && (timeDocument !== undefined || timeProfile.isError)))
   const window = profiledWindow ?? (assumed ? recentWindow(Date.now()) : undefined)
   // The answer is read with the type's own declaration, as the cell admitted it.
   const objectType = typeNamed(metric.objectType)
@@ -74,6 +83,9 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const what = metricHeading(metric, window?.grain)
   const sources = metric.unitPartition ?? []
   const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
+  // Nothing to ask (no records, a refused profile, no window): this question is settled and the next may go.
+  const nothingToAsk = (profile.isError && !late) || profile.data?.document.rows === 0 || (window === undefined && (profile.data !== undefined || late))
+  useEffect(() => { if (nothingToAsk) onSettled() }, [nothingToAsk, onSettled])
   return (
     // One question, one section: its title, its controls, then the answer's own surfaces (no card around cards).
     <section ref={ref} data-slot="panel" className="min-w-0 space-y-4">
@@ -82,8 +94,8 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         {view === "technical" && <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}
       </header>
       <div className="space-y-4">
-        {profile.isPending && <p className="text-sm text-muted-foreground">{seen ? `Reading ${conceptTitle(metric.objectType).toLowerCase()} records…` : "Waits until you scroll to it."}</p>}
-        {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
+        {profile.isPending && <p className="text-sm text-muted-foreground">{!seen ? "Waits until you scroll to it." : !turn ? "Waits for the questions above it." : `Reading ${conceptTitle(metric.objectType).toLowerCase()} records…`}</p>}
+        {profile.isError && !late && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
         {profile.data && profile.data.document.rows === 0 && (
           <EmptyState icon={Sigma} title={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 ? "No records yet" : "No records to add up"}
             next={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 && <Button asChild size="sm" variant="outline"><Link to="/sources"><Database />Load data or connect a source</Link></Button>}>
@@ -96,12 +108,12 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <div className="flex flex-wrap items-start gap-2">
-            <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title={assumed ? "The cell sent no range for this date, so Studio asks the latest 52 weeks." : "Every date its records carry."}>{assumed ? "Latest 52 weeks" : `${day(window.start)} – ${day(Date.parse(window.end) - 86_400_000)}`}</FactChip>
+            <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title={assumed ? (late ? "The cell's profile of this type didn't arrive in time, so Studio asks the latest 52 weeks." : "The cell sent no range for this date, so Studio asks the latest 52 weeks.") : "Every date its records carry."}>{assumed ? "Latest 52 weeks" : `${day(window.start)} – ${day(Date.parse(window.end) - 86_400_000)}`}</FactChip>
             <div className="min-w-0 flex-1"><Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} /></div>
           </div>
           {sources.length === 0
-            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" />
-            : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} />}
+            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" onSettled={onSettled} />
+            : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} onSettled={onSettled} />}
         </>}
       </div>
     </section>
@@ -113,7 +125,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
  * returns (it groups by the unit sources itself), labelled by its unit, most records first; the
  * conditions narrow it. A group opens its answer per period.
  */
-function UnitGroups({ metric, window, conditions, sources, title, declared, picked, onPick }: {
+function UnitGroups({ metric, window, conditions, sources, title, declared, picked, onPick, onSettled }: {
   readonly metric: MetricSummary
   readonly window: Window
   readonly conditions: readonly Condition[]
@@ -122,11 +134,15 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
   readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
   readonly picked: UnitGroup | null
   readonly onPick: (group: UnitGroup | null) => void
+  readonly onSettled: () => void
 }) {
   const asked = metricQuestion(metric, window, conditions) as Question
   const totals: Question = { ...asked, groupBy: sources.map((property) => ({ path: { property } })) }
   const run = useQuery({ queryKey: ["unit-groups", JSON.stringify(totals)], queryFn: () => evaluateQuestion(totals), retry: false, staleTime: 30_000 })
   const result = run.data
+  // Settled once the totals are back, unless one group opens its answer per period (that answer settles it).
+  const single = result?.kind === "answer" && unitGroups(sources, buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })).length === 1
+  useEffect(() => { if (!run.isPending && !single) onSettled() }, [run.isPending, single, onSettled])
   if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
   if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
@@ -155,7 +171,7 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
           </Table></TableCard>
         </div>
       )}
-      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none"
+      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none" onSettled={onSettled}
         total={{ label: `Total, ${period(totals.window)}`, value: figure(open.bucket, open.unit) }} />}
     </div>
   )
@@ -217,11 +233,16 @@ function TypeSections({ types, list }: { readonly types: readonly string[]; read
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
   const held = types.filter((_, index) => !empty(index))
   const without = types.filter((_, index) => empty(index))
+  // The cell answers one question at a time, top first: a question's turn comes when every shown question above it is settled.
+  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set())
+  const shown = held.flatMap((type) => list.filter(({ objectType }) => objectType === type))
+  const turnOf = (name: string) => shown.slice(0, shown.findIndex((metric) => metric.name === name)).every((metric) => settled.has(metric.name))
+  const settle = useMemo(() => new Map(list.map(({ name }) => [name, () => setSettled((current) => current.has(name) ? current : new Set([...current, name]))])), [list])
   return <>
     {held.map((type) => (
       <div key={type} className="space-y-3">
         <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
-        <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} />)}</div>
+        <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} turn={turnOf(metric.name)} onSettled={settle.get(metric.name)!} />)}</div>
       </div>
     ))}
     {without.length > 0 && (

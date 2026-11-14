@@ -30,10 +30,20 @@ export interface ObjectProfile {
 }
 
 /** The cell's profile of one object type, every number in its exact text. */
-/** A profile is computed by the analytics engine: it waits its turn, and a "pending" refusal is asked again. */
-export const readProfile = (objectType: string): Promise<Read<ObjectProfile>> =>
+/** How long a question waits for its type's profile (only a date range is read from it) before it asks the latest 52 weeks instead. */
+export const PROFILE_BUDGET_MS = 5_000
+
+/** The profile did not settle within its budget: the question asks a default window and says so. */
+export class ProfileTimedOut extends Error {
+  constructor() { super(`The cell's profile didn't arrive within ${PROFILE_BUDGET_MS / 1000} seconds.`) }
+}
+
+/** A profile is computed by the analytics engine: it waits its turn, a "pending" refusal is asked again, and each ask has a budget. */
+export const readProfile = (objectType: string, budgetMs: number = PROFILE_BUDGET_MS): Promise<Read<ObjectProfile>> =>
   inAnalyticsLane(async () => {
-    const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are").then((read) => ({ read }), (error: unknown) => ({ error }))
+    const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are", { signal: AbortSignal.timeout(budgetMs) }).then((read) => ({ read }), (error: unknown) => ({
+      error: error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError") ? new ProfileTimedOut() : error,
+    }))
     const result = await untilNotPending(ask, (outcome) => "error" in outcome && outcome.error instanceof Error && /analytics engine call is pending/i.test(outcome.error.message))
     if ("error" in result) throw result.error
     return result.read

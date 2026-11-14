@@ -132,3 +132,31 @@ test("connections: a cell without the connection type says 'No connections yet' 
   await expect(page.getByRole("alert").filter({ hasText: "not authorized" })).toHaveCount(0)
   expect(asked.length).toBeGreaterThan(0)
 })
+
+test("questions: the first question asks its own type's profile at once, gives up on it after its budget, and answers before any question below it asks the cell", async ({ page }) => {
+  test.setTimeout(60_000)
+  await session(page)
+  await viewsCell(page)
+  const metric = (name: string, objectType: string, timeProperty: string) => ({ name, label: "quantity", kind: "simple", objectType, expression: "quantity", timeProperty, timeLinks: [], numerator: null, denominator: null })
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [metric("m.delivery", "canon.Delivery", "occurred_at"), metric("m.orderline", "canon.OrderLine", "due_at"), metric("m.holding", "canon.Holding", "observed_at")] } }))
+  const order: string[] = []
+  // A cold cell: Delivery's profile never comes back; the others take 12 s each.
+  await page.route("**/api/host/v1/objects/*:profile**", async (route) => {
+    const type = decodeURIComponent(new URL(route.request().url()).pathname.split("/v1/objects/")[1] ?? "").replace(":profile", "")
+    order.push(`profile ${type}`)
+    if (type === "canon.Delivery") return new Promise<void>(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 12_000))
+    return route.fulfill({ json: { objectType: type, rows: 10, withheldRows: 0, quarantinedRows: 0, properties: [] } })
+  })
+  const answer = JSON.parse(readFileSync(new URL("../../../fixtures/demo/answers/scrap-yield.k1.answer.json", import.meta.url), "utf8")) as unknown
+  await page.route("**/api/host/v1/questions:evaluate**", (route) => { order.push("evaluate"); return route.fulfill({ json: answer }) })
+  const started = Date.now()
+  await page.goto("/questions")
+  const first = page.locator("[data-slot=panel]").first()
+  await expect(first.locator("[data-slot=answer-lead]")).toBeVisible({ timeout: 10_000 })
+  expect(Date.now() - started).toBeLessThan(10_000)
+  await expect(first.getByText("Latest 52 weeks")).toBeVisible()
+  // The first question asked its own profile and its answer before any question below it asked anything.
+  expect(order[0]).toBe("profile canon.Delivery")
+  expect(order[1]).toBe("evaluate")
+})
