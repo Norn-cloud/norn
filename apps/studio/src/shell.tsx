@@ -39,6 +39,8 @@ export interface Section {
   readonly group?: string
   /** Listed at the foot of the rail instead of with the sections. */
   readonly foot?: boolean
+  /** Other route prefixes that belong to this applet, e.g. `/objects` (a type's records) under Sources. */
+  readonly paths?: readonly string[]
   /** The applet's primary action, shown under its title. */
   readonly action?: { readonly label: string; readonly to: string }
 }
@@ -68,7 +70,7 @@ export const target = (section: Pick<Section, "path">, href: string) =>
 
 /** The section a route belongs to: its own path, or a record page under it. */
 export const sectionOf = (sections: readonly Section[], pathname: string) =>
-  sections.find(({ path }) => within(path, pathname))
+  sections.find(({ path }) => within(path, pathname)) ?? sections.find(({ paths }) => paths?.some((prefix) => within(prefix, pathname)))
 
 export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
 
@@ -106,8 +108,11 @@ function ScopeSwitcher() {
   return (
     <Menu>
       <MenuTrigger data-scope className="group/scope -mx-1.5 flex max-w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-start text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
-        <span className="truncate">{open?.name}<span className="text-muted-foreground"> · {open?.detail}</span></span>
-        <ChevronDown aria-hidden className="size-3.5 shrink-0 transition-transform group-data-open/scope:rotate-180" />
+        <span className="grid min-w-0 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+          <span className="truncate text-foreground/80">{open?.name}</span>
+          <span className="truncate text-xs">{open?.detail}</span>
+        </span>
+        <ChevronDown aria-hidden className="size-3.5 shrink-0 self-start mt-0.5 transition-transform group-data-open/scope:rotate-180" />
       </MenuTrigger>
       <KitMenuContent align="start" className="w-72">
         <MenuRadioGroup value={live ? "" : open?.id ?? ""}>
@@ -458,7 +463,7 @@ function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sect
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl bg-sidebar ring-1 ring-sidebar-border">
               {current
                 ? <AppletPanel key={current.path} section={current} pathname={pathname} />
-                : <div className="px-4 pt-5"><h2 className="text-xl font-semibold tracking-tight">Studio</h2><ScopeSwitcher /></div>}
+                : <div className="min-w-0 space-y-1 px-4 pt-5"><h2 className="text-xl font-semibold tracking-tight">Studio</h2><ScopeSwitcher /></div>}
             </div>
           </div>
           </div>

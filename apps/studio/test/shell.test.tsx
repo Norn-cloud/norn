@@ -38,6 +38,10 @@ test("a record page belongs to the section above it", () => {
   expect(sectionOf([sources, questions], "/sources")).toBe(sources)
   expect(sectionOf([sources, questions], "/sources/canon.Holding")).toBe(sources)
   expect(sectionOf([sources, questions], "/sourcesx")).toBeUndefined()
+  // A type's records live under its applet's other prefix.
+  const owning = { ...sources, paths: ["/objects"] }
+  expect(sectionOf([owning, questions], "/objects/canon.Holding")).toBe(owning)
+  expect(sectionOf([owning, questions], "/objectsx")).toBeUndefined()
 })
 
 test("an entry is a route, or an anchor on its section's page", () => {
