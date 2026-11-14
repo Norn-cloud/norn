@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "One printed line as its extractor read it. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and restates the document's sum of lines in the same commit.",
+      "description": "One printed line as its extractor read it: a `canon.LineItem` of its document. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and the document's law is checked again over its lines as the correction leaves them.",
       "identity": [
         {
           "name": "primary",
@@ -19,7 +19,8 @@
         }
       ],
       "implements": [
-        "docs.SourceDocumentLine"
+        "docs.SourceDocumentLine",
+        "canon.LineItem"
       ],
       "lifecycles": [
         {
@@ -49,6 +50,7 @@
             "to": "one"
           },
           "id": "document",
+          "inverse": "lines",
           "target": "docs.ScannedDocument"
         }
       ],
@@ -92,6 +94,9 @@
         {
           "id": "amount",
           "type": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"

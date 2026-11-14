@@ -5,8 +5,9 @@
 //! The documents pack is provisioned on a tenant cell and its scans are loaded
 //! through the cell's own mapping. Invoice INV-0041 prints lines 18.50 +
 //! 12.00 and a total of 30.50; a correction of its total to 30.00 breaks
-//! `docs.ScannedDocument.total_matches_lines` (and, as its journal entry
-//! JE-0041 books 30.50, `total_matches_ledger`). Every role the pack lets call
+//! `canon.ItemizedDocument.total_matches_lines`, the canon concept's law the
+//! scanned document inherits (and, as its journal entry JE-0041 books 30.50,
+//! `docs.ScannedDocument.total_matches_ledger`). Every role the pack lets call
 //! the correction is refused the same way and nothing commits, but only an
 //! admin or owner reads which law refused, on which document, with which
 //! values. A member (analyst) gets the redacted refusal, and a viewer (guest),
@@ -41,7 +42,10 @@ const ISSUER: &str = "https://studio-preview.example";
 const NOW: u64 = 1_800_000_000;
 const QUERY: &str = "orgId=org_a&environmentId=prod";
 const CORRECT: &str = "docs.scanned_document.correct";
-const LAW: &str = "docs.ScannedDocument.total_matches_";
+const LAWS: [&str; 2] = [
+    "canon.ItemizedDocument.total_matches_lines",
+    "docs.ScannedDocument.total_matches_ledger",
+];
 const HANDLE_KEY: [u8; 32] = [7; 32];
 
 fn key() -> SigningKey {
@@ -82,8 +86,8 @@ fn artifact(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).expect("artifact")).expect("JSON")
 }
 
-/// The documents pack with the core artifacts it names, interfaces and types
-/// before the artifacts that use them.
+/// The documents pack with the core and canon artifacts it names, interfaces
+/// and types before the artifacts that use them.
 fn documents() -> Vec<Value> {
     let core = root().join("registry/core/artifacts");
     let mut documents: Vec<Value> = [
@@ -110,7 +114,22 @@ fn documents() -> Vec<Value> {
             2
         }
     });
+    // The canon itemized-document concept the pack's documents implement,
+    // and its law (LAW-INTERFACE-1), after the types it governs.
+    let canon = root().join("registry/packs/canon/artifacts");
+    documents.splice(
+        3..3,
+        [
+            "canon.ItemizedDocument.interface.json",
+            "canon.LineItem.interface.json",
+        ]
+        .iter()
+        .map(|name| artifact(&canon.join(name))),
+    );
     documents.extend(paths.iter().map(|path| artifact(path)));
+    documents.push(artifact(
+        &canon.join("canon.ItemizedDocument.total_matches_lines.law.json"),
+    ));
     documents
 }
 
@@ -218,21 +237,23 @@ fn only_admins_and_owners_read_a_law_refusal() {
         assert_eq!(status, 422, "{role}: {refusal}");
         let reason = &refusal["reason"];
         // The ledger law or the lines law, whichever the kernel checks first:
-        // both are the document's own laws, and 30.00 breaks both.
+        // both govern the document, and 30.00 breaks both.
         assert!(
             reason["law"]
                 .as_str()
-                .is_some_and(|law| law.starts_with(LAW)),
+                .is_some_and(|law| LAWS.contains(&law)),
             "{role}: {refusal}"
         );
         assert!(
             reason["subject"].to_string().contains("SCAN-INV-0041"),
             "{role}: {refusal}"
         );
-        // The refused total and the value the document holds it against.
+        // The refused total and the values the document holds it against:
+        // its booked entry's amount, or every line amount the law summed.
         assert_eq!(reason["values"]["total"], json!(30), "{role}: {refusal}");
         assert!(
-            reason["values"].to_string().contains("30.5"),
+            reason["values"]["ledger_entry.amount"] == json!(30.5)
+                || reason["values"]["lines.amount"] == json!([18.5, 12]),
             "{role}: {refusal}"
         );
     }
@@ -245,13 +266,19 @@ fn only_admins_and_owners_read_a_law_refusal() {
     assert_eq!(member["code"], admin["code"], "{member}");
     assert!(member.get("reason").is_none_or(Value::is_null), "{member}");
     let text = member.to_string();
-    assert!(!text.contains(LAW) && !text.contains("30.5"), "{member}");
+    assert!(
+        LAWS.iter().all(|law| !text.contains(law)) && !text.contains("30.5"),
+        "{member}"
+    );
 
     // A viewer may not call it: the one opaque denial, no detail.
     let (status, viewer) = cell.correct("viewer", "30.00");
     assert_eq!(status, 403, "{viewer}");
     assert!(viewer.get("reason").is_none_or(Value::is_null), "{viewer}");
-    assert!(!viewer.to_string().contains(LAW), "{viewer}");
+    assert!(
+        LAWS.iter().all(|law| !viewer.to_string().contains(law)),
+        "{viewer}"
+    );
 
     // Nothing above committed: the consistent correction is the first.
     let (status, receipt) = cell.correct("admin", "30.50");

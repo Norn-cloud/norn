@@ -897,10 +897,9 @@ fn law_link_reads_admit_one_to_one_hop_only() {
     // Unguarded, the target may be absent.
     let unguarded = check(Some("self.status == 'approved'"), "self.order.paid == true");
     assert!(refused(&unguarded, codes::PREDICATE_TYPE), "{unguarded:?}");
-    // A to-many link and a second hop refuse admission, each saying what to do.
-    // Before LAW-LINK-1 the kernel never bound links into a law's `self`, so a
-    // to-many read was admitted yet evaluated on an absent list; reading every
-    // target is LAW-LINK-1's to-many extension, which the refusal names.
+    // A to-many forward link of an object type and a second hop refuse
+    // admission, each saying what to do. A law sums over the sources of an
+    // inverse role (LAW-LINK-MANY-1, below), which the refusal names.
     for expression in [
         "len(self.requests) == 0",
         "all(self.requests as r, r.status == 'accepted')",
@@ -910,7 +909,7 @@ fn law_link_reads_admit_one_to_one_hop_only() {
         assert!(
             says(
                 &many,
-                &["`self.requests` is a to-many link", "to-many extension"]
+                &["`self.requests` is a to-many forward link", "inverse role"]
             ),
             "{expression}: {many:?}"
         );
@@ -922,6 +921,116 @@ fn law_link_reads_admit_one_to_one_hop_only() {
     assert!(
         says(&second, &["`self.order.ticket` is a second hop"]),
         "{second:?}"
+    );
+}
+
+/// The artifacts of the canon itemized-document concept and of the documents
+/// pack's types that implement it, and the core interfaces they rest on.
+fn itemized() -> (Vec<Value>, Vec<ArtifactEnvelope>) {
+    let read = |path: &str| -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path);
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("artifact")).expect("JSON")
+    };
+    let base = [
+        "registry/core/artifacts/norn.SourceDocument.interface.json",
+        "registry/core/artifacts/norn.SourceEvidence.interface.json",
+    ]
+    .map(|path| serde_json::from_value(read(path)).expect("envelope"))
+    .to_vec();
+    let set = [
+        "registry/packs/canon/artifacts/canon.ItemizedDocument.interface.json",
+        "registry/packs/canon/artifacts/canon.LineItem.interface.json",
+        "registry/packs/documents/artifacts/docs.SourceDocument.interface.json",
+        "registry/packs/documents/artifacts/docs.SourceDocumentLine.interface.json",
+        "registry/packs/documents/artifacts/docs.BookedEntry.interface.json",
+        "registry/packs/documents/artifacts/docs.LedgerEntry.entity.json",
+        "registry/packs/documents/artifacts/docs.ScannedDocument.entity.json",
+        "registry/packs/documents/artifacts/docs.DocumentLine.entity.json",
+        "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json",
+    ]
+    .map(read)
+    .to_vec();
+    (set, base)
+}
+
+/// LAW-LINK-MANY-1 / LAW-INTERFACE-1: the concept owns the law. It is
+/// declared once, on `canon.ItemizedDocument`, and reads the document's lines
+/// through the concept's `lines`, which the scanned document meets with the
+/// inverse role of its line type's link. An implementer cannot escape it by
+/// leaving `lines` out, and another artifact cannot redeclare it weaker.
+#[test]
+fn a_concept_law_sums_its_lines_and_cannot_be_weakened() {
+    let (set, base) = itemized();
+    let admitted = diagnostics(set.clone(), &base);
+    assert!(admitted.is_empty(), "{admitted:?}");
+
+    // A second implementer, an order and its lines, is bound by the same law
+    // with no law of its own: implementing the concept is the whole contract.
+    let entity = |name: &str, object: Value| {
+        json!({"artifactId": format!("{name}.entity"), "dependencies": [], "irVersion": "0.1", "kind": "entity",
+            "lifecycle": "active", "name": name, "namespace": "acme", "scope": {}, "version": "0.1.0",
+            "provenance": {"source": "system", "sourcePath": "law_ir.rs"},
+            "payload": {"entityVersion": "2.0", "objectType": object}})
+    };
+    let money = json!({"kind": "decimal", "scale": 2, "currencySource": {"links": [], "property": "currency"}, "additivity": {"kind": "additive"}});
+    let mut orders = set.clone();
+    orders.push(entity("acme.Order", json!({"name": "acme.Order", "implements": ["canon.ItemizedDocument"],
+        "identity": [{"name": "primary", "properties": ["id"]}],
+        "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "currency", "type": {"kind": "enum", "values": [{"value": "EUR"}]}}, {"id": "total", "type": money}]})));
+    orders.push(entity("acme.OrderLine", json!({"name": "acme.OrderLine", "implements": ["canon.LineItem"],
+        "identity": [{"name": "primary", "properties": ["id"]}],
+        "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "currency", "type": {"kind": "enum", "values": [{"value": "EUR"}]}}, {"id": "amount", "type": money}],
+        "links": [{"id": "document", "target": "acme.Order", "cardinality": {"to": "one", "from": "many", "required": true}, "inverse": "lines"}]})));
+    let admitted = diagnostics(orders, &base);
+    assert!(admitted.is_empty(), "{admitted:?}");
+
+    // The scanned document must meet the concept's `lines`: without the
+    // inverse role on its line type's link it does not implement the concept.
+    let mut no_lines = set.clone();
+    let line = no_lines
+        .iter_mut()
+        .find(|value| value["artifactId"] == "docs.DocumentLine.entity")
+        .expect("line type");
+    line["payload"]["objectType"]["links"][0]
+        .as_object_mut()
+        .expect("link")
+        .remove("inverse");
+    let refused = run(no_lines, &base);
+    assert!(
+        refused.contains(&"object_type.validation.missing_interface_link".to_owned()),
+        "{refused:?}"
+    );
+
+    // A specialization cannot weaken the inherited law: the same law
+    // identity redeclared for the scanned document alone, with a narrower
+    // condition, is refused against the installed concept law.
+    let mut installed = base.clone();
+    installed.extend(
+        set.iter()
+            .map(|value| serde_json::from_value(value.clone()).expect("envelope")),
+    );
+    let mut weaker = set.last().expect("law").clone();
+    weaker["artifactId"] = json!("docs.ScannedDocument.total_matches_lines.law");
+    weaker["dependencies"] = json!([{"artifactId": "docs.ScannedDocument.entity", "kind": "entity", "version": "0.1.0", "required": true}]);
+    weaker["payload"]["subject"] = json!("docs.ScannedDocument");
+    weaker["payload"]["scope"] = json!({"root": {"kind": "entity", "id": "docs.ScannedDocument"}, "objectTypes": ["docs.ScannedDocument"]});
+    weaker["payload"]["condition"] = json!("len(self.lines) > 3");
+    assert!(run(vec![weaker], &installed).contains(&codes::WEAKENS_INHERITED.to_owned()));
+
+    // A second hop past a line is refused; a line's own property is read.
+    let mut hop = set.clone();
+    let law = hop.last_mut().expect("law");
+    law["payload"]["response"]["expression"] =
+        json!("self.total == sum(map(self.lines, #.document.total))");
+    let found = diagnostics(hop, &base);
+    assert!(
+        found
+            .iter()
+            .any(|found| found.code.as_str() == codes::UNKNOWN_BINDING
+                && found.message.contains("is a second hop")),
+        "{found:?}"
     );
 }
 

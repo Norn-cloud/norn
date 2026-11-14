@@ -302,6 +302,14 @@ pub struct DataQualityFinding {
     /// finding, and then omitted.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub links: std::collections::BTreeMap<String, crate::FactRef>,
+    /// DIAG-REASON-1 / LAW-LINK-MANY-1: for a law finding, the stored values
+    /// the law compared, by path, as it read them: the subject's own
+    /// properties (`total`), a to-one target's (`ledger_entry.amount`), and
+    /// an inverse role's sources' as a list (`lines.amount`). Not part of the
+    /// identity: the subject version and `links` fix them. Empty for every
+    /// other finding, and then omitted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub values: std::collections::BTreeMap<String, crate::RuntimeValue>,
 }
 
 impl DataQualityFinding {
@@ -354,6 +362,7 @@ impl DataQualityFinding {
             last_seen,
             status,
             links: std::collections::BTreeMap::new(),
+            values: std::collections::BTreeMap::new(),
         };
         finding.refresh_identity()?;
         Ok(finding)
@@ -373,6 +382,17 @@ impl DataQualityFinding {
         self.links = links;
         self.refresh_identity()?;
         Ok(self)
+    }
+
+    /// DIAG-REASON-1: record the values the failing law compared. They do
+    /// not change the identity.
+    #[must_use]
+    pub fn with_values(
+        mut self,
+        values: std::collections::BTreeMap<String, crate::RuntimeValue>,
+    ) -> Self {
+        self.values = values;
+        self
     }
 
     /// Add a stable digest of the evidence values and recompute the finding
