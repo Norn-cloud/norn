@@ -31,6 +31,13 @@ nextest=(cargo nextest --profile ci)
 # tool installs (`cargo install`) build in their own directory under $upstream instead.
 guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+# Pinned cargo tools: a binary that already reports the exact pinned version (CI preinstalls
+# checksummed release binaries) is used as is; otherwise the same version is built from source.
+ensure_tool() {
+  local crate=$1 version=$2 binary=$3
+  [[ $("$binary" --version 2> /dev/null) == "${4:-$binary} $version" ]] \
+    || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked "$crate" --version "$version"
+}
 # The pinned nextest, installed like the other tools when absent.
 ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
@@ -77,7 +84,51 @@ select_shard() {
   exit 2
 }
 upstream=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-upstream.XXXXXX")
-trap 'rm -rf -- "$upstream"' EXIT
+# CI telemetry: when NORN_CI_SPANS names a file, every phase and bundle task appends one JSON
+# line (task, commit, PR, VM, start and end in ns, exit code, sccache hit and miss deltas) that
+# a collector ships off the machine. Recording never changes a phase's result or exit status.
+span_task='' span_start=0 span_counts=''
+# Only this invocation records: nested core.sh runs (the canaries call it) inherit no span file.
+spans_file=${NORN_CI_SPANS:-}
+unset NORN_CI_SPANS
+sccache_counts() {
+  [[ ${RUSTC_WRAPPER:-} == *sccache* ]] || command -v sccache > /dev/null 2>&1 || return 0
+  sccache --show-stats --stats-format=json 2> /dev/null | python3 -c 'import json, sys
+stats = json.load(sys.stdin)["stats"]
+print(*(sum(stats[key]["counts"].values()) for key in ("cache_hits", "cache_misses")))' 2> /dev/null || true
+}
+span_begin() {
+  [[ -n $spans_file ]] || return 0
+  span_task=$1 span_start=$(date +%s%N) span_counts=$(sccache_counts)
+  [[ $span_start =~ ^[0-9]+$ ]] || span_task=''
+}
+span_end() {
+  [[ -n $spans_file && -n $span_task ]] || return 0
+  local end hits='' misses='' after phase=${span_task#*/} shard=''
+  [[ $span_task != test/* ]] || { shard=$phase; phase=test; }
+  end=$(date +%s%N)
+  [[ $end =~ ^[0-9]+$ ]] || { span_task=''; return 0; }
+  after=$(sccache_counts)
+  if [[ $span_counts =~ ^[0-9]+\ [0-9]+$ && $after =~ ^[0-9]+\ [0-9]+$ ]]; then
+    read -r hits misses <<<"$after"
+    hits=$((hits - ${span_counts%% *})) misses=$((misses - ${span_counts##* }))
+  fi
+  clean() { tr -cd 'A-Za-z0-9._/:-' <<<"$1"; }
+  printf '{"span":"task %s","ci_source":"core.sh","ci_task":"%s","ci_phase":"%s","ci_shard":"%s","ci_commit":"%s","ci_pr":"%s","ci_vm":"%s","ci_runner":"%s","start_ns":%s,"end_ns":%s,"span_ms":%s,"ci_exit_code":%s,"ok":%s,"cache_hits":%s,"cache_misses":%s}\n' \
+    "$span_task" "$span_task" "$phase" "$shard" "$(git rev-parse HEAD 2> /dev/null || true)" \
+    "$(clean "${NORN_CI_PR:-}")" "$(clean "${NORN_CI_VM:-$(hostname)}")" "$(clean "${NORN_CI_RUNNER:-${RUNNER_ENVIRONMENT:-local}}")" \
+    "$span_start" "$end" "$(((end - span_start) / 1000000))" "$1" "$([[ $1 -eq 0 ]] && echo true || echo false)" \
+    "${hits:-null}" "${misses:-null}" >> "$spans_file" 2> /dev/null || true
+  span_task=''
+}
+# Runs phase $1 (shard $2) as one span; a failing phase is recorded by the EXIT trap. span_end
+# takes the exit status.
+timed_phase() {
+  span_begin "$([[ $1 == test ]] && echo "test/${2:-all}" || echo "phase/$1")"
+  run_phase "$@"
+  span_end 0
+}
+trap 'status=$?; span_end "$status"; rm -rf -- "$upstream"' EXIT
 export NORN_CHECKER_WASM_PARITY_OUT="$upstream/native-parity"
 # Every phase but `cheap` runs over these generated inputs.
 prepared=''
@@ -229,7 +280,7 @@ PY
       python3 scripts/test_proof_enrollment.py
       ensure_nextest
       python3 scripts/check_demo_scenarios.py
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-deny --version 0.19.0
+      ensure_tool cargo-deny 0.19.0 cargo-deny
       cargo deny --locked check
       cargo deny --locked "${guard[@]}" check --config deny.toml
       cargo xtask ci policy
@@ -240,7 +291,7 @@ PY
     integration)
       cargo build --locked -p norn-cli
       cargo build --locked -p norn-cell-do --bin norn-dev-host
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
       crates/norn-checker-wasm/scripts/build-pkg.sh
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
@@ -281,7 +332,7 @@ PY
         printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
         exit 1
       fi
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked wasm-bindgen-cli --version 0.2.129
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
       (
         cd apps/studio
@@ -351,24 +402,20 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# Warm nextest runtimes and phase seconds: Boat run 41541177097;
-# heavy-3 and integration: repaired Boat run 41542781995. `phase/duckdb` is the DuckDB
-# backend's cold bundled C++ build plus norn-cell and its integration test, timed once on a
-# default Boat VM from an empty target (#1206): sccache does not cache the C++, so it is
-# charged in full.
+# Task seconds: p50 of green hosted tasks over 78 recorded runs, 2026-11-11..13 (#1348;
+# refit with the recorded task spans). They include each task's compile through the shared
+# sccache, so a bundle's first test task is charged only the residual cold compile below.
 weights = {
-    "test/heavy-1": 30, "test/heavy-2": 122, "test/heavy-3": 89,
-    "test/heavy-4": 43, "test/heavy-5": 27, "test/heavy-6": 29,
-    "test/rest-1": 143, "test/rest-2": 59, "test/rest-3": 62,
-    "phase/doctest": 6, "phase/features": 239, "phase/duckdb": 280, "phase/wasm": 97,
-    "phase/clippy": 75, "phase/doc": 60, "phase/guards": 369,
-    "phase/integration": 827, "phase/provenance": 17, "phase/test-shards": 5,
-    # Estimate until the first Studio browser rows run in CI (#1113).
-    "phase/browser": 600,
+    "test/heavy-1": 90, "test/heavy-2": 653, "test/heavy-3": 158,
+    "test/heavy-4": 99, "test/heavy-5": 66, "test/heavy-6": 85,
+    "test/rest-1": 1158, "test/rest-2": 513, "test/rest-3": 319,
+    "phase/doctest": 31, "phase/features": 788, "phase/duckdb": 565, "phase/wasm": 137,
+    "phase/clippy": 94, "phase/doc": 44, "phase/guards": 735,
+    "phase/integration": 924, "phase/provenance": 12, "phase/test-shards": 13,
+    "phase/browser": 403,
 }
-# Cold test tasks spent 163–193 seconds compiling, before nextest's runtime.
-# Charge that once per bundle; later shards reuse the same test binaries.
-compile_seconds = 180
+# A bundle's first test task observed at 66 s (heavy-5, n=47): the residual cold compile.
+compile_seconds = 60
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
@@ -545,13 +592,14 @@ PY
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
-        trap 'task_status=$?; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
+        span_begin "$task"
+        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
         if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
       )
     done <<<"$task_lines"
     ;;
-  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do run_phase "$phase"; done ;;
+  all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;
-  test) [[ $# -le 2 ]] || run_phase usage; run_phase test "${2:-all}" ;;
-  *) [[ $# -le 1 ]] || run_phase usage; run_phase "$1" ;;
+  test) [[ $# -le 2 ]] || run_phase usage; timed_phase test "${2:-all}" ;;
+  *) [[ $# -le 1 ]] || run_phase usage; timed_phase "$1" ;;
 esac
