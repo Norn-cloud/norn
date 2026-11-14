@@ -1,0 +1,4 @@
+{
+  "order": 100007,
+  "value": "scripts/ci/test_contract_diff.py"
+}

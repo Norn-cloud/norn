@@ -1,0 +1,116 @@
+@Norn.Checker.LawExceptions.check_shape_correct : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (declared : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑declared).length = (↑ids).length →
+          ∀ {σ : Type} (cond : ℕ → σ → Bool),
+            ∃ r,
+              norn_checker_law_exceptions.check_shape inst_1 law ids parents declared = Aeneas.Std.Result.ok r ∧
+                (r = Aeneas.Std.core.result.Result.Ok () ↔
+                  (∀ b ∈ ↑declared, b = true) ∧
+                    (Norn.Checker.LawExceptions.treeWith law (↑ids) (↑parents) cond).WellFormed)
+@Norn.Checker.LawExceptions.check_shape_refusal : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (declared : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑declared).length = (↑ids).length →
+          ∀ {σ : Type} (cond : ℕ → σ → Bool),
+            ∃ r,
+              norn_checker_law_exceptions.check_shape inst_1 law ids parents declared = Aeneas.Std.Result.ok r ∧
+                (r = Aeneas.Std.core.result.Result.Err norn_checker_law_exceptions.ExceptionTreeRefusal.Limit ↔
+                    64 < (↑ids).length) ∧
+                  (∀ (i : Aeneas.Std.Usize),
+                      r =
+                          Aeneas.Std.core.result.Result.Err
+                            (norn_checker_law_exceptions.ExceptionTreeRefusal.InvalidDeclaration i) ↔
+                        (↑ids).length ≤ 64 ∧
+                          Norn.Checker.LawExceptions.FirstWith (↑ids).length
+                            (Norn.Checker.LawExceptions.Invalid law ↑ids ↑declared) (some i)) ∧
+                    (∀ (i : Aeneas.Std.Usize),
+                        r =
+                            Aeneas.Std.core.result.Result.Err
+                              (norn_checker_law_exceptions.ExceptionTreeRefusal.DanglingOverride i) ↔
+                          (↑ids).length ≤ 64 ∧
+                            Norn.Checker.LawExceptions.FirstWith (↑ids).length
+                                (Norn.Checker.LawExceptions.Invalid law ↑ids ↑declared) none ∧
+                              Norn.Checker.LawExceptions.FirstWith (↑parents).length
+                                (Norn.Checker.LawExceptions.Dangling law ↑ids ↑parents) (some i)) ∧
+                      ∀ (i : Aeneas.Std.Usize),
+                        r =
+                            Aeneas.Std.core.result.Result.Err
+                              (norn_checker_law_exceptions.ExceptionTreeRefusal.Cycle i) ↔
+                          (↑ids).length ≤ 64 ∧
+                            Norn.Checker.LawExceptions.FirstWith (↑ids).length
+                                (Norn.Checker.LawExceptions.Invalid law ↑ids ↑declared) none ∧
+                              Norn.Checker.LawExceptions.FirstWith (↑parents).length
+                                  (Norn.Checker.LawExceptions.Dangling law ↑ids ↑parents) none ∧
+                                Norn.Checker.LawExceptions.FirstWith (↑parents).length
+                                  (Norn.Checker.LawExceptions.Cyclic law (↑ids) (↑parents) cond) (some i)
+@Norn.Checker.LawExceptions.check_shape_sound : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (declared : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑declared).length = (↑ids).length →
+          norn_checker_law_exceptions.check_shape inst_1 law ids parents declared =
+              Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+            ∀ {σ : Type} (cond : ℕ → σ → Bool),
+              (Norn.Checker.LawExceptions.treeWith law (↑ids) (↑parents) cond).Unambiguous
+@Norn.Checker.LawExceptions.lifted_correct : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (matched level next : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑level).length = (↑ids).length →
+          (↑next).length = (↑ids).length →
+            ∃ b l' n',
+              norn_checker_law_exceptions.lifted inst_1 law ids parents matched level next =
+                  Aeneas.Std.Result.ok (b, l', n') ∧
+                b = (Norn.Checker.LawExceptions.foldTree law ids parents matched).lifts () ((↑ids).length + 1) law ∧
+                  ↑l' =
+                    List.map
+                      (fun x => (Norn.Checker.LawExceptions.foldTree law ids parents matched).lifts () (↑ids).length x)
+                      ↑ids
+@Norn.Checker.LawExceptions.lifted_sound : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (declared matched level next : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑declared).length = (↑ids).length →
+          (↑level).length = (↑ids).length →
+            (↑next).length = (↑ids).length →
+              norn_checker_law_exceptions.check_shape inst_1 law ids parents declared =
+                  Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+                ∀ {A : T → Prop},
+                  (Norn.Checker.LawExceptions.foldTree law ids parents matched).Stable () A →
+                    ∃ b l' n',
+                      norn_checker_law_exceptions.lifted inst_1 law ids parents matched level next =
+                          Aeneas.Std.Result.ok (b, l', n') ∧
+                        (b = true ↔ (Norn.Checker.LawExceptions.foldTree law ids parents matched).LiftedBy A)
+@Norn.Checker.LawExceptions.applied_sound : ∀ {T : Type} [inst : DecidableEq T]
+  {inst_1 : Aeneas.Std.core.cmp.PartialEq T T},
+  Norn.Checker.LawExceptions.Lawful inst_1 →
+    ∀ (law : T) (ids parents : Aeneas.Std.Slice T) (declared matched level next applied : Aeneas.Std.Slice Bool),
+      (↑parents).length = (↑ids).length →
+        (↑declared).length = (↑ids).length →
+          (↑level).length = (↑ids).length →
+            (↑next).length = (↑ids).length →
+              (↑applied).length = (↑ids).length →
+                norn_checker_law_exceptions.check_shape inst_1 law ids parents declared =
+                    Aeneas.Std.Result.ok (Aeneas.Std.core.result.Result.Ok ()) →
+                  ∀ {b : Bool} {l' n' : Aeneas.Std.Slice Bool},
+                    norn_checker_law_exceptions.lifted inst_1 law ids parents matched level next =
+                        Aeneas.Std.Result.ok (b, l', n') →
+                      ∀ {A : T → Prop},
+                        (Norn.Checker.LawExceptions.foldTree law ids parents matched).Stable () A →
+                          ∃ a',
+                            norn_checker_law_exceptions.applied_exceptions inst_1 law ids parents matched l' applied =
+                                Aeneas.Std.Result.ok a' ∧
+                              ∀ (k : ℕ) (hk : k < (↑ids).length),
+                                ∃ c,
+                                  (↑a')[k]? = some c ∧
+                                    (c = true ↔
+                                      (Norn.Checker.LawExceptions.foldTree law ids parents matched).Reported () A
+                                        (↑ids)[k])

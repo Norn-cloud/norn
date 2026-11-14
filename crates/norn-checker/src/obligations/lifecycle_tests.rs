@@ -61,7 +61,7 @@ fn constitution_ten_goal_inventory_golden() {
     );
     assert_eq!(
         challenge.sha256(),
-        "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc"
+        "891aa8d83690605ec68c1fe54915d784db46db80af4e9b2f861f911a1accb8ff"
     );
 }
 
@@ -171,12 +171,19 @@ fn lifecycle_goal_cap_is_checked_before_append() {
     );
     assert_eq!(goals.len(), 8_192);
 }
-proptest::proptest! {
-    #[test]
-    fn lifecycle_exact_guard_identity(spaces in 1_usize..16) {
-        let left=challenge(&json!([chart("true")]),&json!([]));
-        let right=challenge(&json!([chart(&format!("true{}", " ".repeat(spaces)))]),&json!([]));
-        proptest::prop_assert_ne!(left.body()["obligations"][0]["statement"]["lifecycleDigest"].clone(),
-            right.body()["obligations"][0]["statement"]["lifecycleDigest"].clone());
+#[test]
+fn lifecycle_exact_guard_identity() {
+    let left = challenge(&json!([chart("true")]), &json!([]));
+    let digest = &left.body()["obligations"][0]["statement"]["lifecycleDigest"];
+    for spaces in 1_usize..16 {
+        let right = challenge(
+            &json!([chart(&format!("true{}", " ".repeat(spaces)))]),
+            &json!([]),
+        );
+        assert_ne!(
+            digest,
+            &right.body()["obligations"][0]["statement"]["lifecycleDigest"],
+            "spaces {spaces}"
+        );
     }
 }

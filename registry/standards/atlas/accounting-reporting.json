@@ -1,0 +1,332 @@
+{
+  "atlasVersion": 1,
+  "domain": "accounting-reporting",
+  "entries": [
+    {
+      "id": "aaoifi-standards",
+      "name": "AAOIFI Shari'ah Standards and Financial Accounting Standards (FAS)",
+      "publisher": "Accounting and Auditing Organization for Islamic Financial Institutions (AAOIFI)",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting",
+        "finance"
+      ],
+      "version": "Rolling: FAS 53 approved Feb 2026 (PR/01/2026); FAS 54 approved in principle Jun 2026",
+      "versionDate": "2026-06",
+      "versionBasis": "AAOIFI Latest News page (aaoifi.com/latest-news-2/?lang=en), read live, lists PR/01/2026 (FAS 53 'Istisna-Based Development Contracts', 45th AAB meeting) and PR/02/2026 (FAS 54 in principle, 11 June 2026). There is no single edition number.",
+      "licence": {
+        "spdx": "LicenseRef-AAOIFI-Copyright",
+        "text": "Copyright AAOIFI; standards free to read online (e-standards) but no reuse licence",
+        "status": "verified",
+        "basis": "Read live on aaoifi.com: the site footer 'Copyright AAOIFI 2025 / Copyrights AAOIFI', and the announcement that all standards are available online free of charge, while AAOIFI does not approve other versions. No licence granting reuse rights was found.",
+        "termsUrl": null,
+        "checked": "2026-11-11"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-HTML"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://aaoifi.com/e-standards/?lang=en",
+      "evidenceUrls": [
+        "https://aaoifi.com/announcement/aaoifi-makes-all-its-standards-accessible-on-its-website-on-a-complimentary-basis/?lang=en",
+        "https://aaoifi.com/e-standards/?lang=en",
+        "https://aaoifi.com/latest-news-2/?lang=en"
+      ],
+      "norn": {
+        "overlap": "Islamic finance contracts (murabaha, ijarah, salam, istisna, sukuk, takaful), zakah reporting",
+        "concepts": [
+          "core.Claim",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "IslamicContract"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Islamic finance contract terms (murabaha, ijara, sukuk) and their accounting."
+      },
+      "notes": "The standards are free to read but copyright-protected. Printed editions are sold. The Shari'ah Standards count was not confirmed on the site.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "ifrs-accounting-taxonomy-2025",
+      "name": "IFRS Accounting Taxonomy 2025",
+      "publisher": "IFRS Foundation / IASB",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting"
+      ],
+      "version": "2025",
+      "versionDate": "2025-03-27",
+      "versionBasis": "Foundation release page states publication on 27 March 2025; its February 2026 notice explicitly retains 2025 for 2026 reporting.",
+      "licence": {
+        "spdx": "LicenseRef-IFRS-Taxonomy-Materials-Terms-and",
+        "text": "IFRS Taxonomy Materials Terms and Conditions; commercial permission required",
+        "status": "verified",
+        "basis": "Taxonomy terms clauses 2-3 allow limited personal/professional uses; commercial software, data services and commercial classification derivatives require Foundation permission. No such permission established for Norn.",
+        "termsUrl": "https://www.ifrs.org/content/dam/ifrs/about-us/legal-and-governance/legal-docs/taxonomy/taxonomy-terms-and-conditions.pdf",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "XBRL"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://392942.hs-sites-eu1.com/ifrs-accounting-taxonomy-2025-download-page",
+      "evidenceUrls": [
+        "https://www.ifrs.org/issued-standards/ifrs-taxonomy/ifrs-accounting-taxonomy-2025/",
+        "https://www.ifrs.org/news-and-events/news/2026/02/ifrs-accounting-taxonomy-2025-to-remain-current-for-2026/",
+        "https://www.ifrs.org/content/dam/ifrs/about-us/legal-and-governance/legal-docs/taxonomy/taxonomy-terms-and-conditions.pdf"
+      ],
+      "norn": {
+        "overlap": "Financial reporting concepts can be mapped to accounts; this is neither a universal chart of accounts nor Egyptian Accounting Standards.",
+        "concepts": [
+          "canon.Posting",
+          "core.LedgerEffect"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Account",
+          "FiscalPeriod",
+          "ReportingConcept"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P0",
+        "reason": "IFRS reporting concepts; commercial use needs permission."
+      },
+      "notes": "No 2026 annual taxonomy was inferred from the clock. The 2025 package removes the IFRS for SMEs entry point; the Foundation directs SME users to 2024. Do not claim full Egyptian/EAS coverage. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "rea-iso15944-4-availability",
+      "name": "REA / ISO/IEC 15944-4 accounting and economic ontology availability",
+      "publisher": "ISO/IEC JTC 1/SC 32",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting",
+        "upper-ontology"
+      ],
+      "version": "ISO/IEC 15944-4:2015, edition 2",
+      "versionDate": null,
+      "versionBasis": "ISO product page identifies edition 2, publication month 2015-04, and confirmation in 2021; lifecycle also lists published stage 26 March 2015. Preserve month-level publication field.",
+      "licence": {
+        "spdx": "LicenseRef-ISO-copyright-written-reproduction-permission",
+        "text": "ISO copyright; written reproduction permission required",
+        "status": "verified",
+        "basis": "ISO page explicitly reserves copyright and requires written permission for reproduction. No machine-readable export or redistribution permission established.",
+        "termsUrl": "https://www.iso.org/standard/67199.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "spec-PDF"
+      ],
+      "machineReadable": "no",
+      "artifactUrl": "https://www.iso.org/standard/67199.html",
+      "evidenceUrls": [
+        "https://www.iso.org/standard/67199.html"
+      ],
+      "norn": {
+        "overlap": "REA is a conceptual design check, not permission to import prose or replace ruled ledger semantics.",
+        "concepts": [
+          "core.Agent",
+          "core.Resource",
+          "core.EconomicEvent",
+          "core.Commitment"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Account",
+          "FiscalPeriod",
+          "ReportingConcept"
+        ],
+        "mapping": "done",
+        "mappingEvidence": [
+          "registry/core/src/physics.ts"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "ignore",
+        "reason": "The ISO text is paywalled; the REA concepts are already Norn's core physics."
+      },
+      "notes": "The standard describes Open-edi Business Transaction Ontology and collaborations; do not claim a downloadable official REA OWL corpus. PDF-only material is never a source payload. Redistribution: prohibited-without-permission.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "us-gaap-taxonomy-2026",
+      "name": "2026 US GAAP Financial Reporting Taxonomy",
+      "publisher": "Financial Accounting Foundation / FASB",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting"
+      ],
+      "version": "2026",
+      "versionDate": "2026-01-31",
+      "versionBasis": "Fetched ZIP META-INF/taxonomyPackage.xml declares version 2026 and publicationDate 2026-01-31; this is package metadata, not an asserted announcement date.",
+      "licence": {
+        "spdx": "LicenseRef-FAF-Taxonomies-Terms-and-Conditions",
+        "text": "FAF Taxonomies Terms and Conditions / Notice: Authorized Uses",
+        "status": "verified",
+        "basis": "Notice permits royalty-free GAAP reporting and unchanged incorporation in works explaining/implementing the taxonomy, with Authorized Uses notice on the first page. Modification needs consent except translation; imported third-party material retains separate terms.",
+        "termsUrl": "https://xbrl.fasb.org/terms/TaxonomiesTermsConditions.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XBRL",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://xbrl.fasb.org/us-gaap/2026/us-gaap-2026.zip",
+      "evidenceUrls": [
+        "https://xbrl.fasb.org/us-gaap/2026/us-gaap-2026.zip",
+        "https://xbrl.fasb.org/terms/TaxonomiesTermsConditions.html"
+      ],
+      "norn": {
+        "overlap": "US disclosure taxonomy remains jurisdictional reporting evidence, not Core or an SME ledger design.",
+        "concepts": [
+          "canon.Posting",
+          "core.LedgerEffect"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Account",
+          "FiscalPeriod",
+          "ReportingConcept"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Ledger depth is the core of SAP parity."
+      },
+      "notes": "The mutable terms page observed copyright ranges through 2027. That is recorded as a rights-page observation, not a 2027 release or a changed package date. Novel ontology derivatives are not automatically permitted works. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "xbrl-2-1-specification",
+      "name": "Extensible Business Reporting Language (XBRL) 2.1",
+      "publisher": "XBRL International Inc.",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting",
+        "finance"
+      ],
+      "version": "XBRL 2.1 Recommendation 2003-12-31 with corrected errata 2013-02-20",
+      "versionDate": "2013-02-20",
+      "versionBasis": "specifications.xbrl.org XBRL 2.1 page, read live, lists 'XBRL Specification 2013-02-20' (Recommendation) with Conformance Suite 2025-07-16.",
+      "licence": {
+        "spdx": "LicenseRef-XBRL-International-Spec-Notice",
+        "text": "Copyright XBRL International, all rights reserved, with a notice allowing the document to be copied and furnished to others, and derivative works that explain it or help implement it, if the notice is kept; the document itself may not be modified",
+        "status": "verified",
+        "basis": "Read the copyright and permission notice in the live spec HTML (xbrl.org/Specification/XBRL-2.1/REC-2003-12-31/...+corrected-errata-2013-02-20.html) today. It refers to the XBRL IP Policy at xbrl.org/legal, which was not opened.",
+        "termsUrl": "https://www.xbrl.org/Specification/XBRL-2.1/REC-2003-12-31/XBRL-2.1-REC-2003-12-31+corrected-errata-2013-02-20.html",
+        "checked": "2026-11-11"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XBRL",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.xbrl.org/Specification/XBRL-2.1/REC-2003-12-31/XBRL-2.1-REC-2003-12-31+corrected-errata-2013-02-20.html",
+      "evidenceUrls": [
+        "https://specifications.xbrl.org/work-product-index-group-base-spec-base-spec.html",
+        "https://www.xbrl.org/Specification/XBRL-2.1/REC-2003-12-31/XBRL-2.1-REC-2003-12-31+corrected-errata-2013-02-20.html"
+      ],
+      "norn": {
+        "overlap": "financial-report facts, contexts, units, taxonomies",
+        "concepts": [
+          "canon.Posting",
+          "core.LedgerEffect"
+        ],
+        "irTargets": [
+          "LawIR"
+        ],
+        "proposedConcepts": [
+          "Account",
+          "FiscalPeriod",
+          "ReportingConcept"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Calculation linkbases are executable summation laws."
+      },
+      "notes": "Verbatim redistribution only: the base XSDs can be vendored unmodified with the notice, but not edited. Taxonomies (IFRS, US GAAP, ESEF) carry their own licences. Reuse: copying is permitted unmodified with the notice; adaptation is not, so vocabulary-only.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "xbrl-gl-2015",
+      "name": "XBRL Global Ledger Taxonomy Framework 2015",
+      "publisher": "XBRL International",
+      "kind": "standard",
+      "domains": [
+        "accounting-reporting"
+      ],
+      "version": "2015 Recommendation",
+      "versionDate": "2015-03-25",
+      "versionBasis": "Recommendation date on the framework and specification index; ZIP returned application/zip.",
+      "licence": {
+        "spdx": "LicenseRef-XBRL-GL-taxonomy-custom-copyright",
+        "text": "XBRL GL taxonomy custom copyright licence",
+        "status": "verified",
+        "basis": "Framework grants copying and implementation/explanatory derivatives with copyright notice and original URL; the taxonomy itself must remain unmodified except translations. Trademark and patent terms remain separate.",
+        "termsUrl": "https://www.xbrl.org/int/gl/2015-03-25/gl-framework-REC-2015-03-25.html",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.xbrl.org/int/gl/2015-03-25/XBRL-GL-REC-2015-03-25.zip",
+      "evidenceUrls": [
+        "https://specifications.xbrl.org/work-product-index-xbrl-gl-xbrl-gl-2015.html",
+        "https://www.xbrl.org/int/gl/2015-03-25/gl-framework-REC-2015-03-25.html",
+        "https://www.xbrl.org/taxonomy/int/gl/2015-03-25/cor/gl-cor-2015-03-25.xsd"
+      ],
+      "norn": {
+        "overlap": "Journal entries, accounts, parties and resources are external representations, not ledger semantics to promote.",
+        "concepts": [
+          "canon.Posting",
+          "core.LedgerEffect"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Account",
+          "FiscalPeriod",
+          "ReportingConcept"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Ledger depth is the core of SAP parity."
+      },
+      "notes": "The observed recommendation is pinned as 2015, not labelled an invented 2026 release. Preserve dependency closure and source constraints before any lowering. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

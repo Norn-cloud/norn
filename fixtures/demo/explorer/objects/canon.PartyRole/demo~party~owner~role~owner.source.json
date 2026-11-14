@@ -1,0 +1,61 @@
+{
+  "bundleDigest": "bdf31716c0eb07184d692542594186d9901a7c35c133e7691814410855c236a9",
+  "sourceRecordRef": {
+    "system": "synthetic-erpnext",
+    "record": "Party/erpnext/demo/Party/SYN-ERPNEXT-owner"
+  },
+  "documentRef": {
+    "system": "synthetic-erpnext",
+    "record": "SYN-ERPNEXT-owner"
+  },
+  "documentDigest": "62bf042faca62a877cbac25a57fd3194fd4e7faef0a17c1147a0deef10ae8722",
+  "mappingPin": {
+    "artifactId": "erpnext.three.mapping",
+    "version": "0.1.0",
+    "sha256": "ddbf31d0eb71c45a8f9be84583b3c1ea4b2151f4e289245425f88fafc024780a"
+  },
+  "fieldProvenance": {
+    "role": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Party/erpnext/demo/Party/SYN-ERPNEXT-owner"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "party_role.role",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "role"
+      ]
+    },
+    "valid_from": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Party/erpnext/demo/Party/SYN-ERPNEXT-owner"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "party_role.valid_from",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "role"
+      ]
+    },
+    "valid_to": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Party/erpnext/demo/Party/SYN-ERPNEXT-owner"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "party_role.valid_to",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "role"
+      ]
+    }
+  }
+}

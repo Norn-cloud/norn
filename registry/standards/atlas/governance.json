@@ -1,0 +1,730 @@
+{
+  "atlasVersion": 1,
+  "domain": "governance",
+  "entries": [
+    {
+      "id": "cedar-policy",
+      "name": "Cedar policy language",
+      "publisher": "Cedar Policy project (github.com/cedar-policy)",
+      "kind": "standard",
+      "domains": [
+        "governance",
+        "parties-identity"
+      ],
+      "version": "4.14.1",
+      "versionDate": "2026-11-02",
+      "versionBasis": "Latest non-prerelease GitHub release of cedar-policy/cedar is v4.14.1, published 2026-11-02.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache License 2.0",
+        "status": "verified",
+        "basis": "GitHub licence metadata for cedar-policy/cedar, cedar-spec (Lean model and differential tests) and cedar-docs reports Apache-2.0, and the cedar-docs LICENSE file read today is the Apache License 2.0.",
+        "termsUrl": "https://github.com/cedar-policy/cedar/blob/main/LICENSE",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "source-code",
+        "JSON",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://github.com/cedar-policy/cedar",
+      "evidenceUrls": [
+        "https://github.com/cedar-policy/cedar",
+        "https://github.com/cedar-policy/cedar-spec",
+        "https://github.com/cedar-policy/cedar-docs"
+      ],
+      "norn": {
+        "overlap": "authorization policies (principal/action/resource/context), entity schemas, policy validation and formal analysis",
+        "concepts": [
+          "core.Entitlement"
+        ],
+        "irTargets": [
+          "PolicyIR"
+        ],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-authz/Cargo.toml"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Authorization decisions compile to Cedar."
+      },
+      "notes": "The Lean formalization lives in cedar-spec. The symbolic compiler (cedar-policy-symcc) has its own version line (v0.8.1).",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "dcat-3-vocabulary",
+      "name": "Data Catalog Vocabulary version 3",
+      "publisher": "W3C",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "3",
+      "versionDate": "2024-08-22",
+      "versionBasis": "W3C Recommendation date from publication history; vocabulary URL is mutable and requires byte pin at admission.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "CC-BY-4.0",
+        "status": "verified",
+        "basis": "Vocabulary explicitly declares dcterms:license CC-BY-4.0; attribute and preserve licence/change notices. This does not license datasets described with DCAT.",
+        "termsUrl": "https://www.w3.org/ns/dcat3.ttl",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/dcat3.ttl",
+      "evidenceUrls": [
+        "https://www.w3.org/ns/dcat3.ttl",
+        "https://www.w3.org/TR/vocab-dcat-3/",
+        "https://www.w3.org/standards/history/vocab-dcat-3/"
+      ],
+      "norn": {
+        "overlap": "One-way catalogue export, not Core or access-policy authority.",
+        "concepts": [
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-projections/src/interop.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Preserve distinct dataset, distribution, data service and version metadata; no equivalentClass inferred from matching names. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dpv-2-1",
+      "name": "Data Privacy Vocabulary (DPV) 2.1",
+      "publisher": "W3C Data Privacy Vocabularies and Controls Community Group",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "2.1",
+      "versionDate": "2025-03-16",
+      "versionBasis": "Ontology versionIRI /2.1 and versionInfo 2.1; ontology-level modified date 2025-03-16, distinct from original issued 2022-08-18 and individual term dates.",
+      "licence": {
+        "spdx": "W3C-20150513",
+        "text": "W3C Software and Document License (version-directory LICENSE.md)",
+        "status": "verified",
+        "basis": "Directory license permits copying, modification and distribution with full notice, existing notices and change attribution. TTL separately points to W3C document license; preserve both notices during admission.",
+        "termsUrl": "https://raw.githubusercontent.com/w3c-cg/dpv/master/2.1/LICENSE.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "JSON-LD",
+        "CSV",
+        "XML",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/w3c-cg/dpv/master/2.1/dpv/dpv.ttl",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/w3c-cg/dpv/master/2.1/dpv/dpv.ttl",
+        "https://raw.githubusercontent.com/w3c-cg/dpv/master/2.1/LICENSE.md",
+        "https://api.github.com/repos/w3c/dpv/contents/2.1/dpv"
+      ],
+      "norn": {
+        "overlap": "Purpose, processing, personal-data category, controller and consent records; external descriptions do not decide Norn permissions.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Consent",
+          "Policy"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Community Group resource, not a W3C Recommendation. EU/GDPR vocabulary is not evidence of Egyptian legal compliance. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "dublin-core-terms",
+      "name": "DCMI Metadata Terms",
+      "publisher": "Dublin Core Metadata Initiative (DCMI)",
+      "kind": "ontology",
+      "domains": [
+        "governance",
+        "records"
+      ],
+      "version": "2020-01-20",
+      "versionDate": "2020-01-20",
+      "versionBasis": "dublincore.org DCMI Metadata Terms page gives the latest version as dcmi-terms/2020-01-20/.",
+      "licence": {
+        "spdx": "CC-BY-4.0",
+        "text": "Creative Commons Attribution 4.0 International (documents and RDF/XML schemas)",
+        "status": "verified",
+        "basis": "Read the DCMI copyright page: 'Unless indicated otherwise, DCMI documents are licensed under ... CC BY 4.0', and the same applies to the RDF and XML schemas.",
+        "termsUrl": "https://www.dublincore.org/about/copyright/",
+        "checked": "2026-11-11"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "spec-HTML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/",
+      "evidenceUrls": [
+        "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/",
+        "https://www.dublincore.org/about/copyright/"
+      ],
+      "norn": {
+        "overlap": "document metadata: title, creator, dates, rights, licence, subject, relations",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Document"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Use the DCMI attribution notice. The DCMI name and trademarks fall under a separate trademark licence.",
+      "origin": "atlas-2026-11-11"
+    },
+    {
+      "id": "linkml-metamodel",
+      "name": "LinkML metamodel",
+      "publisher": "LinkML community",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "33fb95f12e42815db266aec856dec10a04d348f8",
+      "versionDate": "2026-10-09",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release v1.12.0 published 2026-10-08T19:52:41Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "CC0-1.0",
+        "text": "CC0-1.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/linkml/linkml-model/33fb95f12e42815db266aec856dec10a04d348f8/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "RDF",
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/linkml/linkml-model/tar.gz/33fb95f12e42815db266aec856dec10a04d348f8",
+      "evidenceUrls": [
+        "https://codeload.github.com/linkml/linkml-model/tar.gz/33fb95f12e42815db266aec856dec10a04d348f8",
+        "https://raw.githubusercontent.com/linkml/linkml-model/33fb95f12e42815db266aec856dec10a04d348f8/LICENSE",
+        "https://github.com/linkml/linkml-model/commit/33fb95f12e42815db266aec856dec10a04d348f8",
+        "https://github.com/linkml/linkml-model/releases/tag/v1.12.0"
+      ],
+      "norn": {
+        "overlap": "No role in SourceSchemaIR → MappingIR → EntityIR spine.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "ignore",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "CC0 is the metamodel grant; it does not license separate implementation repos or arbitrary LinkML schemas. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "odrl-2-2-vocabulary",
+      "name": "ODRL 2.2 rights and obligations vocabulary",
+      "publisher": "W3C Permissions and Obligations Expression Working Group",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "2.2",
+      "versionDate": "2018-02-15",
+      "versionBasis": "TTL versionInfo 2.2; dated W3C Recommendation.",
+      "licence": {
+        "spdx": "LicenseRef-W3C-artifact-notice-see-linked",
+        "text": "W3C artifact notice; see linked copyright policy",
+        "status": "unverified",
+        "basis": "TTL license link now redirects to general W3C policies. Recommendation uses a permissive document license; exact ontology derivative permission requires admission review.",
+        "termsUrl": "https://www.w3.org/Consortium/Legal/2002/ipr-notice-20021231",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/odrl/2/ODRL22.ttl",
+      "evidenceUrls": [
+        "https://www.w3.org/ns/odrl/2/ODRL22.ttl",
+        "https://www.w3.org/TR/2018/REC-odrl-vocab-20180215/",
+        "https://www.w3.org/Consortium/Legal/2002/ipr-notice-20021231"
+      ],
+      "norn": {
+        "overlap": "Party, Asset, Agreement, Permission and Duty overlap; never Core authority or a replacement authorization engine.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Vocabulary expression alone neither establishes legal enforceability nor admits source-policy execution. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "openlineage-specification",
+      "name": "OpenLineage event and facet schema",
+      "publisher": "OpenLineage / LF AI & Data",
+      "kind": "standard",
+      "domains": [
+        "governance"
+      ],
+      "version": "0ead16e415e828447b7134e099bfb12839de4c25",
+      "versionDate": "2026-10-21",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release 1.54.0 published 2026-10-13T08:32:32Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Pinned licence checked; preserve attribution, copyright, licence and NOTICE conditions. Dependencies retain their own terms.",
+        "termsUrl": "https://raw.githubusercontent.com/OpenLineage/OpenLineage/0ead16e415e828447b7134e099bfb12839de4c25/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/OpenLineage/OpenLineage/0ead16e415e828447b7134e099bfb12839de4c25/spec/OpenLineage.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/OpenLineage/OpenLineage/0ead16e415e828447b7134e099bfb12839de4c25/spec/OpenLineage.json",
+        "https://raw.githubusercontent.com/OpenLineage/OpenLineage/0ead16e415e828447b7134e099bfb12839de4c25/LICENSE",
+        "https://github.com/OpenLineage/OpenLineage/commit/0ead16e415e828447b7134e099bfb12839de4c25",
+        "https://github.com/OpenLineage/OpenLineage/releases/tag/1.54.0"
+      ],
+      "norn": {
+        "overlap": "One-way execution/data-lineage export, not a second runtime.",
+        "concepts": [
+          "core.LedgerEffect"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-projections/src/interop.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Referenced facet definitions require dependency closure. Repository release 1.54.0 is not the schema version. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "osi-ossie-schema",
+      "name": "Open Semantic Interchange / Apache Ossie schema",
+      "publisher": "Apache Ossie contributors (formerly Open Semantic Interchange)",
+      "kind": "standard",
+      "domains": [
+        "governance"
+      ],
+      "version": "ae7d23f7f9002e511b0bb491105e320b30ff7d97",
+      "versionDate": "2026-10-21",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Apache-2.0 LICENSE and ASF README notice checked; preserve licence, attribution and supplied NOTICE. Original GitHub identity redirects to apache/ossie.",
+        "termsUrl": "https://raw.githubusercontent.com/open-semantic-interchange/OSI/ae7d23f7f9002e511b0bb491105e320b30ff7d97/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/open-semantic-interchange/OSI/ae7d23f7f9002e511b0bb491105e320b30ff7d97/core-spec/ossie-schema.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/open-semantic-interchange/OSI/ae7d23f7f9002e511b0bb491105e320b30ff7d97/core-spec/ossie-schema.json",
+        "https://raw.githubusercontent.com/open-semantic-interchange/OSI/ae7d23f7f9002e511b0bb491105e320b30ff7d97/LICENSE",
+        "https://cwiki.apache.org/confluence/spaces/INCUBATOR/pages/430408796/OssieProposal",
+        "https://github.com/open-semantic-interchange/OSI/commit/ae7d23f7f9002e511b0bb491105e320b30ff7d97"
+      ],
+      "norn": {
+        "overlap": "Analytics/metric interchange, not Core semantic authority.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Quoted issue search returned []; broader Search found adjacent analytics work, not an explicit OSI task. README says Apache Ossie was formerly OSI; neither Open Source Initiative nor OSI networking model. No tagged release verified. Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "prov-o-vocabulary",
+      "name": "PROV-O provenance ontology",
+      "publisher": "W3C",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "Recommendation 2013-04-30",
+      "versionDate": "2013-04-30",
+      "versionBasis": "Artifact owl:versionInfo and versionIRI identify the 2013-04-30 Recommendation.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Recommendation has W3C copyright/document-use rules; ontology file declares no licence. Separate artifact derivative/reuse grant remains unverified; no assumed CC-BY or Apache licence.",
+        "termsUrl": "https://www.w3.org/TR/2013/REC-prov-o-20130430/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OWL",
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/prov-o.ttl",
+      "evidenceUrls": [
+        "https://www.w3.org/ns/prov-o.ttl",
+        "https://www.w3.org/TR/2013/REC-prov-o-20130430/",
+        "https://www.w3.org/copyright/",
+        "https://www.w3.org/copyright/intellectual-rights/"
+      ],
+      "norn": {
+        "overlap": "Mapping/derivation provenance alignment and one-way export; not a second upper ontology or ledger authority.",
+        "concepts": [
+          "core.LedgerEffect",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-projections/src/interop.rs"
+        ],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance on every ledger entry and observed link."
+      },
+      "notes": "Preserve origin, attribution, derivation and activity/agent distinctions. Source inclusion alone establishes no semantic correspondence. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "shacl-vocabulary",
+      "name": "SHACL vocabulary",
+      "publisher": "W3C",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "2017-07-20",
+      "versionDate": "2017-07-20",
+      "versionBasis": "Source header explicitly says Version from 2017-07-20; Recommendation is not evidence of newer draft conformance.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Source file contains no licence declaration; Recommendation document copyright alone was not treated as a schema derivative grant. Rights admission unresolved.",
+        "termsUrl": "https://www.w3.org/TR/shacl/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/ns/shacl.ttl",
+      "evidenceUrls": [
+        "https://www.w3.org/ns/shacl.ttl",
+        "https://www.w3.org/TR/shacl/",
+        "https://www.w3.org/copyright/",
+        "https://www.w3.org/copyright/intellectual-rights/"
+      ],
+      "norn": {
+        "overlap": "External RDF shape constraints, not the Rust checker or Norn authorization authority.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Vocabulary is not the complete SHACL conformance algorithm. Do not assume open-world OWL axioms and closed-world SHACL constraints are interchangeable. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "skos-vocabulary",
+      "name": "SKOS core vocabulary",
+      "publisher": "W3C",
+      "kind": "ontology",
+      "domains": [
+        "governance"
+      ],
+      "version": "Recommendation 2009-08-18",
+      "versionDate": "2009-08-18",
+      "versionBasis": "Artifact comment identifies the 18 August 2009 SKOS Reference formalisation.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Recommendation copyright links document-use rules; artifact does not declare a licence. Separate ontology/schema derivative grant not verified; do not assume CC-BY-4.0.",
+        "termsUrl": "https://www.w3.org/TR/2009/REC-skos-reference-20090818/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "RDF",
+        "XML"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.w3.org/2009/08/skos-reference/skos.rdf",
+      "evidenceUrls": [
+        "https://www.w3.org/2009/08/skos-reference/skos.rdf",
+        "https://www.w3.org/TR/2009/REC-skos-reference-20090818/",
+        "https://www.w3.org/copyright/",
+        "https://www.w3.org/copyright/intellectual-rights/"
+      ],
+      "norn": {
+        "overlap": "One-way concept/taxonomy export; mapping assertions remain evidence-qualified.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Formalisation expresses a subset of SKOS semantic conditions, as the file itself states. closeMatch, exactMatch and OWL equivalence remain distinct. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "spdx-license-list",
+      "name": "SPDX License List identifiers",
+      "publisher": "SPDX legal team",
+      "kind": "code-list",
+      "domains": [
+        "governance",
+        "infra-it"
+      ],
+      "version": "3.29.0",
+      "versionDate": "2026-09-16",
+      "versionBasis": "Payload licenseListVersion is 3.29.0 and releaseDate is 2026-09-16T00:00:00Z; source snapshot is commit 31ba1a50e5397e00a304dbadc76531740e89ee48, committed 2026-09-16.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Generated-data README delegates licensing to source and publisher repositories; no artifact-specific redistribution grant verified. CC0 requirement for SPDX document metadata is not evidence licensing the License List itself.",
+        "termsUrl": "https://github.com/spdx/license-list-data/blob/31ba1a50e5397e00a304dbadc76531740e89ee48/README.md",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/json/licenses.json",
+      "evidenceUrls": [
+        "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/json/licenses.json",
+        "https://github.com/spdx/license-list-data/blob/31ba1a50e5397e00a304dbadc76531740e89ee48/README.md",
+        "https://github.com/spdx/license-list-XML",
+        "https://spdx.org/licenses/"
+      ],
+      "norn": {
+        "overlap": "Licence identifiers are source-admission metadata, not a grant or legal classifier.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Do not infer rights for third-party licence texts from their presence on the SPDX list. The catalogue lists the observed format/version but leaves licence null. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "spdx-specification",
+      "name": "SPDX specification and model",
+      "publisher": "SPDX / Linux Foundation",
+      "kind": "ontology",
+      "domains": [
+        "governance",
+        "infra-it"
+      ],
+      "version": "ab5896386a867afe385173b9a3f46cf581909a9a",
+      "versionDate": "2026-10-20",
+      "versionBasis": "Exact Git commit snapshot; version_date is its committer date, not a release date. Separately observed release 3.0.1 published 2024-12-17T18:58:27Z; snapshot is not asserted to be that release.",
+      "licence": {
+        "spdx": "Community-Spec-1.0 AND CC-BY-3.0",
+        "text": "Community-Spec-1.0 AND CC-BY-3.0 (legacy portions)",
+        "status": "verified",
+        "basis": "Pinned LICENSE grants Community Specification 1.0 for specification contributions and CC BY 3.0 for pre-existing portions; pull-license-list.py is separately MIT. Preserve applicable notices; not blanket Apache-2.0.",
+        "termsUrl": "https://raw.githubusercontent.com/spdx/spdx-spec/ab5896386a867afe385173b9a3f46cf581909a9a/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "reference-only",
+      "formats": [
+        "OWL",
+        "JSON-LD",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://codeload.github.com/spdx/spdx-spec/tar.gz/ab5896386a867afe385173b9a3f46cf581909a9a",
+      "evidenceUrls": [
+        "https://codeload.github.com/spdx/spdx-spec/tar.gz/ab5896386a867afe385173b9a3f46cf581909a9a",
+        "https://raw.githubusercontent.com/spdx/spdx-spec/ab5896386a867afe385173b9a3f46cf581909a9a/LICENSE",
+        "https://github.com/spdx/spdx-spec/commit/ab5896386a867afe385173b9a3f46cf581909a9a",
+        "https://github.com/spdx/spdx-spec/releases/tag/3.0.1"
+      ],
+      "norn": {
+        "overlap": "Software/package and licence metadata; isolated supply-chain representation.",
+        "concepts": [
+          "core.Entitlement",
+          "norn.ObservedLinkClaim"
+        ],
+        "irTargets": [],
+        "proposedConcepts": [
+          "Policy",
+          "Consent",
+          "ProvenanceRecord",
+          "Dataset"
+        ],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P1",
+        "reason": "Provenance, policy and consent support audit and reuse."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

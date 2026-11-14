@@ -125,7 +125,10 @@ impl TypeCatalog<'_> {
     }
 }
 fn supported(law: &LawIR) -> bool {
-    law.timing.is_none()
+    // An exception tree has no commit-path semantics until the per-write fold
+    // lands; refusing keeps a law from being evaluated without its exceptions.
+    law.exceptions.is_empty()
+        && law.timing.is_none()
         && law.scope.lifecycle_states.is_empty()
         && law.scope.commitments.is_empty()
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
@@ -134,7 +137,9 @@ fn supported(law: &LawIR) -> bool {
             LawResponse::Invariant { .. } => {
                 matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
             }
-            LawResponse::Action { .. } | LawResponse::Transition { .. } => false,
+            LawResponse::Action { .. }
+            | LawResponse::Transition { .. }
+            | LawResponse::TranslationPreserves { .. } => false,
         }
 }
 
@@ -184,7 +189,7 @@ fn law_failure(
     invariant: Option<Box<BoundInvariantFailure>>,
 ) -> Result<LawFailure, LawEvaluationError> {
     Ok(LawFailure {
-        refuses_native: law.severity == LawSeverity::Error,
+        refuses_native: true,
         outcome,
         rule_ref: pin(artifact, law)?,
         severity: match law.severity {
@@ -239,6 +244,8 @@ pub(crate) fn invariant_failure(
     }
     Ok(None)
 }
+
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: display severity never relaxes governing authority.
 pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
@@ -257,10 +264,7 @@ pub(crate) fn classify(
             }) && invariant_binding(catalog, subject, &law).is_ok()
         };
         if catalog.object_type_names().iter().any(governs) {
-            return match law.severity {
-                LawSeverity::Error => DataQualityRuleClassification::Integrity,
-                LawSeverity::Warning => DataQualityRuleClassification::Quality,
-            };
+            return DataQualityRuleClassification::Integrity;
         }
     }
     DataQualityRuleClassification::Unverified
@@ -331,7 +335,9 @@ pub fn evaluate(
                         Ok(())
                     }
                 }
-                LawResponse::Action { .. } | LawResponse::Transition { .. } => {
+                LawResponse::Action { .. }
+                | LawResponse::Transition { .. }
+                | LawResponse::TranslationPreserves { .. } => {
                     return Err(LawEvaluationError::Unsupported(law.id));
                 }
             },

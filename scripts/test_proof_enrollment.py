@@ -13,9 +13,36 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-import coverage_manifest
-from test_migrate_registry_pr import MigrationTests
-from proof_enrollment import ROOT, discover_sources, validate
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+coverage_manifest = _sibling("coverage_manifest")
+_test_migrate_registry_pr = _sibling("test_migrate_registry_pr")
+MigrationTests = _test_migrate_registry_pr.MigrationTests
+_proof_enrollment = _sibling("proof_enrollment")
+ROOT = _proof_enrollment.ROOT
+discover_sources = _proof_enrollment.discover_sources
+validate = _proof_enrollment.validate
 
 
 class EnrollmentTests(unittest.TestCase):
@@ -218,7 +245,9 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-1", combined["shard"])
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy"])
+        # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
+        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -235,12 +264,37 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
                                  {k: v for k, v in self.full.items() if k != "reason"})
 
+    def test_duckdb_runs_when_norn_cell_is_reached_not_only_changed(self):
+        # norn-kernel is upstream of norn-cell, so a kernel-only change reaches it and plans the
+        # DuckDB phase; norn-api is not, so an api-only change does not (#1206).
+        for path, planned in (("crates/norn-kernel/src/lib.rs", True), ("crates/norn-api/src/lib.rs", False)):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertNotIn("norn-cell", plan["reason"])
+                self.assertEqual("duckdb" in plan["phase"], planned, plan["phase"])
+
+    def test_an_affected_rust_change_plans_rest_shards(self):
+        # Only a plan that reaches no package drops its rest shards; a Rust change keeps them.
+        for path in ("crates/norn-ir/src/lib.rs", "crates/norn-cli/src/main.rs"):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertTrue([shard for shard in plan["shard"] if shard.startswith("rest-")], plan["shard"])
+                self.assertTrue(plan["packages"])
+
     def test_markdown_only_keeps_policy_and_provenance(self):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)
-        self.assertEqual(plan["shard"], ["rest-1"])
+        # The guard is its own workspace (D95): no package is reached, so no test shard runs;
+        # the guards phase runs the guard's suite.
+        self.assertEqual(plan["shard"], [])
         self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
-        self.assertEqual(plan["packages"], "norn-skeleton-guard")
+        self.assertEqual(plan["packages"], "")
         self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
 

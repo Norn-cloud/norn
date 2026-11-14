@@ -356,13 +356,22 @@ fn lifecycle_graph_pins_native_evaluation_limits() {
     assert_eq!(profile["maxRowLawUnits"], 1_000_000);
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
-    #[test]
-    fn every_frozen_choice_keeps_the_complete_chart(loss in 0_u8..5) {
-        let mut profile=bounds();profile.frozen.insert("loss_fine_g".into(),vec![loss.to_string()]);
-        let snapshot=batch(&source(true),&profile).snapshot.expect("bounded");
-        proptest::prop_assert_eq!(snapshot.nodes.len(),snapshot.machine.states.len());
-        for row in snapshot.nodes { proptest::prop_assert_eq!(&row["loss_fine_g"],&norn_ir::RuntimeValue::from_json_text(loss.to_string()).expect("exact")); }
+#[test]
+fn every_frozen_choice_keeps_the_complete_chart() {
+    for loss in 0_u8..5 {
+        let mut profile = bounds();
+        profile
+            .frozen
+            .insert("loss_fine_g".into(), vec![loss.to_string()]);
+        let snapshot = batch(&source(true), &profile).snapshot.expect("bounded");
+        assert_eq!(
+            snapshot.nodes.len(),
+            snapshot.machine.states.len(),
+            "loss {loss}"
+        );
+        let expected = norn_ir::RuntimeValue::from_json_text(loss.to_string()).expect("exact");
+        for row in snapshot.nodes {
+            assert_eq!(&row["loss_fine_g"], &expected, "loss {loss}");
+        }
     }
 }

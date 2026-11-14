@@ -1,0 +1,36 @@
+{
+  "status": {
+    "signoffUnavailable": 422,
+    "signoffMismatch": 422,
+    "notFound": 404
+  },
+  "signoffUnavailable": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "definition.signoff_unavailable",
+    "category": "invalid",
+    "message": "the sign-off cannot be verified",
+    "explanation": "this cell has no restatement generator"
+  },
+  "signoffMismatch": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "definition.signoff_mismatch",
+    "category": "invalid",
+    "message": "the sign-off does not match the definition",
+    "explanation": "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
+    "restatement": "A dashboard titled \"Signed\"",
+    "restatementSha256": "e74a23f6a8e4510d1ddeaf5c3eea07ab363f3501ef9f45c2b4fa36a150c3c4a8"
+  },
+  "notFound": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "definition.not_found",
+    "category": "visibility",
+    "message": "no such definition",
+    "explanation": "no definition (or version of it) with this id is installed in the cell"
+  }
+}

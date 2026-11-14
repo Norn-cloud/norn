@@ -1,4 +1,4 @@
-//! Workspace skeleton guard (P0-SKEL-2): `cargo test -p norn-skeleton-guard`.
+//! Workspace skeleton guard (P0-SKEL-2): `cargo test --manifest-path crates/norn-skeleton-guard/Cargo.toml`.
 //!
 //! The `*_detects_*` tests inject deliberate violations into a copy of the
 //! real `cargo metadata` output and assert the guard reports them, so the
@@ -1027,7 +1027,6 @@ fn zen_pin_is_recorded_consistently() {
             .dependencies
             .iter()
             .any(|dep| dep.name.starts_with("zen-"))
-            && pkg.name.as_str() != "norn-skeleton-guard"
             && !pin.crates.contains_key(pkg.name.as_str())
         {
             assert!(
@@ -1358,8 +1357,57 @@ fn guard_detects_allowlist_growth_beyond_baseline() {
 fn guard_detects_dependency_on_unscoped_or_tooling_crates() {
     let v = check_dependencies(&with_dep("norn-kernel", "norn-analytics-duckdb"));
     assert_eq!(rules_of(&v), ["ring0-unlisted"], "{}", render(&v));
-    let v = check_dependencies(&with_dep("norn-cli", "norn-skeleton-guard"));
-    assert_eq!(rules_of(&v), ["norn-edge"], "{}", render(&v));
+    for kind in [None, Some("dev"), Some("build")] {
+        let v = check_dependencies(&with_dep_as("norn-cli", "norn-skeleton-guard", kind, None));
+        assert_eq!(rules_of(&v), ["guard-dependency"], "{}", render(&v));
+    }
+}
+
+/// The guard's nextest config (its own workspace root, D95) keeps the root's pinned `ci`
+/// profile: same retries, timeouts and test report.
+#[test]
+fn the_guard_runs_the_root_ci_profile() {
+    let profile = |path: PathBuf| -> toml::Value {
+        let text = std::fs::read_to_string(&path).expect("nextest config");
+        let config: toml::Table = toml::from_str(&text).expect("nextest toml");
+        config["profile"]["ci"].clone()
+    };
+    assert_eq!(
+        profile(Path::new(env!("CARGO_MANIFEST_DIR")).join(".config/nextest.toml")),
+        profile(workspace_root().join(".config/nextest.toml")),
+    );
+}
+
+/// The guard is its own workspace (D95): the root workspace does not hold it, and its own
+/// metadata resolves from its own manifest and lockfile, never the root's.
+#[test]
+fn the_guard_is_its_own_workspace() {
+    let root = metadata();
+    assert!(
+        root.workspace_packages()
+            .iter()
+            .all(|pkg| pkg.name.as_str() != norn_skeleton_guard::GUARD_CRATE),
+        "the root workspace must not list the guard"
+    );
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let own = MetadataCommand::new()
+        .manifest_path(&manifest)
+        .no_deps()
+        .exec()
+        .expect("guard metadata");
+    assert_eq!(
+        own.workspace_root.as_std_path(),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("guard dir"),
+        "the guard's workspace root must be its own directory"
+    );
+    assert!(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("Cargo.lock")
+            .is_file(),
+        "the guard keeps its own lockfile"
+    );
 }
 
 #[test]
@@ -1597,4 +1645,22 @@ fn symcc_has_exactly_one_direct_owner() {
             render(&violations)
         );
     }
+}
+
+#[test]
+fn datalog_contract_has_no_checker_or_host_dependency_permission() {
+    for dependency in ["norn-checker", "norn-kernel", "norn-cell"] {
+        let violations = check_dependencies(&with_dep("norn-datalog", dependency));
+        assert!(
+            rules_of(&violations).contains(&"norn-edge"),
+            "{}",
+            render(&violations)
+        );
+    }
+    let violations = check_dependencies(&with_dep("norn-datalog", "tokio"));
+    assert!(
+        rules_of(&violations).contains(&"ring0-host"),
+        "{}",
+        render(&violations)
+    );
 }

@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/semantics-v1/Checker/Certificates/ConservationProof.lean",
+    "command": "scripts/verify-checker-certificates-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.proof.entryc9739a0b8539e531e7f7fcfcc4090abc7933eb8496e13bd1361e0ae08bf80974.selectors"
+    }
+  }
+}

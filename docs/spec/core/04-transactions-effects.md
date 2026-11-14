@@ -6,6 +6,8 @@ Purpose [Astra]: every governed writer lowers into one closed checked calculus w
 
 Reuse `DecisionOutput`, `FactChange`, kernel `CellCommit`, `FactExpectation`, `FactWrite`, `Command`, `Timer`, `IdempotencyKey`, `Generation`, `LogicalTime` and `World`. Extend these families rather than inventing application posting opcodes.
 
+**ACTION-ACTOR-1:** Action derivations read only the host-authenticated call principal as typed `actor.subjectId`, preparations and receipts bind that same principal, and caller-supplied `actor`/`approved` fields at any depth or a principal outside the NFC expression profile refuse with `action.invalid_input` before writes, never rewriting an identity; admission rejects those reserved input-schema property names, including nested objects and array items, with `action.validation.invalid_schema`.
+
 | Target semantic envelope | Required fields |
 |---|---|
 | Intent | `operation_id`, exact canonical `input_digest`, `actor`, `delegation_chain`, `scope`, `world`, `action: Pin`, `definition_generation`, `effective_at`, `user_preconditions`, `retry_ceiling`. |
@@ -37,6 +39,8 @@ Expected evidence: runtime atomicity/CAS enforcement, crash/reopen/race correspo
 
 RECEIPT-AUTH-BIND-1: `acceptReceipt` preparation accepts a content-digest reference only. The tenant/world/authority-scoped host receipt store resolves authenticated `Acceptance` plus `FunctionReceipt` and consumption state. A bound result retains the exact receipt/result/command/generation pins and reconciliation reads. Unknown, replayed, mismatched, failed or wrongly typed results refuse; an action-supplied receipt body always refuses. Receipt consumption and destination writes remain one checked commit; binding alone grants no publication authority.
 
+GUARD-DIAGNOSTIC-1: a transition may declare `guardRefusalCode`, naming an error diagnostic registered at runtime tier T6. Admission refuses unknown/non-runtime codes. A redeclaration retains an inherited diagnostic; omission inherits it. A refused guard exposes the selected code while retaining the original guard expression, failure reason and underlying code. Diagnostic selection changes no admission, authorization or transaction behavior. Core 08 publication uses `core.projection.publication_guard`.
+
 ## Named acceptance scenarios
 
 - **TXN-ALL:** Given receipt quantity/value and matching GL effects, when a final guard fails, then no voucher, stock, GL, command or timer changes; successful replay returns the whole same commit.
@@ -50,7 +54,7 @@ RECEIPT-AUTH-BIND-1: `acceptReceipt` preparation accepts a content-digest refere
 
 Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/norn-kernel/src/{decision_commit,cell_host,effect}.rs`, `crates/norn-cell/src/{host,store,write,quantity}.rs`. Main has atomic decision/CAS/outbox paths and generic quantity primitives, not demonstrated universal writer closure. Lane A #323/#324 and effect composition must converge here. Host #270/#308–#312 and sampled surface suite #317 are pending, not transaction proofs. Lane C #227 uses declared rules/templates; no production stock helper qualifies.
 
-## Work breakdown (each PR ≤400 lines)
+## Work breakdown (one coherent unit per PR)
 
 1. Thread #324 complete reads through existing preparation and finalization; TXN-PHANTOM/TWO race tests (lane A).
 2. Bind admitted rule effects/quantity-template instances to one authority envelope; reject uncovered writers (A4).
@@ -66,7 +70,8 @@ an immutable Function manifest digest, a writable digest property and typed resu
 Admission rejects unknown, computed, reserved and lifecycle binding targets.
 Both destinations exclude objectIdField and every effective identity-key component; a result destination cannot equal digestProperty. The exact writer closure remains required; catalogs preserve the declaration.
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
-Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
+Execution is open only on the single-commit path of Core 07 RECEIPT-CONSUME-1:
+consumption and effects commit atomically, with no partial persistence on refusal.
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
@@ -92,6 +97,51 @@ unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
 inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
 **TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
 consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
+
+### RUN-LEDGER-1 — the cell's run ledger
+
+A run of an admitted flow is the object of the flow's generated Run type; its
+lifecycle property is the flow's only state machine. A commit starts a run by
+carrying one `norn.run.started` ledger event (run id, flow artifact id and
+version, Run type, lifecycle property) together with the write that creates the
+run object. The store records the run (generation 1) in `_norn_flow_run` in that
+commit's transaction, and refreshes its state, version and update time in the
+transaction of every later commit that writes the run object. A start whose run object
+already exists before the commit (a creating write is required), whose Run type
+is undeclared, or whose run id was already started in the world refuses
+(`run.start_invalid`, `run.exists`) and nothing commits. The run-start event stays
+in the hash-chained ledger; the typed commit reader skips it as bookkeeping. The ledger derives only
+from committed batches, so every engine that runs the store's SQL maintains it and
+export replay rebuilds it. It is a read index, not authority: reads go through the
+caller's read gates on the Run type. `live_runs(flow)` counts the runs whose object
+exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a retire
+guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
+**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
+
+### PARKED-1 — parked perform commands
+
+A perform of a built-in that a person resolves (`norn.decision@1`,
+`norn_builtins::parks`) is a parked command. It is enqueued in the outbox like
+any command, in the same commit, but it never occupies the FIFO perform head:
+`perform`, the head lookup and perform claims skip it, so a waiting decision
+never blocks other work. The cell completes it out of order with the result it
+produced itself (`record_parked`, `SqliteCell::complete_parked`), at most once
+per generation; a second or concurrent resolution, another generation, or a
+command that is not parked writes nothing. Its delivery is then pending like
+any result (`Consumed::Result`), and the ordinary delivery fence consumes it
+exactly once. A recorded, unconsumed parked result is redelivered from the store
+(`SqliteCell::parked_results`), so a crash between recording and consuming never
+strands it. A perform claim on a parked command, live or in a retained journal, refuses
+`restore.parked_claim_unsupported`; no build before parked commands could record
+one. Every other command keeps strict FIFO order. Parking is derived
+only from the command's own payload with the compiled-in registry, so every host
+and every export replay classifies a command identically; replay checks a parked
+consumption at its own outbox position and every other at the FIFO head. Named
+scenarios (`crates/norn-cell/tests/parked.rs`): **PARKED-HEAD**, **PARKED-FIFO**,
+**PARKED-ONCE** (decide then expire, replay), **PARKED-RACE** (decide racing expire,
+then two consumers, on two connections to one database file), **PARKED-CRASH**
+(restart before and after the consuming commit, redelivery from the persisted
+result), **PARKED-INTERLEAVING** (property).
 
 ### Durable flow scheduling and identity (#515)
 
@@ -253,3 +303,9 @@ A protected property is inherited conjunctively: a subtype or extension cannot r
 Observed deletes cannot transition or tombstone objects with protected properties. Owned-row caller-selected identity and order never count as kernel default initialization. Observation creation retains unique initial-state initialization after caller input is checked. Named regressions: `an_observed_delete_cannot_transition_a_protected_lifecycle`, `owned_row_actions_refuse_protected_framework_identity_and_order`, and `an_observed_create_keeps_unique_initialization_without_a_property_default`.
 
 The current protected-property profile applies to object properties. Link values have no sealed writer-authority path, so `protected: true` on a link property refuses definition admission with `object_type.validation.link_property_protection_unsupported`, including extension declarations. `link_protection_is_refused_for_definitions_and_extensions_until_authority_exists` covers both the refusal and unchanged unprotected link admission.
+
+### FA-IMM-1: append-only object declarations
+
+`ObjectTypeDef.immutable` defaults to false. An immutable declaration is inherited through every supertype and cannot be weakened by a subtype. New objects may reach their final state within their first decision; an instance that existed before the decision cannot be set, transitioned or deleted. The final commit rechecks the stored concrete type, including direct host writes. A refused write leaves facts, ledger, commands and timers unchanged.
+
+Named scenarios: `immutable_objects_use_pre_decision_existence_for_change_sequences` (new/existing decisions); `inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically` (subtype creation and raw mutation refusal); `immutable_ancestry_controls_every_existing_instance_write` (generated values and inherited flags). Raw commits use `commit.immutable_object`; decision preparation uses the existing `decision.invalid_output` with an immutable reason. This implements the append-only part of TXN-HISTORY-1, without claiming event-sourcing or historical-query completeness.

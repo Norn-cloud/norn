@@ -1,0 +1,10 @@
+{
+  "order": 3,
+  "value": {
+    "artifact": "verification/kernel-proof-v1/Commit/OrderProof.lean",
+    "command": "scripts/verify-kernel-commit-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entry5889caa0f2b3e9b981d8e0457300ace16f9801e2158881e4130eb613dfc6e0c9.evidence.proof.entry473f2da0e6e2f1062aa24c6eae02790f416a07234fc494af677f9850a5b6a04a.selectors"
+    }
+  }
+}

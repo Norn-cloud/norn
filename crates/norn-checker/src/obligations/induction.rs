@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType, verification::LawWriter};
 
+/// The extracted, proved frame decision for preservation goals (#718 U6).
+pub(super) mod frame;
+
 pub(super) struct Induction {
     pub(super) laws: Vec<Value>,
     pub(super) writers: Vec<Value>,
@@ -90,9 +93,20 @@ pub(super) fn build(
                 .push(json!({"law":law_index,"goal":{"kind":kind},
                 "statement":{"rule":kind,"law":law_index},"assessment":"unknown"}));
         }
-        let reads = frame_reads(&law, &catalog);
+        // The statement travels with the goal, so challenges without one keep their bytes.
+        if let LawResponse::TranslationPreserves { observation, .. } = &law.response {
+            result.goals.push(json!({"law":law_index,
+                "goal":{"kind":"translation_preserves","observation":observation.id},
+                "statement":{"rule":"translation_preserves","law":law_index,
+                    "premise":"valid(subject,source) and condition(law,source)",
+                    "conclusion":"valid(target,f(source)) and observe(target,f(source)) = observe(subject,source)",
+                    "nonVacuity":"premise is satisfiable"},
+                "assessment":"unknown"}));
+        }
+        let reads: Option<Vec<String>> =
+            frame_reads(&law, &catalog).map(|fields| fields.into_iter().collect());
         for (writer_index, writer) in writers.iter().enumerate() {
-            let assessment = if transition_frame(&law, reads.as_ref(), writer) {
+            let assessment = if transition_frame(&law, reads.as_deref(), writer) {
                 "transition_frame"
             } else {
                 "unknown"
@@ -182,6 +196,7 @@ fn writer_statement(
 fn frame_reads(law: &LawIR, catalog: &EffectiveCatalog) -> Option<BTreeSet<String>> {
     if !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         || law.timing.is_some()
+        || !law.exceptions.is_empty()
         || !law.scope.lifecycle_states.is_empty()
         || !law.scope.commitments.is_empty()
         || law.scope.object_types.len() != 1
@@ -222,7 +237,7 @@ fn independent_reads(expression: &str, object: &EffectiveObjectType) -> Option<B
     Some(reads.fields)
 }
 
-fn transition_frame(law: &LawIR, reads: Option<&BTreeSet<String>>, writer: &LawWriter) -> bool {
+fn transition_frame(law: &LawIR, reads: Option<&[String]>, writer: &LawWriter) -> bool {
     let LawWriter::Transition {
         object_type,
         property,
@@ -231,7 +246,7 @@ fn transition_frame(law: &LawIR, reads: Option<&BTreeSet<String>>, writer: &LawW
     else {
         return false;
     };
-    object_type == &law.subject && reads.is_some_and(|fields| !fields.contains(property))
+    frame::discharges(&law.subject, object_type, property, reads)
 }
 
 #[cfg(test)]

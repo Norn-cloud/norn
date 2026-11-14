@@ -11,6 +11,12 @@ pub enum Operation {
     ReadDefinitions,
     /// Invoke the named admitted action.
     CallAction(String),
+    /// Admit, install or retire a retained (non-kernel) definition.
+    WriteDefinitions,
+    /// Create the cell for the request's scope from a submitted definition
+    /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
+    /// the cell's own policy.
+    ProvisionCell,
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -21,6 +27,25 @@ pub struct AccessRequest<'a> {
     pub actor: Option<&'a str>,
     /// Requested operation.
     pub operation: Operation,
+}
+
+/// Independent disclosure decisions; none implies either other capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadCapability {
+    /// Membership in an authorized numeric or object population.
+    Population,
+    /// All canonical property values of a member.
+    Values,
+    /// Authenticated source row/document provenance.
+    Sources,
+}
+
+/// A PDP request assembled by trusted server identity/resource mapping.
+pub struct ReadRequest<'a> {
+    /// The disclosure being decided.
+    pub capability: ReadCapability,
+    /// Existing kernel PDP input, never client claims.
+    pub access: &'a norn_kernel::authz::AccessRequest,
 }
 
 /// Trusted principal and admitted action whose complete diagnostic is requested.
@@ -35,6 +60,12 @@ pub struct RefusalDetailRequest<'a> {
 
 /// HOST-AUTH-1: trusted server policy; every kernel callback denies by default.
 pub trait Authorizer: Send + Sync {
+    /// HOST-READ-1: metadata/action authority supplies no data disclosure grant.
+    /// # Errors
+    /// Denies unless a trusted policy explicitly supplies this capability.
+    fn read(&self, _request: &ReadRequest<'_>) -> Result<(), Refusal> {
+        Err(read_denied())
+    }
     /// Current and proposed state authorization, delegated by the kernel.
     ///
     /// # Errors
@@ -68,6 +99,16 @@ pub trait Authorizer: Send + Sync {
         Err(norn_kernel::ActionDenial::Invisible)
     }
 
+    /// DEFS-REOPEN-1: whether this policy can serve a cell whose model has
+    /// `object_types`, checked before an install writes it. A model the
+    /// policy cannot serve would leave the cell unopenable after a restart.
+    ///
+    /// # Errors
+    /// The policy does not compile for the candidate model.
+    fn admits_model(&self, _object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
+        Ok(())
+    }
+
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
     /// Action/read grants do not imply this decision; absent policy denies.
     fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {
@@ -79,6 +120,18 @@ pub trait Authorizer: Send + Sync {
     /// # Errors
     /// A denied request returns the original stable refusal.
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal>;
+}
+
+/// The one opaque read denial: the same document whatever was denied, so a
+/// refusal never tells an ungranted resource from an absent one.
+#[must_use]
+pub fn read_denied() -> Refusal {
+    Refusal::new(
+        http::StatusCode::FORBIDDEN,
+        codes::AUTHZ_DENIED,
+        "the read request is not authorized",
+        "access to the requested read is denied",
+    )
 }
 
 /// The server policy adapted to the kernel action boundary.
@@ -140,6 +193,8 @@ mod tests {
             for operation in [
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
+                Operation::WriteDefinitions,
+                Operation::ProvisionCell,
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

@@ -967,6 +967,88 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
     );
 }
 
+/// QUERY-FANOUT: one Holding whose `tags` link is many-to-many.
+fn holding_fanout_fixture() -> (Vec<MetricDefinition>, QuestionIR, EffectiveCatalog) {
+    let mut ontology: Vec<Value> = serde_json::from_str(ONTOLOGY).expect("ontology");
+    let template = ontology.swap_remove(0);
+    let artifact = |object_type: Value| {
+        let name = object_type["name"].clone();
+        let mut artifact = template.clone();
+        artifact["artifactId"] = json!(format!("{}.entity.v2", name.as_str().expect("name")));
+        artifact["namespace"] = json!("example");
+        artifact["name"] = name;
+        artifact["provenance"]["sourcePath"] = json!("synthetic:query-fanout");
+        artifact["payload"]["objectType"] = object_type;
+        artifact
+    };
+    let holding = json!({"name":"example.Holding","properties":[
+        {"id":"value","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"},"additivity":{"kind":"additive"}}},
+        {"id":"observed_at","type":{"kind":"timestamp","timezone":"utc"}}
+    ],"links":[{"id":"tags","target":"example.Tag","cardinality":{"to":"many","from":"many","required":false}}]});
+    let tag = json!({"name":"example.Tag","properties":[{"id":"label","type":{"kind":"text"}}]});
+    let catalog = catalog(&json!([artifact(holding), artifact(tag)]).to_string());
+    let (mut measure, mut question) = sales();
+    measure["name"] = json!("example.holding_value");
+    measure["type_params"]["expr"] = json!("value");
+    measure["type_params"]["metric_aggregation_params"]["semantic_model"] =
+        json!("example.Holding");
+    measure["x-norn"]["timeDimension"] = json!({"property":"observed_at"});
+    measure["x-norn"]["defaultFilters"] = json!([]);
+    measure["x-norn"]
+        .as_object_mut()
+        .expect("policy")
+        .remove("currency");
+    question
+        .as_object_mut()
+        .expect("question")
+        .remove("compare");
+    question["name"] = json!("example.holding_total");
+    question["objectSet"] = json!("example.Holding");
+    question["aggregate"] = json!([{"metric":"example.holding_value"}]);
+    question["groupBy"] = json!([]);
+    (vec![decode(&measure)], decode(&question), catalog)
+}
+
+/// QUERY-GRAIN-1 (QUERY-FANOUT): one holding worth 80 linked to two tags totals 80
+/// at holding grain, in grams; grouping by the expanded tag grain refuses.
+#[test]
+fn query_grain_fanout_holding_80_with_two_tags_totals_80_and_expanded_grain_refuses() {
+    use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, admit, contribution::project};
+    let (definitions, question, catalog) = holding_fanout_fixture();
+    let plan = admit(&definitions, &question, &catalog, 100).expect("holding grain");
+    assert_eq!(plan.grain().as_str(), "example.Holding");
+    let [sum] = plan.sums() else {
+        panic!("one measure")
+    };
+    assert!(sum.filters.is_empty(), "no link traversal at root grain");
+    assert!(
+        matches!(&sum.property.kind, norn_checker::EffectiveKind::Base(
+        norn_ir::PropertyType::Decimal { unit: Some(unit), .. }
+    ) if unit.code == "g")
+    );
+    // The plan projects each root identity once; its two tags are not part of the row.
+    let holding = std::collections::BTreeMap::from([
+        ("value".into(), norn_ir::RuntimeValue::from(80_i64)),
+        (
+            "observed_at".into(),
+            norn_ir::RuntimeValue::from("2026-10-23T00:00:00Z"),
+        ),
+    ]);
+    let contribution = project(&plan, &holding)
+        .expect("project")
+        .expect("in window");
+    assert_eq!(contribution.bucket, norn_ir::RuntimeValue::Null);
+    assert_eq!(contribution.amounts, vec![Some(80_000_000)], "80 at 1e-6");
+
+    let mut expanded = question;
+    expanded.dimensions = vec![decode(
+        &json!({"path":{"links":["tags"],"property":"label"}}),
+    )];
+    let findings = admit(&definitions, &expanded, &catalog, 100).expect_err("expanded grain");
+    assert_code(&findings, codes::FAN_OUT);
+    assert_code(&findings, AMBIGUOUS_GRAIN);
+}
+
 proptest::proptest! {
     #[test]
     fn compute_deterministic_ratio_lowering_ignores_definition_order(reverse in proptest::bool::ANY, rotation in 0usize..3, filter_key in 0u32..32, max_items in 1u32..=1000) {
@@ -1129,18 +1211,124 @@ fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
     }
 }
 
+#[test]
+fn numeric_additivity_cannot_be_inferred_from_units_or_scale() {
+    for scale in 0u64..=18 {
+        for additive in [false, true] {
+            let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+            let properties = ontology[0]["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties");
+            let amount = properties
+                .iter_mut()
+                .find(|p| p["id"] == "weight")
+                .expect("weight");
+            amount["type"]["scale"] = json!(scale);
+            if !additive {
+                amount["type"]
+                    .as_object_mut()
+                    .expect("type")
+                    .remove("additivity");
+            }
+            let (mut metric, question) = sales();
+            metric["type_params"]["expr"] = json!("weight");
+            metric["x-norn"]
+                .as_object_mut()
+                .expect("extension")
+                .remove("currency");
+            let findings = check_metrics_and_questions(
+                &[decode(&metric)],
+                &[decode(&question)],
+                &catalog(&ontology.to_string()),
+            );
+            assert_eq!(
+                findings
+                    .iter()
+                    .any(|d| d.code == codes::UNDECLARED_ADDITIVITY),
+                !additive,
+                "scale {scale} additive {additive}"
+            );
+        }
+    }
+}
+
+fn question_wording() -> norn_checker::metric::question_display::QuestionWording {
+    use norn_checker::metric::question_display::{QuestionLabels, QuestionWording};
+    use norn_ir::deontic::TextDirection;
+    QuestionWording(std::collections::BTreeMap::from([
+        (
+            "en".into(),
+            QuestionLabels {
+                direction: TextDirection::Ltr,
+                population: "Population".into(),
+                measure: "Measure".into(),
+                by: "By".into(),
+                filters: "Where".into(),
+                effective_time: "Effective time".into(),
+                knowledge_time: "Knowledge policy".into(),
+            },
+        ),
+        (
+            "ar".into(),
+            QuestionLabels {
+                direction: TextDirection::Rtl,
+                population: "مجتمع البيانات".into(),
+                measure: "المقياس".into(),
+                by: "التجميع حسب".into(),
+                filters: "الشروط".into(),
+                effective_time: "وقت السريان".into(),
+                knowledge_time: "سياسة المعرفة".into(),
+            },
+        ),
+    ]))
+}
+
 proptest::proptest! {
     #[test]
-    fn numeric_additivity_cannot_be_inferred_from_units_or_scale(scale in 0u64..=18, additive in proptest::bool::ANY) {
-        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
-        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
-        let amount = properties.iter_mut().find(|p| p["id"] == "weight").expect("weight");
-        amount["type"]["scale"] = json!(scale);
-        if !additive { amount["type"].as_object_mut().expect("type").remove("additivity"); }
-        let (mut metric, question) = sales();
-        metric["type_params"]["expr"] = json!("weight");
-        metric["x-norn"].as_object_mut().expect("extension").remove("currency");
-        let findings = check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string()));
-        proptest::prop_assert_eq!(findings.iter().any(|d| d.code == codes::UNDECLARED_ADDITIVITY), !additive);
+    fn question_locale_identity(age in 1u64..=10000, pinned in proptest::bool::ANY) {
+        use norn_checker::metric::{compute::admit, question_display::render_question};
+        let (definitions,mut question,catalog) = keyed_compute_fixture();
+        question.freshness = if pinned { norn_ir::metric::FreshnessPolicy::AsOf { at:norn_ir::UtcTimestamp("2026-11-02T00:00:00Z".to_owned()) } } else { norn_ir::metric::FreshnessPolicy::Live { max_age_ms:norn_ir::WholeNumber(age) } };
+        let plan = admit(&definitions,&question,&catalog,100).expect("plan");
+        let wording = question_wording();
+        let en = render_question(&plan,&wording,"EN").expect("English");
+        let ar = render_question(&plan,&wording,"ar").expect("Arabic");
+        proptest::prop_assert_eq!(&en.question,&question);
+        proptest::prop_assert_eq!(&ar.question,&question);
+        proptest::prop_assert_eq!(&en.question_digest,&ar.question_digest);
+        proptest::prop_assert_eq!(&en.binding_digest,&ar.binding_digest);
+        proptest::prop_assert_eq!(en.slots.iter().map(|s|(&s.id,&s.text)).collect::<Vec<_>>(),ar.slots.iter().map(|s|(&s.id,&s.text)).collect::<Vec<_>>());
+        proptest::prop_assert_ne!(en.direction,ar.direction);
+        proptest::prop_assert!(en.slots[1].text.contains("kg"));
+        proptest::prop_assert!(en.slots[4].text.contains(&question.time_window.start.0));
+        let policy = if pinned { "as_of" } else { "live" };
+        proptest::prop_assert!(en.slots[5].text.contains(policy));
     }
+}
+
+#[test]
+fn question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_denominator() {
+    use norn_checker::metric::{compute::admit, question_display::render_question};
+    let (mut definitions, mut question, catalog) = keyed_compute_fixture();
+    let mut denominator = definitions[0].clone();
+    denominator.name = "erpnext.other".into();
+    let mut rate: MetricDefinition = decode(&ratio());
+    rate.norn.time_dimension = definitions[0].norn.time_dimension.clone();
+    question.metrics[0].metric.clone_from(&rate.name);
+    definitions.extend([denominator, rate]);
+    let plan = admit(&definitions, &question, &catalog, 100).expect("ratio plan");
+    let mut wording = question_wording();
+    let en = render_question(&plan, &wording, "en").expect("English");
+    assert_eq!(en.slots[1].text.matches("Σ(").count(), 2);
+    assert_eq!(en.slots[1].text.matches("kg").count(), 2);
+    assert!(en.slots[1].text.contains(" / "));
+    assert_eq!(
+        render_question(&plan, &wording, "fr").expect_err("no fallback"),
+        "law.wording.unknown_locale"
+    );
+    wording.0.get_mut("ar").expect("Arabic").measure.clear();
+    assert_eq!(
+        render_question(&plan, &wording, "en").expect_err("all translations complete"),
+        "law.wording.incomplete_locale"
+    );
 }

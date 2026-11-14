@@ -5,6 +5,8 @@ pub mod evidence;
 pub mod finite;
 /// Typed presentation of actual law guarantees and explicit missing evidence.
 pub mod guarantees;
+/// Translation-preservation goals and their proof status.
+pub mod translation;
 
 use crate::members::present_non_null;
 use crate::{IrVersion01, ProvenanceSource, ZenExpression};
@@ -83,6 +85,47 @@ pub struct LawIR {
     pub timing: Option<LawTiming>,
     /// Predicate or exact ontology-bound behavior/invariant identity.
     pub response: LawResponse,
+    /// The law owner's declared exception tree. Omitted when empty, and an
+    /// explicit `[]` is refused, so a law without exceptions has exactly one
+    /// encoding and keeps its canonical bytes and pin.
+    #[serde(
+        default,
+        deserialize_with = "nonempty_exceptions",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[schemars(length(min = 1))]
+    pub exceptions: Vec<LawException>,
+}
+
+/// One declared exception. When its condition holds and no exception that
+/// overrides it applies, the node it overrides does not apply. It has no other
+/// consequence: lifting is its only effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LawException {
+    /// Stable identity, unique within the tree and distinct from the law id.
+    pub id: String,
+    /// The law's own id, or the id of another exception in the same tree.
+    pub overrides: String,
+    /// Boolean ZEN predicate over the law subject's `self` environment.
+    pub condition: ZenExpression,
+    /// Reviewed explanation.
+    pub rationale: String,
+    /// Source location of the declaration.
+    pub source: crate::deontic::RuleSourceSpan,
+}
+
+fn nonempty_exceptions<'de, D>(deserializer: D) -> Result<Vec<LawException>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let exceptions = Vec::<LawException>::deserialize(deserializer)?;
+    if exceptions.is_empty() {
+        return Err(serde::de::Error::custom(
+            "omit `exceptions` rather than declaring an empty list",
+        ));
+    }
+    Ok(exceptions)
 }
 
 /// Applicability of a law. All filters are conjunctive; type lists denote a union.
@@ -201,6 +244,16 @@ pub enum LawResponse {
         property: String,
         /// Transition member id.
         transition_id: String,
+    },
+    /// TRANSLATION-PRESERVES-1: the subject is the source contract, the law's
+    /// condition is admission, and `self` in each assignment is the source record.
+    TranslationPreserves {
+        /// Exact target object type, the target contract.
+        target_type: String,
+        /// Total executable map from target property id to ZEN over the source.
+        assignments: std::collections::BTreeMap<String, ZenExpression>,
+        /// The named observation this law protects.
+        observation: translation::TranslationObservation,
     },
 }
 

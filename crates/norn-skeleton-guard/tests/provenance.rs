@@ -124,16 +124,6 @@ fn complete_lineage_includes_generated_release_and_embedded_copies() {
             .iter()
             .any(|r| r.contains("rejected ancestor"))
     );
-    f.write("input.json", b"independently authored toy");
-    let head = bind_fixture(&f);
-    assert!(bound_report(&f, &head).errors().is_empty());
-    f.write("input.json", b"tampered after immutable binding");
-    assert!(
-        bound_report(&f, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("bound byte drift"))
-    );
 }
 
 #[test]
@@ -169,16 +159,7 @@ fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
     let i = f.add("crates/a/src/lib.rs", b"// a", "code");
     f.passes();
     f.records[i]["sha256"] = json!("0".repeat(64));
-    f.rejects("content hash drift"); // explicit legacy distribution still refuses
-    let head = bind_fixture(&f);
-    assert!(bound_report(&f, &head).errors().is_empty());
-    f.write("crates/a/src/lib.rs", b"// post-commit drift");
-    assert!(
-        bound_report(&f, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("bound byte drift"))
-    );
+    f.rejects("content hash drift");
     let mut f = Fixture::new();
     f.add("crates/a/src/lib.rs", b"// a", "code");
     f.save();
@@ -514,9 +495,17 @@ const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quan
 
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
-    fixture.add(".github/workflows/core.yml", b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
+    // A pull_request workflow cancels its superseded PR runs and nothing else.
+    fixture.add(".github/workflows/core.yml", b"on: pull_request\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n", "code");
     for path in [
+        "crates/norn-skeleton-guard/src/ci/mod.rs",
+        "crates/norn-skeleton-guard/src/ci/yaml.rs",
+        "verification/coverage-v1/fixtures/pull-request-concurrency.json",
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
+        "scripts/ci/implementation_receipts.py",
         ".config/nextest.toml",
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
@@ -582,6 +571,362 @@ fn index_fixture(fixture: &Fixture) {
     }
 }
 
+/// The whole guard crate is the gate: a file added under it or changed in it is a gate change.
+#[test]
+fn trusted_policy_gates_every_file_of_the_guard_crate() {
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // An unlisted file added under the crate (say a module copy to redirect to).
+    let mut candidate = policy_fixture();
+    candidate.add(
+        "crates/norn-skeleton-guard/src/ci_alt/mod.rs",
+        b"pub fn rule() {}\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+    // A changed file under the crate, with its provenance hash updated.
+    let path = "crates/norn-skeleton-guard/src/ci/mod.rs";
+    let mut candidate = policy_fixture();
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.write(path, b"pub fn rule() {}\n");
+    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+    candidate.save();
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error.contains(&format!(
+            "{path}: gate contract differs from the trusted base"
+        ))),
+        "{errors:?}"
+    );
+}
+
+/// The trusted binary's build closure is the gated crate directory (D95): the root manifest
+/// and lockfile are ordinary files, so a candidate that swaps a guard dependency in the root
+/// `Cargo.lock` needs no `/approve-gates`, and cannot change the binary. The guard's own
+/// lockfile and the Cargo configuration it builds under are gates.
+#[test]
+fn the_trusted_build_closure_is_the_gated_guard_directory() {
+    let mut base = policy_fixture();
+    base.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+    base.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+    base.add("Cargo.lock", b"version = 4\n", "code");
+    base.add(
+        "crates/norn-skeleton-guard/Cargo.lock",
+        b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+        "code",
+    );
+    base.save();
+    index_fixture(&base);
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    let changed = |path: &str, data: &[u8]| {
+        let mut candidate = policy_fixture();
+        candidate.add(".cargo/config.toml", b"[alias]\nxtask = \"run\"\n", "code");
+        candidate.add("Cargo.toml", b"[workspace]\nmembers = []\n", "code");
+        candidate.add("Cargo.lock", b"version = 4\n", "code");
+        candidate.add(
+            "crates/norn-skeleton-guard/Cargo.lock",
+            b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\n",
+            "code",
+        );
+        let record = candidate
+            .records
+            .iter()
+            .position(|record| record["path"] == path)
+            .expect("fixture record");
+        candidate.write(path, data);
+        candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
+        candidate.save();
+        index_fixture(&candidate);
+        norn_skeleton_guard::ci::run(candidate.root(), base.root())
+    };
+    // Root manifest and lockfile: a substituted guard dependency is not a gate change.
+    let substituted = b"version = 4\n[[package]]\nname = \"syn\"\nversion = \"2.0.0\"\nsource = \"git+https://example.invalid/syn\"\n";
+    assert_eq!(changed("Cargo.lock", substituted), Vec::<String>::new());
+    assert_eq!(
+        changed("Cargo.toml", b"[workspace]\nmembers = [\"crates/x\"]\n"),
+        Vec::<String>::new()
+    );
+    // The guard's own lockfile and the Cargo configuration are gates.
+    for (path, data) in [
+        ("crates/norn-skeleton-guard/Cargo.lock", &substituted[..]),
+        (
+            ".cargo/config.toml",
+            b"[patch.crates-io]\nsyn = { path = \"x\" }\n",
+        ),
+    ] {
+        let errors = changed(path, data);
+        assert!(
+            errors.iter().any(|error| error.contains(&format!(
+                "{path}: gate contract differs from the trusted base"
+            ))),
+            "{path}: {errors:?}"
+        );
+    }
+}
+
+/// What the trusted build reads besides the guard crate is a gate (#1258 round 4): `.cargo/`
+/// (Cargo config applies whatever `--manifest-path` says) and the toolchain files, which
+/// must stay absent while the base has none. A gate file's mode is part of its contract.
+#[test]
+fn trusted_policy_gates_cargo_config_toolchain_files_and_modes() {
+    let refused = |candidate: &Fixture, base: &Fixture, wanted: &str| {
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+        assert!(
+            errors.iter().any(|error| error.contains(wanted)),
+            "{wanted}: {errors:?}"
+        );
+    };
+    let base = policy_fixture();
+    assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
+    // Adding a toolchain file where the base has none.
+    for path in ["rust-toolchain.toml", "rust-toolchain"] {
+        let mut candidate = policy_fixture();
+        candidate.add(path, b"[toolchain]\npath = \"/tmp/evil\"\n", "code");
+        candidate.save();
+        index_fixture(&candidate);
+        refused(
+            &candidate,
+            &base,
+            &format!("{path}: gate contract differs from the trusted base"),
+        );
+    }
+    // Adding `.cargo/config.toml` with a rustc wrapper where the base has none.
+    let mut candidate = policy_fixture();
+    candidate.add(
+        ".cargo/config.toml",
+        b"[build]\nrustc-wrapper = \"/tmp/wrap\"\n",
+        "code",
+    );
+    candidate.save();
+    index_fixture(&candidate);
+    refused(
+        &candidate,
+        &base,
+        ".cargo/: gate inventory differs from the trusted base",
+    );
+    // Changing `[env]` in an existing `.cargo/config.toml`.
+    let config = |env: &[u8]| {
+        let mut fixture = policy_fixture();
+        let record = fixture.add(".cargo/config.toml", env, "code");
+        fixture.save();
+        index_fixture(&fixture);
+        (fixture, record)
+    };
+    let (cargo_base, _) = config(b"[alias]\nxtask = \"run\"\n");
+    assert!(norn_skeleton_guard::ci::run(cargo_base.root(), cargo_base.root()).is_empty());
+    let (mut cargo_candidate, record) = config(b"[alias]\nxtask = \"run\"\n");
+    cargo_candidate.write(
+        ".cargo/config.toml",
+        b"[alias]\nxtask = \"run\"\n[env]\nPATH = \"/tmp/bin\"\n",
+    );
+    cargo_candidate.records[record]["sha256"] =
+        cargo_candidate.reference(".cargo/config.toml")["sha256"].clone();
+    cargo_candidate.save();
+    refused(
+        &cargo_candidate,
+        &cargo_base,
+        ".cargo/config.toml: gate contract differs from the trusted base",
+    );
+    // An exec-bit flip on a gate file with identical bytes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [
+            "scripts/ci/core.sh",
+            "crates/norn-skeleton-guard/baseline.json",
+        ] {
+            let candidate = policy_fixture();
+            std::fs::set_permissions(
+                candidate.root().join(path),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .expect("chmod");
+            refused(
+                &candidate,
+                &base,
+                &format!("{path}: gate contract differs from the trusted base"),
+            );
+        }
+    }
+}
+
+/// Removing a file under a gate directory is a gate change, even with its record removed.
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "stage the removal in disposable policy test data"
+)]
+fn trusted_policy_refuses_removing_a_file_under_a_gate_directory() {
+    let base = policy_fixture();
+    let path = "crates/norn-skeleton-guard/src/ci/yaml.rs";
+    let mut candidate = policy_fixture();
+    std::fs::remove_file(candidate.root().join(path)).expect("remove");
+    let record = candidate
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("crate record");
+    candidate.records.remove(record);
+    candidate.save();
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(candidate.root())
+            .args(["add", "-A"])
+            .status()
+            .expect("git rm")
+            .success()
+    );
+    let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
+    assert!(
+        errors.iter().any(|error| error
+            .contains("crates/norn-skeleton-guard/: gate inventory differs from the trusted base")),
+        "{errors:?}"
+    );
+}
+
+/// Gated sources cannot stand an ungated file in for gated code: refused even with no gate
+/// change (a tree checked against itself), so a merged one could never be the base.
+/// Every `include!` target is scanned as Rust whatever its extension, and must be tracked.
+#[test]
+fn trusted_policy_scans_include_targets_and_requires_them_tracked() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    // An `include!` target compiles as Rust whatever its extension, so it is scanned too.
+    let data = "crates/norn-skeleton-guard/src/ci/extra.txt";
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/extra.txt\");\n", "code");
+    tree.add(
+        data,
+        b"#[path = \"../../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors
+            .iter()
+            .any(|error| error
+                == &format!("{data}: a `path` attribute is refused in a gated source")),
+        "non-.rs include: {errors:?}"
+    );
+    // An include target must be tracked: an untracked file under the crate is refused.
+    let mut tree = policy_fixture();
+    tree.add(lib, b"include!(\"ci/untracked.rs\");\n", "code");
+    tree.save();
+    index_fixture(&tree);
+    tree.write(
+        "crates/norn-skeleton-guard/src/ci/untracked.rs",
+        b"pub fn f() {}\n",
+    );
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(
+        errors.iter().any(|error| error.contains(
+            "`include!` of crates/norn-skeleton-guard/src/ci/untracked.rs, untracked or outside every gate, is refused"
+        )),
+        "untracked include: {errors:?}"
+    );
+}
+
+#[test]
+fn trusted_policy_refuses_guard_sources_that_reach_outside_every_gate() {
+    let lib = "crates/norn-skeleton-guard/src/lib.rs";
+    for (label, source, refusal) in [
+        (
+            "#[path] to a module outside the crate",
+            "#[path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#[path] inside cfg_attr",
+            "#[cfg_attr(test, path = \"ci_alt/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "#![path] as an inner attribute",
+            "mod ci {\n    #![path = \"x\"]\n}\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "include! of an ungated file",
+            "include!(\"../../../README.md\");\n",
+            "`include!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "include_str! climbing above the repository",
+            "const X: &str = include_str!(\"../../../../outside.json\");\n",
+            "is used other than as a direct",
+        ),
+        (
+            "include! of a macro-built path",
+            "include!(concat!(\"../\", \"x.rs\"));\n",
+            "`include` is used other than as a direct",
+        ),
+        (
+            "an include inside another macro's arguments",
+            "fn f() {\n    assert!(include_str!(\"../../../README.md\").is_empty());\n}\n",
+            "`include_str!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "a renamed include macro",
+            "use std::include_str as read;\n",
+            "`include_str` is used other than as a direct",
+        ),
+        (
+            "an absolute include path",
+            "const X: usize = core::convert::identity(include_bytes!(\"/etc/hostname\").len());\n",
+            "`include_bytes` is used other than as a direct",
+        ),
+        (
+            "a raw-identifier include macro",
+            "r#include!(\"../../../README.md\");\n",
+            "`include!` of README.md, untracked or outside every gate, is refused",
+        ),
+        (
+            "a raw-identifier path attribute",
+            "#[r#path = \"../../../elsewhere/ci/mod.rs\"]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+        (
+            "a raw-identifier path attribute inside cfg_attr",
+            "#[cfg_attr(all(), r#path = \"../../../elsewhere/ci/mod.rs\")]\npub mod ci;\n",
+            "a `path` attribute is refused in a gated source",
+        ),
+    ] {
+        let mut tree = policy_fixture();
+        tree.add(lib, source.as_bytes(), "code");
+        tree.save();
+        index_fixture(&tree);
+        let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+        assert!(
+            errors.iter().any(|error| error.contains(refusal)),
+            "{label}: {errors:?}"
+        );
+    }
+    // A direct include of a gate file (or of a file inside the crate) is admitted.
+    let mut tree = policy_fixture();
+    tree.add(
+        lib,
+        b"pub const RULE: &str = include_str!(\"../../../verification/coverage-v1/validate.py\");\npub const SELF: &str = include_str!(\"ci/yaml.rs\");\n",
+        "code",
+    );
+    tree.save();
+    index_fixture(&tree);
+    let errors = norn_skeleton_guard::ci::run(tree.root(), tree.root());
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 #[test]
 fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated_hashes() {
     let base = policy_fixture();
@@ -589,6 +934,10 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
     for path in [
         ".github/workflows/core.yml",
         "scripts/ci/core.sh",
+        "scripts/ci/contract_diff.py",
+        "scripts/ci/test_contract_diff.py",
+        "scripts/ci/contract-breaks.json",
+        "scripts/ci/implementation_receipts.py",
         "verification/coverage-v1/negative_canaries.py",
     ] {
         let mut candidate = policy_fixture();
@@ -621,6 +970,29 @@ fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated
         errors
             .iter()
             .any(|error| error.contains("workflow inventory differs")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn policy_requires_pull_request_workflows_to_cancel_only_superseded_pr_runs() {
+    let mut fixture = policy_fixture();
+    let path = ".github/workflows/core.yml";
+    let record = fixture
+        .records
+        .iter()
+        .position(|record| record["path"] == path)
+        .expect("workflow record");
+    fixture.write(
+        path,
+        b"on: pull_request\njobs:\n  core:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo synthetic\n",
+    );
+    fixture.records[record]["sha256"] = fixture.reference(path)["sha256"].clone();
+    fixture.save();
+    let errors = norn_skeleton_guard::ci::run(fixture.root(), fixture.root());
+    assert!(
+        errors.iter().any(|error| error
+            == ".github/workflows/core.yml: a pull_request workflow needs a workflow-level concurrency mapping that cancels its superseded PR runs"),
         "{errors:?}"
     );
 }
@@ -930,7 +1302,7 @@ fn git_in(fixture: &Fixture, args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("git fixture");
-    assert!(out.status.success(), "git fixture failed");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
@@ -1141,957 +1513,4 @@ fn merge_group_admits_a_shared_head_when_any_of_its_pull_requests_is_approved() 
         &group_checked(&candidate, &base, &head, &pulls[..1]),
         "only Norn-cloud/norn branches",
     );
-}
-
-fn bind_fixture(f: &Fixture) -> String {
-    f.save();
-    index_fixture(f);
-    commit_fixture(f)
-}
-
-fn bound_report(f: &Fixture, head: &str) -> provenance::Report {
-    provenance::check_bound(
-        f.root(),
-        &provenance::BoundSource {
-            source: f.root(),
-            head,
-            base: f.root(),
-            repository: "Norn-cloud/norn",
-        },
-        false,
-    )
-}
-
-fn ack_entry(id: u64, head: &str, created: &str) -> Value {
-    json!({"id":id,"comment_id":id,"kind":"ack","created_at":created,"recorded_at":created,
-        "comment":{"id":id,"user":"owner","permission":"admin","body":format!("/ack-rights {head}"),
-        "created_at":created,"updated_at":created}})
-}
-
-fn checkpoint_targets(doc: &mut Value) {
-    for trees in doc["rights"].as_object_mut().unwrap().values_mut() {
-        for ledger in trees.as_object_mut().unwrap().values_mut() {
-            if ledger.get("failure_version").is_none() {
-                ledger["failure_version"] = json!(0);
-            }
-            if ledger.get("verdicts").is_none() {
-                ledger["verdicts"] = json!([]);
-            }
-            let data = json!({"head_sha":ledger["head_sha"],"tree_sha":ledger["tree_sha"],"pending":ledger["pending"],
-                "entries":ledger["entries"],"failure_version":ledger["failure_version"]});
-            ledger["checkpoint"] =
-                json!({"digest":norn_skeleton_guard::ci::rights_digest(&data).unwrap()});
-        }
-    }
-}
-
-fn checkpoint_publication(f: &Fixture, doc: &mut Value) {
-    checkpoint_targets(doc);
-    let head = doc
-        .get("head_sha")
-        .unwrap_or_else(|| &doc["merge_group"]["head_sha"])
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let tree = git_in(f, &["rev-parse", &format!("{head}^{{tree}}")]);
-    let targets: serde_json::Map<String, Value> = doc["rights"]
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(head, trees)| {
-            (
-                head.clone(),
-                trees.as_object().unwrap().values().next().unwrap()["checkpoint"]["digest"].clone(),
-            )
-        })
-        .collect();
-    let data = json!({"head_sha":head,"tree_sha":tree,"failure_version":0,"targets":targets});
-    doc["publication"] = data.clone();
-    doc["publication"]["digest"] = json!(norn_skeleton_guard::ci::rights_digest(&data).unwrap());
-    doc["publication"]["verdicts"] = json!([]);
-}
-
-fn rights_evidence(f: &Fixture, doc: &Value) -> String {
-    let mut doc = doc.clone();
-    checkpoint_publication(f, &mut doc);
-    doc.to_string()
-}
-
-fn fixture_rights_acknowledgment(doc: &Value, head: &str, tree: &str) -> Result<String, String> {
-    let mut doc = doc.clone();
-    checkpoint_targets(&mut doc);
-    norn_skeleton_guard::ci::rights_acknowledgment(&doc, head, tree)
-}
-
-fn rights_document(head: &str, base: &str) -> Value {
-    let tree = "3".repeat(40);
-    let mut doc = json!({"repository":"Norn-cloud/norn","head_repository":"Norn-cloud/norn",
-        "head_sha":head,"base_sha":base,"comments":[],"rights":{}});
-    doc["rights"][head][&tree] = json!({"head_sha":head,"tree_sha":tree,"pending":[],
-        "entries":[ack_entry(1, head, "2026-11-03T00:00:00Z")]});
-    doc
-}
-
-fn rights_for(f: &Fixture, head: &str, base: &str) -> Value {
-    let mut doc = rights_document(head, base);
-    let tree = git_in(f, &["rev-parse", &format!("{head}^{{tree}}")]);
-    let mut ledger = doc["rights"][head]
-        .as_object_mut()
-        .unwrap()
-        .remove(&"3".repeat(40))
-        .unwrap();
-    ledger["tree_sha"] = json!(tree);
-    doc["rights"][head][&tree] = ledger;
-    checkpoint_publication(f, &mut doc);
-    doc
-}
-
-fn group_ledgers(f: &Fixture, heads: &[String], base: &str) -> Value {
-    let mut result = serde_json::Map::new();
-    for head in heads {
-        result.extend(
-            rights_for(f, head, base)["rights"]
-                .as_object()
-                .unwrap()
-                .clone(),
-        );
-    }
-    Value::Object(result)
-}
-
-fn target_ledger<'a>(doc: &'a mut Value, head: &str) -> &'a mut Value {
-    doc["rights"][head]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-        .next()
-        .unwrap()
-}
-
-#[test]
-fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_rights() {
-    let f = policy_fixture();
-    let base = commit_fixture(&f);
-    f.write(
-        "crates/norn-ir/src/lib.rs",
-        b"pub enum ArtifactKind { Entity, Law }\n// authored edit\n",
-    );
-    let head = commit_fixture(&f);
-    assert!(bound_report(&f, &head).errors().is_empty());
-    let document = rights_for(&f, &head, &base);
-    let tree = git_in(&f, &["rev-parse", &format!("{head}^{{tree}}")]);
-    assert!(fixture_rights_acknowledgment(&document, &head, &tree).is_ok());
-    for mutation in [
-        "missing",
-        "repository",
-        "stale",
-        "edited",
-        "nonadmin",
-        "revoked",
-        "duplicate",
-        "unreconciled",
-        "missing-events",
-        "tree",
-    ] {
-        let mut doc = document.clone();
-        match mutation {
-            "repository" => doc["repository"] = json!("other/repo"),
-            "stale" => doc["head_sha"] = json!(base),
-            "missing" => target_ledger(&mut doc, &head)["entries"] = json!([]),
-            "edited" => {
-                target_ledger(&mut doc, &head)["entries"][0]["comment"]["updated_at"] =
-                    json!("2026-11-03T01:00:00Z");
-            }
-            "nonadmin" => {
-                target_ledger(&mut doc, &head)["entries"][0]["comment"]["permission"] =
-                    json!("write");
-            }
-            "revoked" => target_ledger(&mut doc, &head)["entries"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"})),
-            "duplicate" => {
-                let entry = target_ledger(&mut doc, &head)["entries"][0].clone();
-                target_ledger(&mut doc, &head)["entries"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(entry);
-            }
-            "unreconciled" => target_ledger(&mut doc, &head)["pending"] = json!([42]),
-            "missing-events" => {
-                target_ledger(&mut doc, &head)
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("pending");
-            }
-            "tree" => target_ledger(&mut doc, &head)["tree_sha"] = json!("0".repeat(40)),
-            _ => unreachable!(),
-        }
-        assert!(
-            fixture_rights_acknowledgment(&doc, &head, &tree).is_err(),
-            "{mutation}"
-        );
-    }
-    let mut gate_only = document;
-    target_ledger(&mut gate_only, &head)["entries"][0]["comment"]["body"] =
-        json!(format!("/approve-gates {head}"));
-    assert!(fixture_rights_acknowledgment(&gate_only, &head, &tree).is_err());
-}
-
-#[test]
-fn deleting_a_live_rights_acknowledgment_cannot_revive_an_older_review() {
-    let head = "1".repeat(40);
-    let mut doc = rights_document(&head, &"2".repeat(40));
-    let check = |doc: &Value| fixture_rights_acknowledgment(doc, &head, &"3".repeat(40));
-    assert!(check(&doc).is_ok());
-    target_ledger(&mut doc, &head)["entries"]
-        .as_array_mut()
-        .unwrap()
-        .push(ack_entry(2, &head, "2026-11-03T00:00:01Z"));
-    assert!(check(&doc).is_ok()); // One target, latest recorded review.
-    target_ledger(&mut doc, &head)["entries"][1]["comment"] = Value::Null;
-    assert!(check(&doc).is_err()); // The persistent frontier cannot fall back to review 1.
-    target_ledger(&mut doc, &head)["entries"]
-        .as_array_mut()
-        .unwrap()
-        .push(ack_entry(3, &head, "2026-11-03T00:02:00Z"));
-    assert!(check(&doc).is_ok());
-    target_ledger(&mut doc, &head)["entries"][2]["comment"]["updated_at"] =
-        json!("2026-11-03T00:03:00Z");
-    assert!(check(&doc).is_err());
-}
-
-#[test]
-fn immutable_binding_refuses_post_commit_payload_record_and_staged_inventory_changes() {
-    for path in ["payload", &format!("{RECORDS}payload.json")] {
-        let mut f = Fixture::new();
-        f.add("payload", b"authored input", "code");
-        let head = bind_fixture(&f);
-        f.write(path, b"post-commit mutation");
-        git_in(&f, &["add", "."]);
-        assert!(
-            bound_report(&f, &head)
-                .errors()
-                .iter()
-                .any(|e| e.contains("bound byte drift"))
-        );
-    }
-    let mut staged = Fixture::new();
-    staged.add("payload", b"authored input", "code");
-    let head = bind_fixture(&staged);
-    staged.write("payload", b"staged bytes");
-    git_in(&staged, &["add", "."]);
-    staged.write("payload", b"authored input");
-    assert!(
-        bound_report(&staged, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("index differs"))
-    );
-    let mut f = Fixture::new();
-    f.add("payload", b"authored input", "code");
-    let head = bind_fixture(&f);
-    f.write("extra", b"staged addition");
-    git_in(&f, &["add", "."]);
-    assert!(!bound_report(&f, &head).errors().is_empty());
-}
-
-#[test]
-fn bound_distribution_requires_independent_members_bytes_and_control_files() {
-    let mut f = Fixture::new();
-    let i = f.add("payload", b"authored input", "code");
-    f.records[i]["sha256"] = json!("0".repeat(64));
-    let head = bind_fixture(&f);
-    let output = tempfile::tempdir().unwrap();
-    for (path, entry) in norn_skeleton_guard::ci::git::tree(f.root(), &head).unwrap() {
-        let target = output.path().join(path);
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(target, entry.bytes).unwrap();
-    }
-    let check = || {
-        provenance::check_bound(
-            output.path(),
-            &provenance::BoundSource {
-                source: f.root(),
-                head: &head,
-                base: f.root(),
-                repository: "Norn-cloud/norn",
-            },
-            true,
-        )
-    };
-    assert!(check().errors().is_empty());
-    assert!(
-        !provenance::check_distribution(output.path())
-            .errors()
-            .is_empty()
-    );
-    for path in ["payload", MANIFEST, &format!("{RECORDS}payload.json")] {
-        let target = output.path().join(path);
-        let before = fs::read(&target).unwrap();
-        fs::write(&target, b"mutation").unwrap();
-        assert!(!check().errors().is_empty(), "{path}");
-        fs::remove_file(&target).unwrap();
-        assert!(!check().errors().is_empty(), "missing {path}");
-        fs::write(&target, before).unwrap();
-    }
-    fs::write(output.path().join("forged-export-inventory.json"), b"{}").unwrap();
-    assert!(!check().errors().is_empty());
-    assert!(
-        !provenance::check_distribution(output.path())
-            .errors()
-            .is_empty()
-    );
-}
-
-#[test]
-fn actual_bytes_preserve_source_and_rejection_closure_despite_misleading_legacy_hashes() {
-    for legacy in [None, Some("0".repeat(64)), Some("f".repeat(64))] {
-        let mut f = Fixture::new();
-        let i = f.add("renamed.json", b"known source bytes", "code");
-        let actual = f.reference("renamed.json")["sha256"].clone();
-        f.add("registry/standards/sources.lock.json", &serde_json::to_vec(&json!([{
-            "sourceId":"source.toy", "releaseId":"1.0.0", "license":"GPL-3.0", "redistribution":"vendored",
-            "files":[{"path":"original.json", "sha256":actual}]
-        }])).unwrap(), "provenance-evidence");
-        if let Some(hash) = &legacy {
-            f.records[i]["sha256"] = json!(hash);
-        } else {
-            f.records[i].as_object_mut().unwrap().remove("sha256");
-        }
-        let head = bind_fixture(&f);
-        assert!(
-            bound_report(&f, &head)
-                .errors()
-                .iter()
-                .any(|e| e.contains("requires derivation from source.toy"))
-        );
-
-        let mut f = Fixture::new();
-        f.add("bad", b"rejected identical bytes", "extraction-database");
-        f.add("renamed", b"rejected identical bytes", "code");
-        f.derived("descendant", "renamed", "generated");
-        for (index, record) in f.records.iter_mut().enumerate() {
-            if legacy.is_none() {
-                record.as_object_mut().unwrap().remove("sha256");
-            } else {
-                record["sha256"] = json!(format!("{index:064x}"));
-            }
-        }
-        let head = bind_fixture(&f);
-        let report = bound_report(&f, &head);
-        assert!(
-            report.rejected_paths["renamed"]
-                .iter()
-                .any(|e| e.contains("content matches a rejected"))
-        );
-        assert!(
-            report.rejected_paths["descendant"]
-                .iter()
-                .any(|e| e.contains("rejected ancestor"))
-        );
-
-        let mut f = Fixture::new();
-        let i = f.add("payload", b"changed upstream bytes", "standards-data");
-        let pin = hex::encode(Sha256::digest(b"original upstream bytes"));
-        let path = "registry/standards/sources.lock.json";
-        f.add(path, &serde_json::to_vec(&json!([{"sourceId":"source.toy", "releaseId":"1.0.0", "license":"Apache-2.0", "redistribution":"vendored", "files":[{"path":"payload","sha256":pin}]}])).unwrap(), "provenance-evidence");
-        f.records[i]["origin"] = json!("upstream");
-        f.records[i]["sources"] =
-            json!([{"id":"source.toy","revision":"1.0.0","evidence":f.reference(path)}]);
-        if legacy.is_none() {
-            f.records[i].as_object_mut().unwrap().remove("sha256");
-        } else {
-            f.records[i]["sha256"] = json!(pin);
-        } // lie that bytes still match the catalog
-        let head = bind_fixture(&f);
-        assert!(
-            bound_report(&f, &head)
-                .errors()
-                .iter()
-                .any(|e| e.contains("differs from pinned source"))
-        );
-    }
-}
-
-#[test]
-fn bound_mode_preserves_missing_record_ancestry_and_nested_evidence_refusals() {
-    let mut f = Fixture::new();
-    f.add("input", b"authored input", "synthetic-fixture");
-    f.derived("generated", "input", "synthetic-golden");
-    f.derived("release", "generated", "generated");
-    let head = bind_fixture(&f);
-    f.write("input", b"uncommitted drift");
-    assert!(!bound_report(&f, &head).errors().is_empty());
-    // Once committed, a deterministic rights contradiction still taints ancestry.
-    f.records[1]["category"] = json!("extraction-database");
-    let head = bind_fixture(&f);
-    assert!(
-        bound_report(&f, &head)
-            .rejected_paths
-            .contains_key("release")
-    );
-    f.records[1]["category"] = json!("synthetic-fixture");
-    f.records[1]["rights_evidence"][0]["sha256"] = json!("0".repeat(64));
-    let head = bind_fixture(&f);
-    assert!(
-        bound_report(&f, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("tampered evidence"))
-    );
-    f.records.remove(1);
-    let head = bind_fixture(&f);
-    assert!(
-        bound_report(&f, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("missing shipped-artifact"))
-    );
-}
-
-#[test]
-fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integration() {
-    let mut f = policy_fixture();
-    f.add("notes", b"first\n2\n3\n4\n5\n6\n7\n8\n9\nlast\n", "code");
-    let base = bind_fixture(&f);
-    git_in(&f, &["branch", "-M", "queue"]);
-    let trusted_dir = tempfile::tempdir().unwrap();
-    let trusted = trusted_dir.path().join("base");
-    git_in(
-        &f,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            trusted.to_str().unwrap(),
-            &base,
-        ],
-    );
-    let mut heads = Vec::new();
-    for (branch, content) in [
-        ("pr-a", "FIRST\n2\n3\n4\n5\n6\n7\n8\n9\nlast\n"),
-        ("pr-b", "first\n2\n3\n4\n5\n6\n7\n8\n9\nLAST\n"),
-    ] {
-        git_in(&f, &["checkout", "--quiet", "-b", branch, &base]);
-        f.write("notes", content.as_bytes());
-        heads.push(commit_fixture(&f));
-        git_in(&f, &["checkout", "--quiet", "queue"]);
-        git_in(&f, &["merge", "--quiet", "--no-ff", "--no-edit", branch]);
-    }
-    let head = git_in(&f, &["rev-parse", "HEAD"]);
-    let doc = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":head},
-        "pull_requests":heads.iter().map(|h| rights_for(&f, h, &base)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &heads, &base)});
-    let admission = |doc: &Value, head: &str| {
-        let mut doc = doc.clone();
-        checkpoint_publication(&f, &mut doc);
-        norn_skeleton_guard::ci::rights_admission(&doc, f.root(), &trusted, head)
-    };
-    assert!(admission(&doc, &head).is_ok());
-    let evidence = trusted_dir.path().join("group-evidence.json");
-    fs::write(&evidence, rights_evidence(&f, &doc)).unwrap();
-    let report = norn_skeleton_guard::ci::check_with_rights(
-        f.root(),
-        &trusted,
-        &head,
-        "Norn-cloud/norn",
-        None,
-        &evidence,
-    );
-    assert!(report.errors.is_empty(), "{:?}", report.errors);
-    assert!(
-        provenance::check_bound(
-            f.root(),
-            &provenance::BoundSource {
-                source: f.root(),
-                head: &head,
-                base: &trusted,
-                repository: "Norn-cloud/norn"
-            },
-            false
-        )
-        .errors()
-        .is_empty()
-    );
-    assert_durable_group_revocation(&f, &trusted, &head, &doc, &evidence);
-    let mut missing = doc.clone();
-    target_ledger(&mut missing, &heads[1])["entries"] = json!([]);
-    assert!(admission(&missing, &head).is_err());
-    // Rewrite the merge result with a metadata-only addition: no new parent,
-    // but a tree that no acknowledged head or clean integration accounts for.
-    f.write(&format!("{RECORDS}notes.json"), b"{}");
-    git_in(&f, &["add", "."]);
-    git_in(&f, &["commit", "--quiet", "--amend", "--no-edit"]);
-    let tampered = git_in(&f, &["rev-parse", "HEAD"]);
-    let mut modified = doc;
-    modified["merge_group"]["head_sha"] = json!(tampered);
-    assert!(
-        admission(&modified, &tampered)
-            .unwrap_err()
-            .contains("integration-only")
-    );
-}
-
-fn assert_durable_group_revocation(
-    f: &Fixture,
-    trusted: &Path,
-    head: &str,
-    doc: &Value,
-    evidence: &Path,
-) {
-    let pull = doc["pull_requests"][0]["head_sha"].as_str().unwrap();
-    for edited in [false, true] {
-        let mut revoked = doc.clone();
-        target_ledger(&mut revoked, pull)["entries"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"}));
-        if edited {
-            target_ledger(&mut revoked, pull)["entries"][0]["comment"]["body"] =
-                json!("ordinary text");
-        }
-        fs::write(evidence, rights_evidence(f, &revoked)).unwrap();
-        let report = norn_skeleton_guard::ci::check_with_rights(
-            f.root(),
-            trusted,
-            head,
-            "Norn-cloud/norn",
-            None,
-            evidence,
-        );
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|e| e.contains("unacknowledged constituent"))
-        );
-        target_ledger(&mut revoked, pull)["entries"]
-            .as_array_mut()
-            .unwrap()
-            .push(ack_entry(3, pull, "2026-11-03T00:01:01Z"));
-        fs::write(evidence, rights_evidence(f, &revoked)).unwrap();
-        let report = norn_skeleton_guard::ci::check_with_rights(
-            f.root(),
-            trusted,
-            head,
-            "Norn-cloud/norn",
-            None,
-            evidence,
-        );
-        assert!(report.errors.is_empty());
-    }
-}
-
-#[test]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "exercise the real trusted CLI over synthetic event data"
-)]
-fn trusted_pr_event_and_cli_require_separate_rights_evidence_on_the_inspected_head() {
-    let f = policy_fixture();
-    let base = commit_fixture(&f);
-    let temporary = tempfile::tempdir().unwrap();
-    let trusted = temporary.path().join("base");
-    git_in(
-        &f,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            trusted.to_str().unwrap(),
-            &base,
-        ],
-    );
-    f.write(
-        "crates/norn-ir/src/lib.rs",
-        b"pub enum ArtifactKind { Entity, Law }\n// authored change without a hash refresh\n",
-    );
-    let head = commit_fixture(&f);
-    let evidence = temporary.path().join("rights.json");
-    fs::write(&evidence, rights_for(&f, &head, &base).to_string()).unwrap();
-    let report = norn_skeleton_guard::ci::check_with_rights(
-        f.root(),
-        &trusted,
-        &head,
-        "Norn-cloud/norn",
-        None,
-        &evidence,
-    );
-    assert!(report.errors.is_empty(), "{:?}", report.errors);
-    let binding = report.provenance.binding.unwrap();
-    assert_eq!(binding.head, head);
-    assert_eq!(binding.base, base);
-    assert_eq!(binding.policy, base);
-    assert_eq!(binding.changed_paths, ["crates/norn-ir/src/lib.rs"]);
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args([
-            "ci",
-            "trusted",
-            "--root",
-            f.root().to_str().unwrap(),
-            "--base-root",
-            trusted.to_str().unwrap(),
-            "--head",
-            &head,
-            "--repository",
-            "Norn-cloud/norn",
-            "--rights-evidence",
-            evidence.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(result.status.success(), "{result:?}");
-    let output: Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(output["provenance"]["binding"]["head"], head);
-    fs::remove_file(&evidence).unwrap();
-    assert!(
-        !norn_skeleton_guard::ci::run_with_rights(
-            f.root(),
-            &trusted,
-            &head,
-            "Norn-cloud/norn",
-            None,
-            &evidence
-        )
-        .is_empty()
-    );
-    for args in [
-        vec!["ci", "provenance"],
-        vec![
-            "ci",
-            "provenance",
-            "--distribution",
-            "--head",
-            &head,
-            "--repository",
-            "Norn-cloud/norn",
-        ],
-        vec![
-            "ci",
-            "provenance",
-            "--legacy-distribution",
-            "--distribution",
-            "--head",
-            &head,
-        ],
-    ] {
-        assert!(
-            !std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
-                .args(args)
-                .current_dir(f.root())
-                .output()
-                .unwrap()
-                .status
-                .success()
-        );
-    }
-}
-
-#[test]
-fn legacy_digest_is_optional_but_present_values_keep_the_strict_shape() {
-    for value in [
-        json!(null),
-        json!("wrong"),
-        json!("A".repeat(64)),
-        json!(42),
-    ] {
-        let mut f = Fixture::new();
-        let i = f.add("payload", b"authored content", "code");
-        f.records[i]["sha256"] = value;
-        let head = bind_fixture(&f);
-        assert!(!bound_report(&f, &head).errors().is_empty());
-    }
-}
-
-#[test]
-fn overlapping_rights_metadata_changes_require_resolution_even_if_source_merges_cleanly() {
-    let mut f = Fixture::new();
-    f.add("payload", b"authored payload", "code");
-    let base = bind_fixture(&f);
-    let path = format!("{RECORDS}payload.json");
-    let original: Value = serde_json::from_slice(&fs::read(f.root().join(&path)).unwrap()).unwrap();
-    let mut heads = Vec::new();
-    for (branch, field, value) in [
-        ("metadata-a", "category", json!("generic-proof")),
-        ("metadata-b", "notices", json!([f.reference("LICENSE")])),
-    ] {
-        git_in(&f, &["checkout", "--quiet", "-b", branch, &base]);
-        let mut record = original.clone();
-        record[field] = value;
-        f.write(
-            &path,
-            serde_json::to_string_pretty(&record).unwrap().as_bytes(),
-        );
-        heads.push(commit_fixture(&f));
-    }
-    assert!(
-        norn_skeleton_guard::ci::git::clean_merge(f.root(), &heads[0], &heads[1], &base)
-            .unwrap_err()
-            .contains("metadata disagreement")
-    );
-}
-
-#[test]
-fn trusted_groups_refuse_unreviewed_payload_rights_pairs_in_either_order_or_on_base() {
-    for (reverse, metadata_on_base) in [(false, false), (true, false), (false, true)] {
-        let mut f = policy_fixture();
-        f.add("notes", b"original authored notes\n", "code");
-        let original = bind_fixture(&f);
-        let temporary = tempfile::tempdir().unwrap();
-        let trusted = temporary.path().join("trusted");
-        git_in(
-            &f,
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "--detach",
-                trusted.to_str().unwrap(),
-                &original,
-            ],
-        );
-        let evidence = temporary.path().join("evidence.json");
-        let mut heads = Vec::new();
-        for metadata in [false, true] {
-            git_in(&f, &["checkout", "--quiet", "-B", "pull", &original]);
-            if metadata {
-                let path = format!("{RECORDS}notes.json");
-                let mut record: Value =
-                    serde_json::from_slice(&fs::read(f.root().join(&path)).unwrap()).unwrap();
-                record["category"] = json!("generic-proof");
-                f.write(
-                    &path,
-                    serde_json::to_vec_pretty(&record).unwrap().as_slice(),
-                );
-            } else {
-                f.write("notes", b"changed authored notes\n");
-            }
-            let head = commit_fixture(&f);
-            fs::write(&evidence, rights_for(&f, &head, &original).to_string()).unwrap();
-            let report = norn_skeleton_guard::ci::check_with_rights(
-                f.root(),
-                &trusted,
-                &head,
-                "Norn-cloud/norn",
-                None,
-                &evidence,
-            );
-            assert!(
-                report.errors.is_empty(),
-                "individual reviewed pair: {:?}",
-                report.errors
-            );
-            heads.push(head);
-        }
-        let base = if metadata_on_base {
-            heads[1].clone()
-        } else {
-            original.clone()
-        };
-        git_in(
-            &f,
-            &[
-                "-C",
-                trusted.to_str().unwrap(),
-                "checkout",
-                "--quiet",
-                "--detach",
-                &base,
-            ],
-        );
-        git_in(&f, &["checkout", "--quiet", "-B", "queue", &base]);
-        let mut queued = if metadata_on_base {
-            vec![heads[0].clone()]
-        } else {
-            heads
-        };
-        if reverse {
-            queued.reverse();
-        }
-        for head in &queued {
-            git_in(&f, &["merge", "--quiet", "--no-ff", "--no-edit", head]);
-        }
-        let group = git_in(&f, &["rev-parse", "HEAD"]);
-        let document = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":group},
-            "pull_requests":queued.iter().map(|head| rights_for(&f, head, &original)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &queued, &original)});
-        fs::write(&evidence, rights_evidence(&f, &document)).unwrap();
-        let report = norn_skeleton_guard::ci::check_with_rights(
-            f.root(),
-            &trusted,
-            &group,
-            "Norn-cloud/norn",
-            None,
-            &evidence,
-        );
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|error| error.contains("unreviewed payload/rights combination")),
-            "{:?}",
-            report.errors
-        );
-    }
-}
-
-#[test]
-fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_ack() {
-    let head = "1".repeat(40);
-    for edited in [false, true] {
-        let mut doc = rights_document(&head, &"2".repeat(40));
-        target_ledger(&mut doc, &head)["entries"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"}));
-        if edited {
-            target_ledger(&mut doc, &head)["entries"][0]["comment"] = Value::Null;
-        }
-        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err());
-        target_ledger(&mut doc, &head)["entries"]
-            .as_array_mut()
-            .unwrap()
-            .push(ack_entry(3, &head, "2026-11-03T00:01:01Z"));
-        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
-        target_ledger(&mut doc, &head)["entries"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":11,"kind":"revoke","recorded_at":"2026-11-03T00:01:01Z"}));
-        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err());
-    }
-}
-
-#[test]
-fn rights_ledger_requires_an_independently_expected_head_and_tree() {
-    let head = "1".repeat(40);
-    let doc = rights_document(&head, &"2".repeat(40));
-    assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
-    assert!(fixture_rights_acknowledgment(&doc, &head, &"4".repeat(40)).is_err());
-    assert!(fixture_rights_acknowledgment(&doc, &"5".repeat(40), &"3".repeat(40)).is_err());
-}
-
-#[test]
-fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fresh_review() {
-    assert_global_rights_recovery("single");
-}
-
-#[test]
-fn same_sha_rights_ledger_blocks_every_pr_and_group_until_reconciled() {
-    assert_global_rights_recovery("shared");
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "execute actual rights programs over saved event fixtures"
-)]
-fn assert_global_rights_recovery(layout: &str) {
-    let (candidate, base, heads, group_head) = merge_group(&[&|f| {
-        f.write(
-            "crates/norn-ir/src/lib.rs",
-            b"pub enum ArtifactKind { Entity, Law }\n",
-        );
-    }]);
-    let temporary = tempfile::tempdir().unwrap();
-    let trusted = temporary.path().join("base");
-    git_in(
-        &candidate,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            trusted.to_str().unwrap(),
-            &base,
-        ],
-    );
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../verification/coverage-v1/negative_canaries.py");
-    let output = std::process::Command::new("python3")
-        .args([
-            script.to_str().unwrap(),
-            "--rights-recovery",
-            &heads[0],
-            &base,
-            &group_head,
-            &git_in(
-                &candidate,
-                &["rev-parse", &format!("{}^{{tree}}", heads[0])],
-            ),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "saved-event fixture execution failed"
-    );
-    let documents: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let evidence = temporary.path().join("rights.json");
-    for removal in ["edited", "deleted"] {
-        for stage in [
-            "initial",
-            "pending",
-            "interleaving",
-            "premature",
-            "partial",
-            "reconciled",
-            "fresh",
-            "inflight",
-            "plain",
-            "paging",
-            "withdrawn",
-            "case",
-        ] {
-            for kind in ["pr", "a", "group"] {
-                let head = if kind == "group" {
-                    &group_head
-                } else {
-                    &heads[0]
-                };
-                git_in(&candidate, &["checkout", "--quiet", "--detach", head]);
-                fs::write(
-                    &evidence,
-                    documents[format!("{layout}-{removal}-{stage}")][kind].to_string(),
-                )
-                .unwrap();
-                let report = norn_skeleton_guard::ci::check_with_rights(
-                    candidate.root(),
-                    &trusted,
-                    head,
-                    "Norn-cloud/norn",
-                    None,
-                    &evidence,
-                );
-                assert_eq!(
-                    report.errors.is_empty(),
-                    matches!(
-                        stage,
-                        "initial" | "fresh" | "inflight" | "plain" | "paging" | "case"
-                    ),
-                    "{removal}/{stage}/{kind}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn a_late_success_cannot_override_a_newer_failure_generation() {
-    let head = "1".repeat(40);
-    let tree = "3".repeat(40);
-    let mut doc = rights_document(&head, &"2".repeat(40));
-    let ledger = target_ledger(&mut doc, &head);
-    ledger["failure_version"] = json!(10);
-    ledger["verdicts"] = json!([
-        {"id":10,"state":"failure","description":"rights event failed"},
-        {"id":11,"state":"success","description":json!({"v":4,"d":"a".repeat(64),"f":0}).to_string()}
-    ]);
-    checkpoint_targets(&mut doc);
-    let refusal = norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).unwrap_err();
-    assert!(refusal.contains("stale success"));
-    target_ledger(&mut doc, &head)["verdicts"][1]["description"] =
-        json!(json!({"v":4,"d":"a".repeat(64),"f":10}).to_string());
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_ok());
-    target_ledger(&mut doc, &head)["checkpoint"]["digest"] = json!("0".repeat(64));
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_err());
 }

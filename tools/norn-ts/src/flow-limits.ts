@@ -11,14 +11,19 @@
  * (`crates/norn-ir/tests/golden/norn.limits.v1.canonical.json`), never
  * restated here.
  */
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Json } from "./canonical.ts"
 import { FLOW_LIMITS, retryDelay } from "./builder/lower-flow.ts"
 import type { FlowDef, Step } from "./builder/flow.ts"
 import { TOOL_ROOT } from "./profile.ts"
 
-export const LIMITS_PROFILE_PATH = join(TOOL_ROOT, "..", "..", "crates", "norn-ir", "tests", "golden", "norn.limits.v1.canonical.json")
+// A released package carries the limits profile beside the authoring profile;
+// a checkout reads the kernel's golden, of which that is a byte-identical copy.
+const PACKAGED_LIMITS = join(TOOL_ROOT, "profile", "norn.limits.v1.canonical.json")
+export const LIMITS_PROFILE_PATH = existsSync(PACKAGED_LIMITS)
+  ? PACKAGED_LIMITS
+  : join(TOOL_ROOT, "..", "..", "crates", "norn-ir", "tests", "golden", "norn.limits.v1.canonical.json")
 
 export interface LimitsProfile {
   readonly id: string

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.interpretation.invalid_endpoint",
+  "message": "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

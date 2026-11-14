@@ -7,7 +7,7 @@
   },
   "runtime": {
     "status": "partial",
-    "bound": "Exhaustive current finite predicate table covers all 11 ArtifactKind variants by all 7 ArtifactLifecycle variants (77 calls); surrounding promotion/runtime obligations remain tested rather than exhaustive.",
+    "bound": "The predicate table covers all 7 ArtifactLifecycle variants for 15 ArtifactKind variants and 3 lifecycles for SourceSchema (108 calls); surrounding promotion/runtime obligations remain tested rather than exhaustive.",
     "artifacts": {
       "$entries": "runtime.artifacts"
     },

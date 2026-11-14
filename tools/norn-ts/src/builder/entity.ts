@@ -18,6 +18,7 @@
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
+import type { Localized, MemberLabels } from "./labels.ts"
 
 // ------------------------------------------------------------ value kinds
 
@@ -50,6 +51,7 @@ export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer"; readonly additivity?: PropertyAdditivity }
   | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
+  | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }
@@ -67,6 +69,7 @@ export const money = (scale: number, currency: string | CurrencySource): Propert
   scale,
   currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
 })
+export const boundDecimal = (group: string): PropertyType => ({ kind: "decimal-binding", group })
 /** VAL-RATE: currency per one declared quantity unit at a single exact scale. */
 export const rate = (scale: number, currency: string | CurrencySource, perUnit: UnitRef, rounding?: Rounding): PropertyType => ({
   kind: "decimal", scale,
@@ -115,6 +118,7 @@ export interface TransitionDecl {
   readonly to: string
   /** ZEN Expression guards (conjoined). */
   readonly guards?: ReadonlyArray<string>
+  readonly guardRefusalCode?: string
 }
 
 export interface LifecycleDecl {
@@ -153,7 +157,8 @@ export interface InvariantDecl {
   readonly message: string
 }
 
-interface TypeMetaBase {
+/** Labels ride on the definition and lower to a separate `labels` artifact (`./labels.ts`). */
+interface TypeMetaBase extends Localized, MemberLabels {
   readonly role?: "thing" | "happening"
   readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly markings?: ReadonlyArray<string>

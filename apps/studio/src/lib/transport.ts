@@ -99,3 +99,9 @@ export const recordedTransport: Transport = {
     return object && links && readsOf(objectType, id, object.document, links.document) ? { object, links, source } : null
   },
 }
+
+/**
+ * The transport the pages read through. Recorded until the cell's live read
+ * host lands; live reads replace it here, behind configuration.
+ */
+export const transport: Transport = recordedTransport

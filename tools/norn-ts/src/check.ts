@@ -21,6 +21,7 @@ import {
   type Profile,
   ProfileError,
   TOOL_ROOT,
+  dependencyDir,
   loadProfile,
 } from "./profile.ts"
 
@@ -55,7 +56,20 @@ export interface CheckOptions {
   readonly cancellationToken?: ts.CancellationToken
 }
 
+/** Array methods that lower to norn-zen/6 closures; `.length` lowers to `len`. */
+const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
+/** `Norn.law(name, spec)` members whose values are predicates over the subject. */
+const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually"])
+/** Element names that would shadow a Norn expression binding or a zen keyword. */
+export const RESERVED_CLOSURE_NAMES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "as"])
+
 interface Ctx {
+  /**
+   * Inside a `Norn.law(name, { on })` predicate: the subject's date and
+   * timestamp properties are strings in TypeScript, so ordering two strings is
+   * left to the compiler, which knows the property types and refuses the rest.
+   */
+  readonly lawSubject?: boolean
   /** Inside the body argument of a `Norn.flow` call. */
   readonly flow: boolean
   /** Directly inside an `Effect.gen` generator body (yield* allowed). */
@@ -97,7 +111,7 @@ const AMBIENT_ROOTS = new Set([
   "Bun",
 ])
 
-const EFFECT_DIST = join(TOOL_ROOT, "node_modules", "effect", "dist") + sep
+const EFFECT_DIST = join(dependencyDir("effect"), "dist") + sep
 const RESOLVE_ANCHOR = join(TOOL_ROOT, "__norn_resolve_anchor__.ts")
 
 export const COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -120,7 +134,7 @@ export function assertPins(profile: Profile): void {
     )
   }
   const effectPkg = JSON.parse(
-    readFileSync(join(TOOL_ROOT, "node_modules", "effect", "package.json"), "utf8"),
+    readFileSync(join(dependencyDir("effect"), "package.json"), "utf8"),
   ) as { version: string }
   if (effectPkg.version !== profile.pins.effect.version) {
     throw new ProfileError(
@@ -129,11 +143,21 @@ export function assertPins(profile: Profile): void {
   }
 }
 
+/** The module specifier of the intrinsics, read once from the profile (`intrinsicsModule`). */
+let intrinsicsModule: string | undefined
+
 export function createHost(): ts.CompilerHost {
   const host = ts.createCompilerHost(COMPILER_OPTIONS, true)
+  const intrinsics = (intrinsicsModule ??= loadProfile().intrinsicsModule)
   host.resolveModuleNameLiterals = (literals, containingFile, redirected, options) =>
     literals.map((literal) => {
       const name = literal.text
+      // The intrinsics are pinned to this tool's own declaration, an ambient
+      // `declare module` in INTRINSICS_PATH, which is a root file of every
+      // program. Leaving the specifier unresolved binds it there; a copy a
+      // package manager installed in the project (`@norn/authoring`, for the
+      // editor) is never read by the checker or the compiler.
+      if (name === intrinsics) return { resolvedModule: undefined }
       // Pin `effect` resolution to this tool's lockfile-installed copy.
       const from = name === "effect" || name.startsWith("effect/") ? RESOLVE_ANCHOR : containingFile
       return ts.resolveModuleName(name, from, options, host, undefined, redirected)
@@ -311,6 +335,8 @@ export class ProfileChecker {
 class FileWalk {
   private readonly diagnostics: Diagnostic[] = []
   private readonly uses: SymbolUse[] = []
+  /** Element names of the enclosing array closures, innermost last. */
+  private readonly closureParams: string[] = []
   private readonly jsonData = new Map<ts.VariableDeclaration, boolean>()
   private readonly boundedJsonData = new Set<ts.VariableDeclaration>()
   private jsonDataDepthExceeded = false
@@ -455,6 +481,10 @@ class FileWalk {
 
   private isBoolean(node: ts.Node): boolean {
     return this.every(this.typeOf(node), (t) => (t.flags & ts.TypeFlags.BooleanLike) !== 0)
+  }
+
+  private isString(node: ts.Node): boolean {
+    return this.every(this.typeOf(node), (t) => (t.flags & ts.TypeFlags.StringLike) !== 0)
   }
 
   private isNumber(node: ts.Node): boolean {
@@ -1025,8 +1055,8 @@ class FileWalk {
       case ts.SyntaxKind.LessThanEqualsToken:
       case ts.SyntaxKind.GreaterThanToken:
       case ts.SyntaxKind.GreaterThanEqualsToken:
-        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right))) {
-          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers only")
+        if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right)) && !this.sameParsedTemporal(b.left, b.right) && !(ctx.lawSubject && this.isString(b.left) && this.isString(b.right))) {
+          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers and for two parsed dates or timestamps (Norn.parseDate, Norn.addDays, Norn.parseTimestamp)")
         }
         return
       case ts.SyntaxKind.EqualsEqualsToken:
@@ -1142,6 +1172,7 @@ class FileWalk {
         for (const a of call.arguments) this.expr(a, ctx)
         return
       }
+      if (array && ARRAY_CLOSURES.has(name)) return this.arrayClosure(call, callee, ctx)
     }
     const text = callee.getText(this.sf)
     if (this.owner.spelledLikeAdmitted(text, ts.isIdentifier(callee))) {
@@ -1149,6 +1180,45 @@ class FileWalk {
     }
     if (this.isAmbient(callee)) return this.report(callee, "NORN-FLOW-AMBIENT", `\`${text}\` reads host time/entropy/IO`)
     this.report(callee, "NORN-FLOW-UNSUPPORTED-CALL", `\`${text}\` is a call the compiler cannot see`)
+  }
+
+  /**
+   * `xs.some(x => ...)`, `.every`, `.filter`, `.map` (A2, #1176): norn-zen/6
+   * closures. Only in a pure expression callback (a law, guard, derivation or
+   * decision), with one inline arrow whose single plain parameter is not
+   * already bound by an enclosing closure and whose body is an expression.
+   */
+  private arrayClosure(call: ts.CallExpression, callee: ts.PropertyAccessExpression, ctx: Ctx): void {
+    const name = callee.name.text
+    if (!ctx.pure) return this.report(callee, "NORN-FLOW-EXPRESSION", `\`.${name}\` is a closure; closures are admitted in expression callbacks (Norn.expression, laws, guards, derivations), not in flow data`)
+    this.expr(callee.expression, ctx)
+    const fn = call.arguments[0]
+    if (call.arguments.length !== 1 || !fn) return this.report(call, "NORN-FLOW-EXPRESSION", `\`.${name}\` takes exactly one inline callback`)
+    if (!ts.isArrowFunction(fn)) return this.report(fn, "NORN-FLOW-CAPTURE", `pass \`.${name}\` an inline arrow callback; a function value is opaque to the compiler`)
+    if (fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return this.report(fn, "NORN-FLOW-UNSUPPORTED-CALL", "async callbacks are not admitted")
+    const [param, ...extra] = fn.parameters
+    if (!param || extra.length > 0 || !ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken) {
+      return this.report(fn, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback takes one plain parameter (the element); the index and array arguments are not admitted`)
+    }
+    if (RESERVED_CLOSURE_NAMES.has(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` names a Norn expression binding; call the element something else`)
+    if (this.closureParams.includes(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` is already the element of an enclosing closure; give the inner element another name`)
+    if (ts.isBlock(fn.body)) return this.report(fn.body, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback body is one expression; write \`x => ...\` without braces`)
+    this.closureParams.push(param.name.text)
+    try { this.expr(fn.body, ctx) } finally { this.closureParams.pop() }
+  }
+
+  /** Both operands are parsed temporal values of one kind, which norn-zen/6 orders semantically. */
+  private sameParsedTemporal(left: ts.Expression, right: ts.Expression): boolean {
+    const kind = (node: ts.Expression): string | undefined => {
+      while (ts.isParenthesizedExpression(node)) node = node.expression
+      if (!ts.isCallExpression(node)) return undefined
+      const callee = node.expression
+      const name = ts.isPropertyAccessExpression(callee) ? callee.name : ts.isIdentifier(callee) ? callee : undefined
+      const id = name && this.resolve(name).id
+      return id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.addDays" ? "date" : id === "@norn/authoring#Norn.parseTimestamp" ? "timestamp" : undefined
+    }
+    const l = kind(left)
+    return l !== undefined && l === kind(right)
   }
 
   private args(call: ts.CallExpression, ctx: Ctx): void {
@@ -1339,6 +1409,26 @@ class FileWalk {
       }
       case "effect/Function#pipe":
         return this.args(call, eff)
+      case "@norn/authoring#Norn.law": {
+        // `law(name, { on, when, must | never | eventually, within, ... })` (A3, #1176):
+        // its predicates are pure expression callbacks over the subject.
+        const spec = a[1] && this.unwrap(a[1])
+        if (!a[0] || !spec || !ts.isObjectLiteralExpression(spec)) return this.args(call, ctx)
+        this.expr(a[0], ctx)
+        for (const p of spec.properties) {
+          if (!ts.isPropertyAssignment(p) || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) { this.report(p, "NORN-FLOW-LITERAL", "a law spec takes plain name: value members"); continue }
+          const value = this.unwrap(p.initializer)
+          if (LAW_PREDICATES.has(p.name.text)) this.callback(p.initializer, call, { ...ctx, lawSubject: true }, true)
+          else if (p.name.text === "within" && ts.isObjectLiteralExpression(value)) {
+            for (const w of value.properties) {
+              if (ts.isPropertyAssignment(w) && ts.isIdentifier(w.name) && w.name.text === "before") this.callback(w.initializer, call, ctx, true)
+              else if (ts.isPropertyAssignment(w)) this.expr(w.initializer, ctx)
+              else this.report(w, "NORN-FLOW-LITERAL", "within takes days, hours or before")
+            }
+          } else this.expr(p.initializer, ctx)
+        }
+        return
+      }
       default:
         return this.args(call, ctx)
     }

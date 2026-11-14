@@ -113,7 +113,7 @@ proptest! {
         prop_assert!(constraint.check_runtime_value(&record).is_err());
     }
     #[test]
-    fn val_unit_admission_preserves_case_and_system(code in "[A-Za-z]{1,5}", ucum in any::<bool>()) {
+    fn val_unit_admission_preserves_case_and_system(code in unit_code(), ucum in any::<bool>()) {
         let system = if ucum { norn_ir::UnitSystem::Ucum } else { norn_ir::UnitSystem::Qudt };
         let member = norn_ir::RecordMember { id: PropertyId("amount".to_owned()), property_type: unit_type(&code, system), constraints: PropertyConstraints::default() };
         let artifact = declaration(PropertyType::Record { members: vec![member] });
@@ -124,6 +124,32 @@ proptest! {
             prop_assert!(findings.iter().any(|d| d.code == MISMATCH && d.span.as_ref().is_some_and(|s| s.pointer == "/payload/propertyTypes/0/type/members/0/type/unit")));
         }
     }
+}
+
+/// Real unit codes, the same codes with every letter's case flipped, and
+/// arbitrary short codes: a bare regex almost never produced a real code, so
+/// the admitted branch went unexercised.
+fn unit_code() -> impl Strategy<Value = String> {
+    let real: Vec<String> = units::UNITS.iter().map(|unit| unit.0.to_owned()).collect();
+    let flipped: Vec<String> = real
+        .iter()
+        .map(|code| {
+            code.chars()
+                .map(|c| {
+                    if c.is_ascii_uppercase() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c.to_ascii_uppercase()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    prop_oneof![
+        2 => prop::sample::select(real),
+        1 => prop::sample::select(flipped),
+        1 => "[A-Za-z]{1,5}",
+    ]
 }
 
 fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {

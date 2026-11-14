@@ -1,0 +1,7 @@
+{
+  "comment": "Metric ids recorded under a second name for the same quantity. Records are never edited, so the view and the ratchet fold each alias into its canonical id; `record.py verify` checks both keep one unit and statistic. Check `record.py ids` before inventing an id.",
+  "aliases": {
+    "checker.test.cut2_changed_four_serial_s": "checker.test.cut2_four_serial_s",
+    "proof.gate.exact-arith-correspondence.s": "proof.gate.exact_arith.s"
+  }
+}

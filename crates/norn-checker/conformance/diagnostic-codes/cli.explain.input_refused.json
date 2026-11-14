@@ -1,0 +1,7 @@
+{
+  "code": "cli.explain.input_refused",
+  "message": "The checker refused the explain request: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

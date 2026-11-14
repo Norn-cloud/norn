@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod catalog;
+pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
@@ -37,12 +38,15 @@ pub mod engine;
 pub mod error;
 pub mod export;
 mod export_journal;
+pub mod flow_run;
+pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
+mod mapping_links;
 mod mapping_process;
 mod migration;
 pub mod mining;
@@ -58,6 +62,7 @@ pub mod read;
 mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
+pub mod retained;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
@@ -65,6 +70,8 @@ pub mod transparency;
 mod write;
 
 pub use error::CellError;
+
+pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
@@ -82,6 +89,16 @@ pub use store::{
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
 
+/// Whether `function_id@version` is a compiled-in built-in
+/// (`norn_builtins::resolve`); a host registers it so a flow step may
+/// perform only built-ins (#1252).
+#[must_use]
+pub fn builtin_registered(function_id: &str, version: u32) -> bool {
+    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
+}
+
 /// Workers/Durable Objects SQLite adapter (celld and workerd).
 #[cfg(target_arch = "wasm32")]
 pub mod workers;
+
+mod read_envelope;

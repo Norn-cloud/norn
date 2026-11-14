@@ -1,0 +1,234 @@
+{
+  "atlasVersion": 1,
+  "domain": "energy",
+  "entries": [
+    {
+      "id": "entsoe-cgmes-apl",
+      "name": "ENTSO-E CIM Application Profiles Library",
+      "publisher": "ENTSO-E",
+      "kind": "ontology",
+      "domains": [
+        "energy"
+      ],
+      "version": "1.1.0",
+      "versionDate": "2025-09-16",
+      "versionBasis": "Publisher Latest Updates lists APL v1.1.0 on 16 September 2025; independently versioned from NC 2.5 and CIM UML bundles.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0 (APL scope)",
+        "status": "verified",
+        "basis": "Publisher APL-specific disclaimer licenses Vocabulary and Constraints under Apache-2.0 and requires attention to distributed NOTICE; does not license all IEC/ENTSO-E materials.",
+        "termsUrl": "https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://www.entsoe.eu/Documents/CIM_documents/Grid_Model_CIM/APL/1.1.0/ApplicationProfilesLibrary-release1-1-0.zip",
+      "evidenceUrls": [
+        "https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/",
+        "https://www.entsoe.eu/Documents/CIM_documents/Grid_Model_CIM/APL/1.1.0/ApplicationProfilesLibrary-release1-1-0.zip"
+      ],
+      "norn": {
+        "overlap": "Grid equipment shapes and declarative validation; SHACL lowering would require a declared subset and representation fidelity gates.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "iec-cim-entsoe-uml",
+      "name": "IEC CIM / ENTSO-E CGMES and NC extension UML distribution",
+      "publisher": "IEC / ENTSO-E",
+      "kind": "standard",
+      "domains": [
+        "energy"
+      ],
+      "version": "ENTSO-E CIM 17.2.0 / CGMES 3.0.0 / NCP 2.5",
+      "versionDate": "2026-09-10",
+      "versionBasis": "ENTSO-E library labels this precise linked UML package ICTC approved 10 September 2026; do not normalize filename CGMES31v01 to a different claimed standard release.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "APL's Apache grant is scoped to APL vocabularies/constraints; not verified for this UML package or IEC base publications.",
+        "termsUrl": "https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "other"
+      ],
+      "machineReadable": "unverified",
+      "artifactUrl": "https://eepublicdownloads.blob.core.windows.net/public-cdn-container/clean-documents/CIM_documents/Grid_Model_CIM/CIM17-2_CGMES31v01_PROF-20v03_NC25v25_MS10v12_DES10v01.zip",
+      "evidenceUrls": [
+        "https://www.entsoe.eu/data/cim/cim-for-grid-models-exchange/"
+      ],
+      "norn": {
+        "overlap": "Power-system assets, equipment and grid connectivity; specialized industry semantics.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Public URL and ZIP response verified; full model contents remain uninspected and no open terms assigned. Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "openadr-2-schemas",
+      "name": "OpenADR 2.0a/b profile schemas",
+      "publisher": "OpenADR Alliance",
+      "kind": "standard",
+      "domains": [
+        "energy"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Official landing page names 2.0a/b profiles; exact package revision and release date not visible without download workflow.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "Publisher says specifications are license free but copyrighted and subject to download-form conditions; not an established redistribution grant.",
+        "termsUrl": "https://www.openadr.org/specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "XSD",
+        "XML"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.openadr.org/specification",
+      "evidenceUrls": [
+        "https://www.openadr.org/specification"
+      ],
+      "norn": {
+        "overlap": "Demand response events, intervals and device participation are sector-specific exchange models.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "openadr-3-enumeration-schemas",
+      "name": "OpenADR 3 enumeration schemas",
+      "publisher": "OpenADR Alliance",
+      "kind": "standard",
+      "domains": [
+        "energy"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Publisher repository and README identify OpenADR 3 enumeration schemas. Mutable main selected; no tagged release or precise source date established.",
+      "licence": {
+        "spdx": "Apache-2.0",
+        "text": "Apache-2.0",
+        "status": "verified",
+        "basis": "Repository LICENSE is Apache-2.0; retain licence/notices and mark modifications. This grant is not transferred to the separate normative OpenAPI or third-party ADVISOR schemas.",
+        "termsUrl": "https://raw.githubusercontent.com/oadr3-org/openadr3-schemas/main/LICENSE",
+        "checked": "2026-10-21"
+      },
+      "reuse": "code-reusable",
+      "formats": [
+        "JSON-Schema",
+        "JSON"
+      ],
+      "machineReadable": "yes",
+      "artifactUrl": "https://raw.githubusercontent.com/oadr3-org/openadr3-schemas/main/OpenADR_Alliance/units.schema.yaml",
+      "evidenceUrls": [
+        "https://github.com/oadr3-org/openadr3-schemas",
+        "https://raw.githubusercontent.com/oadr3-org/openadr3-schemas/main/README.md",
+        "https://raw.githubusercontent.com/oadr3-org/openadr3-schemas/main/LICENSE",
+        "https://raw.githubusercontent.com/oadr3-org/openadr3-schemas/main/OpenADR_Alliance/units.schema.yaml"
+      ],
+      "norn": {
+        "overlap": "Application-level event/report enumeration labels and value constraints, separate from energy API/runtime semantics.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "P2",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: license-conditions.",
+      "origin": "catalogue-2026-10-21"
+    },
+    {
+      "id": "openadr-3-openapi",
+      "name": "OpenADR 3 normative OpenAPI YAML",
+      "publisher": "OpenADR Alliance",
+      "kind": "protocol",
+      "domains": [
+        "energy"
+      ],
+      "version": null,
+      "versionDate": null,
+      "versionBasis": "Official page confirms OpenADR 3 YAML, but exact minor/patch and date not verified from an authorized primary payload; third-party 3.1.0 mirror is not substituted.",
+      "licence": {
+        "spdx": "NOASSERTION",
+        "text": "No licence statement found",
+        "status": "unverified",
+        "basis": "No primary-source payload licence verified. Do not import Apache assertions made by unaffiliated mirrors or extend reference-implementation licensing to the specification.",
+        "termsUrl": "https://www.openadr.org/specification",
+        "checked": "2026-10-21"
+      },
+      "reuse": "vocabulary-only",
+      "formats": [
+        "OpenAPI"
+      ],
+      "machineReadable": "restricted",
+      "artifactUrl": "https://www.openadr.org/specification",
+      "evidenceUrls": [
+        "https://www.openadr.org/specification",
+        "https://www.openadr.org/index.php?Itemid=194&id=210%3Aopenadr-3.0&option=com_content&view=article",
+        "https://api.github.com/repos/oadr3-org/specification"
+      ],
+      "norn": {
+        "overlap": "Demand response programs, events, reports and resources; not a new Norn runtime.",
+        "concepts": [],
+        "irTargets": [],
+        "proposedConcepts": [],
+        "mapping": "none",
+        "mappingEvidence": [],
+        "importerIssue": null
+      },
+      "priority": {
+        "sapParity": "watch",
+        "reason": "Industry vertical outside the ERP core; later."
+      },
+      "notes": "Redistribution: unverified.",
+      "origin": "catalogue-2026-10-21"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "code": "labels.admission.unknown_target",
+  "message": "a label names a definition that neither the artifact set nor the installed base declares",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
