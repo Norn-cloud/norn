@@ -17,6 +17,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::too_many_lines,
+    clippy::arithmetic_side_effects,
     reason = "hosted install correspondence"
 )]
 
@@ -216,7 +217,8 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let mut cell = provisioned(&path);
-    assert_eq!(cell.version(), 1);
+    // Provisioning installs the cell's own sources pack after its set (#1358).
+    let base = cell.version();
     // Before the pack, the cell serves no melts.
     assert_ne!(cell.melts().status, 200);
 
@@ -236,18 +238,18 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
             .is_some_and(|pointer| pointer.starts_with("/artifacts/2"))),
         "the finding names the broken law: {refusal}"
     );
-    let applied = cell.change(APPLY_PATH, Some("owner"), &broken, Some(1));
+    let applied = cell.change(APPLY_PATH, Some("owner"), &broken, Some(base));
     assert_eq!(applied.status, 422);
     assert_eq!(json_of(&applied)["diagnostics"], refusal["diagnostics"]);
-    assert_eq!(cell.version(), 1);
+    assert_eq!(cell.version(), base);
 
     // Only a definition writer (owner, admin) plans or applies; anyone else
     // gets the one opaque denial, whatever the body.
-    let denied = cell.change(APPLY_PATH, None, &jewelry(), Some(1));
+    let denied = cell.change(APPLY_PATH, None, &jewelry(), Some(base));
     assert_eq!(denied.status, 403);
     for role in ["member", "viewer"] {
         for route in [PLAN_PATH, APPLY_PATH] {
-            let response = cell.change(route, Some(role), &jewelry(), Some(1));
+            let response = cell.change(route, Some(role), &jewelry(), Some(base));
             assert_eq!(response, denied, "{role} {route}");
         }
     }
@@ -258,35 +260,35 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
         &json!({ "artifacts": jewelry(), "expectedVersion": 1 }).to_string(),
     );
     assert_eq!(other_org, denied);
-    assert_eq!(cell.version(), 1);
+    assert_eq!(cell.version(), base);
 
     // The owner's plan: four artifacts added, the Melt a new type.
     let planned = cell.change(PLAN_PATH, Some("owner"), &jewelry(), None);
     assert_eq!(planned.status, 200, "{}", planned.body);
     let plan = json_of(&planned);
-    assert_eq!(plan["baseVersion"], 1);
-    assert_eq!(plan["nextVersion"], 2);
+    assert_eq!(plan["baseVersion"], base);
+    assert_eq!(plan["nextVersion"], base + 1);
     assert_eq!(plan["unchanged"], false);
     assert_eq!(plan["added"].as_array().unwrap().len(), 4, "{plan}");
     assert_eq!(plan["newObjectTypes"], json!([MELT]));
-    assert_eq!(cell.version(), 1, "a plan writes nothing");
+    assert_eq!(cell.version(), base, "a plan writes nothing");
 
     // Apply needs the planned revision; an admin applies it.
     let unplanned = cell.change(APPLY_PATH, Some("admin"), &jewelry(), None);
     assert_eq!(unplanned.status, 400);
-    let stale = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(0));
+    let stale = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base - 1));
     assert_eq!(json_of(&stale)["code"], "defs.stale");
-    let applied = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(1));
+    let applied = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base));
     assert_eq!(applied.status, 200, "{}", applied.body);
     let receipt = json_of(&applied);
     assert_eq!(receipt["outcome"], "installed");
-    assert_eq!(receipt["definitionsVersion"], 2);
+    assert_eq!(receipt["definitionsVersion"], base + 1);
     assert_eq!(receipt["receiptSha256"], plan["receiptSha256"]);
-    assert_eq!(cell.version(), 2);
+    assert_eq!(cell.version(), base + 1);
     // The same apply again installs nothing.
-    let again = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(2));
+    let again = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base + 1));
     assert_eq!(json_of(&again)["outcome"], "unchanged", "{}", again.body);
-    assert_eq!(cell.version(), 2);
+    assert_eq!(cell.version(), base + 1);
 
     // The new type is served at once, and its action is callable: a melt
     // that loses metal is refused by the law, a correct one is accepted.
@@ -309,7 +311,7 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     // revision, with the melt and its law.
     drop(cell);
     let mut cell = Cell::opened(&path);
-    assert_eq!(cell.version(), 2);
+    assert_eq!(cell.version(), base + 1);
     assert_eq!(
         json_of(&cell.melts())["records"].as_array().map(Vec::len),
         Some(1)
@@ -329,12 +331,12 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
         format!("/objects/{MELT}/m2"),
         "{held}"
     );
-    let applied = cell.change(APPLY_PATH, Some("owner"), &stricter, Some(2));
+    let applied = cell.change(APPLY_PATH, Some("owner"), &stricter, Some(base + 1));
     assert_eq!(json_of(&applied)["code"], "defs.live_data_refused");
-    assert_eq!(cell.version(), 2);
+    assert_eq!(cell.version(), base + 1);
     // A law the stored melt keeps installs, with the stored melt checked.
     let looser = with_law("self.input_fine_g >= self.output_fine_g + self.loss_fine_g");
-    let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(2));
+    let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(base + 1));
     assert_eq!(applied.status, 200, "{}", applied.body);
     assert_eq!(json_of(&applied)["plan"]["checkedObjects"], 1);
     assert_eq!(
@@ -344,7 +346,7 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
             .len(),
         1
     );
-    assert_eq!(cell.version(), 3);
+    assert_eq!(cell.version(), base + 2);
 }
 
 /// A reserved artifact or an empty change is refused before admission.
@@ -352,6 +354,7 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
 fn a_reserved_or_empty_change_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
     let mut forged = jewelry();
     forged[0]["artifactId"] = json!("core.forged");
     let refused = cell.change(PLAN_PATH, Some("owner"), &forged, None);
@@ -365,5 +368,5 @@ fn a_reserved_or_empty_change_is_refused() {
         cell.change(PLAN_PATH, Some("owner"), &twice, None).status,
         400
     );
-    assert_eq!(cell.version(), 1);
+    assert_eq!(cell.version(), base);
 }
