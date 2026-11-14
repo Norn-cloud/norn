@@ -68,4 +68,14 @@ export const RecordMelt = Norn.action({
   ],
   writes: [{ type: Melt, change: "created" }, { type: Melt, change: "modified" }],
   effect: { kind: "upsert_input_object", type: Melt, objectIdField: "id" },
+  access: { artifactId: "jewelry.melt.access.policy", version: "0.1.0" },
+})
+
+/** Who records a melt on a hosted cell: its members, admins and owner. */
+export const MeltAccess = Norn.access({
+  id: "jewelry.melt.access", title: "Melt recorders", version: "0.1.0",
+  rules: [
+    { ruleId: "recorders", actions: [RecordMelt], resourceType: Melt,
+      scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["member", "admin", "owner"] } }] },
+  ],
 })

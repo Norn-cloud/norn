@@ -36,6 +36,10 @@ if (process.argv[2] === "dev") {
     process.exit(error.exitCode)
   }
 }
+if (process.argv[2] === "plan" || process.argv[2] === "apply") {
+  const { main } = await import("./apply.ts")
+  process.exit(await main(process.argv[2], process.argv.slice(3)))
+}
 if (process.argv[2] === "init") {
   const { init } = await import("./init.ts")
   const { ProjectError } = await import("./project.ts")
@@ -54,7 +58,7 @@ function option(name: string): string | undefined {
   return index < 0 ? undefined : flags[index + 1]
 }
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
   process.exit(2)
 }
 if (command === "profile") {

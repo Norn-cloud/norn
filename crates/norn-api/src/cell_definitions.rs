@@ -191,21 +191,23 @@ fn conflict(code: &str, message: &str, explanation: String) -> Refusal {
 
 /// The refusal of a store preflight, as a definitions install words it.
 fn preflight_refusal(error: CellError) -> Refusal {
-    match error {
-        CellError::DefinitionVersionConflict { expected, actual } => conflict(
+    if let CellError::DefinitionVersionConflict { expected, actual } = &error {
+        return conflict(
             "defs.stale",
             "the definitions changed since this revision was planned",
             format!(
                 "planned against {expected:?}, the cell is at {actual:?}; re-plan against the active revision"
             ),
-        ),
-        CellError::DefinitionMigrationRefused(reason) => conflict(
+        );
+    }
+    if let CellError::DefinitionMigrationRefused(reason) = &error {
+        return conflict(
             "defs.migration_refused",
             "the candidate definitions cannot carry the cell's live data",
-            reason,
-        ),
-        other => unservable(other.to_string()),
+            reason.clone(),
+        );
     }
+    unservable(error.to_string())
 }
 
 /// A checked submission: what it admits to, and its plan.
@@ -236,9 +238,12 @@ fn planned(artifact: &ArtifactEnvelope, from: Option<&ArtifactEnvelope>) -> Plan
     }
 }
 
-/// Parse, bound and admit one body over the active set, then preflight the
-/// install on the store without writing. Call only after authorization.
-fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, Option<u64>), Refusal> {
+/// The submission's request and its own artifacts: bounded, decoded, none
+/// reserved, none repeated, each scoped inside the cell.
+fn submission<E: SqlEngine>(
+    host: &DevHost<E>,
+    body: &str,
+) -> Result<(DefinitionsChangeRequest, Vec<ArtifactEnvelope>), Refusal> {
     if body.len() > crate::provision::MAX_PROVISION_BYTES {
         return Err(Refusal::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -274,6 +279,37 @@ fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, 
         refusal.diagnostics = repeated;
         return Err(refusal);
     }
+    Ok((request, tenant))
+}
+
+/// The submitted artifacts against the active ones: added, replaced, identical.
+#[allow(clippy::type_complexity, reason = "the three lists of a plan")]
+fn diff(
+    tenant: &[ArtifactEnvelope],
+    active: &InstalledDefinitionSet,
+) -> Result<(Vec<PlannedArtifact>, Vec<PlannedArtifact>, Vec<String>), Refusal> {
+    let retained = kernel_set::retained_artifacts(&active.canonical_set).map_err(Refusal::host)?;
+    let by_id: BTreeMap<&str, &ArtifactEnvelope> = retained
+        .iter()
+        .map(|artifact| (artifact.artifact_id.as_str(), artifact))
+        .collect();
+    let (mut added, mut changed, mut same) = (Vec::new(), Vec::new(), Vec::new());
+    for artifact in tenant {
+        match by_id.get(artifact.artifact_id.as_str()) {
+            None => added.push(planned(artifact, None)),
+            Some(active) if canonical(active)? == canonical(artifact)? => {
+                same.push(artifact.artifact_id.clone());
+            }
+            Some(active) => changed.push(planned(artifact, Some(active))),
+        }
+    }
+    Ok((added, changed, same))
+}
+
+/// Parse, bound and admit one body over the active set, then preflight the
+/// install on the store without writing. Call only after authorization.
+fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, Option<u64>), Refusal> {
+    let (request, tenant) = submission(host, body)?;
     let active = host.active_definitions()?.ok_or_else(|| {
         conflict(
             codes::NOT_INSTALLED,
@@ -290,21 +326,7 @@ fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, 
         KernelRefusal::Refused(findings) => refused(crate::provision::placed(&findings, &tenant)),
         KernelRefusal::Invalid(detail) => unservable(detail),
     })?;
-    let retained = kernel_set::retained_artifacts(&active.canonical_set).map_err(Refusal::host)?;
-    let by_id: BTreeMap<&str, &ArtifactEnvelope> = retained
-        .iter()
-        .map(|artifact| (artifact.artifact_id.as_str(), artifact))
-        .collect();
-    let (mut added, mut changed, mut same) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in &tenant {
-        match by_id.get(artifact.artifact_id.as_str()) {
-            None => added.push(planned(artifact, None)),
-            Some(active) if canonical(active)? == canonical(artifact)? => {
-                same.push(artifact.artifact_id.clone());
-            }
-            Some(active) => changed.push(planned(artifact, Some(active))),
-        }
-    }
+    let (added, changed, same) = diff(&tenant, &active)?;
     let unchanged = admitted.canonical_set == active.canonical_set;
     let (model, new_object_types, next_version) = {
         let cell = host.cell()?;
@@ -330,7 +352,6 @@ fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, 
             .collect();
         (model, new_object_types, next_version)
     };
-    let diagnostics = Vec::new();
     Ok((
         Candidate {
             plan: DefinitionsPlan {
@@ -342,7 +363,7 @@ fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, 
                 same,
                 new_object_types,
                 checked_objects: 0,
-                diagnostics,
+                diagnostics: Vec::new(),
                 receipt_sha256: admitted.receipt_sha256.clone(),
             },
             admitted,
@@ -407,7 +428,7 @@ fn live_findings<E: SqlEngine>(
                 if record.object_type != name {
                     continue;
                 }
-                checked += 1;
+                checked = checked.saturating_add(1);
                 if usize::try_from(checked).unwrap_or(usize::MAX) > MAX_CHECKED_OBJECTS {
                     return Err(conflict(
                         codes::LIVE_DATA_UNBOUNDED,
