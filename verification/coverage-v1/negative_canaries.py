@@ -1103,6 +1103,7 @@ def workflow_sccache_canaries(source: str) -> None:
                 if result.returncode != 0 or got != mode:
                     raise AssertionError(f"{name}: shared cache mode drift {runner}/{event}/{ref}: {got} != {mode}")
                 if mode and (server.get("SCCACHE_BUCKET") != "bucket" or server.get("SCCACHE_REGION") != "auto"
+                             or server.get("SCCACHE_IDLE_TIMEOUT") != "0"
                              or server.get("AWS_ACCESS_KEY_ID") != "key-id"):
                     raise AssertionError(f"{name}: shared cache server environment drift: {server}")
                 if mode is None and any(key.startswith("AWS_") for key in server):

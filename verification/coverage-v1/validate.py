@@ -148,7 +148,9 @@ if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCAC
   export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
     SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
     SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
-    AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}"
+    AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}" SCCACHE_IDLE_TIMEOUT=0
+  # The server must outlive idle stretches (tests, Bun): an idle exit would restart it
+  # without this configuration, on the local cache only.
   echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
 fi
 # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
