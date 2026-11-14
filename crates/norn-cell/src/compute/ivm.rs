@@ -350,6 +350,7 @@ impl IncrementalQuestion {
         )?;
         result.engine = Engine::Ivm;
         self.totals.0.retain(|key, _| result.rows.contains_key(key));
+        self.totals.1.retain(|key, _| result.rows.contains_key(key));
         self.receipt_pin = reader.receipt_at(result.revision.commits)?.map(|r| r.hash);
         source_pins.retain(|id, _| self.members.contains(id));
         self.source_pins = source_pins;

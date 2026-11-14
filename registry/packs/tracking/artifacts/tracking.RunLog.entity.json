@@ -1,0 +1,107 @@
+{
+  "artifactId": "tracking.RunLog.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Run log",
+  "namespace": "tracking",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "log_id"
+          ]
+        },
+        {
+          "name": "position",
+          "properties": [
+            "run_id",
+            "seq"
+          ]
+        }
+      ],
+      "name": "tracking.RunLog",
+      "properties": [
+        {
+          "id": "log_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "run_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "seq",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "params",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "tags",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metrics",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "end_time",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "run_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "prev_id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.RunLog.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

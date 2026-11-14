@@ -10,8 +10,12 @@ use crate::entity_instance::EffectiveKind;
 pub struct Contribution {
     /// Scalar group value, or null for an ungrouped question.
     pub bucket: RuntimeValue,
-    /// Numerator then denominator; absence means the operand predicate excluded it.
+    /// Numerator then denominator; absence means the operand predicate excluded it,
+    /// or the operand is null (then `nulls` says so).
     pub amounts: Vec<Option<i64>>,
+    /// Per operand: the row passed its predicate but the measured property is
+    /// null. A null is skipped by the sum, never read as 0, and counted.
+    pub nulls: Vec<bool>,
 }
 
 /// COMPUTE-DETERMINISTIC-1: project one typed row without IO or arithmetic rounding.
@@ -58,23 +62,34 @@ pub fn project(
         }
         Some(dimension) => value(plan, row, dimension.path.property.as_str())?.clone(),
     };
-    let amounts = plan
+    let (amounts, nulls): (Vec<_>, Vec<_>) = plan
         .sums()
         .iter()
         .map(|sum| {
             if !matches_filters(plan, row, &sum.filters)? {
-                return Ok(None);
+                return Ok((None, false));
             }
-            let number = value(plan, row, sum.property.id.as_str())?
-                .as_decimal()
-                .ok_or(UNSUPPORTED_ENGINE)?;
-            coefficient(number).map(Some).ok_or(UNSUPPORTED_ENGINE)
+            // A null on a nullable property (admission refuses null elsewhere) is absent, not 0.
+            let measured = value(plan, row, sum.property.id.as_str())?;
+            if measured.is_null() {
+                return Ok((None, true));
+            }
+            let number = measured.as_decimal().ok_or(UNSUPPORTED_ENGINE)?;
+            coefficient(number)
+                .map(|n| (Some(n), false))
+                .ok_or(UNSUPPORTED_ENGINE)
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    if amounts.iter().all(Option::is_none) {
+        .collect::<Result<Vec<_>, &'static str>>()?
+        .into_iter()
+        .unzip();
+    if amounts.iter().all(Option::is_none) && !nulls.contains(&true) {
         return Ok(None);
     }
-    Ok(Some(Contribution { bucket, amounts }))
+    Ok(Some(Contribution {
+        bucket,
+        amounts,
+        nulls,
+    }))
 }
 
 fn value<'a>(
