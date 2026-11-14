@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 # Matches the public workflow and repository toolchain.
-TOOLCHAIN = "1.98.0"
+TOOLCHAIN = "1.100.0"
 REPO = Path(__file__).resolve().parents[2]
 # Every child Python starts isolated (#513): `-I` (no script directory or cwd on sys.path, no
 # PYTHON* environment), `-B` and a fresh bytecode prefix, so no `__pycache__` next to any

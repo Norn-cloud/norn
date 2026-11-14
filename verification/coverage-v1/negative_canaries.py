@@ -809,7 +809,7 @@ def studio_browser_phase_canaries() -> None:
         tools = {
             "cargo": "exit 0",
             "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
-            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
                     'exit "$RUN_STATUS"',
@@ -1682,7 +1682,7 @@ def workflow_canaries() -> None:
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
         ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
-        ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
+        ("floating Rust toolchain", "toolchain: 1.100.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
     mutations.extend((f"missing {trigger} trigger", f"  {trigger}:\n", "") for trigger in ("pull_request", "pull_request_target", "push", "merge_group"))
@@ -1693,8 +1693,8 @@ def workflow_canaries() -> None:
                 raise AssertionError(f"workflow canary target drifted: {label}")
             candidate.write_text(source.replace(original, replacement, 1), encoding="utf-8")
             expect_coverage_validator_rejection(label, formal_workflow_path=candidate)
-        decoy = source.replace("toolchain: 1.98.0", "toolchain: stable", 1).replace(
-            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
+        decoy = source.replace("toolchain: 1.100.0", "toolchain: stable", 1).replace(
+            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.100.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
         command = 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"'
