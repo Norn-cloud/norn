@@ -61,7 +61,8 @@ test("the page bar holds search, shortcuts and notifications (the view and langu
   const html = await at("/sources", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("Search…")
   expect(html).not.toContain('aria-label="Business or technical view"')
-  expect(html).toContain("Language and view")
+  // The phone's view-and-language menu is not drawn on a desktop, so it never shadows the account menu's choices.
+  expect(html).not.toContain("Language and view")
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
   // Before the mode is decided the switcher says it is connecting; it names the recording only once Studio knows there is no cell.

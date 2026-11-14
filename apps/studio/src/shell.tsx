@@ -407,14 +407,16 @@ const iconButton = "flex size-9 items-center justify-center rounded-full text-mu
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { view } = useView()
+  const { isMobile } = useSidebar()
   return (
     <div className="flex items-center gap-0.5">
       {view === "technical" && <span className="hidden rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground lg:inline">Technical view</span>}
       {/* On a phone the rail's account menu is behind the sheet, so one small menu holds the view and language. */}
-      <Menu>
-        <MenuTrigger aria-label="Language and view" className={cn(iconButton, "md:hidden")}><SlidersHorizontal aria-hidden /></MenuTrigger>
+      {/* Rendered only on a phone, so its choices never shadow the account menu's. */}
+      {isMobile && <Menu>
+        <MenuTrigger aria-label="Language and view" className={iconButton}><SlidersHorizontal aria-hidden /></MenuTrigger>
         <KitMenuContent align="end" className="w-52"><ViewAndLanguage /></KitMenuContent>
-      </Menu>
+      </Menu>}
       {tools}
       <Popover>
         <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "max-md:hidden")}><Keyboard aria-hidden /></PopoverTrigger>
