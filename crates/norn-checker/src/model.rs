@@ -22,7 +22,9 @@
 //! is admitted: numeric, boolean, `enum` or `text` for a feature, numeric,
 //! boolean or `enum` for the target. A `ref` property is resolved through the
 //! shared property types of the set and the base; one that does not resolve
-//! there is refused rather than guessed. A model that names a predictions
+//! there is refused rather than guessed. An extension, of the type or of a
+//! supertype, adds members for a model only when the model's scope can see
+//! it. A model that names a predictions
 //! type (#1171 M4) is admitted only when that type resolves, is visible from
 //! the model's scope as the input type is, has non-nullable text properties
 //! `subject` and `model_version`, and declares every output as a
@@ -514,7 +516,9 @@ struct Catalog<'a> {
     /// Every artifact defining an object type of this name, candidates first.
     definers: BTreeMap<String, Vec<&'a ArtifactEnvelope>>,
     interfaces: BTreeMap<String, EntityRoot>,
-    extensions: BTreeMap<String, Vec<EntityRoot>>,
+    /// Extensions by target name, each with its defining envelope: a model
+    /// sees only the extensions its scope can see.
+    extensions: BTreeMap<String, Vec<(EntityRoot, &'a ArtifactEnvelope)>>,
     property_types: Vec<PropertyTypeDef>,
 }
 
@@ -556,7 +560,11 @@ impl<'a> Catalog<'a> {
                 }
                 EntityRoot::V2Extension(def) => {
                     let target = def.object_type_extension.target.as_str().to_owned();
-                    catalog.extensions.entry(target).or_default().push(root);
+                    catalog
+                        .extensions
+                        .entry(target)
+                        .or_default()
+                        .push((root, artifact));
                 }
                 EntityRoot::V2PropertyTypes(def) => {
                     catalog
@@ -612,9 +620,10 @@ impl<'a> Catalog<'a> {
     }
 
     /// The admitted-kind class of every effective member of object type
-    /// `name`, or `None` when no object type has that name.
-    fn members(&self, name: &str) -> Option<BTreeMap<&str, Class>> {
-        self.member_refs(name).map(|members| {
+    /// `name` as `model` sees it, or `None` when no object type has that
+    /// name.
+    fn members(&self, name: &str, model: &ArtifactEnvelope) -> Option<BTreeMap<&str, Class>> {
+        self.member_refs(name, model).map(|members| {
             members
                 .into_iter()
                 .map(|(id, member)| (id, self.class(member)))
@@ -623,8 +632,17 @@ impl<'a> Catalog<'a> {
     }
 
     /// The effective members of object type `name` by id, most derived
-    /// first, or `None` when no object type has that name.
-    fn member_refs(&self, name: &str) -> Option<BTreeMap<&str, Member<'_>>> {
+    /// first, as `model` sees them, or `None` when no object type has that
+    /// name. An extension, of the type or of a supertype, contributes only
+    /// when the model's scope can see it (`artifact_set::scope_conflict`
+    /// from the model to the extension is `None`, the rule
+    /// `artifact_set::scope_finding` applies), so a member only an invisible
+    /// extension declares is unknown to the model.
+    fn member_refs(
+        &self,
+        name: &str,
+        model: &ArtifactEnvelope,
+    ) -> Option<BTreeMap<&str, Member<'_>>> {
         let mut members = BTreeMap::new();
         let mut interfaces = Vec::new();
         let mut visited = BTreeSet::new();
@@ -665,7 +683,15 @@ impl<'a> Catalog<'a> {
                 | EntityRoot::V2PropertyTypes(_)
                 | EntityRoot::V2Markings(_) => {}
             }
-            for extension in self.extensions.get(&current).into_iter().flatten() {
+            let visible =
+                self.extensions
+                    .get(&current)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, defining)| {
+                        crate::artifact_set::scope_conflict(&model.scope, &defining.scope).is_none()
+                    });
+            for (extension, _) in visible {
                 if let EntityRoot::V2Extension(def) = extension {
                     let def = &def.object_type_extension;
                     for property in &def.properties {
@@ -749,7 +775,7 @@ pub(crate) fn check_model_set(
         check_predictions(&catalog, root, artifact, &mut findings);
         let input = root.input.object_type().as_str();
         findings.extend(catalog.scope_finding(artifact, input, "/payload/input/objectType"));
-        let Some(members) = catalog.members(input) else {
+        let Some(members) = catalog.members(input, artifact) else {
             findings.push(finding(
                 UNKNOWN_INPUT,
                 format!(
@@ -835,7 +861,7 @@ fn check_predictions(
     let mut push = |message: String, pointer: String| {
         findings.push(finding(PREDICTION_TYPE, message, pointer, artifact));
     };
-    let Some(members) = catalog.member_refs(name) else {
+    let Some(members) = catalog.member_refs(name, artifact) else {
         push(
             format!(
                 "no object type in the artifact set or the installed base is named {name} for the model's predictions"

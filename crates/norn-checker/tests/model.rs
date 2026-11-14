@@ -711,7 +711,13 @@ fn prediction_extension(scope: &Value, property: &Value) -> ArtifactEnvelope {
 fn with_extension_feature() -> Value {
     with(
         "/features",
-        json!(["tenure_months", "monthly_spend", "plan", "region", "acme__loyalty"]),
+        json!([
+            "tenure_months",
+            "monthly_spend",
+            "plan",
+            "region",
+            "acme__loyalty"
+        ]),
     )
 }
 
@@ -775,12 +781,18 @@ fn a_predictions_column_only_an_invisible_extension_declares_is_refused() {
                 ],
                 &[]
             ),
-            at("model.admission.prediction_type_mismatch", "/payload/outputs/3"),
+            at(
+                "model.admission.prediction_type_mismatch",
+                "/payload/outputs/3"
+            ),
             "candidate {scope}"
         );
         assert_eq!(
             model_findings(&[model], &[account(), customer(), predictions, extension]),
-            at("model.admission.prediction_type_mismatch", "/payload/outputs/3"),
+            at(
+                "model.admission.prediction_type_mismatch",
+                "/payload/outputs/3"
+            ),
             "installed {scope}"
         );
     }
