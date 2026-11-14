@@ -278,3 +278,31 @@ test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the
   await form.getByRole("button", { name: "Another" }).click()
   await expect(form.getByLabel("Holding id")).toHaveValue("")
 })
+
+test("refused by a law with no detail (a hosted cell's reason: null): says so plainly, claims no law, and lists the record's open findings as their own facts", async ({ page }) => {
+  await open(page)
+  // The hosted refusal: 422 core.laws.violated, no reason, the generic message, for every role (#1353).
+  await page.route("**/api/host/v1/actions/canon.holding.adjust**", (route) => route.request().method() === "POST"
+    ? route.fulfill({ status: 422, json: { format: "norn/refusal@2", code: "core.laws.violated", category: "domain", message: "a declared precondition does not hold", reason: null, diagnostics: [] } })
+    : route.fallback())
+  // The record already carries an open law finding the reader can see on its page.
+  await page.route("**/findings?**", (route) => route.fulfill({ json: {
+    objectType: "canon.Holding", id: "demo/holding/0001", quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "demo.law", lawId: "demo.unknown_law", version: "0.1" }, severity: "error", message: "Counted grams disagree with the vault ledger.", status: "open", firstSeen: "2026-11-13T22:33:15Z", lastSeen: "2026-11-13T22:33:15Z" }],
+  } }))
+  await rowFor(page, "demo/holding/0001").click()
+  await page.getByRole("button", { name: "Adjust quantity" }).click()
+  const form = sheet(page)
+  await form.getByLabel("Counted quantity").fill("12.500")
+  await form.getByLabel("Reason").fill("Recount")
+  await form.locator('button[type="submit"]').click()
+  const card = form.locator('[data-refusal="redacted"]')
+  await expect(card).toContainText("Refused by a law. Nothing was written.")
+  await expect(card).toContainText("“a declared precondition does not hold”")
+  await expect(card.locator("[data-open-findings]")).toContainText("Open findings on this record")
+  await expect(card.locator("[data-open-findings]")).toContainText("Counted grams disagree with the vault ledger.")
+  // No law is named as the refuser, and no "use this value" is offered: the cell disclosed none.
+  await expect(card).not.toContainText("This change breaks a rule")
+  await expect(card.getByRole("button", { name: /^Use / })).toHaveCount(0)
+  await shoot(page, "refused-redacted")
+})

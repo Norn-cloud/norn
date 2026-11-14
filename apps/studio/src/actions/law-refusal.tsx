@@ -1,4 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
+import { useLocale } from "@/lib/locale"
+import { useView } from "@/lib/view"
+import { catalogOf } from "../lib/catalog.ts"
+import { factDisplay } from "../lib/objects.ts"
+import { readFindings } from "../evidence/review.ts"
 import { ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
@@ -85,6 +90,62 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
             <span className="whitespace-pre-wrap">{explanation}</span>
           </span>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A law refused the change, and the cell disclosed no detail (a hosted cell sends `reason: null`;
+ * #1353): say plainly that a law refused it and nothing was written, with the cell's own words. Then,
+ * as separate facts, the open law findings on this record that the reader can already read (the same
+ * ones its page shows): which law each records and the facts it compares, with the record's values.
+ * Nothing here claims which law refused this write, and nothing evaluates a law.
+ */
+export function RedactedLawRefusal({ objectType, id, code, message, technical }: { readonly objectType: string; readonly id: string | undefined; readonly code: string; readonly message: string; readonly technical: boolean }) {
+  const { locale } = useLocale()
+  const { view } = useView()
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const findings = useQuery({ queryKey: ["findings", objectType, id], queryFn: () => readFindings(objectType, id!), enabled: id !== undefined, retry: false })
+  const object = useQuery({ queryKey: ["object", objectType, id], queryFn: () => transport.object(objectType, id!), enabled: id !== undefined, retry: false })
+  const concept = catalog.data ? catalogOf(catalog.data.document, locale).byName.get(objectType) : undefined
+  const open = findings.data?.document.findings.filter(({ status }) => status === "open") ?? []
+  const record = object.data ?? undefined
+  const fact = (fieldId: string) => {
+    const field = concept?.fields.find(({ id: candidate }) => candidate === fieldId)
+    if (field === undefined) return { label: fieldId.replaceAll("_", " "), value: undefined }
+    return { label: field.label ?? field.id.replaceAll("_", " "), value: record ? factDisplay(field, record.object.document, record.object.numbers, "", view) : undefined }
+  }
+  return (
+    <div role="alert" data-refusal="redacted" className="overflow-hidden rounded-xl border border-border bg-card text-sm">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
+        <Chip tone="red" icon={ShieldX}>Refused</Chip>
+        <span className="font-medium">Refused by a law. Nothing was written.</span>
+      </div>
+      <div className="grid gap-2.5 px-3 py-3">
+        <p className="text-meta text-muted-foreground">The cell said: “{message}”. It does not say which law, or which values, to this view.</p>
+        {open.length > 0 && (
+          <div className="grid gap-2" data-open-findings>
+            <div className="text-xs font-medium text-muted-foreground">Open findings on this record</div>
+            {open.map((finding) => {
+              const law = finding.ruleRef.kind === "law" ? concept?.laws.find(({ id: lawId }) => lawId === (finding.ruleRef as { lawId: string }).lawId) : undefined
+              const compared = law?.compares?.map(fact)
+              return (
+                <div key={finding.id} className="grid gap-1.5 rounded-lg bg-muted px-3 py-2">
+                  <p className="text-pretty">{law?.rationale ?? finding.message}</p>
+                  {compared && <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
+                    {compared.map(({ label, value }, index) => <span key={label} className="contents">
+                      {index > 0 && <span className="text-meta text-muted-foreground">vs</span>}
+                      <FactChip label={label}>{value ?? "—"}</FactChip>
+                    </span>)}
+                  </div>}
+                </div>
+              )
+            })}
+            <p className="text-xs text-muted-foreground">These are on the record as it is stored; correcting them is what the law asks.</p>
+          </div>
+        )}
+        {technical && <span className="border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">{code}</span>}
       </div>
     </div>
   )
