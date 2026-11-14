@@ -125,7 +125,10 @@ generated() {
 # The proof files `import Mathlib`, all of it, while `lake build Aeneas` builds only the Mathlib
 # modules Aeneas needs: on a fresh machine the top-level Mathlib.olean never existed (#10). Fetch
 # Mathlib's prebuilt files for the revision the pinned Aeneas manifest locks (a no-op once
-# present), and require the module the proofs import.
+# present), and require the module the proofs import. The cache unpacks by renaming files into
+# the project, so it lives on the tool root's filesystem: a ~/.cache on another mount fails every
+# rename with EXDEV and leaves a half-unpacked Mathlib.
+export MATHLIB_CACHE_DIR="${MATHLIB_CACHE_DIR:-$tool_root/mathlib-cache}"
 (cd "$lean_root" && lake exe cache get)
 (cd "$lean_root" && lake build Aeneas)
 test -f "$lean_root/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean"
