@@ -122,6 +122,10 @@ routes! {
     /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
     /// route (HOST-PROVISION-1).
     Provision => ("POST", "/v1/cell:provision"),
+    /// `POST /v1/cell/definitions:plan` (HOST-INSTALL-1).
+    DefinitionsPlan => ("POST", "/v1/cell/definitions:plan"),
+    /// `POST /v1/cell/definitions:apply` (HOST-INSTALL-1).
+    DefinitionsApply => ("POST", "/v1/cell/definitions:apply"),
     /// `POST /v1/actions/{actionId}`.
     Action => ("POST", "/v1/actions/{actionId}"),
     /// `GET /v1/definitions`.
@@ -244,6 +248,8 @@ impl Route {
             "/v1/uploads:read" => return Some(Self::UploadRead),
             "/v1/actions" => return Some(Self::ActionCatalog),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
+            norn_api::cell_definitions::PLAN_PATH => return Some(Self::DefinitionsPlan),
+            norn_api::cell_definitions::APPLY_PATH => return Some(Self::DefinitionsApply),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
@@ -664,6 +670,10 @@ fn route<E: SqlEngine>(
         Err(without_engine(route, method))
     } else if route_of == Some(Route::Provision) {
         provisioned(host, actor, request)
+    } else if let Some(route) =
+        route_of.filter(|route| matches!(route, Route::DefinitionsPlan | Route::DefinitionsApply))
+    {
+        cell_definitions(host, actor, route, request)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
@@ -766,6 +776,47 @@ fn provisioned<E: SqlEngine>(
     };
     definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
     Err(norn_api::provision::already_provisioned())
+}
+
+/// HOST-INSTALL-1: plan or apply a change of the cell's kernel definitions.
+/// Authorized with the explicit scope before the body is read.
+fn cell_definitions<E: SqlEngine>(
+    host: Option<&DevHost<E>>,
+    actor: Option<&str>,
+    route: Route,
+    request: &Request<'_>,
+) -> Result<String, Refusal> {
+    if request.method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a definitions change is planned and applied with POST",
+        ));
+    }
+    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
+    let scope = ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    let host = cell(host)?;
+    definition_routes::authorize(host, &scope, actor, Operation::WriteDefinitions)?;
+    if route == Route::DefinitionsPlan {
+        document_json(&norn_api::cell_definitions::plan_definitions(
+            host,
+            &scope,
+            actor,
+            request.body,
+        )?)
+    } else {
+        document_json(&norn_api::cell_definitions::apply_definitions(
+            host,
+            &scope,
+            actor,
+            request.body,
+            request.now.saturating_mul(1000),
+        )?)
+    }
 }
 
 /// The coordinates of `GET /v1/questions/{question}/trace`: scope, the

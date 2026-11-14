@@ -454,8 +454,25 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        self.install_definitions_checked(candidate_model, input, expected_version, |_| Ok(()))
+    }
+
+    /// [`Self::install_definitions`], with `check` run on the cell's store
+    /// under the same exclusive epoch, before anything is written: what it
+    /// reads cannot change before the install commits, and its refusal
+    /// installs nothing.
+    /// # Errors
+    /// `check`'s refusal, or as [`Self::install_definitions`].
+    pub fn install_definitions_checked(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
+    ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
+        check(cell.store())?;
         check_reopens(
             &candidate_model,
             &input.canonical_set,

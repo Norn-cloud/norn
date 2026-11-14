@@ -945,3 +945,116 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
         json!([{ "path": owner("display_name"), "operator": "eq", "value": "Ada" }])
     )));
 }
+
+/// HOST-INSTALL-1: a pack applied over a provisioned privacy set keeps its
+/// markings. The jewelry pack is applied through `apply_definitions` (the
+/// hosted route's function); the read path takes the marking catalog from
+/// the retained canonical set of the new revision, so a member's read of
+/// `canon.Party.display_name` is still the pseudonym.
+#[test]
+fn an_applied_pack_keeps_the_privacy_markings() {
+    use norn_api::cell_definitions::{apply_definitions, plan_definitions};
+    use norn_ir::ArtifactEnvelope;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
+    let read = |path: &str| -> ArtifactEnvelope { serde_json::from_str(&text(path)).unwrap() };
+    let mut artifacts: Vec<ArtifactEnvelope> =
+        serde_json::from_str(&text("fixtures/demo/explorer/three-systems.definitions.json"))
+            .unwrap();
+    for artifact in &mut artifacts {
+        if artifact.artifact_id == "canon.Party.entity" {
+            *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
+        }
+    }
+    artifacts.push(read("registry/privacy/artifacts/privacy.markings.entity.json"));
+    artifacts.push(read("registry/privacy/artifacts/privacy.reveal.policy.json"));
+    let Ok(admitted) = norn_api::kernel_set::admit_kernel_set(&artifacts) else {
+        panic!("the privacy set is admitted");
+    };
+    let model = norn_api::kernel_set::serving_model(&artifacts).expect("the set is served");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let physical = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: admitted.canonical_set,
+                    registry: vec![],
+                    receipt_sha256: admitted.receipt_sha256,
+                    admission_receipt: Some(admitted.receipt),
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &physical.key(),
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical.key(),
+                logical_time: 2,
+                writes: vec![FactWriteRow::Put {
+                    object_type: PARTY.into(),
+                    key: "p1".into(),
+                    values: BTreeMap::from([
+                        ("display_name".to_owned(), V::from("Ada Lovelace")),
+                        ("kind".to_owned(), V::from("person")),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    let scope = ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let pack: Vec<Json> = [
+        "jewelry.Melt.entity",
+        "jewelry.melt.fine_mass_conserved.law",
+        "jewelry.melt.record.action",
+    ]
+    .iter()
+    .map(|id| serde_json::from_str(&text(&format!("registry/packs/jewelry/artifacts/{id}.json"))).unwrap())
+    .collect();
+    let plan = plan_definitions(
+        &cell,
+        &scope,
+        Some("owner"),
+        &json!({ "artifacts": pack }).to_string(),
+    )
+    .unwrap();
+    let applied = apply_definitions(
+        &cell,
+        &scope,
+        Some("owner"),
+        &json!({ "artifacts": pack, "expectedVersion": plan.base_version }).to_string(),
+        10,
+    )
+    .unwrap();
+    assert_eq!(applied.definitions_version, plan.next_version);
+    let record = get_queried_object(&cell, &scope, Some("member"), PARTY, "p1", &Mapping).unwrap();
+    let document = serde_json::to_value(&record).unwrap();
+    let name = document["values"]["display_name"].as_str().unwrap_or_default();
+    assert!(!name.contains("Ada"), "the value never leaves: {document}");
+    assert_eq!(
+        document["masked"]["display_name"]["markings"],
+        json!(["pii.contact"]),
+        "{document}"
+    );
+}

@@ -165,6 +165,18 @@ fn dispatch(
             "fix the refused change shown by norn dev; the first admitted revision is served",
         ));
     };
+    // DEV-ONE-AUTHORITY-1: only this process installs definitions, from the
+    // project's sources; the hosted plan/apply routes are not served here.
+    if parsed.path == norn_api::cell_definitions::PLAN_PATH
+        || parsed.path == norn_api::cell_definitions::APPLY_PATH
+    {
+        return refusal(&Refusal::new(
+            http::StatusCode::CONFLICT,
+            "defs.dev_sources_only",
+            "norn dev installs definitions from the project's sources",
+            "save the project's sources; norn dev admits and installs every change itself",
+        ));
+    }
     let now = super::now_ms().checked_div(1000).unwrap_or_default();
     // The active revision's metrics, derived before the request runs.
     let questions = match questions.questions(host) {
