@@ -20,4 +20,4 @@ run("agent offers help on B under assist@1", agent("lending.assistance.offer", {
 run("officer retires assist@1", officer("lending.policy.retire", {"id": "assist@1"}, "retire-assist-1"))
 run("officer promotes assist@2", officer("lending.policy.promote", {"id": "assist@2"}, "promote-assist-2"))
 run("agent offers help on B under assist@2", agent("lending.assistance.offer", {"id": f"help-{B}-v2", "application_id": B, "score_id": f"{B}@{MV}", "policy_id": "assist@2", "channel": "email", "message": "Can we help you finish your application?"}, f"help-{B}-v2"))
-json.dump({k: [v[0], v[1]] for k, v in out.items()}, open("/home/dev/.cache/agent-scratch/lane-d/scenario.json", "w"), indent=1)
+json.dump({k: [v[0], v[1]] for k, v in out.items()}, open("scenario.json", "w"), indent=1)
