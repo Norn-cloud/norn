@@ -279,6 +279,8 @@ pub struct Tenant<E: SqlEngine> {
     pseudonym_secret: Option<Vec<u8>>,
     /// D102: the link to the tenant analytics engine, once the host has one.
     engine: Option<crate::olap::Exchange>,
+    /// Studio's connector checks, decided by the PDP (#1036).
+    connectors: crate::policy::ConnectorPolicy,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -302,6 +304,7 @@ impl<E: SqlEngine> Tenant<E> {
         let derived = handle_key
             .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
             .map(|questions| questions.with_label("tenant"));
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -314,6 +317,7 @@ impl<E: SqlEngine> Tenant<E> {
             derived,
             pseudonym_secret: handle_key.map(<[u8]>::to_vec),
             engine: None,
+            connectors,
         })
     }
 
@@ -330,6 +334,7 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let serving = Serving::from_store(store, &scope, table, &caller, questions)?;
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -342,6 +347,7 @@ impl<E: SqlEngine> Tenant<E> {
             derived: None,
             pseudonym_secret: None,
             engine: None,
+            connectors,
         })
     }
 
@@ -544,7 +550,8 @@ impl<E: SqlEngine> Tenant<E> {
 
     /// `POST /v1/access:decide` (#1036): the connector checks Studio asks,
     /// decided for the request's verified principal under the declared
-    /// [`CONNECTOR_GRANTS`]: `{checks: [{action, resource: {type, id}}]}` to
+    /// [`crate::policy::CONNECTOR_GRANTS`], each check decided by the kernel
+    /// PDP: `{checks: [{action, resource: {type, id}}]}` to
     /// `{decisions: [{action, resource, decision, rule}]}` in the same order.
     /// `connector.run` reads the binding's `runRole` from its own active
     /// cell definition, never from the request. A request outside this
@@ -616,13 +623,9 @@ impl<E: SqlEngine> Tenant<E> {
             } else {
                 None
             };
-            let rule = crate::policy::CONNECTOR_GRANTS.decide(
-                &caller.roles,
-                &self.scope.org_id,
-                &action,
-                (&kind, &id),
-                run_role.as_deref(),
-            );
+            let rule = self
+                .connectors
+                .decide(&caller, &action, (&kind, &id), run_role.as_deref());
             decisions.push(serde_json::json!({
                 "action": action,
                 "resource": { "type": kind, "id": id },
