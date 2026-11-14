@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { Fragment, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { CalendarRange, ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
 import { FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
@@ -35,19 +35,34 @@ import { useLiveRefresh } from "./lib/live-reads.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
 /** One metric the cell derives, asked per day or week over every date its records carry. */
+/** Whether an element has come near the viewport (once seen, stays seen); without an observer (a test render) it is seen. */
+function useSeen<T extends Element>() {
+  const ref = useRef<T>(null)
+  const [seen, setSeen] = useState(() => typeof IntersectionObserver === "undefined")
+  useEffect(() => {
+    if (seen || ref.current === null) return
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) { setSeen(true); observer.disconnect() } }, { rootMargin: "300px" })
+    observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [seen])
+  return [ref, seen] as const
+}
+
 function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const { view } = useView()
+  // A question further down asks the cell only when it scrolls near view: the engine answers one at a time.
+  const [ref, seen] = useSeen<HTMLElement>()
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const [conditions, setConditions] = useState<readonly Condition[]>([])
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false })
+  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false, enabled: seen })
   const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
   // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
   // cell declares them; the window then spans every date that type carries.
   const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
-  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: timeType !== undefined && timeType !== metric.objectType })
+  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: seen && timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
   const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
@@ -61,13 +76,13 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
   const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
   return (
     // One question, one section: its title, its controls, then the answer's own surfaces (no card around cards).
-    <section data-slot="panel" className="min-w-0 space-y-4">
+    <section ref={ref} data-slot="panel" className="min-w-0 space-y-4">
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
         <h2 className="text-[1.625rem] font-normal tracking-[-0.025em]">{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</h2>
         {view === "technical" && <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}
       </header>
       <div className="space-y-4">
-        {profile.isPending && <p className="text-sm text-muted-foreground">Reading {conceptTitle(metric.objectType).toLowerCase()} records…</p>}
+        {profile.isPending && <p className="text-sm text-muted-foreground">{seen ? `Reading ${conceptTitle(metric.objectType).toLowerCase()} records…` : "Waits until you scroll to it."}</p>}
         {profile.isError && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
         {profile.data && profile.data.document.rows === 0 && (
           <EmptyState icon={Sigma} title={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 ? "No records yet" : "No records to add up"}
@@ -197,7 +212,8 @@ function LiveQuestionsBoard() {
  * metric: its metrics are listed together, compactly, after the types that have records.
  */
 function TypeSections({ types, list }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[] }) {
-  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false })) })
+  // The profiles each card reads as it comes into view (one analytics read at a time): read here, never asked here.
+  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false, enabled: false })) })
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
   const held = types.filter((_, index) => !empty(index))
   const without = types.filter((_, index) => empty(index))

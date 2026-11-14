@@ -1,3 +1,4 @@
+import { inAnalyticsLane, untilNotPending } from "./evaluate.ts"
 import { cellRead } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
 
@@ -29,8 +30,14 @@ export interface ObjectProfile {
 }
 
 /** The cell's profile of one object type, every number in its exact text. */
+/** A profile is computed by the analytics engine: it waits its turn, and a "pending" refusal is asked again. */
 export const readProfile = (objectType: string): Promise<Read<ObjectProfile>> =>
-  cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are")
+  inAnalyticsLane(async () => {
+    const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are").then((read) => ({ read }), (error: unknown) => ({ error }))
+    const result = await untilNotPending(ask, (outcome) => "error" in outcome && outcome.error instanceof Error && /analytics engine call is pending/i.test(outcome.error.message))
+    if ("error" in result) throw result.error
+    return result.read
+  })
 
 /** A profiled value as sent: numbers by their exact text at `pointer`, text as is, nothing for null. */
 export function profiled(read: Read<unknown>, pointer: string, value: unknown): string {

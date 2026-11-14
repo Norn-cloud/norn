@@ -199,3 +199,37 @@ test("the assistant's model reads a safe prompt: typed placeholder chips, the gu
   await page.waitForTimeout(300)
   await safe.screenshot({ path: `${SHOTS}/privacy-guard-original.png` })
 })
+
+test("the analytics engine answers one call at a time: Studio never sends a second while one is out, and a 'pending' refusal is asked again, not shown", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await stage(page)
+  // The cell's one DuckDB slot: a call that overlaps another is refused as pending (500), and so is the very first one.
+  let inFlight = 0
+  let most = 0
+  let first = true
+  let refusedPending = 0
+  await page.route("**/api/host/v1/questions:evaluate**", async (route) => {
+    inFlight += 1
+    most = Math.max(most, inFlight)
+    if (inFlight > 1 || first) {
+      first = false
+      inFlight -= 1
+      refusedPending += 1
+      return route.fulfill({ status: 500, json: { format: "norn/refusal@2", code: "sql.engine_busy", message: "sql engine: an analytics engine call is pending" } })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    inFlight -= 1
+    return route.fulfill({ json: answerFor((route.request().postDataJSON() as { question: Parameters<typeof answerFor>[0] }).question) })
+  })
+  await page.goto("/dashboards")
+  await page.getByRole("button", { name: /^A weekly overview of/ }).click()
+  await page.getByRole("button", { name: "Propose" }).click()
+  const card = page.locator("[data-proposal=prop_1]")
+  await expect(card.locator("[data-view=number]")).toBeVisible({ timeout: 20_000 })
+  await expect(card.locator("[data-view=pie]")).toBeVisible({ timeout: 20_000 })
+  await expect(card.locator("[data-view=line]")).toBeVisible({ timeout: 20_000 })
+  await expect(card).not.toContainText("pending")
+  await expect(card).not.toContainText("did not answer")
+  expect(most).toBe(1)
+  expect(refusedPending).toBe(1)
+})
