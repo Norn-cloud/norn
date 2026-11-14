@@ -13,13 +13,13 @@ failed=0
 # faster but the I/O-bound norn-cell durable-store tests slower, so it is not the default.
 step() { local n=$1 t=$SECONDS rc; shift; "$@" > "$out/$n.log" 2>&1; rc=$?; echo "$n rc=$rc $((SECONDS-t))s" | tee -a "$out/steps"; [[ $rc -eq 0 ]] || failed=1; }
 t0=$SECONDS
-changed=$(git diff --name-only "$base" HEAD) || { echo "scoped: cannot diff against $base" >&2; exit 2; }
+changed=$(git -c core.quotePath=false diff --name-only --no-renames "$base" HEAD) || { echo "scoped: cannot diff against $base" >&2; exit 2; }
 # Workspace-wide inputs reach every crate: such a unit needs the full gate, never a scoped one.
 if wide=$(grep -E '^(Cargo\.lock|Cargo\.toml|rust-toolchain(\.toml)?|\.cargo/.*)$' <<<"$changed"); then
   echo "scoped: workspace-wide change ($(tr '\n' ' ' <<<"$wide")); run the full gate: scripts/ci/core.sh all" >&2
   exit 3
 fi
-read -r touched dependents < <(python3 -I - "$changed" <<'PY'
+read -r touched dependents outside < <(python3 -I - "$changed" <<'PY'
 import json, subprocess, sys
 changed = sys.argv[1].split()
 meta = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"]))
@@ -28,10 +28,21 @@ pkgs = {p["name"]: p["manifest_path"][len(root) + 1:].rsplit("/", 1)[0] for p in
 touched = {n for n, d in pkgs.items() for f in changed if f.startswith(d + "/")}
 deps = {n for p in meta["packages"] for n in [p["name"]]
         if any(d["name"] in touched and d.get("path") for d in p["dependencies"])} - touched
-print(",".join(sorted(touched)) or "-", ",".join(sorted(deps)) or "-")
+# The planner's rule (core.sh plan --affected): a path outside every member crate is
+# unplannable, except provenance records and top-level or docs/ Markdown. Studio has its own
+# steps below. Crate tests read fixtures/, registry/ and the like, so such a unit needs the full gate.
+dirs = sorted(pkgs.values())
+outside = [f for f in changed if not any(f.startswith(d + "/") for d in dirs)
+           and not f.startswith(("apps/studio/", ".github/ci/provenance/"))
+           and not (f.endswith(".md") and (f.startswith("docs/") or "/" not in f))]
+print(",".join(sorted(touched)) or "-", ",".join(sorted(deps)) or "-", outside[0] if outside else "-", len(outside))
 PY
 )
-[[ -n ${touched:-} && -n ${dependents:-} ]] || { echo "could not derive the touched crates" >&2; exit 2; }
+[[ -n ${touched:-} && -n ${dependents:-} && -n ${outside:-} ]] || { echo "could not derive the touched crates" >&2; exit 2; }
+if [[ ${outside%% *} != - ]]; then
+  echo "scoped: ${outside##* } changed path(s) outside the crates and apps/studio, e.g. ${outside%% *}; run the full gate: scripts/ci/core.sh all" >&2
+  exit 3
+fi
 echo "touched=$touched dependents=$dependents" | tee -a "$out/steps"
 step fmt cargo fmt --all -- --check
 if [[ $touched != - ]]; then
