@@ -411,6 +411,24 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The current revision of the retained definition `id`, if any, read
+    /// under the definitions read epoch. The host's own authority checks
+    /// (`/v1/access:decide` reads a binding's `runRole`) read it here; no
+    /// network caller does.
+    /// # Errors
+    /// A store failure.
+    pub fn retained_definition(
+        &self,
+        id: &str,
+    ) -> Result<Option<norn_cell::retained::RetainedDefinitionRecord>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .retained_definition(id, None)
+            .map_err(Refusal::host)
+    }
+
     /// The active definitions version alone (no set is read), or `None` for
     /// a cell with nothing installed: cheap enough to check per request.
     /// # Errors
