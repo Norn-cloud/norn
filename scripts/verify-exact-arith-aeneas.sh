@@ -123,14 +123,24 @@ generated() {
 }
 
 # The proof files `import Mathlib`, all of it, while `lake build Aeneas` builds only the Mathlib
-# modules Aeneas needs: on a fresh machine the top-level Mathlib.olean never existed (#10). Fetch
-# Mathlib's prebuilt files for the revision the pinned Aeneas manifest locks (a no-op once
-# present), and require the module the proofs import. The cache unpacks by renaming files into
-# the project, so it lives on the tool root's filesystem: a ~/.cache on another mount fails every
-# rename with EXDEV and leaves a half-unpacked Mathlib. An inherited override is ignored for the
-# same reason.
-export MATHLIB_CACHE_DIR="$tool_root/mathlib-cache"
+# modules Aeneas needs: on a fresh machine the top-level Mathlib.olean never existed (#10). So the
+# gate fetches Mathlib's prebuilt files. Lean loads .olean files without re-checking them, and the
+# cache server names its archives by a non-cryptographic hash of their inputs, so the download is
+# trusted only by content: after the fetch, the sha256 over every archive of the pinned Mathlib
+# revision must equal the digest below (recorded from the 2026-11-14 download that passed this
+# gate: 8542 archives). A missing, extra or changed archive fails the gate before any proof runs.
+# The cache lives on the tool root's filesystem, one directory per revision: it unpacks by
+# renaming files into the project, and a ~/.cache on another mount fails every rename with EXDEV
+# and leaves a half-unpacked Mathlib. Inherited overrides of the cache location and source are
+# dropped for the same reasons.
+mathlib_rev=fabf563a7c95a166b8d7b6efca11c8b4dc9d911f
+mathlib_archives_sha256=962f98de613ecc6b29f6bcf60951dd5aeb0771ff875b0b55488f97f41ff691a0
+test "$(python3 -I -c 'import json, sys; print(next(p["rev"] for p in json.load(open(sys.argv[1]))["packages"] if p["name"] == "mathlib"))' "$lean_root/lake-manifest.json")" = "$mathlib_rev"
+unset MATHLIB_CACHE_GET_URL MATHLIB_CACHE_USE_CLOUDFLARE
+export MATHLIB_CACHE_DIR="$tool_root/mathlib-cache/$mathlib_rev"
+mkdir -p "$MATHLIB_CACHE_DIR"
 (cd "$lean_root" && lake exe cache get)
+test "$(cd "$MATHLIB_CACHE_DIR" && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)" = "$mathlib_archives_sha256"
 (cd "$lean_root" && lake build Aeneas)
 test -f "$lean_root/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean"
 # The written semantics never import the extraction.
