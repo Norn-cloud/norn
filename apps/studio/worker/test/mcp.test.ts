@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { assistantCallback, cimdAllowed, fetchClientMetadata } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 import { hostToken } from "../actor.ts"
+import { retried } from "../mcp.ts"
 import { createAuth } from "../auth.ts"
 
 /**
@@ -298,4 +299,13 @@ test("a store that cannot be read is a retryable 503, never the person's token b
     db(env).run(`alter table "${table}_away" rename to "${table}"`)
     expect((await mcp(env, accessToken, INIT)).status).toBe(200)
   }
+})
+
+test("a store read that fails once is tried again before it counts as unavailable", async () => {
+  let reads = 0
+  expect(await retried(async () => { reads += 1; if (reads < 2) throw new Error("opening"); return "keys" }, [1, 1])).toBe("keys")
+  expect(reads).toBe(2)
+  reads = 0
+  await expect(retried(async () => { reads += 1; throw new Error("down") }, [1, 1])).rejects.toThrow("down")
+  expect(reads).toBe(3)
 })

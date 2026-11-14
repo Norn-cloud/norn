@@ -49,6 +49,22 @@ export async function grantActor(auth: Auth, claims: { readonly sub?: unknown; r
 }
 
 /**
+ * A read of Studio's auth store, tried again twice after a short pause before it counts as
+ * unavailable: a freshly started isolate's first read can fail while the store opens, and an
+ * assistant should never see that as anything but a slower answer.
+ */
+export async function retried<T>(read: () => Promise<T>, pauses: readonly number[] = [100, 400]): Promise<T> {
+  for (const pause of pauses) {
+    try {
+      return await read()
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, pause))
+    }
+  }
+  return read()
+}
+
+/**
  * The access token's claims, verified against this deployment's own signing keys (no network
  * fetch); null when the token is not one this deployment issued for /mcp; "unavailable" when the
  * keys cannot be read right now. A store hiccup is not the person's token being wrong: answering
@@ -60,7 +76,7 @@ async function verifiedClaims(auth: Auth, baseURL: string, authorization: string
   const token = match[1] as string
   let jwks: unknown
   try {
-    jwks = await auth.api.getJwks()
+    jwks = await retried(() => auth.api.getJwks())
   } catch {
     return "unavailable"
   }
@@ -183,7 +199,7 @@ export async function serveMcp(request: Request, edge: McpEdge): Promise<Respons
   if (claims === null) return challenge(edge.baseURL, request.headers.has("authorization") ? "invalid_token" : undefined)
   let actor: Awaited<ReturnType<typeof grantActor>>
   try {
-    actor = await grantActor(edge.auth, claims as never)
+    actor = await retried(() => grantActor(edge.auth, claims as never))
   } catch {
     return rpcError(503, "Norn's sign-in check is briefly unavailable; retry.", { "retry-after": "2" })
   }
