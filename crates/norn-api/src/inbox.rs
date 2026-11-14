@@ -1003,7 +1003,10 @@ fn record<E: SqlEngine>(
     // correction); any other disagrees, and the record needs review.
     let mut agreeing = BTreeSet::new();
     let mut others: Vec<NornInboxFinding> = Vec::new();
-    for other in open.iter().filter(|other| other.rule_ref != finding.rule_ref) {
+    for other in open
+        .iter()
+        .filter(|other| other.rule_ref != finding.rule_ref)
+    {
         let (compared, wants, words) = read(other);
         let agrees = matches!((&derived, &wants), (Some((property, value)), Some((wanted, expected)))
             if property == wanted && same_number(value, expected));
@@ -1026,7 +1029,13 @@ fn record<E: SqlEngine>(
     if let Some((property, value)) = &derived
         && others.is_empty()
     {
-        others.extend(dry_run(definitions, &review, finding, &agreeing, (property, value)));
+        others.extend(dry_run(
+            definitions,
+            &review,
+            finding,
+            &agreeing,
+            (property, value),
+        ));
     }
     if let Some((property, value)) = derived
         && others.is_empty()
