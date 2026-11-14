@@ -149,7 +149,7 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await page.getByLabel("Tile 3 view").selectOption("chart:bar")
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page.getByText("Version 2")).toBeVisible()
-  await page.getByRole("link", { name: "View" }).click()
+  await page.getByRole("link", { name: "View", exact: true }).click()
   await expect(page.locator("[data-view=bar]")).toBeVisible()
 
   // Delete, then undo: the same definition is installed over the retired version.
