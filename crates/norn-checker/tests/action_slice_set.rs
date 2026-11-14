@@ -265,7 +265,7 @@ fn slice_property_and_link_selectors_are_resolved_against_the_model() {
 fn unresolved_slice_catalogs_and_nullable_final_keys_fail_closed() {
     let mut unresolved = documents();
     unresolved[0]["payload"]["propertyTypes"][1]["type"]["name"] = json!("fashion.missing");
-    assert!(!findings(unresolved).is_empty());
+    assert_ne!(findings(unresolved), []);
 
     let mut nullable = documents();
     nullable[4]["payload"]["derive"] = json!([

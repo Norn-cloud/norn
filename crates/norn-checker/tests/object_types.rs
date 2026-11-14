@@ -173,7 +173,10 @@ fn inherited_identity_definitions() -> Vec<ObjectTypeDef> {
 #[test]
 fn id_collision_admission_preserves_inherited_key_root_and_normalization() {
     let definitions = inherited_identity_definitions();
-    assert!(check_object_type_defs(&definitions, &[], &BTreeSet::new()).is_empty());
+    assert_eq!(
+        check_object_type_defs(&definitions, &[], &BTreeSet::new()),
+        []
+    );
     let template: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
         "../../../fixtures/ir/entity-v2/artifact-set/retail-sku.entity.json"
     ))

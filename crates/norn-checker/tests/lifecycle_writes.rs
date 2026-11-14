@@ -64,7 +64,7 @@ fn pairs(findings: Vec<Diagnostic>) -> Vec<(String, String)> {
         .map(|Diagnostic { code, span, .. }| {
             (
                 code.as_str().to_owned(),
-                span.map(|span| span.pointer).unwrap_or_default(),
+                span.map_or_default(|span| span.pointer),
             )
         })
         .collect()
@@ -279,7 +279,7 @@ fn scalar_table_patch_and_set_values_obey_the_effective_enum_contract() {
             });
             let findings = set_findings(vec![entity_with_mode(), rule]);
             if valid {
-                assert!(findings.is_empty(), "{op} {literal}: {findings:?}");
+                assert_eq!(findings, [], "{op} {literal}: {findings:?}");
             } else {
                 assert!(
                     findings
@@ -988,7 +988,7 @@ fn closed_exchange_patch_does_not_write_ledger_or_conversion_members() {
         "[{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{eligible:true}},{op:'patch',objectType:'jewelry.CycleLedger',key:'ledger',patch:{account_code:'Sales'}},{op:'patch',objectType:'jewelry.CycleConversion',key:'conversion',patch:{output_gross:1}}]",
     ] {
         let findings = set_diagnostics(heterogeneous_patch_example(expression));
-        assert!(findings.is_empty(), "{findings:?}");
+        assert_eq!(findings, [], "{findings:?}");
     }
 }
 

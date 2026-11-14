@@ -43,9 +43,9 @@ fn cycles(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Str
 fn forward_dependencies_are_acyclic() {
     let a = declaration("test.a", "1.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[]);
-    assert!(cycles(&[a.clone(), b.clone()], &[]).is_empty());
-    assert!(cycles(&[b, a.clone()], &[]).is_empty());
-    assert!(norn_checker::check_artifact(&a).is_empty());
+    assert_eq!(cycles(&[a.clone(), b.clone()], &[]).len(), 0);
+    assert_eq!(cycles(&[b, a.clone()], &[]).len(), 0);
+    assert_eq!(norn_checker::check_artifact(&a), []);
 }
 #[test]
 fn self_and_retained_classification_cycles_refuse() {
@@ -64,9 +64,9 @@ fn retained_versions_and_ambiguous_identities_never_select_a_cycle_target() {
     let a = declaration("test.a", "2.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[("test.a", "1.0.0")]);
     let old = declaration("test.a", "1.0.0", &[]);
-    assert!(cycles(&[a.clone(), b], &[old]).is_empty());
+    assert_eq!(cycles(&[a.clone(), b], &[old]).len(), 0);
     let b = declaration("test.b", "1.0.0", &[("test.a", "2.0.0")]);
-    assert!(cycles(&[a, b.clone(), b], &[]).is_empty());
+    assert_eq!(cycles(&[a, b.clone(), b], &[]).len(), 0);
 }
 proptest::proptest! {
     // Sparse edges and no self-loops: with uniform bits nearly every non-DAG
@@ -120,31 +120,34 @@ fn findings(
 fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
     let base = item();
     let class = qualified();
-    assert!(findings(std::slice::from_ref(&class), std::slice::from_ref(&base)).is_empty());
+    assert_eq!(
+        findings(std::slice::from_ref(&class), std::slice::from_ref(&base)),
+        []
+    );
     let mut newer = serde_json::to_value(&base).expect("wire");
     newer["version"] = json!("2.0.0");
     newer["payload"]["objectType"]["properties"][0]["type"] = json!({"kind":"text"});
-    assert!(
+    assert_eq!(
         findings(
             std::slice::from_ref(&class),
             &[
                 base.clone(),
                 serde_json::from_value(newer).expect("new version")
             ]
-        )
-        .is_empty()
+        ),
+        []
     );
     let mut with_member = serde_json::to_value(&class).expect("wire");
     with_member["payload"]["dependencies"] = json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
         "member":{"kind":"property", "typeName":"test.Item", "property":"amount"}}]);
-    assert!(
+    assert_eq!(
         findings(
             &[serde_json::from_value(with_member).expect("member")],
             std::slice::from_ref(&base)
-        )
-        .is_empty()
+        ),
+        []
     );
-    assert!(findings(&[base, class], &[]).is_empty());
+    assert_eq!(findings(&[base, class], &[]), []);
     let mut interface = serde_json::to_value(item()).expect("wire");
     let definition = interface["payload"]
         .as_object_mut()
@@ -152,12 +155,12 @@ fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
         .remove("objectType")
         .expect("type");
     interface["payload"]["interface"] = definition;
-    assert!(
+    assert_eq!(
         findings(
             &[qualified()],
             &[serde_json::from_value(interface).expect("interface")]
-        )
-        .is_empty()
+        ),
+        []
     );
 }
 #[test]
@@ -191,9 +194,9 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
             "{pointer}"
         );
     }
-    assert!(!findings(&[qualified()], &[]).is_empty());
+    assert_ne!(findings(&[qualified()], &[]), []);
     let base = item();
-    assert!(!findings(&[qualified()], &[base.clone(), base]).is_empty());
+    assert_ne!(findings(&[qualified()], &[base.clone(), base]), []);
     let mut pinned = serde_json::to_value(item()).expect("wire");
     pinned["dependencies"] =
         json!([{"artifactId":"test.amounts", "version":"1.0.0", "kind":"entity", "required":true}]);
@@ -259,11 +262,12 @@ fn graph_classify_keeps_base_ids_and_membership_exit_is_a_pure_read() {
         class.classify(&original, true).expect("complete"),
         BTreeSet::from(["lot-7".into()])
     );
-    assert!(
+    assert_eq!(
         class
             .classify(&[row("lot-7", 99)], true)
             .expect("complete")
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(original, [row("lot-7", 101)]);
     assert_eq!(class.definitions().len(), 2);

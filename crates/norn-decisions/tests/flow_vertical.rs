@@ -172,5 +172,5 @@ fn flow_vertical_trace_matches_the_golden() {
             requested_timer = timers.first().cloned();
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert_eq!(failures.len(), 0, "{}", failures.join("\n"));
 }

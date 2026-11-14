@@ -36,7 +36,7 @@ fn standard_expression_cells_use_context_without_a_subject() {
     value.inputs[0].field = None;
     let result = analyze_table(&value, &boolean()).expect("analysis");
     assert!(result.uncovered.is_none());
-    assert!(result.overlaps.is_empty());
+    assert_eq!(result.overlaps, []);
 }
 
 #[test]

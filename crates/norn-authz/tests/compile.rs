@@ -375,7 +375,7 @@ fn arbitrary_expressions_are_rejected() {
 #[test]
 fn empty_policy_compiles_to_an_empty_deny_all_set() {
     let compiled = compile(&schema(), &policy(&[])).expect("empty compiles");
-    assert!(compiled.is_empty());
+    assert_eq!(compiled.len(), 0);
     assert_eq!(compiled.to_cedar(), "");
 }
 

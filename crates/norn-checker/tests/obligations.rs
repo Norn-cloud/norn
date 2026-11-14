@@ -33,8 +33,9 @@ fn source(pool: &[Value]) -> DefinitionSource {
             tenant: None,
         },
     );
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "fixture must be admitted: {:?}",
         findings
             .iter()
@@ -1194,7 +1195,7 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         result_sha256: &"b".repeat(64),
         record: &record,
     }];
-    assert!(run(&extension, &stale).reused.is_empty());
+    assert_eq!(run(&extension, &stale).reused, []);
     // A new writer declaration, including opaque writers, never qualifies.
     let mut writer = documents[2].clone();
     writer["artifactId"] = json!("jewelry.writer.entity");
@@ -1207,7 +1208,7 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         base.body()["assumptions"].clone(),
         base.body()["assurance"].clone(),
     ) {
-        assert!(
+        assert_eq!(
             contract
                 .challenge_under_specialisation(
                     &changed,
@@ -1217,8 +1218,8 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
                     &prior
                 )
                 .expect("fallback")
-                .reused
-                .is_empty()
+                .reused,
+            []
         );
     }
 }
@@ -1327,7 +1328,7 @@ fn layers_chain_retains_exact_order_without_enabling_flat_challenges() {
     let layers = retained_fixture();
     let checked = verify_layers(&layers).expect("three retained layers");
     assert_eq!(checked.artifacts().len(), 3);
-    assert!(checked.registry().is_empty());
+    assert_eq!(checked.registry().len(), 0);
     assert_eq!(checked.exact_digest().len(), 64);
     assert_eq!(
         checked.exact_digest(),

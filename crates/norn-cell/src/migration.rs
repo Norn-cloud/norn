@@ -3305,8 +3305,7 @@ fn add_column<E: SqlEngine>(
         .as_ref()
         .map(sql_literal)
         .transpose()?
-        .map(|value| format!(" DEFAULT {value}"))
-        .unwrap_or_default();
+        .map_or_default(|value| format!(" DEFAULT {value}"));
     let not_null = if column.nullable { "" } else { " NOT NULL" };
     let sql = format!(
         "ALTER TABLE {} ADD COLUMN {} {}{not_null}{default_sql}",

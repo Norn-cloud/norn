@@ -68,7 +68,7 @@ fn challenge(artifacts: &[Value]) -> Challenge {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "fixture admission: {findings:?}");
+    assert_eq!(findings, [], "fixture admission: {findings:?}");
     let source = DefinitionSource::parse(
         &serde_json::to_string(artifacts).expect("exact source"),
         "[]",

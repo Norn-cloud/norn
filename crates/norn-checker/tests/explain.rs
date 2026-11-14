@@ -62,7 +62,7 @@ fn incomplete_law_names_the_uncovered_writer_and_footprints() {
         Some("fixtures/law-ir/laws.source.ts")
     );
     assert_eq!(report.closure.artifacts.len(), pool().len());
-    assert!(!law.obligations.is_empty());
+    assert_ne!(law.obligations, []);
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn every_v2_finding_carries_the_guidance_registered_for_its_own_code() {
         "erpnext.no_unpaid_ship",
     )
     .unwrap_err();
-    assert!(!errors.is_empty());
+    assert_ne!(errors, []);
     for error in &errors {
         let finding = error.to_json_v2();
         let registered =
@@ -227,7 +227,7 @@ fn every_law_carries_its_own_obligations() {
                 .iter()
                 .position(|candidate| candidate == &law.declaration.artifact_id)
                 .unwrap();
-            assert!(!law.obligations.is_empty(), "{id}");
+            assert_ne!(law.obligations, [], "{id}");
             for obligation in &law.obligations {
                 let expected = norn_ir::RuntimeValue::from_json_text(index.to_string()).unwrap();
                 assert_eq!(obligation.get("law"), Some(&expected), "{id}");
@@ -259,7 +259,7 @@ fn action_direct_effects_are_the_same_catalog_rows() {
         ExplainKind::Action,
         "commerce.sales_order.submit_invoice.action",
     );
-    assert!(!report.direct_effects.is_empty());
+    assert_ne!(report.direct_effects, []);
     assert!(
         report
             .direct_effects
@@ -305,7 +305,7 @@ fn wording_uses_arabic_and_data_only_french_maps_and_refuses_missing_locale() {
         norn_checker::explain::render_wording(&mut report, &options).unwrap();
         let wording = report.laws[0].wording.as_ref().unwrap();
         assert_eq!(wording.direction, direction);
-        assert!(!wording.slots.is_empty());
+        assert_ne!(wording.slots, []);
         assert_eq!(wording.sha256.len(), 64);
         let invalid = ExplainOptions {
             locale: Some("zz".into()),

@@ -94,7 +94,7 @@ fn model_findings(definitions: Vec<Value>) -> Vec<(String, String)> {
         .map(|finding| {
             (
                 finding.code.as_str().to_owned(),
-                finding.span.map(|span| span.pointer).unwrap_or_default(),
+                finding.span.map_or_default(|span| span.pointer),
             )
         })
         .collect()
@@ -235,7 +235,7 @@ fn admission_findings(effect: &Value) -> Vec<(String, String)> {
         .map(|finding| {
             (
                 finding.code.as_str().to_owned(),
-                finding.span.map(|span| span.pointer).unwrap_or_default(),
+                finding.span.map_or_default(|span| span.pointer),
             )
         })
         .collect()
@@ -265,7 +265,7 @@ fn admission_findings_for_artifacts(entities: Vec<Value>, action: Value) -> Vec<
         .map(|finding| {
             (
                 finding.code.as_str().to_owned(),
-                finding.span.map(|span| span.pointer).unwrap_or_default(),
+                finding.span.map_or_default(|span| span.pointer),
             )
         })
         .collect()
@@ -303,10 +303,7 @@ fn assert_finding(findings: &[(String, String)], code: &str, pointer: &str) {
 #[test]
 fn positive_parent_and_rows_artifact_set_is_admitted() {
     let findings = admission_findings(&row_effect(&valid_collection_action()));
-    assert!(
-        findings.is_empty(),
-        "valid parent-and-rows set: {findings:?}"
-    );
+    assert_eq!(findings, [], "valid parent-and-rows set: {findings:?}");
 }
 
 #[test]
@@ -448,8 +445,9 @@ fn ordering_constraints_must_admit_every_dense_position_through_max_rows() {
         parent_type(20, &json!({ "to": "many", "from": "one" })),
         child,
     );
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "bounds containing every dense row position: {findings:?}"
     );
 }
@@ -527,8 +525,9 @@ fn row_preconditions_may_read_materialized_derived_properties() {
     config["preconditions"] = json!(["self.double_quantity > 0"]);
 
     let findings = admission_findings(&row_effect(&config));
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "preconditions can read completed row derivations: {findings:?}"
     );
 }
@@ -912,8 +911,9 @@ fn row_effect_plumbing_can_share_a_name_with_parent_lifecycle_properties() {
         }
     }
     let findings = admission_diagnostics_for_artifacts(entities.clone(), action.clone());
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "CAS input only reads the version: {findings:?}"
     );
     action["payload"]["inputSchema"]["properties"]["parentValues"] = json!({
@@ -1002,7 +1002,7 @@ fn row_operation_items_must_admit_the_bounded_json_operation_profile() {
             action,
         );
         if accepted {
-            assert!(findings.is_empty(), "{findings:?}");
+            assert_eq!(findings, [], "{findings:?}");
         } else {
             assert!(
                 findings

@@ -74,8 +74,9 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
-    assert!(
-        !files.is_empty(),
+    assert_ne!(
+        files.len(),
+        0,
         "no checker source found under {}",
         src.display()
     );
@@ -160,8 +161,9 @@ fn every_emitted_code_is_registered() {
         })
         .map(|(literal, files)| format!("{literal} ({files:?})"))
         .collect();
-    assert!(
-        unregistered.is_empty(),
+    assert_eq!(
+        unregistered.len(),
+        0,
         "dotted literals that are neither registered codes (conformance/diagnostic-codes/) nor \
          listed non-code literals:\n{}",
         unregistered.join("\n")
@@ -176,16 +178,18 @@ fn every_registered_code_is_emitted() {
         .map(|entry| entry.code)
         .filter(|code| !found.contains_key(*code))
         .collect();
-    assert!(
-        unreferenced.is_empty(),
+    assert_eq!(
+        unreferenced.len(),
+        0,
         "registered codes no checker source emits: {unreferenced:?}"
     );
     let stale: Vec<&&str> = NON_CODE_LITERALS
         .iter()
         .filter(|literal| !found.contains_key(**literal))
         .collect();
-    assert!(
-        stale.is_empty(),
+    assert_eq!(
+        stale.len(),
+        0,
         "non-code literals no longer in source: {stale:?}"
     );
     assert!(
@@ -217,15 +221,17 @@ fn non_code_literals_match_the_shrink_only_baseline() {
         "NON_CODE_LITERALS has duplicates"
     );
     let unbaselined: Vec<&&str> = listed.difference(&baseline).collect();
-    assert!(
-        unbaselined.is_empty(),
+    assert_eq!(
+        unbaselined.len(),
+        0,
         "NON_CODE_LITERALS entries missing from {} (the baseline is shrink-only; register \
          new codes in conformance/diagnostic-codes/ instead): {unbaselined:?}",
         path.display()
     );
     let stale: Vec<&&str> = baseline.difference(&listed).collect();
-    assert!(
-        stale.is_empty(),
+    assert_eq!(
+        stale.len(),
+        0,
         "baseline entries no longer in NON_CODE_LITERALS; remove them from {}: {stale:?}",
         path.display()
     );

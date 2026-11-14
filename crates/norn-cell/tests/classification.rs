@@ -103,7 +103,7 @@ fn graph_classify_changes_membership_without_events_or_obligation_changes() {
         .expect("install");
     let empty =
         evaluate(&store, &class, MAIN_WORLD, &mut |_, _| VisibleItem::Visible).expect("empty");
-    assert!(empty.members.is_empty());
+    assert_eq!(empty.members.len(), 0);
     assert!(
         empty
             .dependencies
@@ -125,11 +125,12 @@ fn graph_classify_changes_membership_without_events_or_obligation_changes() {
     assert_eq!(store.verified_head().expect("head"), head);
     store.commit(&put(99)).expect("permitted reconciliation");
     let head = store.verified_head().expect("head");
-    assert!(
+    assert_eq!(
         evaluate(&store, &class, MAIN_WORLD, &mut |_, _| VisibleItem::Visible)
             .expect("exit")
             .members
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         store.verified_head().expect("no classification effects"),
@@ -165,7 +166,7 @@ fn graph_classify_refuses_uninstalled_and_exhausted_reads_and_captures_hidden_ro
     ));
     let hidden = evaluate(&store, &class, MAIN_WORLD, &mut |_, _| VisibleItem::Hidden)
         .expect("authorized subset");
-    assert!(hidden.members.is_empty());
+    assert_eq!(hidden.members.len(), 0);
     assert!(
         hidden
             .dependencies
@@ -308,12 +309,12 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
         3
     );
     let (denied, _) = catalog_access(&["norn.admin"]);
-    assert!(
+    assert_eq!(
         snapshot
             .read(&query, &limits, &denied, &request, scope)
             .expect("capability denial")
-            .items
-            .is_empty()
+            .items,
+        []
     );
     let mut wrong = request.clone();
     wrong.action_id = "norn.write".into();

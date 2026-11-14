@@ -29,7 +29,7 @@ fn command_tool(operation: &clap::Command) -> Result<McpTool, String> {
         .filter(|arg| arg.get_long().is_some() && arg.get_action().takes_values())
     {
         let name = arg.get_id().as_str();
-        properties.insert(name.into(), serde_json::json!({"type":"string", "description":arg.get_help().map(ToString::to_string).unwrap_or_default()}));
+        properties.insert(name.into(), serde_json::json!({"type":"string", "description":arg.get_help().map_or_default(ToString::to_string)}));
         if arg.is_required_set() {
             required.push(name);
         }

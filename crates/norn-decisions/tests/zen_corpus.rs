@@ -51,8 +51,9 @@ fn zen_admitted_node_corpus() {
     for path in &paths {
         checked += check_fixture(path, &mut failures);
     }
-    assert!(
-        failures.is_empty(),
+    assert_eq!(
+        failures.len(),
+        0,
         "{} corpus failures:\n{}",
         failures.len(),
         failures.join("\n")

@@ -102,7 +102,7 @@ fn xsd_admission_hook_changes_no_other_adapter_result() {
             decode_source_schema(&value).is_ok(),
             "{name} keeps its clean result"
         );
-        let mut as_xsd = value.clone();
+        let mut as_xsd = value;
         *as_xsd
             .pointer_mut("/adapter/name")
             .expect("every fixture names its adapter") = serde_json::json!("norn.formats.xsd");

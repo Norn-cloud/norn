@@ -220,10 +220,10 @@ fn shared_fixture_cases_enforce_unit_and_layer_partitioning() {
                 "fixture {} should pass: {:#?}",
                 case.id, validation.diagnostics
             );
-            assert!(!validation.certificates.is_empty());
+            assert_ne!(validation.certificates, []);
         } else {
             assert!(!validation.ok, "fixture {} should be rejected", case.id);
-            assert!(validation.certificates.is_empty());
+            assert_eq!(validation.certificates, []);
             assert!(
                 validation
                     .diagnostics
@@ -363,7 +363,7 @@ fn ontology_artifact_and_unit_dimension_bindings_fail_closed() {
     for (candidate, expected_code) in attacks {
         let validation = validate_ledger_pack(&candidate);
         assert!(!validation.ok, "attack {expected_code} must reject");
-        assert!(validation.certificates.is_empty());
+        assert_eq!(validation.certificates, []);
         assert!(
             validation
                 .diagnostics
@@ -530,7 +530,7 @@ fn duplicate_legs_and_undeclared_layers_fail_closed() {
 fn one_coefficient_perturbation_is_rejected_symbolically() {
     let validation = validate_ledger_pack(&symbolic_pack("2"));
     assert!(!validation.ok);
-    assert!(validation.certificates.is_empty());
+    assert_eq!(validation.certificates, []);
     assert!(validation.diagnostics.iter().any(|diagnostic| {
         diagnostic.code == diagnostic_codes::UNBALANCED_COEFFICIENT
             && diagnostic.message.contains("parameter `quantity`")
@@ -716,7 +716,7 @@ fn seal_rejects_cross_leg_runtime_partition_prefix_overflow() {
 
     let validation = validate_ledger_pack(&pack);
     assert!(!validation.ok);
-    assert!(validation.certificates.is_empty());
+    assert_eq!(validation.certificates, []);
     assert!(validation.diagnostics.iter().any(|diagnostic| {
         diagnostic.code == diagnostic_codes::BOUND_OVERFLOW
             && diagnostic
@@ -789,7 +789,7 @@ fn pack_diagnostics_keep_first_findings_and_refuse_at_count_or_json_byte_budget(
         candidate.accounts[0].allowed_unit_ids = vec![unit_id; 16_000];
         let refusal = compile_ledger_pack(&candidate).expect_err("duplicate units must refuse");
         assert!(!refusal.ok);
-        assert!(refusal.certificates.is_empty());
+        assert_eq!(refusal.certificates, []);
         assert!(refusal.diagnostics.len() <= MAX_LEDGER_DIAGNOSTICS);
         let bytes = serde_json::to_vec(&refusal.diagnostics).expect("diagnostic JSON");
         assert!(bytes.len() <= MAX_LEDGER_DIAGNOSTIC_BYTES);

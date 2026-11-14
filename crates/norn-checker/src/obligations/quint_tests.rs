@@ -103,7 +103,7 @@ fn original_mutant_restore_and_visible_unknown_inventory() {
             tenant: None,
         },
     );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(diagnostics, [], "{diagnostics:?}");
     let original = source(&artifacts);
     let registry = BTreeSet::new();
     let authority = ApprovedContract::approve(

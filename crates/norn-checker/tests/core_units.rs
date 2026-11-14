@@ -64,7 +64,10 @@ fn core_units_is_the_exact_generated_admitted_catalog() {
         std::fs::read_to_string(path).expect("generated catalog"),
         rendered
     );
-    assert!(norn_checker::check_property_type_defs(&catalog(), &BTreeSet::new()).is_empty());
+    assert_eq!(
+        norn_checker::check_property_type_defs(&catalog(), &BTreeSet::new()),
+        []
+    );
 }
 
 #[test]
@@ -210,7 +213,7 @@ fn val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins() {
     let base = [units::pack().expect("pack")];
     for (code, _, _, _, _) in units::UNITS {
         let mut artifact = declaration(unit_type(code, norn_ir::UnitSystem::Ucum));
-        assert!(unit_findings(&artifact, &base).is_empty());
+        assert_eq!(unit_findings(&artifact, &base), []);
         assert!(
             unit_findings(&artifact, &[])
                 .iter()

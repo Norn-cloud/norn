@@ -1278,7 +1278,7 @@ mod tests {
             "trusted-merge-group.yml",
         ] {
             let source = workflow(name);
-            assert!(!source.is_empty(), "{name} is missing");
+            assert_ne!(source.len(), 0, "{name} is missing");
             assert_eq!(concurrency(name, &source), None, "{name}");
         }
     }
@@ -1299,8 +1299,7 @@ mod tests {
         let block = VALIDATOR
             .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
             .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(block, _)| block)
-            .unwrap_or_default();
+            .map_or_default(|(block, _)| block);
         let entries = block
             .lines()
             .map(|line| line.trim().trim_end_matches(','))
@@ -1529,19 +1528,20 @@ mod tests {
         ] {
             let mutated = source.replacen(before, after, 1);
             assert_ne!(mutated, source, "{label}: no-op mutation");
-            assert!(!pinned_steps(&mutated).is_empty(), "{label} was admitted");
+            assert_ne!(pinned_steps(&mutated).len(), 0, "{label} was admitted");
         }
         let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
         assert_eq!(pinned_steps(&test_only).len(), 2);
         let stats = "          disable_annotations: true\n";
         assert_eq!(source.matches(stats).count(), 2);
         assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);
-        assert!(
+        assert_eq!(
             super::pinned_step_errors(
                 ".github/workflows/codeql.yml",
                 &super::yaml::Value::Map(Vec::new())
             )
-            .is_empty()
+            .len(),
+            0
         );
     }
 
@@ -1629,12 +1629,18 @@ mod tests {
         let contract =
             || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
         assert_eq!(contract_errors(contract(), None), contract());
-        assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(contract(), Some(Ok("maintainer".to_owned()))).len(),
+            0
+        );
         assert_eq!(
             contract_errors(contract(), Some(Err("fork".to_owned()))).len(),
             2
         );
-        assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(Vec::new(), Some(Err("fork".to_owned()))).len(),
+            0
+        );
     }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";

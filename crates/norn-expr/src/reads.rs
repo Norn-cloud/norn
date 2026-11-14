@@ -470,7 +470,7 @@ mod tests {
     fn marks_a_whole_root_pass_through() {
         let reads = expression_reads("self", "self").expect("root pass-through should parse");
         assert!(reads.whole_root);
-        assert!(reads.fields.is_empty());
+        assert_eq!(reads.fields.len(), 0);
     }
 
     #[test]
@@ -520,10 +520,11 @@ mod tests {
                 .expect("dynamic property"),
             BTreeSet::from([vec!["invoice".to_owned()]])
         );
-        assert!(
+        assert_eq!(
             expression_read_paths("input.status == 'Paid'", "slice")
                 .expect("input only")
-                .is_empty()
+                .len(),
+            0
         );
     }
 }

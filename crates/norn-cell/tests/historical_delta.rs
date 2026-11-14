@@ -167,7 +167,7 @@ fn quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pi
         .result;
     exact.engine = Engine::Ivm;
     assert_eq!(delta, &exact);
-    assert!(delta.exclusions.is_empty());
+    assert_eq!(delta.exclusions.len(), 0);
     let historical = IncrementalQuestion::rebuild_known_at(
         host.store(),
         &plan,

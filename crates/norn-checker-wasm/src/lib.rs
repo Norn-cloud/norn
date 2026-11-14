@@ -278,8 +278,7 @@ pub fn check_artifact_set_json(
         .as_object()
         .and_then(|object| object.get("base"))
         .and_then(norn_ir::RuntimeValue::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+        .map_or_default(Vec::as_slice);
     let checked = check_artifact_set_with_flow_source_map(
         &norn_checker::ReceiptSources::new(
             sources
@@ -1209,8 +1208,7 @@ pub fn explain_artifact_set_json(
         .as_object()
         .and_then(|object| object.get("base"))
         .and_then(norn_ir::RuntimeValue::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+        .map_or_default(Vec::as_slice);
     let context = parse_context(context_json)?;
     if context
         .limits

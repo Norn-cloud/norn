@@ -308,7 +308,7 @@ fn a_resolved_link_reports_its_coverage() {
     assert_eq!(coverage.active_terms, 3);
     assert_eq!(coverage.mapped.len(), 2);
     assert!(coverage.residual.contains("norn.shop.order.theme"));
-    assert!(coverage.canon_gaps.is_empty());
+    assert_eq!(coverage.canon_gaps.len(), 0);
 }
 
 #[test]

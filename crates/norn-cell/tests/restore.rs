@@ -688,14 +688,8 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
     for replace in [false, true] {
         let mut restored =
             CellStore::open(&target, model(), StoreOptions::default()).expect("open");
-        assert!(
-            restored
-                .read()
-                .pending_observations()
-                .expect("inbox")
-                .is_empty()
-        );
-        assert!(restored.read().runs("command").expect("runs").is_empty());
+        assert_eq!(restored.read().pending_observations().expect("inbox"), []);
+        assert_eq!(restored.read().runs("command").expect("runs"), []);
         if replace {
             restored
                 .commit(&CommitBatch {

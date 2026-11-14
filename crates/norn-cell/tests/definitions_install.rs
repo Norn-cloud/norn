@@ -4920,10 +4920,7 @@ fn mixed_or_incomplete_property_column_layouts_are_refused_and_left_untouched() 
                 &[],
             )
             .expect("reads meta");
-        assert!(
-            marker.is_empty(),
-            "{case}: the layout marker is not written"
-        );
+        assert_eq!(marker.len(), 0, "{case}: the layout marker is not written");
     }
 }
 
@@ -5130,7 +5127,7 @@ fn governing_law_input(expression: &str, at: u64) -> (Model, InstalledDefinition
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     input.canonical_set = String::from_utf8(
         norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
     )
@@ -5279,7 +5276,7 @@ fn purity_quality_host_with_severity(
             "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":severity, "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
         }}
     ])).expect("typed synthetic declarations");
-    assert!(
+    assert_eq!(
         norn_checker::check_artifact_set(
             &artifacts,
             &norn_checker::EntityArtifactSetContext {
@@ -5287,8 +5284,8 @@ fn purity_quality_host_with_severity(
                 base: &[],
                 tenant: None
             }
-        )
-        .is_empty()
+        ),
+        []
     );
     let model =
         Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[])
@@ -5811,7 +5808,7 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let old_model = cell.store().model().clone();
     drop(cell);
     let mut store = CellStore::open(path, old_model, StoreOptions::default()).expect("store");
@@ -6212,8 +6209,8 @@ fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics(
     let bundle: norn_cell::mapping_bundle::MappingBundle =
         norn_ir::runtime::decode(&observed.input).expect("bundle");
     assert_eq!(bundle.raw, raw.input);
-    assert!(bundle.records.is_empty());
-    assert!(!bundle.diagnostics.is_empty());
+    assert_eq!(bundle.records, []);
+    assert_ne!(bundle.diagnostics, []);
     assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
         && d.get("span").is_some()
         && d.get("severity").is_some()));
@@ -7456,7 +7453,7 @@ fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal()
             .read()
             .observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
         if churn < 7 {
-            assert!(result.expect("bounded retry stabilizes").is_empty());
+            assert_eq!(result.expect("bounded retry stabilizes"), []);
         } else {
             assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
         }

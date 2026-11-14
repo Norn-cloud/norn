@@ -4474,8 +4474,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                     .collect(),
                 root,
             };
-            self.actions
-                .insert(binding.binding_id.clone(), parsed.clone());
+            self.actions.insert(binding.binding_id.clone(), parsed);
         }
         for (index, binding) in bindings.iter().enumerate() {
             let path = format!("/payload/ux/actionBindings/{index}/inputMapping");

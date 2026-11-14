@@ -189,7 +189,7 @@ fn mvp_map_three_aliases_roles_and_one_economic_identity() {
             assert_eq!(link.target_key, key);
             assert_eq!(link.key, delivery.key);
         }
-        assert!(!delivery.property_provenance.is_empty());
+        assert_ne!(delivery.property_provenance.len(), 0);
         let holding = mapped.iter().find(|r| r.map == "holding").expect("holding");
         for (role, key) in [
             ("owner", "demo/party/owner"),
@@ -245,7 +245,7 @@ fn mvp_item_holding_catalog_and_owner_location_partitions() {
         assert_eq!(items[0].object_type.as_str(), "canon.Item");
         assert_eq!(holdings[0].object_type.as_str(), "canon.Holding");
         assert_ne!(holdings[0].key, holdings[1].key);
-        assert!(items[0].links.is_empty());
+        assert_eq!(items[0].links, []);
     }
 }
 #[test]

@@ -3077,8 +3077,7 @@ fn resolve_transition<X>(
                 .transitions
                 .iter()
                 .find(|candidate| candidate.id == *transition)
-                .map(|candidate| candidate.from.clone())
-                .unwrap_or_default(),
+                .map_or_default(|candidate| candidate.from.clone()),
         }),
     }
 }

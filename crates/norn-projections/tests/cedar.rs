@@ -147,8 +147,8 @@ fn minimal_schema_matches_its_golden() {
     let golden = std::fs::read_to_string(fixtures().join(MINIMAL_GOLDEN))
         .expect("minimal Cedar golden exists");
     assert_eq!(projection.schema, golden);
-    assert!(projection.losses.is_empty());
-    assert!(projection.attributes["demo.Note"].is_empty());
+    assert_eq!(projection.losses, []);
+    assert_eq!(projection.attributes["demo.Note"].len(), 0);
     assert!(!projection.attributes.contains_key("Norn::Actor"));
 }
 
@@ -195,7 +195,7 @@ fn principal_attribute_projection_emits_only_safe_typed_actor_fields() {
         &[],
         &invalid,
     );
-    assert!(projection.principal_attributes.is_empty());
+    assert_eq!(projection.principal_attributes.len(), 0);
     assert_eq!(projection.losses.len(), invalid.len());
     assert!(!projection.schema.contains("bad-name"));
     assert!(!projection.schema.contains("entity Escape"));

@@ -485,7 +485,7 @@ fn all_sixteen_quint_terminal_mismatches_are_retained_as_reduced_trace_regressio
             .expect("read")
             .expect("record");
         assert_eq!(closed.status, "expired");
-        assert!(closed.remaining.is_empty());
+        assert_eq!(closed.remaining, []);
         assert_eq!(case["outcome"], "terminal");
         let state = QuantityState {
             reservation: Some(closed),

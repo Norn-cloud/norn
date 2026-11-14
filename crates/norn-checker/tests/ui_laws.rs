@@ -126,7 +126,7 @@ fn findings_with(widget: Value, mut support: Vec<Value>, base: &[Value]) -> Vec<
 }
 
 fn clean(found: &[Diagnostic]) {
-    assert!(found.is_empty(), "unexpected findings: {found:#?}");
+    assert_eq!(found, [], "unexpected findings: {found:#?}");
 }
 
 fn exact(found: &[Diagnostic], pointer: &str, message: &str) {

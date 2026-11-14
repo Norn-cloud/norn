@@ -60,15 +60,14 @@ fn artifact(entry: &Value) -> ArtifactEnvelope {
 fn artifacts(case: &Value, key: &str) -> Vec<ArtifactEnvelope> {
     case.get(key)
         .and_then(Value::as_array)
-        .map(|entries| entries.iter().map(artifact).collect())
-        .unwrap_or_default()
+        .map_or_default(|entries| entries.iter().map(artifact).collect())
 }
 
 fn located(finding: norn_checker::Diagnostic) -> Vec<String> {
     vec![
         finding.artifact_id.unwrap_or_default(),
         finding.code.as_str().to_owned(),
-        finding.span.map(|span| span.pointer).unwrap_or_default(),
+        finding.span.map_or_default(|span| span.pointer),
     ]
 }
 
@@ -80,13 +79,12 @@ fn run(case: &Value) -> Vec<Vec<String>> {
     let registry: BTreeSet<PropertyTypeName> = case
         .get("registry")
         .and_then(Value::as_array)
-        .map(|names| {
+        .map_or_default(|names| {
             names
                 .iter()
                 .map(|name| PropertyTypeName(name.as_str().expect("registry name").to_owned()))
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let tenant = case.get("tenant").map(|tenant| {
         (
             tenant["tenantId"].as_str().expect("tenantId").to_owned(),
@@ -196,7 +194,7 @@ fn a_valid_set_resolves_in_installation_order() {
         );
     }
     assert!(position("retail.reorder.action") < position("retail.pack.core"));
-    assert!(resolved.base_dependencies.is_empty());
+    assert_eq!(resolved.base_dependencies.len(), 0);
 
     // Deterministic regardless of input order.
     let mut reversed = candidates.clone();
@@ -619,7 +617,7 @@ fn pack_pin_1_shared_contract_and_structural_refusals() {
         .pop()
         .expect("leaf");
     retained["base"] = json!([leaf]);
-    assert!(run(&retained).is_empty());
+    assert_eq!(run(&retained).len(), 0);
     let mut self_cycle = valid;
     let node = &mut self_cycle["artifacts"][0]["patch"]["payload"]["instances"][0];
     node["instances"][0]["instanceId"] = node["instanceId"].clone();

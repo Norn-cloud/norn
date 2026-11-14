@@ -608,7 +608,7 @@ fn an_unsupported_host_refuses_receipt_effects() {
         refused.code(),
         "action.receipt_effect_unsupported" | "action.target_not_found"
     ));
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
 }
 
 #[test]

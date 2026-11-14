@@ -126,7 +126,7 @@ fn law_transitive_diamond_is_one_instance_per_subject_with_all_paths() {
     base.reverse();
     assert_eq!(projected(&law, &base), instances);
     let (empty, interfaces) = interface_case(false, "self.total_amount >= 0");
-    assert!(projected(&empty, &interfaces).is_empty());
+    assert_eq!(projected(&empty, &interfaces), []);
     assert!(
         norn_checker::verification::effective_law_instances(
             &[law],
@@ -223,7 +223,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         .collect();
     let holder = pack("toy.instances", "core.Order.interface", Some(nodes));
     base.extend([root, leaf, holder]);
-    assert!(
+    assert_eq!(
         check_artifact_set(
             &base,
             &EntityArtifactSetContext {
@@ -231,8 +231,8 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
                 base: &[],
                 tenant: None
             }
-        )
-        .is_empty(),
+        ),
+        [],
         "retained fixture admission"
     );
     let mut declaration: LawIR =
@@ -640,7 +640,7 @@ fn law_contained_empty_scoped_implementation_is_not_non_vacuity() {
         serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
     )
     .expect("payload");
-    assert!(projected(&law, &base).is_empty());
+    assert_eq!(projected(&law, &base), []);
     assert!(
         norn_checker::verification::retained_law_membership(
             &law,
@@ -743,7 +743,7 @@ fn law_interface_and_empty_validate_the_declared_contract_without_vacuous_eviden
     for implemented in [false, true] {
         let (artifact, base) = interface_case(implemented, "self.total_amount >= 0");
         let wire = serde_json::to_value(&artifact).expect("wire");
-        assert!(run(vec![wire.clone()], &base).is_empty());
+        assert_eq!(run(vec![wire.clone()], &base).len(), 0);
         assert_eq!(serde_json::to_value(&artifact).expect("original law"), wire);
         let (invalid, base) = interface_case(implemented, "self.implementation_only >= 0");
         assert!(
@@ -805,7 +805,7 @@ fn erpnext_laws_admit_through_the_shared_set_checker() {
             tenant: None,
         },
     );
-    assert!(entity_findings.is_empty(), "{entity_findings:?}");
+    assert_eq!(entity_findings, [], "{entity_findings:?}");
     assert_eq!(run(laws(), &entities()), Vec::<String>::new());
 }
 
@@ -871,7 +871,7 @@ fn existing_laws_survive_tightening_and_cannot_be_replaced() {
     child["payload"]["modality"] = json!({"kind":"always"});
     assert!(run(vec![child.clone()], &base).contains(&codes::WEAKENS_INHERITED.to_owned()));
     child["payload"]["id"] = json!("erpnext.additional_safety");
-    assert!(run(vec![child], &base).is_empty());
+    assert_eq!(run(vec![child], &base).len(), 0);
 }
 #[test]
 fn whole_set_closure_includes_hidden_new_writers_and_refuses_missing_dependencies() {
@@ -994,7 +994,10 @@ fn registry_typed_entity_keeps_its_transition_writers_and_refuses_without_regist
         property: "status".into(),
         transition: "shipped".into(),
     }));
-    assert!(norn_checker::verification::check_law_set(&pool, &[], &registry).is_empty());
+    assert_eq!(
+        norn_checker::verification::check_law_set(&pool, &[], &registry),
+        []
+    );
     assert!(conservative_closure(&law, &pool, &BTreeSet::new(), budget).is_err());
     assert!(
         norn_checker::verification::check_law_set(&pool, &[], &BTreeSet::new())
@@ -1020,7 +1023,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
     assert!(run(vec![law], &entities()).contains(&codes::UNKNOWN_BINDING.to_owned()));
     let mut law = laws()[0].clone();
     law["payload"]["response"] = json!({"kind":"transition", "objectType":"erpnext.SalesOrder", "property":"status", "transitionId":"shipped"});
-    assert!(run(vec![law.clone()], &entities()).is_empty());
+    assert_eq!(run(vec![law.clone()], &entities()).len(), 0);
     law["payload"]["response"]["transitionId"] = json!("absent");
     assert!(run(vec![law], &entities()).contains(&codes::UNKNOWN_BINDING.to_owned()));
     let mut law = laws()[2].clone();
@@ -1033,7 +1036,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
         .expect("properties")
         .push(json!({"id":"deadline", "type":{"kind":"timestamp", "timezone":"utc"}}));
     base[2] = serde_json::from_value(request).expect("deadline type");
-    assert!(run(vec![law.clone()], &base).is_empty());
+    assert_eq!(run(vec![law.clone()], &base).len(), 0);
     let mut computed = serde_json::to_value(&base[2]).expect("request with deadline");
     computed["payload"]["objectType"]["properties"].as_array_mut().expect("properties").push(json!({"id":"computed_deadline", "type":{"kind":"timestamp", "timezone":"utc"}, "computed":"self.deadline"}));
     base[2] = serde_json::from_value(computed).expect("computed timestamp type");
@@ -1045,7 +1048,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
             tenant: None,
         },
     );
-    assert!(entity_findings.is_empty(), "{entity_findings:?}");
+    assert_eq!(entity_findings, [], "{entity_findings:?}");
     law["payload"]["timing"]["property"] = json!("computed_deadline");
     assert!(run(vec![law], &base).contains(&codes::UNKNOWN_BINDING.to_owned()));
 }
@@ -1071,7 +1074,7 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .collect(),
     );
     values.push(pack);
-    assert!(run(values.clone(), &entities()).is_empty());
+    assert_eq!(run(values.clone(), &entities()).len(), 0);
     for kind in [
         json!("derived"),
         json!("unknown"),
@@ -1147,7 +1150,7 @@ fn decimal_binding_findings_with(
 #[test]
 fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults() {
     for unit in ["g", "kg"] {
-        assert!(decimal_binding_findings([Some(unit); 3], [3; 3]).is_empty());
+        assert_eq!(decimal_binding_findings([Some(unit); 3], [3; 3]), []);
     }
     assert!(
         decimal_binding_findings([None; 3], [3; 3])
@@ -1165,7 +1168,7 @@ fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults
 fn interface_decimal_binding_admits_implementors_with_declared_additivity() {
     for additivity in ["additive", "semi_additive", "non_additive"] {
         let findings = decimal_binding_findings_with([Some("g"); 3], [3; 3], Some(additivity));
-        assert!(findings.is_empty(), "{additivity}: {findings:?}");
+        assert_eq!(findings, [], "{additivity}: {findings:?}");
     }
 }
 

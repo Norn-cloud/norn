@@ -128,7 +128,7 @@ mod tests {
         // 0 <-> 1 is a cycle, 2 is behind it, 3 has a self-loop.
         let edges = graph(&[(0, 1), (1, 0), (2, 0), (3, 3)], 4);
         let (order, blocked) = topological_order(&edges, |v| v);
-        assert!(order.is_empty());
+        assert_eq!(order.len(), 0);
         assert_eq!(
             cycle_groups(&edges, &blocked),
             vec![BTreeSet::from([0, 1]), BTreeSet::from([3])]

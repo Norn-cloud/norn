@@ -161,7 +161,7 @@ fn decimal_and_record_link_values_and_defaults_refuse_atomically() {
                             cell.ledger().len()
                         )
                     );
-                    assert!(cell.outbox().is_empty());
+                    assert_eq!(cell.outbox(), []);
                 }
             }
         }
@@ -464,17 +464,11 @@ fn assert_refusal_record(
         prior_entries + 1,
         "one refusal record is appended"
     );
-    assert!(
-        cell.outbox().is_empty(),
-        "a refused command reached the outbox"
-    );
-    assert!(cell.timers().is_empty(), "a refused timer was scheduled");
+    assert_eq!(cell.outbox(), [], "a refused command reached the outbox");
+    assert_eq!(cell.timers().len(), 0, "a refused timer was scheduled");
     let entry = cell.ledger().last().expect("refusal entry");
-    assert!(
-        entry.written.is_empty(),
-        "refusal entry wrote a business fact"
-    );
-    assert!(entry.linked.is_empty());
+    assert_eq!(entry.written, [], "refusal entry wrote a business fact");
+    assert_eq!(entry.linked, []);
     assert_eq!(entry.events.len(), 1);
     assert!(matches!(
         &entry.events[0],
@@ -718,9 +712,9 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
             && outcome.as_ref() == &DataQualityOutcome::NotSatisfied
     ));
     assert!(cell.load(&key).unwrap().values.is_none());
-    assert!(cell.ledger().is_empty());
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.ledger(), []);
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
 }
 
 #[test]
@@ -968,9 +962,10 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
         },
     )
     .expect("unchanged quality failure is admitted as a finding");
-    assert!(first_prepared.writes.is_empty(), "no fact version bump");
-    assert!(
-        first_prepared.events.is_empty(),
+    assert_eq!(first_prepared.writes, [], "no fact version bump");
+    assert_eq!(
+        first_prepared.events,
+        [],
         "finding is appended by sealed authority"
     );
     commit_observed_snapshot(
@@ -1025,8 +1020,9 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
         },
     )
     .expect("repeated unchanged quality failure remains observable");
-    assert!(
-        second_prepared.writes.is_empty(),
+    assert_eq!(
+        second_prepared.writes,
+        [],
         "repeat still does not bump version"
     );
     let (mut tampered_commit, read_finding_authorization) = second_prepared.into_parts();
@@ -1363,7 +1359,7 @@ fn final_read_retention_drops_findings_for_reverted_intermediate_values() {
         },
     )
     .expect("unchanged invalid B prepares a guarded-read finding");
-    assert!(unchanged_invalid.writes.is_empty());
+    assert_eq!(unchanged_invalid.writes, []);
     let (_, read_authorization) = unchanged_invalid.into_parts();
     authorization.merge(read_authorization);
     let revert = prepare_observed_snapshot(
@@ -1450,7 +1446,7 @@ fn repeated_guarded_read_state_shares_fuel_and_keeps_each_authority() {
         )
         .expect("each expensive read authority fits independently");
         let (part_commit, part_authorization) = prepared.into_parts();
-        assert!(part_commit.writes.is_empty());
+        assert_eq!(part_commit.writes, []);
         if aggregate_commit.is_none() {
             aggregate_commit = Some(part_commit);
         }
@@ -1539,7 +1535,7 @@ fn distinct_guarded_read_states_still_share_and_exhaust_commit_fuel() {
         )
         .expect("each expensive read authority fits independently");
         let (part_commit, part_authorization) = prepared.into_parts();
-        assert!(part_commit.writes.is_empty());
+        assert_eq!(part_commit.writes, []);
         if aggregate_commit.is_none() {
             aggregate_commit = Some(part_commit);
         }
@@ -1596,7 +1592,7 @@ fn read_only_findings_are_revalidated_against_the_commit_time_catalog() {
         },
     )
     .expect("the quality violation prepares a finding-only observation");
-    assert!(prepared.writes.is_empty());
+    assert_eq!(prepared.writes, []);
     let (commit, authorization) = prepared.into_parts();
 
     let mut integrity_type = quality_type;
@@ -1644,7 +1640,7 @@ fn stale_read_only_finding_cas_does_not_append_an_event() {
         },
     )
     .expect("the unchanged quality violation prepares a finding-only observation");
-    assert!(prepared.writes.is_empty());
+    assert_eq!(prepared.writes, []);
     let (commit, authorization) = prepared.into_parts();
 
     let changed_values = object(json!({"item_id": "stale-finding-cas", "amount": -1}));
@@ -1727,8 +1723,8 @@ fn season_window_invariant_admits_leap_and_equal_dates_and_refuses_reversed_date
     ));
     assert!(cell.load(&reversed).unwrap().values.is_none());
     assert_eq!(cell.ledger().len(), ledger_len);
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
     for (key, before) in accepted {
         assert_eq!(cell.load(&key).unwrap(), before);
     }
@@ -1764,7 +1760,7 @@ fn omitted_nullable_default_is_evaluated_and_observed_value_is_retained() {
             && outcome.as_ref() == &DataQualityOutcome::NotSatisfied
     ));
     assert!(command_cell.load(&key).unwrap().values.is_none());
-    assert!(command_cell.ledger().is_empty());
+    assert_eq!(command_cell.ledger(), []);
 
     // Seed a legacy/incomplete host value before attaching the model. The
     // observation path must materialize the same default, report the finding,
@@ -1895,7 +1891,10 @@ fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
     .into_iter()
     .map(|definition| serde_json::from_value(definition).expect("shared type decodes"))
     .collect();
-    assert!(norn_checker::check_property_type_defs(&property_types, &BTreeSet::new()).is_empty());
+    assert_eq!(
+        norn_checker::check_property_type_defs(&property_types, &BTreeSet::new()),
+        []
+    );
 
     let object_type: ObjectTypeDef = serde_json::from_value(json!({
         "name": "test.ReferencedNumericDefaults",
@@ -1943,15 +1942,15 @@ fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
     );
 
     let mut remaining = norn_kernel::invariant_evaluation_budget();
-    assert!(
+    assert_eq!(
         norn_kernel::evaluate_invariants(
             &catalog,
             &FactKey::new(type_name.as_str(), "referenced"),
             &JsonObject::new(),
             &mut remaining,
         )
-        .expect("referenced defaults satisfy their invariants")
-        .is_empty()
+        .expect("referenced defaults satisfy their invariants"),
+        []
     );
 }
 
@@ -2021,7 +2020,7 @@ fn missing_runtime_interface_metadata_fails_closed() {
         })
         .unwrap_err();
     assert_eq!(error.code(), "commit.invariant_model");
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
 }
 
 #[test]
@@ -2590,8 +2589,8 @@ fn raw_commit_uses_one_cumulative_invariant_fuel_budget() {
     for key in keys {
         assert!(cell.load(&key).unwrap().values.is_none());
     }
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
 }
 
 #[test]
@@ -2778,12 +2777,12 @@ fn observed_aggregate_shares_one_invariant_fuel_budget_and_commits_nothing_on_ex
         error,
         CommitError::InvariantBudgetExceeded { limit, .. } if limit == fuel_limit
     ));
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
     for key in keys {
         assert!(cell.load(&key).unwrap().values.is_none());
     }
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
 }
 
 #[test]
@@ -2857,8 +2856,8 @@ fn observed_findings_count_toward_the_existing_event_budget() {
     ));
     assert_eq!(cell.load(&key).unwrap(), prior);
     assert_eq!(cell.ledger().len(), 1);
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
 }
 
 #[test]
@@ -2901,8 +2900,8 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
     let entry = cell.ledger().last().expect("observation ledger entry");
     assert_eq!(entry.consumed, Some(consumed));
     assert_eq!(entry.written.len(), 1);
-    assert!(cell.outbox().is_empty());
-    assert!(cell.timers().is_empty());
+    assert_eq!(cell.outbox(), []);
+    assert_eq!(cell.timers().len(), 0);
     let Some(ObservationEvent::DataQualityFinding { fact }) = entry
         .events
         .iter()
@@ -3104,9 +3103,9 @@ fn observation_authorization_binds_its_write_and_does_not_exempt_other_writes() 
             );
         }
         assert!(cell.load(&key).unwrap().values.is_none());
-        assert!(cell.ledger().is_empty());
-        assert!(cell.outbox().is_empty());
-        assert!(cell.timers().is_empty());
+        assert_eq!(cell.ledger(), []);
+        assert_eq!(cell.outbox(), []);
+        assert_eq!(cell.timers().len(), 0);
     }
 }
 
@@ -3287,7 +3286,7 @@ fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
         }),
         Err(CommitError::InvariantViolation { .. })
     ));
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
     let slice = load_slice(&cell, [key.clone()]).unwrap();
     let provenance = source_provenance();
     let snapshot = ObservedSnapshot {
@@ -3331,7 +3330,7 @@ fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
         );
     }
     assert!(cell.load(&key).unwrap().exists());
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
 }
 
 #[test]
@@ -3462,8 +3461,8 @@ fn law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin(
     );
     assert!(native.load(&key).unwrap().values.is_none());
     assert!(native.load(&other).unwrap().values.is_none());
-    assert!(native.ledger().is_empty());
-    assert!(native.outbox().is_empty());
+    assert_eq!(native.ledger(), []);
+    assert_eq!(native.outbox(), []);
 }
 
 #[test]
@@ -3491,7 +3490,7 @@ fn law_invariant_runtime_other_responses_still_refuse_before_activation() {
             })
             .expect_err("unsupported response cannot disappear behind false activation");
         assert_eq!(refusal.code(), "core.laws.unsupported_semantics");
-        assert!(native.ledger().is_empty());
+        assert_eq!(native.ledger(), []);
     }
 }
 
@@ -3567,7 +3566,7 @@ fn law_invariant_runtime_resolves_the_retained_subjects_interface_member() {
             ..
         })
     ));
-    assert!(native.ledger().is_empty());
+    assert_eq!(native.ledger(), []);
 }
 
 #[test]
@@ -3744,15 +3743,15 @@ fn law_interface_transitive_and_diamond_implementors_govern_once_with_the_interf
             norn_kernel::DataQualityRuleClassification::Integrity
         );
         let mut budget = EvaluationBudget::default().units();
-        assert!(
+        assert_eq!(
             norn_kernel::governing_laws::evaluate(
                 &retained,
                 &key,
                 &named_values("named"),
                 &mut budget
             )
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+            []
         );
     }
     let mut native = cell()
@@ -4054,8 +4053,8 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
     assert!(reason.contains("unsupported"));
     assert!(reason.contains("duration"));
     assert!(native.load(&key).unwrap().values.is_none());
-    assert!(native.ledger().is_empty());
-    assert!(native.outbox().is_empty());
+    assert_eq!(native.ledger(), []);
+    assert_eq!(native.outbox(), []);
 }
 
 #[test]
@@ -4086,5 +4085,5 @@ fn law_with_exceptions_refuses_until_the_fold_lands() {
         .expect_err("a law with exceptions has no commit-path semantics yet");
     assert_eq!(refusal.code(), "core.laws.unsupported_semantics");
     assert!(native.load(&key).unwrap().values.is_none());
-    assert!(native.ledger().is_empty());
+    assert_eq!(native.ledger(), []);
 }

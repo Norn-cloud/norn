@@ -702,8 +702,7 @@ fn validate<E: SqlEngine>(
     let title = value
         .get(title_member)
         .and_then(Value::as_str)
-        .map(|title| title.trim().to_owned())
-        .unwrap_or_default();
+        .map_or_default(|title| title.trim().to_owned());
     let title = flow.as_ref().map_or(title, |flow| {
         flow.summary
             .title

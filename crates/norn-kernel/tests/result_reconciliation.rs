@@ -601,7 +601,7 @@ fn result_reconciliation_applies_destination_cas_in_the_accepting_commit() {
         acceptance.destination,
         Some(expect(("dam.Document", "doc-9", 5)))
     );
-    assert!(acceptance.reads.is_empty());
+    assert_eq!(acceptance.reads, []);
     assert!(!acceptance.requires_cell_lane);
 
     let thumbnail = |expected: u64| FactWrite {
@@ -614,7 +614,7 @@ fn result_reconciliation_applies_destination_cas_in_the_accepting_commit() {
     let commit = acceptance
         .commit::<(), (), ()>(vec![thumbnail(5)], Vec::new(), Vec::new())
         .expect("the write carries the CAS");
-    assert!(commit.reads.is_empty(), "the write itself is the CAS");
+    assert_eq!(commit.reads, [], "the write itself is the CAS");
     assert_eq!(commit.writes[0].expected, FactVersion(5));
     let conflict = acceptance
         .commit::<(), (), ()>(vec![thumbnail(6)], Vec::new(), Vec::new())
@@ -1240,7 +1240,7 @@ fn result_reconciliation_binds_only_accepted_results_into_the_vertical_flow() {
         Reconciliation::Refused(refused) => panic!("refused: {refused:?}"),
     };
     let (_, commands) = deliver(&fresh, &case.receipt, &mut run_state);
-    assert!(commands.is_empty());
+    assert_eq!(commands.len(), 0);
     let completed = run_state.clone().expect("run");
     assert_eq!(completed["status"], "completed");
     assert_eq!(

@@ -248,7 +248,7 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
         );
     }
     assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/3");
-    assert!(DEMO_GRANTS.capabilities(&["analyst".into()]).is_empty());
+    assert_eq!(DEMO_GRANTS.capabilities(&["analyst".into()]), []);
     assert_eq!(
         DEMO_GRANTS.capabilities(&["viewer".into()]),
         [ReadCapability::Population]
@@ -279,7 +279,7 @@ fn the_grant_table_is_pinned_exactly() {
     };
     // Roles match exactly: no case folding, no trimming.
     for variant in ["Admin", "ADMIN", "admin ", " admin", "Viewer"] {
-        assert!(held(&[variant]).is_empty(), "{variant:?}");
+        assert_eq!(held(&[variant]), [], "{variant:?}");
     }
     // Duplicates and unions add nothing beyond the declared grants.
     assert_eq!(held(&["viewer", "viewer"]), [Population]);

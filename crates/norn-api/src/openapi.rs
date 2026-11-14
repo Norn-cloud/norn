@@ -220,6 +220,6 @@ mod free_form_contract_tests {
         let document: Value = serde_json::from_str(&super::openapi_json().unwrap()).unwrap();
         let mut bare = Vec::new();
         walk(&document, "#", &mut bare);
-        assert!(bare.is_empty(), "bare object schemas: {bare:#?}");
+        assert_eq!(bare.len(), 0, "bare object schemas: {bare:#?}");
     }
 }

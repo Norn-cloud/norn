@@ -448,7 +448,7 @@ mod tests {
             "}".repeat(super::MAX_DEPTH.saturating_add(2))
         );
         let found = records(&source);
-        assert!(!found.is_empty());
+        assert_ne!(found, []);
         assert!(found.iter().all(|record| !record.has_closed_keys()));
     }
 

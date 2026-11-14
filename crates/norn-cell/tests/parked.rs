@@ -115,7 +115,7 @@ fn a_parked_decision_never_blocks_the_fifo_head() {
             .is_some()
     );
     consume(&mut cell, "ask").unwrap();
-    assert!(cell.store().read().parked_commands().unwrap().is_empty());
+    assert_eq!(cell.store().read().parked_commands().unwrap(), []);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn a_crash_between_commit_and_delivery_never_completes_twice() {
         assert_eq!(redelivered[0].input, answer("approve"));
         cell.commit(CellCommit::empty().consuming(redelivered[0].consumed()))
             .unwrap();
-        assert!(cell.parked_results().unwrap().is_empty());
+        assert_eq!(cell.parked_results().unwrap(), []);
         // Crash after the consuming commit, before the caller hears of it.
     }
     let mut cell = open_at(&path);
@@ -228,8 +228,8 @@ fn a_crash_between_commit_and_delivery_never_completes_twice() {
         not_pending(&consume(&mut cell, "ask")),
         "a retried delivery is refused"
     );
-    assert!(cell.parked_results().unwrap().is_empty());
-    assert!(cell.store().read().parked_commands().unwrap().is_empty());
+    assert_eq!(cell.parked_results().unwrap(), []);
+    assert_eq!(cell.store().read().parked_commands().unwrap(), []);
     cell.store().verified_head().unwrap();
 }
 
@@ -320,7 +320,7 @@ fn racing_connections_resolve_and_consume_a_parked_command_once() {
         })
         .count();
     assert_eq!(consuming, 1);
-    assert!(cell.parked_results().unwrap().is_empty());
+    assert_eq!(cell.parked_results().unwrap(), []);
     cell.store().verified_head().unwrap();
 }
 

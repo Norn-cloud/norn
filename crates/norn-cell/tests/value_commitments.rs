@@ -516,13 +516,14 @@ fn propertyless_occurrences_and_canonical_noop_sets_keep_lineage() {
             std::collections::BTreeSet::from(["pii.contact".to_owned()])
         );
     }
-    assert!(
+    assert_eq!(
         store
             .read()
             .effective_markings(MAIN_WORLD, "proof.Item", "item", Some(2))
             .expect("markings")
             .expect("complete")["value"]
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -671,13 +672,14 @@ fn canonical_noop_set_compares_engine_normalized_values() {
             .expect("complete"),
         std::collections::BTreeSet::from(["pii.contact".to_owned()])
     );
-    assert!(
+    assert_eq!(
         store
             .read()
             .effective_markings(MAIN_WORLD, "proof.Number", "number", Some(2))
             .expect("labels")
             .expect("complete")["value"]
-            .is_empty()
+            .len(),
+        0
     );
 }
 

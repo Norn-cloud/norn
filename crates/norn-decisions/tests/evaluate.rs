@@ -1173,7 +1173,7 @@ fn declared_transfer_return_and_cancellation_vectors_preserve_original_allocatio
                 assert!(
                     average_result(vec![
                         receipt.clone(),
-                        transfer.clone(),
+                        transfer,
                         movement(2, "more", "receipt", quantity, amount, ""),
                         movement(3, "t", "delivery", 1, 0, "")
                     ])
@@ -1824,11 +1824,11 @@ scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::R
 #[test]
 fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
     let decision = admit_inline(&bounded_rate_rule("g", "USD"));
-    assert!(!decision.assignment_fuel().is_empty());
+    assert_ne!(decision.assignment_fuel(), []);
     for assignment in decision.assignment_fuel() {
         assert!(assignment.fuel.units > 0);
         assert_eq!(assignment.fuel.semantics.len(), 64);
-        assert!(!assignment.source.is_empty());
+        assert_ne!(assignment.source.len(), 0);
     }
     let slice = Value::object([
         ("currency", Value::String("USD".into())),

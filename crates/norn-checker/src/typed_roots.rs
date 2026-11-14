@@ -3057,7 +3057,7 @@ mod tests {
                         [("action.validation.invalid_schema".to_owned(), path)]
                     );
                 } else {
-                    assert!(found.is_empty(), "{found:?}");
+                    assert_eq!(found, [], "{found:?}");
                 }
             }
         }
@@ -3078,7 +3078,7 @@ mod tests {
         let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
         action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
             "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
-        assert!(findings(action).is_empty());
+        assert_eq!(findings(action), []);
     }
 
     proptest::proptest! {
@@ -3385,15 +3385,15 @@ mod tests {
             "existing".to_owned(),
             Type::Record("fashion.Season".to_owned()),
         )]);
-        assert!(
+        assert_eq!(
             super::check_action_slice_preconditions(
                 &root,
                 records.clone(),
                 slice_fields.clone(),
                 BTreeMap::new(),
                 None,
-            )
-            .is_empty()
+            ),
+            []
         );
 
         let mut invalid = root;
@@ -3571,7 +3571,7 @@ mod tests {
         action["payload"]["outputSchema"] = json!({
             "type": "object", "properties": {}, "additionalProperties": false
         });
-        assert!(findings(action.clone()).is_empty());
+        assert_eq!(findings(action.clone()), []);
         action["payload"]["inputSchema"] = json!({
             "type": ["null", "boolean", "number", "string", "array", "object"]
         });
@@ -3948,7 +3948,7 @@ mod tests {
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
         rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(actual.is_empty(), "{actual:?}");
+        assert_eq!(actual, [], "{actual:?}");
         // FOLD-ORDER-1: collection selection is mandatory and explicit.
         for selector in [None, Some(json!("")), Some(json!("  "))] {
             let mut bad = rule.clone();

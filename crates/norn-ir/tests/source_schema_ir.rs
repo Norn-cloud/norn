@@ -60,7 +60,7 @@ fn fixtures_decode_and_round_trip() {
             .unwrap_or_else(|error| panic!("{name} should decode: {error}"));
         let encoded = serde_json::to_value(&document).expect("document should encode");
         assert_eq!(encoded, wire, "{name} should round-trip");
-        assert!(!document.datasets.is_empty(), "{name} declares datasets");
+        assert_ne!(document.datasets, [], "{name} declares datasets");
     }
 }
 

@@ -2533,7 +2533,7 @@ where
         }
         collection_rows = collection_rows.saturating_add(ids.len());
         manifest_states.insert(collection_id.clone(), manifest);
-        ordered_rows.insert(collection_id.clone(), ids.clone());
+        ordered_rows.insert(collection_id.clone(), ids);
     }
     let snapshot_cost = collection_rows
         .saturating_add(raw_row_ops.len())
@@ -3084,7 +3084,7 @@ where
                     .and_then(|state| state.values.as_ref())
                     .and_then(|values| values.get(collection.ordering_key.as_str()));
                 let order_changed = old_order != Some(&order);
-                values.insert(collection.ordering_key.as_str().to_owned(), order.clone());
+                values.insert(collection.ordering_key.as_str().to_owned(), order);
                 values = catalog
                     .materialize_object_defaults(&collection.child_type, &values)
                     .map_err(|error| {
@@ -4455,7 +4455,7 @@ fn authorize_identity_collision<H: CellHost + ?Sized>(
     let CommitError::IdentityCollision { conflicts, .. } = error else {
         return Ok(());
     };
-    for key in conflicts.iter() {
+    for key in conflicts {
         authorize_slice_type(call, input, authorizer, &key.object_type)?;
         let bounded = host
             .load_bounded(
@@ -6567,8 +6567,8 @@ mod reference_lineage_tests {
         let guarded_proof = proof()
             .with_read_guards(&mut guarded, std::slice::from_ref(&reference))
             .expect("additional full guard");
-        assert!(guarded_proof.reference_reads().is_empty());
-        assert!(guarded_proof.property_reads().is_empty());
+        assert_eq!(guarded_proof.reference_reads(), []);
+        assert_eq!(guarded_proof.property_reads(), []);
         assert!(guarded_proof.validates(&guarded));
         let mismatch = FactExpectation {
             key: commit.reads[0].key.clone(),

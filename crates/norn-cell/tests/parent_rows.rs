@@ -1055,7 +1055,7 @@ fn byte_budget_includes_loaded_parent_and_child_value_snapshots() {
         &output_limits,
     )
     .expect_err("loaded parent and child plus input exceed the bounded slice bytes");
-    assert!(!refusal.code().is_empty());
+    assert_ne!(refusal.code().len(), 0);
     assert_eq!(cell.commits().expect("reads ledger").len(), 1);
     assert_parent(&cell, 1, &initial);
     assert_row(&cell, "large-row", 1, 1, &initial, 1);
@@ -1197,8 +1197,8 @@ fn failed_row_guard_aborts_parent_rows_links_and_ledger_together() {
         &Allow,
     )
     .expect_err("the second row fails its trusted guard");
-    assert!(!refusal.code().is_empty());
-    assert!(cell.commits().expect("reads ledger").is_empty());
+    assert_ne!(refusal.code().len(), 0);
+    assert_eq!(cell.commits().expect("reads ledger"), []);
     assert_eq!(
         cell.load(&parent_key()).expect("parent remains absent"),
         FactState::default()
@@ -1279,7 +1279,7 @@ fn authorization_denial_on_one_proposed_child_aborts_the_whole_commit() {
         )
         .expect_err("the authorizer denies one child's proposed state");
         assert!(matches!(refusal, ActionRefusal::PermissionDenied { .. }));
-        assert!(cell.commits().expect("reads ledger").is_empty());
+        assert_eq!(cell.commits().expect("reads ledger"), []);
         assert_eq!(
             cell.load(&parent_key()).expect("parent remains absent"),
             FactState::default()
@@ -1351,7 +1351,7 @@ fn stale_parent_and_row_versions_refuse_without_partial_writes() {
         &Allow,
     )
     .expect_err("the parent CAS is stale");
-    assert!(!stale_parent.code().is_empty());
+    assert_ne!(stale_parent.code().len(), 0);
     assert_eq!(cell.commits().expect("reads ledger").len(), before);
     assert_parent(&cell, 2, "updated");
 
@@ -1373,7 +1373,7 @@ fn stale_parent_and_row_versions_refuse_without_partial_writes() {
         &Allow,
     )
     .expect_err("the row CAS is stale");
-    assert!(!refusal.code().is_empty());
+    assert_ne!(refusal.code().len(), 0);
     assert_eq!(cell.commits().expect("reads ledger").len(), before);
     assert_parent(&cell, 2, "updated");
     assert_row(&cell, "row-a", 2, 1, "A updated", 3);
@@ -1434,7 +1434,7 @@ fn row_only_edit_advances_parent_cas_and_exact_retry_replays_its_receipt() {
         &Allow,
     )
     .expect_err("the row-only commit advanced the parent version");
-    assert!(!refusal.code().is_empty());
+    assert_ne!(refusal.code().len(), 0);
     assert_eq!(cell.commits().expect("reads ledger").len(), 2);
     assert_parent(&cell, 2, "initial");
     assert_row(&cell, "row-b", 1, 2, "B", 2);
@@ -1486,7 +1486,7 @@ fn update_guard_checks_derived_proposed_row_and_refuses_zero_quantity() {
         &Allow,
     )
     .expect_err("the trusted row guard sees the proposed zero quantity");
-    assert!(!refusal.code().is_empty());
+    assert_ne!(refusal.code().len(), 0);
 
     assert_eq!(cell.commits().expect("reads ledger").len(), 1);
     assert_parent(&cell, 1, "initial");
@@ -1609,8 +1609,8 @@ fn collection_bound_and_cascade_delete_apply_to_all_rows() {
         &Allow,
     )
     .expect_err("maxRows rejects a third child");
-    assert!(!too_many.code().is_empty());
-    assert!(cell.commits().expect("reads ledger").is_empty());
+    assert_ne!(too_many.code().len(), 0);
+    assert_eq!(cell.commits().expect("reads ledger"), []);
     assert_eq!(
         cell.load(&parent_key()).expect("parent absent"),
         FactState::default()
@@ -2474,7 +2474,7 @@ fn optional_parent_delete_marker_accepts_omission_or_false_and_rejects_malformed
         assert!(!cell.load(&parent_key()).expect("load parent").exists());
         assert!(!cell.load(&row_key("row-a")).expect("load row").exists());
         assert!(!cell.load(&manifest_key()).expect("load manifest").exists());
-        assert!(cell.commits().expect("ledger").is_empty());
+        assert_eq!(cell.commits().expect("ledger"), []);
     }
 }
 
@@ -2728,7 +2728,7 @@ fn required_stored_row_field_must_be_supplied_or_derived_by_the_action() {
             .expect("load refused action record")
             .exists()
     );
-    assert!(cell.commits().expect("ledger").is_empty());
+    assert_eq!(cell.commits().expect("ledger"), []);
 
     let derived = action_with_derived_idx();
     commit_action(
@@ -2782,7 +2782,7 @@ fn unprepared_parent_row_receipts_obey_default_and_custom_output_limits() {
         assert!(
             matches!(refusal, ActionRefusal::InputBoundExceeded { subject, .. } if subject == "action call receipt")
         );
-        assert!(cell.commits().expect("ledger").is_empty());
+        assert_eq!(cell.commits().expect("ledger"), []);
         assert_eq!(
             cell.load(&parent_key()).expect("parent absent"),
             FactState::default()
@@ -2902,7 +2902,7 @@ fn caller_cannot_choose_an_owned_child_lifecycle_initial_state() {
             &Allow,
         );
         assert!(matches!(outcome, Err(ActionRefusal::InvalidInput { field }) if field == "rowOps"));
-        assert!(cell.commits().expect("ledger").is_empty());
+        assert_eq!(cell.commits().expect("ledger"), []);
         assert!(!cell.load(&parent_key()).expect("parent").exists());
         assert!(!cell.load(&row_key("row-a")).expect("row").exists());
         assert!(!cell.load(&manifest_key()).expect("manifest").exists());
@@ -2982,5 +2982,5 @@ fn val_exact_row_derivation_refuses_another_derived_target_without_writes() {
             .values
             .is_none()
     );
-    assert!(cell.commits().expect("ledger loads").is_empty());
+    assert_eq!(cell.commits().expect("ledger loads"), []);
 }

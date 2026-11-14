@@ -422,9 +422,9 @@ fn path_fixture(target: &str, via: &str) -> ObjectTypeDef {
 
 #[test]
 fn lifecycle_path_property_proves_required_visit() {
-    assert!(run(&[path_fixture("shipped", "paid")], &[], None).is_empty());
-    assert!(run(&[path_fixture("shipped", "draft")], &[], None).is_empty());
-    assert!(run(&[path_fixture("shipped", "shipped")], &[], None).is_empty());
+    assert_eq!(run(&[path_fixture("shipped", "paid")], &[], None), []);
+    assert_eq!(run(&[path_fixture("shipped", "draft")], &[], None), []);
+    assert_eq!(run(&[path_fixture("shipped", "shipped")], &[], None), []);
 }
 
 #[test]
@@ -478,7 +478,7 @@ fn lifecycle_path_property_inherited_when_child_redeclares_machine() {
     child.properties.clear();
     child.lifecycles[0].path_properties.clear();
     let types = [parent, child];
-    assert!(run(&types, &[], None).is_empty());
+    assert_eq!(run(&types, &[], None), []);
 }
 
 #[test]
@@ -508,7 +508,7 @@ fn inherited_path_property_survives_redeclaration_and_target_narrowing() {
     .expect("narrowed enum decodes");
     child.lifecycles[0].terminal = vec!["paid".to_owned()];
     child.lifecycles[0].transitions.truncate(1);
-    assert!(run(&[parent, child], &[], None).is_empty());
+    assert_eq!(run(&[parent, child], &[], None), []);
 }
 
 /// Every stuck state is its own finding: two unreachable states of one

@@ -57,11 +57,12 @@ fn rejected(error: impl std::fmt::Display) -> JsValue {
 }
 
 /// A finite HTTP reply.
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct Reply {
     /// HTTP status.
     pub status: u16,
     /// JSON body.
+    #[wasm_bindgen(getter_with_clone)]
     pub body: String,
     /// The pinned JWKS should be refetched (an unknown key id was seen and the
     /// retry interval has passed); the host refetches, then retries once.
@@ -69,7 +70,7 @@ pub struct Reply {
     pub refresh_jwks: bool,
     /// Why the cell's definitions installed no action policy, for the
     /// operator's log only; never part of the reply.
-    #[wasm_bindgen(js_name = policyError)]
+    #[wasm_bindgen(js_name = policyError, getter_with_clone)]
     pub policy_error: Option<String>,
 }
 

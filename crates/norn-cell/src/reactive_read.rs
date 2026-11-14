@@ -2380,10 +2380,7 @@ mod binding_read_tests {
             .read()
             .binding_rows_after_with_budget(MAIN_WORLD, "test.Customer", None, 2, &mut byte_budget)
             .expect("metadata budget");
-        assert!(
-            rows.is_empty(),
-            "identity text is not fetched before charge"
-        );
+        assert_eq!(rows, [], "identity text is not fetched before charge");
         assert!(!complete);
         assert_eq!(byte_budget.remaining_bytes(), header);
     }
@@ -2471,7 +2468,7 @@ mod binding_read_tests {
                 &mut budget,
             )
             .expect("unsupported lookup falls back");
-        assert!(fallback.is_empty());
+        assert_eq!(fallback, []);
         assert!(!fallback_complete);
         assert_eq!(budget.remaining_rows(), before_rows);
         assert_eq!(budget.remaining_bytes(), before_bytes);

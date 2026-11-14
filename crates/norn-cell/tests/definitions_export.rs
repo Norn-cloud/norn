@@ -51,7 +51,7 @@ fn pre_open_legacy_definition_history_without_registry_table_reads_empty_registr
         .expect("pre-open read")
         .expect("active definitions");
     assert_eq!(installed.version, 1);
-    assert!(installed.registry.is_empty());
+    assert_eq!(installed.registry.len(), 0);
 }
 
 fn definitions(note: bool) -> (Model, String) {

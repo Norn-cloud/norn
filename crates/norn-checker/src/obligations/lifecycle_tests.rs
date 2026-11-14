@@ -101,7 +101,7 @@ fn generated_lifecycle_reachability() {
     assert_eq!(goals[3]["goal"]["transition"], "finish");
     for goal in goals {
         assert_eq!(goal["assessment"], "unknown");
-        assert!(!goal["reason"].as_str().expect("reason").is_empty());
+        assert_ne!(goal["reason"].as_str().expect("reason").len(), 0);
         assert_eq!(goal["statement"]["maxSteps"], 3);
         assert_eq!(goal["statement"]["maxObjects"], 1);
         assert_eq!(goal["statement"]["property"], "status");

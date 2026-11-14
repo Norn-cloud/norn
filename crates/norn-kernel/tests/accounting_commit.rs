@@ -164,8 +164,8 @@ fn unbalanced_group_refusal_has_no_fact_ledger_or_outbox_effects() {
             .unwrap()
             .exists()
     );
-    assert!(cell.ledger().is_empty());
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.ledger(), []);
+    assert_eq!(cell.outbox(), []);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn multiple_currencies_balance_independently_and_cannot_cancel_across_units() {
         .commit(cross_currency)
         .expect_err("a net-zero total across currencies is not balanced");
     assert_eq!(refusal.code(), "journal.unbalanced_by_unit");
-    assert!(unbalanced.ledger().is_empty());
+    assert_eq!(unbalanced.ledger(), []);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn a_journal_id_cannot_balance_across_books() {
         .commit(cross_book)
         .expect_err("books are independent accounting groups");
     assert_eq!(refusal.code(), "journal.too_few_legs");
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
 }
 
 #[test]

@@ -1014,12 +1014,7 @@ fn shadow_entitlements_never_grant_but_explain_the_enforced_counterfactual() {
         explanation.decision,
         PdpDecision::Deny(crate::DenyReason::Access)
     );
-    assert!(
-        explanation
-            .entitlement_evaluation
-            .enforced_matches
-            .is_empty()
-    );
+    assert_eq!(explanation.entitlement_evaluation.enforced_matches, []);
     assert_eq!(explanation.entitlement_evaluation.shadow_matches.len(), 1);
     assert_eq!(
         explanation.entitlement_evaluation.rows[0].outcome,
@@ -1371,7 +1366,7 @@ fn entitlement_membership_attributes_do_not_change_legacy_cedar_schemas() {
     let (projection, policies) = projected_policies(vec![json!({
         "role": { "anyOf": ["approver"] }
     })]);
-    assert!(projection.principal_attributes.is_empty());
+    assert_eq!(projection.principal_attributes.len(), 0);
     let pdp = pdp(policies);
     let request = pdp_request(
         principal_with_role_key("some-role-key"),

@@ -93,7 +93,7 @@ fn codes_of(diagnostics: &[norn_checker::Diagnostic]) -> Vec<&str> {
 #[test]
 fn clean_theory_has_a_witness_for_every_relation() {
     let theory = invoice_mapping();
-    assert!(check_non_vacuity(&theory, ChaseBudget::default()).is_empty());
+    assert_eq!(check_non_vacuity(&theory, ChaseBudget::default()), []);
     let ChaseOutcome::Model(model) =
         non_vacuity_witness(&theory, "Line", ChaseBudget::default()).unwrap()
     else {
@@ -569,7 +569,7 @@ fn path_equation_valid_identity_lowers_and_retains_origin() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let theory = norn_checker::consistency::lower_path_equations(
         &[concept],
         &std::collections::BTreeSet::new(),
@@ -757,7 +757,7 @@ fn path_equation_base_only_errors_do_not_reject_tenant() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
 }
 
 #[test]

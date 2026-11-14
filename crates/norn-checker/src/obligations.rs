@@ -704,14 +704,10 @@ impl ApprovedContract {
                 .map_err(|_error| ChallengeError::Closure)
             })
             .transpose()?;
-        let writers = closure
-            .as_ref()
-            .map(|c| c.writers.clone())
-            .unwrap_or_default();
+        let writers = closure.as_ref().map_or_default(|c| c.writers.clone());
         let boundaries = closure
             .as_ref()
-            .map(|c| c.open_boundaries.clone())
-            .unwrap_or_default();
+            .map_or_default(|c| c.open_boundaries.clone());
         let per_law = writers
             .len()
             .saturating_add(boundaries.len())

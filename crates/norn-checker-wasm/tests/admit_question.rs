@@ -67,11 +67,12 @@ fn a_question_over_an_undeclared_metric_is_refused_with_findings() {
     let out = admit(&question);
     assert_eq!(out["admitted"], false);
     assert!(out["plan"].is_null());
-    assert!(
-        !out["diagnostics"]["diagnostics"]
+    assert_ne!(
+        out["diagnostics"]["diagnostics"]
             .as_array()
             .expect("findings")
-            .is_empty(),
+            .len(),
+        0,
         "{out:#}"
     );
 }

@@ -609,7 +609,7 @@ fn assert_refused(
     let ledger = cell.ledger().len();
     let refusal = commit_action(cell, catalog, call, authorizer).unwrap_err();
     assert_eq!(refusal.code(), code, "{refusal}");
-    assert!(!refusal.to_string().is_empty());
+    assert_ne!(refusal.to_string().len(), 0);
     assert_eq!(cell.ledger().len(), ledger, "a refused call committed");
     refusal
 }
@@ -1234,7 +1234,7 @@ fn action_refuses_invalid_source_version_and_child_merge_expression_shapes_witho
         let refusal = commit_action(&mut cell, &catalog, &call, &Allow).unwrap_err();
         assert_eq!(refusal.code(), "decision.invalid_output");
         assert_eq!(cell.ledger().len(), ledger_len);
-        assert!(cell.outbox().is_empty());
+        assert_eq!(cell.outbox(), []);
         assert_eq!(
             status(&cell, &FactKey::new(ORDER, "SO-1")),
             Some(JsonValue::String("draft".to_owned()))
@@ -1272,7 +1272,7 @@ fn action_command_expressions_share_one_turn_fuel_budget() {
         "expected a shared-fuel refusal, got {refusal}"
     );
     assert_eq!(cell.ledger().len(), ledger_len);
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
     assert_eq!(
         status(&cell, &FactKey::new(ORDER, "SO-1")),
         Some(JsonValue::String("draft".to_owned()))
@@ -1292,7 +1292,7 @@ fn action_command_expression_failure_commits_nothing() {
     let refusal = commit_action(&mut cell, &catalog, &action_call, &Allow).unwrap_err();
     assert_eq!(refusal.code(), "decision.invalid_output");
     assert_eq!(cell.ledger().len(), ledger_len);
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
     assert_eq!(
         status(&cell, &FactKey::new(ORDER, "SO-1")),
         Some(JsonValue::String("draft".into()))
@@ -1319,7 +1319,7 @@ fn action_command_envelope_counts_the_ledger_enqueue_event() {
         commit_action_with_limits(&mut cell, &catalog, &action_call, &Allow, &limits).unwrap_err();
     assert_eq!(refusal.code(), "decision.envelope_exceeded");
     assert_eq!(cell.ledger().len(), ledger_len);
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
 }
 
 #[test]
@@ -2872,7 +2872,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
         "{refusal}"
     );
     assert_eq!(cell.ledger().len(), ledger_len);
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
     assert!(
         !cell
             .load(&FactKey::new("commerce.NamedOrder", "SO-ACME-2025-00001"))
@@ -3053,7 +3053,7 @@ fn naming_series_rejects_caller_supplied_keys_for_series_creates() {
     );
     let refusal = commit_action(&mut cell, &catalog, &supplied, &Allow).unwrap_err();
     assert_eq!(refusal.code(), "action.invalid_input");
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
 
     let mut upsert = naming_series_action("commerce.named_order.upsert");
     upsert.effect_program = Some(norn_ir::ActionEffectProgram::UpsertInputObject {
@@ -3071,7 +3071,7 @@ fn naming_series_rejects_caller_supplied_keys_for_series_creates() {
     );
     let refusal = commit_action(&mut cell, &catalog, &supplied_upsert, &Allow).unwrap_err();
     assert_eq!(refusal.code(), "action.write_mode_failed");
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
 }
 
 #[test]
@@ -3641,7 +3641,7 @@ fn owned_row_expressions_share_action_fuel_and_refuse_atomically() {
                     matches!(refusal, ActionRefusal::ExpressionBudgetExceeded { limit }
                     if limit == fuel_limit)
                 );
-                assert!(cell.ledger().is_empty());
+                assert_eq!(cell.ledger(), []);
                 for key in [&parent, &manifest, &record] {
                     assert_eq!(cell.load(key).unwrap(), FactState::default());
                 }
@@ -3753,7 +3753,7 @@ fn refuse_owned_series_atomically(
     for (key, state) in links {
         assert_eq!(cell.load_link(&key).unwrap(), state);
     }
-    assert!(cell.outbox().is_empty());
+    assert_eq!(cell.outbox(), []);
     refusal
 }
 
@@ -3852,7 +3852,7 @@ fn owned_rows_preserve_generated_names_but_allow_updates_and_reorders() {
         panic!("expected existing-row update");
     };
     assert_eq!(cell.ledger().len(), before + 1);
-    assert!(receipt.linked.is_empty());
+    assert_eq!(receipt.linked, []);
     assert_eq!(record.row_operations.len(), 2);
     assert!(
         receipt
@@ -3954,7 +3954,7 @@ fn unchanged_owned_manifests_use_snapshot_bounds_not_event_limits() {
         panic!("expected empty patch to commit");
     };
     assert_eq!(cell.ledger().len(), before.len() + 1);
-    assert!(cell.ledger().last().unwrap().events.is_empty());
+    assert_eq!(cell.ledger().last().unwrap().events, []);
     assert_eq!(
         receipt.written.len(),
         1,
@@ -4167,7 +4167,7 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
         refusal.to_string().contains("required link `legal_entity`"),
         "{refusal}"
     );
-    assert!(cell.ledger().is_empty());
+    assert_eq!(cell.ledger(), []);
     assert!(
         !cell
             .load(&FactKey::new("party.Brand", "BRAND-1"))
@@ -4203,7 +4203,7 @@ fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
         let result = commit_action(&mut cell, &catalog, &request, &Allow);
         if supplied {
             assert!(result.is_err());
-            assert!(cell.ledger().is_empty());
+            assert_eq!(cell.ledger(), []);
         } else {
             assert!(result.is_ok(), "{result:?}");
             let child = cell
@@ -4240,7 +4240,7 @@ fn owned_row_actions_refuse_protected_framework_identity_and_order() {
         );
         let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
         assert_eq!(refusal.code(), "action.unsupported_effect");
-        assert!(cell.ledger().is_empty());
+        assert_eq!(cell.ledger(), []);
         assert!(
             !cell
                 .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
@@ -4350,7 +4350,7 @@ norn_testkit::proptest::proptest! {
             }
         }
         assert_refused(&mut denied, &catalog, &request, &DenyQuote, "action.permission_denied");
-        assert!(denied.outbox().is_empty());
+        assert_eq!(denied.outbox(), []);
         action.writes.retain(|write| write.entity_kind == ORDER);
         assert_refused(&mut denied, &catalog, &call(&action, "SO-1", "uncovered"), &Allow, "core.txn.unchecked_writer");
     }
