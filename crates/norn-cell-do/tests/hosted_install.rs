@@ -150,7 +150,13 @@ impl Cell {
         )
     }
 
-    fn change(&mut self, path: &str, role: Option<&str>, artifacts: &[Value], expected: Option<u64>) -> Response {
+    fn change(
+        &mut self,
+        path: &str,
+        role: Option<&str>,
+        artifacts: &[Value],
+        expected: Option<u64>,
+    ) -> Response {
         let mut body = json!({ "artifacts": artifacts });
         if let Some(version) = expected {
             body["expectedVersion"] = json!(version);
@@ -178,7 +184,12 @@ impl Cell {
     }
 
     fn melts(&mut self) -> Response {
-        self.call("GET", &format!("/v1/objects/{MELT}"), Some(&user("admin")), "")
+        self.call(
+            "GET",
+            &format!("/v1/objects/{MELT}"),
+            Some(&user("admin")),
+            "",
+        )
     }
 }
 
@@ -188,8 +199,14 @@ fn json_of(response: &Response) -> Value {
 
 fn provisioned(path: &Path) -> Cell {
     let mut cell = Cell::opened(path);
-    let body = json!({ "baseSha256": base::trusted_base().unwrap().sha256(), "artifacts": tenant_set() });
-    let response = cell.call("POST", PROVISION_PATH, Some(&user("owner")), &body.to_string());
+    let body =
+        json!({ "baseSha256": base::trusted_base().unwrap().sha256(), "artifacts": tenant_set() });
+    let response = cell.call(
+        "POST",
+        PROVISION_PATH,
+        Some(&user("owner")),
+        &body.to_string(),
+    );
     assert_eq!(response.status, 200, "{}", response.body);
     cell
 }
@@ -276,18 +293,27 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     assert_eq!(cell.melts().status, 200);
     let lossy = cell.melt("m1", "100.000", "98.000", "0.000");
     assert!(lossy.status >= 400, "{}", lossy.body);
-    assert_eq!(json_of(&cell.melts())["records"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        Some(0)
+    );
     let correct = cell.melt("m2", "100.000", "98.000", "2.000");
     assert_eq!(correct.status, 200, "{}", correct.body);
     assert_eq!(json_of(&correct)["outcome"], "committed");
-    assert_eq!(json_of(&cell.melts())["records"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        Some(1)
+    );
 
     // HOST-REOPEN-1: a restarted host reopens the cell at the applied
     // revision, with the melt and its law.
     drop(cell);
     let mut cell = Cell::opened(&path);
     assert_eq!(cell.version(), 2);
-    assert_eq!(json_of(&cell.melts())["records"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        Some(1)
+    );
     let lossy = cell.melt("m3", "50.000", "49.000", "0.000");
     assert!(lossy.status >= 400, "{}", lossy.body);
 
@@ -311,7 +337,13 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(2));
     assert_eq!(applied.status, 200, "{}", applied.body);
     assert_eq!(json_of(&applied)["plan"]["checkedObjects"], 1);
-    assert_eq!(json_of(&applied)["plan"]["changed"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json_of(&applied)["plan"]["changed"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(cell.version(), 3);
 }
 
@@ -329,6 +361,9 @@ fn a_reserved_or_empty_change_is_refused() {
     assert_eq!(empty.status, 400);
     let mut twice = jewelry();
     twice.push(twice[0].clone());
-    assert_eq!(cell.change(PLAN_PATH, Some("owner"), &twice, None).status, 400);
+    assert_eq!(
+        cell.change(PLAN_PATH, Some("owner"), &twice, None).status,
+        400
+    );
     assert_eq!(cell.version(), 1);
 }

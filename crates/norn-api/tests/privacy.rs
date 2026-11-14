@@ -958,16 +958,21 @@ fn an_applied_pack_keeps_the_privacy_markings() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let text = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
     let read = |path: &str| -> ArtifactEnvelope { serde_json::from_str(&text(path)).unwrap() };
-    let mut artifacts: Vec<ArtifactEnvelope> =
-        serde_json::from_str(&text("fixtures/demo/explorer/three-systems.definitions.json"))
-            .unwrap();
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&text(
+        "fixtures/demo/explorer/three-systems.definitions.json",
+    ))
+    .unwrap();
     for artifact in &mut artifacts {
         if artifact.artifact_id == "canon.Party.entity" {
             *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
         }
     }
-    artifacts.push(read("registry/privacy/artifacts/privacy.markings.entity.json"));
-    artifacts.push(read("registry/privacy/artifacts/privacy.reveal.policy.json"));
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.markings.entity.json",
+    ));
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.reveal.policy.json",
+    ));
     let Ok(admitted) = norn_api::kernel_set::admit_kernel_set(&artifacts) else {
         panic!("the privacy set is admitted");
     };
@@ -1031,7 +1036,12 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         "jewelry.melt.record.action",
     ]
     .iter()
-    .map(|id| serde_json::from_str(&text(&format!("registry/packs/jewelry/artifacts/{id}.json"))).unwrap())
+    .map(|id| {
+        serde_json::from_str(&text(&format!(
+            "registry/packs/jewelry/artifacts/{id}.json"
+        )))
+        .unwrap()
+    })
     .collect();
     let plan = plan_definitions(
         &cell,
@@ -1051,7 +1061,9 @@ fn an_applied_pack_keeps_the_privacy_markings() {
     assert_eq!(applied.definitions_version, plan.next_version);
     let record = get_queried_object(&cell, &scope, Some("member"), PARTY, "p1", &Mapping).unwrap();
     let document = serde_json::to_value(&record).unwrap();
-    let name = document["values"]["display_name"].as_str().unwrap_or_default();
+    let name = document["values"]["display_name"]
+        .as_str()
+        .unwrap_or_default();
     assert!(!name.contains("Ada"), "the value never leaves: {document}");
     assert_eq!(
         document["masked"]["display_name"]["markings"],

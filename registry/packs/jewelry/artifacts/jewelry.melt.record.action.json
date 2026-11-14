@@ -14,6 +14,10 @@
   "name": "Record a melt",
   "namespace": "jewelry",
   "payload": {
+    "access": {
+      "artifactId": "jewelry.melt.access.policy",
+      "version": "0.1.0"
+    },
     "actionId": "jewelry.melt.record",
     "description": "Record how much fine metal a melt took in, gave out and lost.",
     "effectProgram": {

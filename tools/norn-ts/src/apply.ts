@@ -96,6 +96,7 @@ export async function change(target: Target, command: "plan" | "apply", artifact
     if (!show(planned.status, planned.document, planSummary)) return { out, ok: false }
     if (command === "plan") return { out, ok: true }
     expected = planned.document.baseVersion
+    if (typeof expected !== "number") throw new Error("the plan names no base revision")
   }
   const applied = await post(target, APPLY_PATH, { artifacts, expectedVersion: expected })
   return { out, ok: show(applied.status, applied.document, appliedSummary) }

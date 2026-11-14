@@ -190,7 +190,10 @@ fn conflict(code: &str, message: &str, explanation: String) -> Refusal {
 }
 
 /// The refusal of a store preflight, as a definitions install words it.
-#[allow(clippy::needless_pass_by_value, reason = "`map_err` hands the error over by value")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "`map_err` hands the error over by value"
+)]
 fn preflight_refusal(error: CellError) -> Refusal {
     if let CellError::DefinitionVersionConflict { expected, actual } = &error {
         return conflict(
@@ -259,7 +262,9 @@ fn submission<E: SqlEngine>(
         ))
     })?;
     if request.artifacts.is_empty() {
-        return Err(Refusal::invalid("a definitions change names at least one artifact"));
+        return Err(Refusal::invalid(
+            "a definitions change names at least one artifact",
+        ));
     }
     let tenant = crate::provision::tenant_artifacts(host.scope(), &request.artifacts, refused)?;
     let mut ids = std::collections::BTreeSet::new();
@@ -309,7 +314,10 @@ fn diff(
 
 /// Parse, bound and admit one body over the active set, then preflight the
 /// install on the store without writing. Call only after authorization.
-fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, Option<u64>), Refusal> {
+fn candidate<E: SqlEngine>(
+    host: &DevHost<E>,
+    body: &str,
+) -> Result<(Candidate, Option<u64>), Refusal> {
     let (request, tenant) = submission(host, body)?;
     let active = host.active_definitions()?.ok_or_else(|| {
         conflict(
@@ -339,12 +347,19 @@ fn candidate<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Result<(Candidate, 
             active.version
         } else {
             store
-                .check_definitions(&model, &install_input(&admitted, &active, 0), Some(active.version))
+                .check_definitions(
+                    &model,
+                    &install_input(&admitted, &active, 0),
+                    Some(active.version),
+                )
                 .map_err(preflight_refusal)?
                 .version
         };
-        let served: std::collections::BTreeSet<&str> =
-            store.model().object_types().map(|t| t.name.as_str()).collect();
+        let served: std::collections::BTreeSet<&str> = store
+            .model()
+            .object_types()
+            .map(|t| t.name.as_str())
+            .collect();
         let new_object_types = model
             .object_types()
             .map(|t| t.name.as_str())
@@ -441,7 +456,12 @@ fn live_findings<E: SqlEngine>(
                 }
                 let key = norn_kernel::FactKey::new(name, record.id.clone());
                 let mut budget = LAW_FUEL;
-                match norn_kernel::governing_laws::evaluate(&catalog, &key, &record.values, &mut budget) {
+                match norn_kernel::governing_laws::evaluate(
+                    &catalog,
+                    &key,
+                    &record.values,
+                    &mut budget,
+                ) {
                     Ok(failures) => {
                         for failure in failures {
                             let law = match &failure.rule_ref {
@@ -606,7 +626,10 @@ pub fn apply_definitions<E: SqlEngine>(
 
 /// The candidate's serving model, rebuilt under the write epoch (the moved
 /// model goes to the install itself).
-fn install_model<E: SqlEngine>(store: &CellStore<E>, admitted: &AdmittedSet) -> Result<Model, Refusal> {
+fn install_model<E: SqlEngine>(
+    store: &CellStore<E>,
+    admitted: &AdmittedSet,
+) -> Result<Model, Refusal> {
     reopen_model(&admitted.canonical_set, serves_actions(store.model()))
         .map_err(|refusal| unservable(refusal.explanation))
 }

@@ -5,7 +5,6 @@
 //! and prints the cell's answer.
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
-use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -87,7 +86,8 @@ fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>,
     files
         .iter()
         .map(|file: &PathBuf| {
-            let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let text =
+                std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
             serde_json::value::RawValue::from_string(text)
                 .map_err(|e| format!("{}: not JSON: {e}", file.display()))
         })
@@ -142,7 +142,8 @@ impl Client {
         let authorization = match &target.token_env {
             Some(variable) => Some(format!(
                 "Bearer {}",
-                std::env::var(variable).map_err(|_e| "token environment variable is unavailable")?
+                std::env::var(variable)
+                    .map_err(|_e| "token environment variable is unavailable")?
             )),
             None => None,
         };
@@ -156,8 +157,8 @@ impl Client {
             origin,
         };
         if let (Some(email), Some(variable)) = (&target.email, &target.password_env) {
-            let password =
-                std::env::var(variable).map_err(|_e| "password environment variable is unavailable")?;
+            let password = std::env::var(variable)
+                .map_err(|_e| "password environment variable is unavailable")?;
             client.cookie = Some(client.sign_in(email, &password)?);
         }
         Ok(client)
@@ -247,11 +248,15 @@ fn text(value: &Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Append one line to `out`.
+fn line(out: &mut String, text: String) {
+    out.push_str(&text);
+    out.push('\n');
+}
+
 fn plan_summary(plan: &Value) -> String {
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "plan over revision {} -> {}{}",
+    line(&mut out, format!("plan over revision {} -> {}{}",
         text(plan, "baseVersion"),
         text(plan, "nextVersion"),
         if plan.get("unchanged") == Some(&Value::Bool(true)) {
@@ -259,25 +264,33 @@ fn plan_summary(plan: &Value) -> String {
         } else {
             ""
         }
-    );
+    ));
     for (key, mark) in [("added", "+"), ("changed", "~")] {
-        for artifact in plan.get(key).and_then(Value::as_array).into_iter().flatten() {
+        for artifact in plan
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let from = artifact
                 .get("fromVersion")
                 .and_then(Value::as_str)
                 .map(|from| format!("{from} -> "))
                 .unwrap_or_default();
-            let _ = writeln!(
-                out,
-                "  {mark} {} ({} {from}{})",
+            line(&mut out, format!("  {mark} {} ({} {from}{})",
                 text(artifact, "artifactId"),
                 text(artifact, "kind"),
                 text(artifact, "toVersion")
-            );
+            ));
         }
     }
-    for id in plan.get("same").and_then(Value::as_array).into_iter().flatten() {
-        let _ = writeln!(out, "  = {}", id.as_str().unwrap_or_default());
+    for id in plan
+        .get("same")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        line(&mut out, format!("  = {}", id.as_str().unwrap_or_default()));
     }
     let types: Vec<&str> = plan
         .get("newObjectTypes")
@@ -287,13 +300,11 @@ fn plan_summary(plan: &Value) -> String {
         .filter_map(Value::as_str)
         .collect();
     if !types.is_empty() {
-        let _ = writeln!(out, "  new types: {}", types.join(", "));
+        line(&mut out, format!("  new types: {}", types.join(", ")));
     }
-    let _ = writeln!(
-        out,
-        "  checked {} stored object(s) under the new laws",
+    line(&mut out, format!("  checked {} stored object(s) under the new laws",
         text(plan, "checkedObjects")
-    );
+    ));
     diagnostics(&mut out, plan);
     out.trim_end().to_owned()
 }
@@ -310,13 +321,11 @@ fn diagnostics(out: &mut String, document: &Value) {
             .and_then(Value::as_str)
             .map(|pointer| format!(" at {pointer}"))
             .unwrap_or_default();
-        let _ = writeln!(
-            out,
-            "  {} {}{at}: {}",
+        line(out, format!("  {} {}{at}: {}",
             text(finding, "severity"),
             text(finding, "code"),
             text(finding, "message")
-        );
+        ));
     }
 }
 
@@ -331,7 +340,12 @@ fn refusal_summary(status: u16, refusal: &Value) -> String {
     out.trim_end().to_owned()
 }
 
-fn answer(json_out: bool, status: u16, document: &Value, summary: impl Fn(&Value) -> String) -> (String, bool) {
+fn answer(
+    json_out: bool,
+    status: u16,
+    document: &Value,
+    summary: impl Fn(&Value) -> String,
+) -> (String, bool) {
     let accepted = (200..300).contains(&status);
     let shown = if json_out {
         document.to_string()
@@ -360,7 +374,10 @@ pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
     match &args.command {
         CellCommand::Plan(target) => {
             let client = Client::new(target)?;
-            let (status, plan) = client.post(norn_api::cell_definitions::PLAN_PATH, &body(&target.paths, None)?)?;
+            let (status, plan) = client.post(
+                norn_api::cell_definitions::PLAN_PATH,
+                &body(&target.paths, None)?,
+            )?;
             Ok(answer(target.json, status, &plan, plan_summary))
         }
         CellCommand::Apply {
@@ -372,8 +389,10 @@ pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
             let expected = if let Some(version) = expected_version {
                 *version
             } else {
-                let (status, plan) =
-                    client.post(norn_api::cell_definitions::PLAN_PATH, &body(&target.paths, None)?)?;
+                let (status, plan) = client.post(
+                    norn_api::cell_definitions::PLAN_PATH,
+                    &body(&target.paths, None)?,
+                )?;
                 let (text, accepted) = answer(target.json, status, &plan, plan_summary);
                 if !accepted {
                     return Ok((text, false));
@@ -426,7 +445,8 @@ mod tests {
 
     #[test]
     fn a_pack_directory_is_read_in_name_order_and_kept_exact() {
-        let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/packs/jewelry/artifacts");
+        let pack =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/packs/jewelry/artifacts");
         let read = artifacts(&[pack]).unwrap();
         let ids: Vec<String> = read
             .iter()

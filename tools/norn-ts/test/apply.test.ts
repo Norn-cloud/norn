@@ -13,7 +13,7 @@ test("apply plans first, applies against the planned revision, and stops at a re
       const url = new URL(request.url)
       seen.push({ path: url.pathname, query: url.search, body: await request.json(), auth: request.headers.get("authorization") })
       if (refuse) return Response.json({ code: "defs.refused", message: "not admissible", explanation: "nothing changed", diagnostics: [{ severity: "error", code: "law.x", message: "bad", span: { pointer: "/artifacts/1" } }] }, { status: 422 })
-      if (url.pathname === PLAN_PATH) return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [{ artifactId: "jewelry.Melt.entity", kind: "entity", toVersion: "0.1.0" }], changed: [], same: [], newObjectTypes: ["jewelry.Melt"], checkedObjects: 0, diagnostics: [] })
+      if (url.pathname.endsWith(PLAN_PATH)) return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [{ artifactId: "jewelry.Melt.entity", kind: "entity", toVersion: "0.1.0" }], changed: [], same: [], newObjectTypes: ["jewelry.Melt"], checkedObjects: 0, diagnostics: [] })
       return Response.json({ outcome: "installed", definitionsVersion: 3, previousVersion: 2, receiptSha256: "ab", commitSeq: 9 })
     },
   })
