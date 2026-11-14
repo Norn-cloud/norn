@@ -59,7 +59,7 @@ fn lower(plan: &QuestionPlan) -> Result<(String, String), CellError> {
         _ => return Err(refused(UNSUPPORTED_ENGINE)),
     };
     let schema = format!(
-        "CREATE TABLE input(bucket VARCHAR NOT NULL,id VARCHAR PRIMARY KEY,version UBIGINT NOT NULL,a DECIMAL(38,{a}),b DECIMAL(38,{b}))"
+        "CREATE TABLE input(bucket VARCHAR NOT NULL,id VARCHAR PRIMARY KEY,version UBIGINT NOT NULL,a DECIMAL(38,{a}),b DECIMAL(38,{b}),na UBIGINT NOT NULL,nb UBIGINT NOT NULL)"
     );
     let value = if ratio {
         "CASE WHEN d=0 THEN NULL ELSE v + CASE WHEN abs(r)>=abs(d)-abs(r) THEN CASE WHEN (n<0)=(d<0) THEN 1 ELSE -1 END ELSE 0 END END"
@@ -68,10 +68,10 @@ fn lower(plan: &QuestionPlan) -> Result<(String, String), CellError> {
     };
     // Decimal division produces DOUBLE in DuckDB. Only HUGEINT quotient/remainder is used.
     let aggregate = format!(
-        "WITH s AS (SELECT bucket,COALESCE(SUM(a),0) AS a,COALESCE(SUM(b),0) AS b FROM input GROUP BY bucket),
+        "WITH s AS (SELECT bucket,COALESCE(SUM(a),0) AS a,COALESCE(SUM(b),0) AS b,SUM(na) AS na,SUM(nb) AS nb FROM input GROUP BY bucket),
         c AS (SELECT *,CAST(a*1000000 AS HUGEINT) AS n,CAST(b*1000000 AS HUGEINT) AS d FROM s),
         q AS (SELECT *,n*1000000 // NULLIF(d,0) AS v,n*1000000 % NULLIF(d,0) AS r FROM c)
-        SELECT bucket,CAST(a AS VARCHAR),CAST(b AS VARCHAR),CAST({value} AS VARCHAR) FROM q ORDER BY bucket"
+        SELECT bucket,CAST(a AS VARCHAR),CAST(b AS VARCHAR),CAST({value} AS VARCHAR),CAST(na AS UBIGINT),CAST(nb AS UBIGINT) FROM q ORDER BY bucket"
     );
     Ok((schema, aggregate))
 }
@@ -91,19 +91,24 @@ fn execute(
     let conn = db(Connection::open_in_memory())?;
     db(conn.execute_batch("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;"))?;
     db(conn.execute_batch(schema))?;
-    let mut insert = db(conn.prepare("INSERT INTO input VALUES (?,?,?,?,?)"))?;
+    let mut insert = db(conn.prepare("INSERT INTO input VALUES (?,?,?,?,?,?,?)"))?;
     for (id, (version, contribution)) in &snapshot.contributions {
         let (a, b) = match contribution.amounts.as_slice() {
             [a] => (*a, None),
             [a, b] => (*a, *b),
             _ => return Err(refused(UNSUPPORTED_ENGINE)),
         };
+        // A null measured value is skipped by SUM (it is SQL NULL) and counted here.
+        let null =
+            |index: usize| u64::from(contribution.nulls.get(index).copied().unwrap_or(false));
         db(insert.execute(params![
             bucket_key(contribution)?,
             id,
             version,
             operand(a)?,
-            operand(b)?
+            operand(b)?,
+            null(0),
+            null(1)
         ]))?;
     }
     let mut rows = aggregate_rows(&conn, aggregate, plan.sums().len(), &snapshot.result.rows)?;
@@ -153,11 +158,19 @@ fn aggregate_rows(
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?,
+            row.get::<_, u64>(4)?,
+            row.get::<_, u64>(5)?,
         ))
     }))?;
     let mut rows = BTreeMap::new();
     for total in totals {
-        let (key, a, b, value) = db(total)?;
+        let (key, a, b, value, na, nb) = db(total)?;
+        let counts: Vec<u64> = [na, nb].into_iter().take(arity).collect();
+        let null_counts = if counts.iter().any(|count| *count > 0) {
+            counts
+        } else {
+            Vec::new()
+        };
         let bucket = representatives
             .get(&key)
             .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?
@@ -179,6 +192,7 @@ fn aggregate_rows(
                 value,
                 members: BTreeMap::new(),
                 suppressed: false,
+                null_counts,
             },
         );
     }

@@ -1,0 +1,64 @@
+{
+  "artifactId": "tracking.run.kill.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Kill run",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.run.kill",
+    "effectProgram": {
+      "entityArtifactId": "tracking.Run.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "run_id",
+      "objectKind": "tracking.Run",
+      "transition": "kill"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Kill run",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "tracking.Run"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.run.kill.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

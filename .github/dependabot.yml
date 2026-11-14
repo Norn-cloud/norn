@@ -1,18 +1,43 @@
 version: 2
+# One grouped pull request per ecosystem per week (#513): Dependabot cannot refresh the
+# provenance records (.github/ci/provenance) or the pins in verification/coverage-v1/validate.py,
+# so each update needs one lane commit; a group makes that one commit per ecosystem.
+# The npm and github-actions groups take minor and patch updates only, so a breaking major
+# arrives as its own pull request and never holds the week's group.
+# The skeleton guard's own lockfile (crates/norn-skeleton-guard/Cargo.lock, a separate,
+# gated workspace) is deliberately not listed: its updates are made by hand, as gate pull requests.
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    # Only updates inside each Cargo.toml requirement (Cargo.lock only). A bump that needs a
+    # manifest edit (a major, a 0.x minor, an `=` pin) is not proposed: it is lane work.
+    versioning-strategy: lockfile-only
+    groups:
+      cargo:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /tools/norn-ts
     schedule:
       interval: weekly
+    groups:
+      norn-ts:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: npm
     directory: /packages/norn-sdk
     schedule:
       interval: weekly
+    groups:
+      norn-sdk:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
