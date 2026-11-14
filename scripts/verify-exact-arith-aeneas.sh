@@ -139,8 +139,11 @@ test "$(python3 -I -c 'import json, sys; print(next(p["rev"] for p in json.load(
 unset MATHLIB_CACHE_GET_URL MATHLIB_CACHE_USE_CLOUDFLARE
 export MATHLIB_CACHE_DIR="$tool_root/mathlib-cache/$mathlib_rev"
 mkdir -p "$MATHLIB_CACHE_DIR"
-(cd "$lean_root" && lake exe cache get)
+# Download only (`get-`), check the digest, and only then unpack (`get`): an archive that fails
+# the digest is never decompressed into the Lean project the other proof gates load.
+(cd "$lean_root" && lake exe cache get-)
 test "$(cd "$MATHLIB_CACHE_DIR" && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)" = "$mathlib_archives_sha256"
+(cd "$lean_root" && lake exe cache get)
 (cd "$lean_root" && lake build Aeneas)
 test -f "$lean_root/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean"
 # The written semantics never import the extraction.
