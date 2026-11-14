@@ -48,14 +48,25 @@ export async function grantActor(auth: Auth, claims: { readonly sub?: unknown; r
   return { actorKind: "user", subjectId: claims.sub, orgId: member.organizationId, role: member.role, authMethod: "oauth", environmentId: member.environmentId }
 }
 
-/** The access token's claims, verified against this deployment's own signing keys (no network fetch). */
-async function verifiedClaims(auth: Auth, baseURL: string, authorization: string | null) {
+/**
+ * The access token's claims, verified against this deployment's own signing keys (no network
+ * fetch); null when the token is not one this deployment issued for /mcp; "unavailable" when the
+ * keys cannot be read right now. A store hiccup is not the person's token being wrong: answering
+ * it 401 `invalid_token` makes an assistant drop the connection for the whole session.
+ */
+async function verifiedClaims(auth: Auth, baseURL: string, authorization: string | null): Promise<Record<string, unknown> | null | "unavailable"> {
   const match = /^Bearer ([A-Za-z0-9._~+/-]+=*)$/.exec(authorization ?? "")
   if (match === null) return null
   const token = match[1] as string
+  let jwks: unknown
+  try {
+    jwks = await auth.api.getJwks()
+  } catch {
+    return "unavailable"
+  }
   try {
     const claims = await verifyJwsAccessToken(token, {
-      jwksFetch: async () => (await auth.api.getJwks()) as never,
+      jwksFetch: async () => jwks as never,
       verifyOptions: { issuer: baseURL, audience: mcpResource(baseURL), requiredClaims: ["azp", "sub", "exp"] },
     })
     // A sender-constrained (DPoP) token is not accepted as a plain bearer token.
@@ -168,8 +179,14 @@ export async function serveMcp(request: Request, edge: McpEdge): Promise<Respons
   const version = request.headers.get("mcp-protocol-version")
   if (version !== null && !PROTOCOL_VERSIONS.has(version)) return rpcError(400, `Unsupported MCP-Protocol-Version ${version}.`)
   const claims = await verifiedClaims(edge.auth, edge.baseURL, request.headers.get("authorization"))
+  if (claims === "unavailable") return rpcError(503, "Norn's sign-in check is briefly unavailable; retry.", { "retry-after": "2" })
   if (claims === null) return challenge(edge.baseURL, request.headers.has("authorization") ? "invalid_token" : undefined)
-  const actor = await grantActor(edge.auth, claims as never)
+  let actor: Awaited<ReturnType<typeof grantActor>>
+  try {
+    actor = await grantActor(edge.auth, claims as never)
+  } catch {
+    return rpcError(503, "Norn's sign-in check is briefly unavailable; retry.", { "retry-after": "2" })
+  }
   if (actor === null) return challenge(edge.baseURL, "invalid_token")
   if (actor.environmentId === null) return rpcError(503, "This workspace has no data environment yet.")
   if (edge.host === undefined) return rpcError(503, "No Norn host is connected to this deployment.")

@@ -282,3 +282,20 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   // Static pages are the edge's; nothing about them reaches the cell.
   expect(env.forwarded).toHaveLength(0)
 })
+
+test("a store that cannot be read is a retryable 503, never the person's token being wrong", async () => {
+  const env = stage()
+  const { cookie } = await person(env, "fi@example.com")
+  const { accessToken } = await grant(env, cookie)
+  expect((await mcp(env, accessToken, INIT)).status).toBe(200)
+  // An assistant drops a connector for the session on 401 invalid_token: a hiccup must not look like one.
+  for (const table of ["jwks", "member"]) {
+    db(env).run(`alter table "${table}" rename to "${table}_away"`)
+    const busy = await mcp(env, accessToken, INIT)
+    expect(busy.status).toBe(503)
+    expect(busy.headers.get("retry-after")).toBe("2")
+    expect(busy.headers.get("www-authenticate")).toBeNull()
+    db(env).run(`alter table "${table}_away" rename to "${table}"`)
+    expect((await mcp(env, accessToken, INIT)).status).toBe(200)
+  }
+})
