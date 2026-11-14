@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.type_mismatch",
+  "message": "a relational view's expression or column does not have the type its operator needs",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

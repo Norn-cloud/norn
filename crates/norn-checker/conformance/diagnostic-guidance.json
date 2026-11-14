@@ -552,6 +552,14 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "derived.validation.column_conflict",
+    "fix": "Rename one of the columns, or give the join a prefix that keeps every output name unique."
+  },
+  {
+    "code": "derived.validation.grain_dropped",
+    "fix": "Pass every grain column through unchanged under its own name, for example `input.id` as `id`."
+  },
+  {
     "code": "derived.validation.incremental_not_supported",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -560,8 +568,36 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "derived.validation.invalid_plan",
+    "fix": "Declare every node and input the plan names, keep the plan acyclic with every node feeding the output, and use only entity inputs, recompute_on_read maintenance and the current temporal scope."
+  },
+  {
     "code": "derived.validation.io_in_view",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "derived.validation.join_undeclared",
+    "fix": "Join along a link the left object type declares, or on a key the right object type declares (or its id), with the right side at that type's identity grain."
+  },
+  {
+    "code": "derived.validation.order_not_total",
+    "fix": "Add the input's grain columns to the order (or the partition or key), so every row has one place."
+  },
+  {
+    "code": "derived.validation.output_schema_mismatch",
+    "fix": "Set `outputSchema` to `{}`; the admitted plan publishes the inferred columns."
+  },
+  {
+    "code": "derived.validation.type_mismatch",
+    "fix": "Make predicates Boolean, keep group and order keys scalar, and give each operator a column of the type it reads."
+  },
+  {
+    "code": "derived.validation.union_shape",
+    "fix": "Project every union input to the same columns, in the same order, with the same types and contracts."
+  },
+  {
+    "code": "derived.validation.unknown_column",
+    "fix": "Name a column of the input node's row; columns from a join carry the join's prefix."
   },
   {
     "code": "entity.deprecation.v1_payload",

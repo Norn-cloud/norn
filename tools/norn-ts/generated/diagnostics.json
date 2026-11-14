@@ -1105,6 +1105,22 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.column_conflict",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's node outputs two columns with one name",
+      "fix": "Rename one of the columns, or give the join a prefix that keeps every output name unique.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.grain_dropped",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's projection drops or changes a column that identifies its rows",
+      "fix": "Pass every grain column through unchanged under its own name, for example `input.id` as `id`.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.incremental_not_supported",
       "tier": "T2",
       "severity": "error",
@@ -1121,12 +1137,68 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.invalid_plan",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit",
+      "fix": "Declare every node and input the plan names, keep the plan acyclic with every node feeding the output, and use only entity inputs, recompute_on_read maintenance and the current temporal scope.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.io_in_view",
       "tier": "T2",
       "severity": "error",
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "derived.validation.join_undeclared",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type",
+      "fix": "Join along a link the left object type declares, or on a key the right object type declares (or its id), with the right side at that type's identity grain.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.order_not_total",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity",
+      "fix": "Add the input's grain columns to the order (or the partition or key), so every row has one place.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.output_schema_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it",
+      "fix": "Set `outputSchema` to `{}`; the admitted plan publishes the inferred columns.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.type_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's expression or column does not have the type its operator needs",
+      "fix": "Make predicates Boolean, keep group and order keys scalar, and give each operator a column of the type it reads.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.union_shape",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ",
+      "fix": "Project every union input to the same columns, in the same order, with the same types and contracts.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.unknown_column",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view names a column that its input row does not have",
+      "fix": "Name a column of the input node's row; columns from a join carry the join's prefix.",
+      "no_fix": null
     },
     {
       "code": "entity.deprecation.v1_payload",

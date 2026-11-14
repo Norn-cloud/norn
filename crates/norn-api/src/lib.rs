@@ -45,6 +45,8 @@ pub mod question_routes;
 pub mod routes;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
+/// Typed transform reads (`ViewIR` v1): rows, row lineage and the admitted plan.
+pub mod transform_routes;
 
 /// The trusted transport's identity seam: verified host tokens to Norn principals.
 pub mod principal;

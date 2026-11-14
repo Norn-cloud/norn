@@ -384,6 +384,11 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_base,
                 ))
+                .chain(crate::transform::check_transform_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                    normalized_context.registry,
+                ))
                 .collect::<Vec<_>>()
         }
         Err(resolution) => normalized_artifacts

@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.unknown_column",
+  "message": "a relational view names a column that its input row does not have",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

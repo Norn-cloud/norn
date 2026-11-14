@@ -11,6 +11,8 @@ mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
+/// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
+pub mod transform;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{

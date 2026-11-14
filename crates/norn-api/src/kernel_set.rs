@@ -172,6 +172,28 @@ pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefus
         .map_err(|e| invalid("governing laws")(&e))
 }
 
+/// Admit `added` over an installed set, as installing it would: the retained
+/// artifacts, any of the same id replaced by its new version, re-admitted
+/// whole on the base the retained receipt records.
+///
+/// # Errors
+/// The checker's findings, or a retained set or receipt that cannot be read.
+pub fn admit_over(
+    canonical_set: &str,
+    receipt: Option<&str>,
+    added: &[ArtifactEnvelope],
+) -> Result<AdmittedSet, KernelRefusal> {
+    let base = base_ids(receipt).map_err(KernelRefusal::Invalid)?;
+    let replaced: BTreeSet<&str> = added.iter().map(|a| a.artifact_id.as_str()).collect();
+    let mut artifacts: Vec<ArtifactEnvelope> = retained_artifacts(canonical_set)
+        .map_err(KernelRefusal::Invalid)?
+        .into_iter()
+        .filter(|a| !replaced.contains(a.artifact_id.as_str()))
+        .collect();
+    artifacts.extend(added.iter().cloned());
+    admit_kernel_set_with_base(&artifacts, &base)
+}
+
 /// The artifact envelopes of an installed set's canonical text.
 ///
 /// # Errors

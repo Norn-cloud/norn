@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.order_not_total",
+  "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
