@@ -1,0 +1,25 @@
+[package]
+name = "norn-importers"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "system-declared source schemas (OFBiz entity XML) to SourceSchemaIR with a loss report; files only (ring 1; see README.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+norn-formats = { path = "../norn-formats" }
+norn-ir = { path = "../norn-ir" }
+# The same pinned XML reader norn-formats uses; DTDs are refused.
+quick-xml = "=0.41.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+# The conformance harness checks the SourceSchemaIR artifact with the checker.
+norn-checker = { path = "../norn-checker" }
+
+[lints]
+workspace = true

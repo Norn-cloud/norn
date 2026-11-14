@@ -1,0 +1,796 @@
+{
+  "diagnostics": [
+    {
+      "artifactId": null,
+      "code": "format.reference_unresolved",
+      "message": "Book.statusId references StatusItem, but the source does not declare which status type it takes",
+      "path": "Book.statusId",
+      "remediation": "fix_definition",
+      "severity": "warning"
+    },
+    {
+      "artifactId": null,
+      "code": "format.reference_unresolved",
+      "message": "StatusValidChange.statusId references StatusItem, but the source does not declare which status type it takes",
+      "path": "StatusValidChange.statusId",
+      "remediation": "fix_definition",
+      "severity": "warning"
+    },
+    {
+      "artifactId": null,
+      "code": "format.reference_unresolved",
+      "message": "StatusValidChange.statusIdTo references StatusItem, but the source does not declare which status type it takes",
+      "path": "StatusValidChange.statusIdTo",
+      "remediation": "fix_definition",
+      "severity": "warning"
+    }
+  ],
+  "layers": [],
+  "provenance": {
+    "adapter": {
+      "name": "norn.importers.ofbiz-entity",
+      "version": "0.1.0"
+    },
+    "inputs": [
+      {
+        "bytes": 4205,
+        "name": "entitydef/entitymodel.xml",
+        "sha256": "5a2649d5a1aa282e275119f1d3bfbb883152f3f8d265ca357834d7e1e2987596"
+      },
+      {
+        "bytes": 302,
+        "name": "entitydef/entitygroup.xml",
+        "sha256": "2eee7803832478b3321dc07c9cdc1207776656c386f7b81e7d65ccfb4b169d8b"
+      },
+      {
+        "bytes": 924,
+        "name": "data/ToySeedData.xml",
+        "sha256": "2cf00b386852da69ad94e906d07f036109767522b485a61f1fa751f8c224a513"
+      },
+      {
+        "bytes": 55,
+        "name": "LICENSE",
+        "sha256": "a10185f143411e27d20f68256c2c0904d71fd3715f71816910d0ef96c5852498"
+      },
+      {
+        "bytes": 88,
+        "name": "NOTICE",
+        "sha256": "2d58feee32dc45c3406dcf4101f9dd61e08e0c63fd22335f3573a753ce8fe95a"
+      }
+    ],
+    "parser": {
+      "name": "quick-xml",
+      "version": "0.41.0"
+    }
+  },
+  "sourceSchema": {
+    "adapter": {
+      "name": "norn.importers.ofbiz-entity",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "Book",
+        "field": "bookTypeId",
+        "id": "Book.bookTypeId",
+        "origin": "observed_candidate",
+        "values": [
+          {
+            "label": "General",
+            "value": "GENERAL"
+          },
+          {
+            "label": "Subsidiary",
+            "value": "SUB"
+          }
+        ]
+      },
+      {
+        "dataset": "Line",
+        "field": "bookId",
+        "id": "Line.bookId",
+        "origin": "observed_candidate",
+        "values": [
+          {
+            "value": "DEMO"
+          }
+        ]
+      },
+      {
+        "dataset": "StatusItem",
+        "field": "statusTypeId",
+        "id": "StatusItem.statusTypeId",
+        "origin": "observed_candidate",
+        "values": [
+          {
+            "label": "Book status",
+            "value": "BOOK_STATUS"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "Book",
+        "fields": [
+          "bookId"
+        ],
+        "id": "Book:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "BookType",
+        "fields": [
+          "bookTypeId"
+        ],
+        "id": "BookType:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Line",
+        "fields": [
+          "code"
+        ],
+        "id": "Line:unique:LINE_CODE",
+        "kind": "unique",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Line",
+        "fields": [
+          "bookId",
+          "lineSeqId"
+        ],
+        "id": "Line:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "StatusType",
+        "fields": [
+          "statusTypeId"
+        ],
+        "id": "StatusType:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "StatusItem",
+        "fields": [
+          "statusId"
+        ],
+        "id": "StatusItem:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "StatusValidChange",
+        "fields": [
+          "statusId",
+          "statusIdTo"
+        ],
+        "id": "StatusValidChange:pk",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Book",
+        "fields": [
+          "bookTypeId"
+        ],
+        "id": "Book:rel:0",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "BookType",
+          "fields": [
+            "bookTypeId"
+          ]
+        }
+      },
+      {
+        "dataset": "Book",
+        "fields": [
+          "statusId"
+        ],
+        "id": "Book:rel:1",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "StatusItem",
+          "fields": [
+            "statusId"
+          ]
+        }
+      },
+      {
+        "dataset": "Line",
+        "fields": [
+          "bookId"
+        ],
+        "id": "Line:rel:0",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "Book",
+          "fields": [
+            "bookId"
+          ]
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "fields": [
+          "statusTypeId"
+        ],
+        "id": "StatusItem:rel:0",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "StatusType",
+          "fields": [
+            "statusTypeId"
+          ]
+        }
+      },
+      {
+        "dataset": "StatusValidChange",
+        "fields": [
+          "statusId"
+        ],
+        "id": "StatusValidChange:rel:0",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "StatusItem",
+          "fields": [
+            "statusId"
+          ]
+        }
+      },
+      {
+        "dataset": "StatusValidChange",
+        "fields": [
+          "statusIdTo"
+        ],
+        "id": "StatusValidChange:rel:1",
+        "kind": "foreign_key",
+        "origin": "declared",
+        "target": {
+          "dataset": "StatusItem",
+          "fields": [
+            "statusId"
+          ]
+        }
+      }
+    ],
+    "datasets": [
+      {
+        "description": "A book of accounts.",
+        "id": "Book",
+        "kind": "table",
+        "namespace": "org.toy.ledger",
+        "nativeName": "Book"
+      },
+      {
+        "id": "BookType",
+        "kind": "table",
+        "namespace": "org.toy.ledger",
+        "nativeName": "BookType"
+      },
+      {
+        "id": "Line",
+        "kind": "table",
+        "namespace": "org.toy.ledger",
+        "nativeName": "Line"
+      },
+      {
+        "id": "StatusType",
+        "kind": "table",
+        "namespace": "org.toy.common",
+        "nativeName": "StatusType"
+      },
+      {
+        "id": "StatusItem",
+        "kind": "table",
+        "namespace": "org.toy.common",
+        "nativeName": "StatusItem"
+      },
+      {
+        "id": "StatusValidChange",
+        "kind": "table",
+        "namespace": "org.toy.common",
+        "nativeName": "StatusValidChange"
+      },
+      {
+        "description": "Book with lines",
+        "id": "BookAndLine",
+        "kind": "view",
+        "namespace": "org.toy.ledger",
+        "nativeName": "BookAndLine"
+      }
+    ],
+    "extensions": {
+      "norn.importers.ofbiz/0.1.0": {
+        "codeSetGaps": [
+          {
+            "constraint": "Book:rel:1",
+            "dataset": "Book",
+            "field": "statusId",
+            "kind": "status-type-undeclared",
+            "target": "StatusItem",
+            "targetField": "statusId",
+            "title": "Current"
+          },
+          {
+            "constraint": "StatusValidChange:rel:0",
+            "dataset": "StatusValidChange",
+            "field": "statusId",
+            "kind": "status-type-undeclared",
+            "target": "StatusItem",
+            "targetField": "statusId",
+            "title": "Main"
+          },
+          {
+            "constraint": "StatusValidChange:rel:1",
+            "dataset": "StatusValidChange",
+            "field": "statusIdTo",
+            "kind": "status-type-undeclared",
+            "target": "StatusItem",
+            "targetField": "statusId",
+            "title": "To"
+          }
+        ],
+        "datasets": {
+          "Book": {
+            "attributes": {
+              "title": "Ledger book"
+            },
+            "fields": {
+              "closedBy": {
+                "file": "entitydef/entitymodel.xml"
+              },
+              "secret": {
+                "encrypt": "true",
+                "file": "entitydef/entitymodel.xml"
+              }
+            },
+            "file": "entitydef/entitymodel.xml",
+            "indexes": [
+              {
+                "fields": [
+                  "opened"
+                ],
+                "name": "BOOK_OPENED"
+              }
+            ],
+            "inverseRelations": [
+              {
+                "fields": [
+                  "bookId"
+                ],
+                "target": "Line",
+                "targetFields": [
+                  "bookId"
+                ],
+                "type": "many"
+              }
+            ],
+            "relations": {
+              "Book:rel:1": {
+                "title": "Current"
+              }
+            }
+          },
+          "BookType": {
+            "file": "entitydef/entitymodel.xml"
+          },
+          "Line": {
+            "file": "entitydef/entitymodel.xml"
+          },
+          "StatusItem": {
+            "file": "entitydef/entitymodel.xml"
+          },
+          "StatusType": {
+            "file": "entitydef/entitymodel.xml"
+          },
+          "StatusValidChange": {
+            "file": "entitydef/entitymodel.xml",
+            "relations": {
+              "StatusValidChange:rel:0": {
+                "title": "Main"
+              },
+              "StatusValidChange:rel:1": {
+                "title": "To"
+              }
+            }
+          }
+        },
+        "entityGroups": {
+          "Line": "org.toy.archive"
+        },
+        "enumerationCandidates": {
+          "LINE_SIDE": [
+            {
+              "description": "Debit",
+              "enumId": "LINE_DEBIT"
+            }
+          ]
+        },
+        "files": [
+          {
+            "header": {
+              "title": "Toy ledger",
+              "version": "1.0"
+            },
+            "path": "entitydef/entitymodel.xml",
+            "role": "entity",
+            "sha256": "5a2649d5a1aa282e275119f1d3bfbb883152f3f8d265ca357834d7e1e2987596"
+          },
+          {
+            "path": "entitydef/entitygroup.xml",
+            "role": "group",
+            "sha256": "2eee7803832478b3321dc07c9cdc1207776656c386f7b81e7d65ccfb4b169d8b"
+          },
+          {
+            "path": "data/ToySeedData.xml",
+            "role": "seed",
+            "sha256": "2cf00b386852da69ad94e906d07f036109767522b485a61f1fa751f8c224a513"
+          },
+          {
+            "path": "LICENSE",
+            "role": "licence",
+            "sha256": "a10185f143411e27d20f68256c2c0904d71fd3715f71816910d0ef96c5852498"
+          },
+          {
+            "path": "NOTICE",
+            "role": "notice",
+            "sha256": "2d58feee32dc45c3406dcf4101f9dd61e08e0c63fd22335f3573a753ce8fe95a"
+          }
+        ],
+        "licence": {
+          "file": "LICENSE",
+          "spdx": "Apache-2.0"
+        },
+        "lifecycleCandidates": [
+          {
+            "description": "Book status",
+            "states": [
+              {
+                "description": "Open",
+                "sequenceId": "01",
+                "statusCode": "OPEN",
+                "statusId": "BOOK_OPEN"
+              },
+              {
+                "description": "Closed",
+                "sequenceId": "02",
+                "statusCode": "CLOSED",
+                "statusId": "BOOK_CLOSED"
+              }
+            ],
+            "statusTypeId": "BOOK_STATUS",
+            "transitions": [
+              {
+                "from": "BOOK_OPEN",
+                "name": "Close",
+                "to": "BOOK_CLOSED"
+              }
+            ]
+          }
+        ],
+        "notice": {
+          "copyright": "Toy Ledger, Copyright 2026 Norn test fixtures",
+          "file": "NOTICE"
+        },
+        "unresolved": [
+          {
+            "dataset": "Book",
+            "fields": [
+              "bookTypeId"
+            ],
+            "kind": "relation",
+            "target": "NoSuchEntity",
+            "targetFields": [
+              "bookTypeId"
+            ],
+            "title": "Missing",
+            "type": "one-nofk"
+          },
+          {
+            "from": "BOOK_GONE",
+            "kind": "status-change",
+            "row": "data/ToySeedData.xml#6",
+            "to": "BOOK_OPEN"
+          }
+        ]
+      }
+    },
+    "fields": [
+      {
+        "dataset": "Book",
+        "name": "bookId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Book",
+        "name": "bookTypeId",
+        "nativeType": "id",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Book",
+        "name": "statusId",
+        "nativeType": "id",
+        "ordinal": 2,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Book",
+        "description": "When the book was opened.",
+        "name": "opened",
+        "nativeType": "date-time",
+        "ordinal": 3,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "datetime"
+        }
+      },
+      {
+        "dataset": "Book",
+        "name": "secret",
+        "nativeType": "long-varchar",
+        "ordinal": 4,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "text"
+        }
+      },
+      {
+        "dataset": "Book",
+        "name": "active",
+        "nativeType": "indicator",
+        "ordinal": 5,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "boolean"
+        }
+      },
+      {
+        "dataset": "Book",
+        "name": "closedBy",
+        "nativeType": "name",
+        "ordinal": 6,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "BookType",
+        "name": "bookTypeId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "BookType",
+        "name": "description",
+        "nativeType": "description",
+        "ordinal": 1,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Line",
+        "name": "bookId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Line",
+        "name": "lineSeqId",
+        "nativeType": "id",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Line",
+        "name": "amount",
+        "nativeType": "currency-amount",
+        "ordinal": 2,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Line",
+        "name": "rate",
+        "nativeType": "floating-point",
+        "ordinal": 3,
+        "typeCandidate": {
+          "origin": "inferred",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Line",
+        "name": "code",
+        "nativeType": "id",
+        "ordinal": 4,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusType",
+        "name": "statusTypeId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusType",
+        "name": "parentTypeId",
+        "nativeType": "id",
+        "ordinal": 1,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusType",
+        "name": "description",
+        "nativeType": "description",
+        "ordinal": 2,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "name": "statusId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "name": "statusTypeId",
+        "nativeType": "id",
+        "ordinal": 1,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "name": "statusCode",
+        "nativeType": "short-varchar",
+        "ordinal": 2,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "name": "sequenceId",
+        "nativeType": "id",
+        "ordinal": 3,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusItem",
+        "name": "description",
+        "nativeType": "description",
+        "ordinal": 4,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusValidChange",
+        "name": "statusId",
+        "nativeType": "id",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusValidChange",
+        "name": "statusIdTo",
+        "nativeType": "id",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "StatusValidChange",
+        "name": "transitionName",
+        "nativeType": "name",
+        "ordinal": 2,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "lineage": [
+      {
+        "id": "BookAndLine:view",
+        "inputs": [
+          "Book",
+          "Line"
+        ],
+        "kind": "view",
+        "output": "BookAndLine"
+      }
+    ],
+    "observedAt": "2026-11-12T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "e9a51c1fa504ea7752b09954a23f2090581cce8585ee1725c9d24f9dcae56903",
+      "uri": "https://github.com/example/toy-ledger/tree/0000000000000000000000000000000000000001"
+    },
+    "source": {
+      "instance": "example/toy-ledger",
+      "system": "Toy ledger",
+      "version": "0000000000000000000000000000000000000001"
+    }
+  }
+}

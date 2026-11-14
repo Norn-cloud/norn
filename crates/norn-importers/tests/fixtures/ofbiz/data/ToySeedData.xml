@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture authored for Norn tests; not upstream content. -->
+<entity-engine-xml>
+    <BookType bookTypeId="GENERAL" description="General"/>
+    <BookType bookTypeId="SUB" description="Subsidiary"/>
+    <StatusType statusTypeId="BOOK_STATUS" description="Book status"/>
+    <StatusItem statusId="BOOK_OPEN" statusTypeId="BOOK_STATUS" statusCode="OPEN" sequenceId="01" description="Open"/>
+    <StatusItem statusId="BOOK_CLOSED" statusTypeId="BOOK_STATUS" statusCode="CLOSED" sequenceId="02" description="Closed"/>
+    <StatusValidChange statusId="BOOK_OPEN" statusIdTo="BOOK_CLOSED" transitionName="Close"/>
+    <StatusValidChange statusId="BOOK_GONE" statusIdTo="BOOK_OPEN" transitionName="Restore"/>
+    <Enumeration enumId="LINE_DEBIT" enumTypeId="LINE_SIDE" description="Debit"/>
+    <Book bookId="DEMO" bookTypeId="GENERAL" statusId="BOOK_OPEN"/>
+</entity-engine-xml>

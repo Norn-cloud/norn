@@ -1,0 +1,12 @@
+{
+  "name": "norn-importers",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-formats",
+    "norn-ir"
+  ],
+  "dev_only_norn": [
+    "norn-checker"
+  ],
+  "third_party": []
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture authored for Norn tests; not upstream content. -->
+<entitymodel>
+    <entity entity-name="Thing" package-name="org.toy">
+        <field name="thingId" type="id" shiny="yes"/>
+        <prim-key field="thingId"/>
+        <relation type="one" rel-entity-name="Thing" cascade="all"><key-map field-name="thingId"/></relation>
+    </entity>
+    <entity-macro name="unknown"/>
+</entitymodel>

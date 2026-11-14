@@ -1,0 +1,199 @@
+{
+  "system": "Apache OFBiz",
+  "repository": "apache/ofbiz-framework",
+  "revision": "9ee2530cc9b42dac3dc029b8156024cef39f8b66",
+  "observedAt": "2026-11-11T13:36:41Z",
+  "licence": "Apache-2.0",
+  "files": [
+    {
+      "path": "LICENSE",
+      "role": "licence",
+      "sha256": "cbac9a0fde0598111b821378374122ab895b7f5963767e4928e85ebabab13cda"
+    },
+    {
+      "path": "NOTICE",
+      "role": "notice",
+      "sha256": "dc5608d6a118e28e840b2b16b351bae9ba0059c1c69c6cfee25fd05631f52800"
+    },
+    {
+      "path": "applications/accounting/entitydef/entitymodel_reports.xml",
+      "role": "entity",
+      "sha256": "192ac4bbf9b9f7d61bc47ff08b1ed9f6a4ec29214c2d8e045f1d8903e5439ad5"
+    },
+    {
+      "path": "applications/commonext/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "6c48f36d466c93d63e08ed522edbe4cdb6f7c192137da0f5c9b41fe6e25560ca"
+    },
+    {
+      "path": "applications/datamodel/data/seed/AccountingSeedData.xml",
+      "role": "seed",
+      "sha256": "aeed0d6c84cb1551de08a90e8b18342bef5650660ef6f97d80c42d6aa43582c3"
+    },
+    {
+      "path": "applications/datamodel/data/seed/CommonExtSeedData.xml",
+      "role": "seed",
+      "sha256": "92d4328486f5222808e102aa4fc6c3e72e1c37731370f6a6b9c41632ec5288c9"
+    },
+    {
+      "path": "applications/datamodel/data/seed/ContentSeedData.xml",
+      "role": "seed",
+      "sha256": "aba3ecf78d763a901dd65daf3a5f332add4b9f35ba09932b3f3d165d6d26a17a"
+    },
+    {
+      "path": "applications/datamodel/data/seed/HumanResSeedData.xml",
+      "role": "seed",
+      "sha256": "1cf41cad6903f4f84073de41feea136116396db69d69e4b0f9ae6464b7989ffe"
+    },
+    {
+      "path": "applications/datamodel/data/seed/ManufacturingSeedData.xml",
+      "role": "seed",
+      "sha256": "689554f9a9712bdde4bc79fb831b5a42975a063ee0130e55c9e30a85f45685c5"
+    },
+    {
+      "path": "applications/datamodel/data/seed/MarketingSeedData.xml",
+      "role": "seed",
+      "sha256": "15d1c38ad908150631df4f440e9c32fcda22d8bb63a3e7234afafef41b778a36"
+    },
+    {
+      "path": "applications/datamodel/data/seed/OrderSeedData.xml",
+      "role": "seed",
+      "sha256": "89cab11bb984930c4c1b7d9e9882a58f30a4058cf34f7b7cc65332dc73d47feb"
+    },
+    {
+      "path": "applications/datamodel/data/seed/PartySeedData.xml",
+      "role": "seed",
+      "sha256": "c85f775f21beefaa9dca58453c5c9dc1ae35b61cd938d3ce2b566bd9295c7f1f"
+    },
+    {
+      "path": "applications/datamodel/data/seed/ProductSeedData.xml",
+      "role": "seed",
+      "sha256": "97baedfa4d168cb56be6d1de34822f425c0b3f8acdf7bedba08d3c8c90af3957"
+    },
+    {
+      "path": "applications/datamodel/data/seed/SecurityExtSeedData.xml",
+      "role": "seed",
+      "sha256": "84216c38277eb4fa78f9d92d9f224d2982b04bb3ac828ed255efde072173362b"
+    },
+    {
+      "path": "applications/datamodel/data/seed/WorkEffortSeedData.xml",
+      "role": "seed",
+      "sha256": "1aa3a5a0a8b61138c46a180ac85b4bb6200eba3747ba70c026461d2f9c5ccccd"
+    },
+    {
+      "path": "applications/datamodel/entitydef/accounting-entitymodel.xml",
+      "role": "entity",
+      "sha256": "2b298f9eb970ec7d699f6fbd6b78206c9c387417f170dbf2c1389362418afbf1"
+    },
+    {
+      "path": "applications/datamodel/entitydef/content-entitymodel.xml",
+      "role": "entity",
+      "sha256": "3ad7678bbbd8c7873c52d8ec2ba93f416bc517cbff7467113a1c7696efb1c769"
+    },
+    {
+      "path": "applications/datamodel/entitydef/humanres-entitymodel.xml",
+      "role": "entity",
+      "sha256": "8fafdfefdacefd2f6c0aed04554c680c5ed3474f6b9a1890a7ca339273051a37"
+    },
+    {
+      "path": "applications/datamodel/entitydef/manufacturing-entitymodel.xml",
+      "role": "entity",
+      "sha256": "93e0c043c2b44427d9a8aa1b42e7882a65716da0e74af3172016eb9e748d9c31"
+    },
+    {
+      "path": "applications/datamodel/entitydef/marketing-entitymodel.xml",
+      "role": "entity",
+      "sha256": "f226088b3fb4364da6461878ece61428e401d88b7905363c4cffcea93ad439e5"
+    },
+    {
+      "path": "applications/datamodel/entitydef/order-entitymodel.xml",
+      "role": "entity",
+      "sha256": "f2ab886b766185ceeaae52c0124d90c3bf2caa2cab45afbba3c8ece5f7d4a976"
+    },
+    {
+      "path": "applications/datamodel/entitydef/party-entitymodel.xml",
+      "role": "entity",
+      "sha256": "f7653fc2fd4e504b307027c22b52edaf0a68bb474ef43fdcdc06a35088ea5a6d"
+    },
+    {
+      "path": "applications/datamodel/entitydef/product-entitymodel.xml",
+      "role": "entity",
+      "sha256": "9349d8864439aa4717390a10a184f7c34daf20384875fa36ad6dce6e8b0aac03"
+    },
+    {
+      "path": "applications/datamodel/entitydef/shipment-entitymodel.xml",
+      "role": "entity",
+      "sha256": "430f3b9523ba7ee5ba3a54f70488ad530cf6fd3e16fde3aae86a4d252f0a6620"
+    },
+    {
+      "path": "applications/datamodel/entitydef/workeffort-entitymodel.xml",
+      "role": "entity",
+      "sha256": "9d477638e49cb504762a74c80e81011f85e90c5f87ab61ce49c5210908a6d569"
+    },
+    {
+      "path": "applications/order/entitydef/entitymodel_view.xml",
+      "role": "entity",
+      "sha256": "39f6cb60545c90d07ecea036402f42bbc7e8cadaf3672e81568b2b6c4156a503"
+    },
+    {
+      "path": "applications/product/entitydef/entitymodel_view.xml",
+      "role": "entity",
+      "sha256": "232687ce9ccb7ab4dc4274783fdfa2abe1803d1bfb76493c272431b69ae5d407"
+    },
+    {
+      "path": "applications/workeffort/entitydef/entitymodel_view.xml",
+      "role": "entity",
+      "sha256": "1af75f8a998cb7eb15bae711b6312f779cb7907f94de7c323eb4dd50a65f6e6e"
+    },
+    {
+      "path": "framework/catalina/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "819a8fb8b18628e53a83ea0cb9c2920df62fe3ab454235d49404ed9541625a3d"
+    },
+    {
+      "path": "framework/common/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "674cf25f3248737f98ad966876c37eb6f6b9a6154c193d7419524875a7092cc2"
+    },
+    {
+      "path": "framework/entity/entitydef/entitygroup.xml",
+      "role": "group",
+      "sha256": "2fa4eb9401ee216ad36fc143df09eef664b0b09b843ec05ac7afe29e472272e6"
+    },
+    {
+      "path": "framework/entity/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "0a6764ee7f2f497ebd389e27160c06cf15d6fff8c2f5ee10a10e44289dc401a0"
+    },
+    {
+      "path": "framework/entityext/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "016249edd8835a7e8893baa4fd20882356cd600737356ce577511c9766f7fd31"
+    },
+    {
+      "path": "framework/security/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "9292973d9e5990874f31179b5b19770271de870270e0757d8a8db5be06c10b4f"
+    },
+    {
+      "path": "framework/service/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "520a8eb385181ae9b9c4dbc7a700d7df59e2f7946fbd74f61ef08cb55fc92c53"
+    },
+    {
+      "path": "framework/webapp/entitydef/entitygroup.xml",
+      "role": "group",
+      "sha256": "9de946c98b7a1cd13138c57042625db6cd3877836b7521f9312415b0626040e2"
+    },
+    {
+      "path": "framework/webapp/entitydef/entitymodel.xml",
+      "role": "entity",
+      "sha256": "9366f220293514984d6aea03127a47c882dbe8e64d381d8ba3c7cb3a2291a7bd"
+    },
+    {
+      "path": "framework/webtools/entitydef/entitymodel-secret.xml",
+      "role": "entity",
+      "sha256": "c5a47f8e05a3acb12802056f736bdf73ae33cd06eebc086a4404f3d0d208d495"
+    }
+  ]
+}
