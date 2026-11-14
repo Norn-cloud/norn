@@ -11,7 +11,7 @@ import "../index.css"
  * view and Studio's origin in two meta tags; the host then delivers the tool's input and result.
  */
 const meta = (name: string) => document.querySelector(`meta[name="${name}"]`)?.getAttribute("content") ?? null
-const VIEWS: readonly View[] = ["answer", "lineage", "dashboard", "receipt"]
+const VIEWS: readonly View[] = ["answer", "lineage", "dashboard", "receipt", "records", "findings", "plan"]
 const named = meta("norn-view")
 const view: View = VIEWS.find((candidate) => candidate === named) ?? "answer"
 const studio = meta("norn-studio")

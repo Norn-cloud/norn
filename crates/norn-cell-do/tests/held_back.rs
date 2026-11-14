@@ -398,3 +398,147 @@ fn outsider() -> String {
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     )
 }
+
+impl Cell {
+    /// One MCP `tools/call` (or `tools/list`, with `name` empty) as `role`.
+    fn mcp(&mut self, role: &str, name: &str, arguments: &Value) -> Value {
+        let message = if name.is_empty() {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}})
+        } else {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}})
+        };
+        let response = self.call("/v1/mcp", &user(role), &message.to_string());
+        assert_eq!(response.status, 200, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).unwrap();
+        body["result"].clone()
+    }
+}
+
+/// The same moment through MCP, as an agent drives it (#520): the held record
+/// and why, from the same routes and policy; the correction refused at 70.00
+/// and committed at 72.00; the actor is the server's to fill, never an input.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one stage moment, read top to bottom"
+)]
+fn an_agent_reads_why_an_invoice_is_held_and_corrects_it_through_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("a.sqlite"));
+    let listed = cell.mcp("admin", "", &json!({}));
+    let tools: Vec<&Value> = listed["tools"].as_array().unwrap().iter().collect();
+    let names: Vec<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "norn_list_held",
+        "norn_get_findings",
+        "norn_explain",
+        "norn_plan_definitions",
+        "norn_apply_definitions",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "{expected} missing from {names:?}"
+        );
+    }
+    let correct = tools
+        .iter()
+        .find(|tool| tool["_meta"]["norn/actionId"] == CORRECT)
+        .expect("the correction is a tool");
+    let tool = correct["name"].as_str().unwrap().to_owned();
+    assert!(
+        correct["inputSchema"]["properties"]
+            .get("corrected_by")
+            .is_none(),
+        "{correct}"
+    );
+    // A member may not write definitions: no definition tools.
+    let member = cell.mcp("member", "", &json!({}));
+    assert!(!member.to_string().contains("norn_plan_definitions"));
+
+    let held = cell.mcp(
+        "admin",
+        "norn_list_held",
+        &json!({"type": "docs.ScannedDocument"}),
+    );
+    assert_eq!(held["isError"], false, "{held}");
+    let (_, route) = cell.get("/v1/objects/docs.ScannedDocument:quarantined", "admin");
+    let ids = |value: &Value| -> Vec<String> {
+        value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(ids(&held["structuredContent"]), ids(&route));
+    let first = &held["structuredContent"]["items"][0];
+    assert!(
+        LAWS.iter()
+            .any(|law| first["findings"].to_string().contains(law)),
+        "{first}"
+    );
+    assert!(
+        held["structuredContent"]["remedies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|remedy| remedy == &json!(tool))
+    );
+
+    let id = "SCAN-INV-0042";
+    let found = cell.mcp(
+        "admin",
+        "norn_get_findings",
+        &json!({"type": "docs.ScannedDocument", "id": id}),
+    );
+    let (_, route) = cell.get(
+        &format!("/v1/objects/docs.ScannedDocument/{id}/findings"),
+        "admin",
+    );
+    assert_eq!(found["structuredContent"]["findings"], route["findings"]);
+    assert_eq!(found["structuredContent"]["quarantined"], true);
+    // A viewer is refused exactly as the route refuses them.
+    let viewer = cell.mcp(
+        "viewer",
+        "norn_get_findings",
+        &json!({"type": "docs.ScannedDocument", "id": id}),
+    );
+    let (_, refusal) = cell.get(
+        &format!("/v1/objects/docs.ScannedDocument/{id}/findings"),
+        "viewer",
+    );
+    if refusal.get("code").is_some() {
+        assert_eq!(viewer["isError"], true, "{viewer}");
+        assert_eq!(viewer["structuredContent"], refusal);
+    }
+
+    let input = |total: &str| {
+        json!({"id": id, "currency": "USD", "total": total,
+        "correction_reason": "the scan prints 72.00", "correction_evidence": "SCAN-INV-0042~total"})
+    };
+    let refused = cell.mcp("admin", &tool, &input("70.00"));
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["code"], "core.laws.violated",
+        "{refused}"
+    );
+    let explained = cell.mcp(
+        "admin",
+        "norn_explain",
+        &json!({"code": "core.laws.violated"}),
+    );
+    assert_eq!(explained["structuredContent"]["known"], true, "{explained}");
+    let spoofed = cell.mcp("admin", &tool, &json!({"id": id, "currency": "USD", "total": "72.00",
+        "correction_reason": "x", "correction_evidence": "SCAN-INV-0042~total", "corrected_by": "user:someone-else"}));
+    assert_eq!(spoofed["isError"], true, "{spoofed}");
+    let accepted = cell.mcp("admin", &tool, &input("72.00"));
+    assert_eq!(accepted["isError"], false, "{accepted}");
+    assert_eq!(
+        accepted["structuredContent"]["outcome"], "committed",
+        "{accepted}"
+    );
+    cell.released(id, 72);
+}
