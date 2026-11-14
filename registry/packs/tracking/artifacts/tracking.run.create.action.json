@@ -1,0 +1,108 @@
+{
+  "artifactId": "tracking.run.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create run",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.run.create",
+    "createLinks": [
+      {
+        "link": "experiment",
+        "targetIdField": "experiment_id",
+        "targetType": "tracking.Experiment"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "tracking.Run.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "run_id",
+      "objectKind": "tracking.Run",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_uri": {
+          "type": "string"
+        },
+        "experiment_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_name": {
+          "type": "string"
+        },
+        "start_time": {
+          "type": "integer"
+        },
+        "tags": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "experiment_id",
+        "run_name",
+        "user_id",
+        "start_time",
+        "artifact_uri",
+        "tags"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "experiment_id"
+          }
+        },
+        "name": "experiment",
+        "objectType": "tracking.Experiment"
+      }
+    ],
+    "title": "Create run",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "tracking.Run"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.run.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
