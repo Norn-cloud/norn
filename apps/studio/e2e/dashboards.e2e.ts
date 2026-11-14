@@ -126,8 +126,8 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await page.goto("/dashboards")
   const ask = page.getByRole("textbox", { name: "Ask for a dashboard" })
   await expect(ask).toBeVisible()
-  await page.getByRole("button", { name: /^A weekly overview of/ }).click()
-  await expect(ask).toHaveValue(/A weekly overview of Input/)
+  await page.getByRole("button", { name: /^Weekly / }).click()
+  await expect(ask).toHaveValue(/Weekly Input/)
   await page.getByRole("button", { name: "Propose" }).click()
   const card = page.locator("[data-proposal=prop_1]")
   await expect(card.getByText("The cell's checker admitted this dashboard")).toBeVisible()
@@ -149,7 +149,7 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await page.getByLabel("Tile 3 view").selectOption("chart:bar")
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page.getByText("Version 2")).toBeVisible()
-  await page.getByRole("link", { name: "View" }).click()
+  await page.getByRole("link", { name: "View", exact: true }).click()
   await expect(page.locator("[data-view=bar]")).toBeVisible()
 
   // Delete, then undo: the same definition is installed over the retired version.
@@ -222,7 +222,7 @@ test("the analytics engine answers one call at a time: Studio never sends a seco
     return route.fulfill({ json: answerFor((route.request().postDataJSON() as { question: Parameters<typeof answerFor>[0] }).question) })
   })
   await page.goto("/dashboards")
-  await page.getByRole("button", { name: /^A weekly overview of/ }).click()
+  await page.getByRole("button", { name: /^Weekly / }).click()
   await page.getByRole("button", { name: "Propose" }).click()
   const card = page.locator("[data-proposal=prop_1]")
   await expect(card.locator("[data-view=number]")).toBeVisible({ timeout: 20_000 })

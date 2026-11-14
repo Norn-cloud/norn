@@ -716,6 +716,7 @@ fn decode_dbt_metrics(
             let mut definition = MetricDefinition {
                 name: metric.name.clone(),
                 label: flow.label,
+                display: None,
                 metric_type: flow.metric_type,
                 type_params,
                 norn,
@@ -993,6 +994,7 @@ pub fn import_metricflow(
         let mut definition = MetricDefinition {
             name: flow.name,
             label: flow.label,
+            display: None,
             metric_type: flow.metric_type,
             type_params: flow.type_params,
             norn,
@@ -1199,6 +1201,7 @@ pub fn import_osi(
         definitions.push(MetricDefinition {
             name: metric.name.clone(),
             label: metric.name.clone(),
+            display: None,
             metric_type: MetricType::Simple,
             type_params: norn_ir::metric::MetricTypeParams {
                 expr: Some(amount.property.0.clone()),

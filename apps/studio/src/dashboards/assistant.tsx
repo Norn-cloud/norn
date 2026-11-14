@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { Check, CircleCheck, CircleX, Sparkles, X } from "lucide-react"
+import { ArrowUp, Check, CircleCheck, CircleX, CornerDownRight, Sparkles, X } from "lucide-react"
 import { useState } from "react"
 import { ValidationPanel } from "@/components/editor"
 import { Well } from "@/components/panel"
@@ -54,16 +54,19 @@ export const dollars = (micro: number) => micro < 10_000 ? "under $0.01" : `$${(
 /** A catalog label in words: an object type's id inside it (`canon.Holding`) reads as its title (`Holding`). */
 export const inWords = (label: string): string => label.replace(/\b(?:[a-z][a-z0-9_]*\.)+[A-Z][A-Za-z0-9]*\b/g, (id) => conceptTitle(id))
 
-/** Three requests the catalog can answer, worded from its own labels: never a name it does not declare. */
+/** How a request names a metric: the server's display words, else its label with type ids as titles. */
+const spoken = (metric: QuestionCatalog["metrics"][number]) => metric.display ?? inWords(metric.label)
+
+/** Three requests the catalog can answer, worded from the server's own names: never a name it does not declare. */
 export function examples(catalog: QuestionCatalog): readonly string[] {
-  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio").map((metric) => ({ ...metric, label: inWords(metric.label) }))
+  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio").map(spoken)
   const found = catalog.metrics.find(({ type }) => type === "ratio")
-  const ratio = found && { ...found, label: inWords(found.label) }
+  const ratio = found && spoken(found)
   const category = catalog.properties.find(({ kind }) => kind === "text" || kind === "enum")?.name.replaceAll("_", " ")
   return [
-    first && `A weekly overview of ${first.label}${second ? ` and ${second.label}` : ""}, with a headline total for each`,
-    ratio && category && `${ratio.label} by ${category}, and how it moved week by week`,
-    first && category && `Which ${category} contributes most to ${first.label}?`,
+    first && `Weekly ${first}${second ? ` and ${second}` : ""}`,
+    ratio && category && `${ratio[0]?.toUpperCase() ?? ""}${ratio.slice(1)} by ${category}, week by week`,
+    first && category && `Which ${category} has the most ${first}?`,
   ].filter((text): text is string => typeof text === "string")
 }
 
@@ -148,22 +151,36 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
   const capped = listing.data !== undefined && listing.data.spentMicroUsd >= listing.data.capMicroUsd
   return (
     <section className="space-y-4" aria-label="Dashboard assistant">
-      <div className="space-y-3 rounded-xl border bg-card p-4 shadow-elevation">
-        <label className="grid gap-2 text-sm">
-          <span className="flex items-center gap-2 font-medium"><Sparkles aria-hidden className="size-4 text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}</span>
-          <Textarea value={request} maxLength={2000} placeholder={dashboardId ? "e.g. Show the trend as bars and add a total" : "Describe what you want to see"} onChange={(event) => setRequest(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && request.trim() !== "") ask.mutate(request.trim()) }} />
-        </label>
-        {!dashboardId && (
-          <div className="flex flex-wrap gap-2">
-            {/* A long request is one line, cut to the panel, with its full text as a tooltip. */}
-            {examples(catalog).map((example) => <Button key={example} type="button" size="sm" variant="outline" title={example} className="max-w-full min-w-0 shrink justify-start" onClick={() => setRequest(example)}><span className="min-w-0 truncate">{example}</span></Button>)}
+      <div className="space-y-3 rounded-2xl border bg-card p-3 shadow-elevation">
+        <form className="group/prompt rounded-xl border bg-background transition-shadow focus-within:border-foreground/25 focus-within:shadow-sm"
+          onSubmit={(event) => { event.preventDefault(); if (request.trim() !== "" && !capped) ask.mutate(request.trim()) }}>
+          <p aria-hidden className="flex items-center gap-2 px-3 pt-2.5 text-sm font-medium">
+            <Sparkles className="size-4 text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
+          </p>
+          <Textarea value={request} maxLength={2000} rows={2} aria-label={dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"} placeholder={dashboardId ? "e.g. Show the trend as bars and add a total" : "Describe what you want to see"} onChange={(event) => setRequest(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && request.trim() !== "") ask.mutate(request.trim()) }}
+            className="min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent" />
+          <div className="flex items-center gap-2 px-3 pb-2.5">
+            <p className="text-meta text-muted-foreground">The server proposes; its checker decides; nothing is saved until you accept.</p>
+            <span className="ms-auto hidden text-meta text-muted-foreground sm:inline">⌘↵</span>
+            <Button type="submit" size="sm" className="rounded-full" disabled={ask.isPending || request.trim() === "" || capped}>{ask.isPending ? <Sparkles className="animate-pulse" /> : <ArrowUp />}{ask.isPending ? "Proposing…" : "Propose"}</Button>
+          </div>
+        </form>
+        {!dashboardId && examples(catalog).length > 0 && (
+          <div className="space-y-1 px-1">
+            <p className="px-2 text-xs text-muted-foreground">Try asking</p>
+            <ul className="grid gap-0.5">
+              {examples(catalog).map((example) => (
+                <li key={example}>
+                  <button type="button" onClick={() => setRequest(example)}
+                    className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-start text-sm text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                    <CornerDownRight aria-hidden className="mt-0.5 size-3.5 shrink-0" /><span className="min-w-0 text-pretty">{example}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-meta text-muted-foreground">The server proposes; its checker decides; nothing is saved until you accept.</p>
-          <Button className="ms-auto" size="sm" disabled={ask.isPending || request.trim() === "" || capped} onClick={() => ask.mutate(request.trim())}><Sparkles />{ask.isPending ? "Proposing…" : "Propose"}</Button>
-        </div>
         {capped && <p role="status" className="text-sm text-muted-foreground">The assistant has reached its spending cap.</p>}
         {ask.isError && <p role="alert" className="text-sm text-destructive">{ask.error.message}</p>}
         {listing.isError && <p role="status" className="text-sm text-muted-foreground">{listing.error.message}</p>}
