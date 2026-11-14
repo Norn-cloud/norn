@@ -280,3 +280,19 @@ test("a refusal with no detail lists the record's open law finding with the fact
   expect(html).toContain("72.00 (30.00 + 40.00 + 2.00)")
   expect(html).not.toContain(">—<")
 })
+
+test("a held record's finding shows the values its law compared, a summed list as its exact sum and parts", async () => {
+  const { Findings } = await import("../src/evidence/findings.tsx")
+  const read = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs", path), "utf8")) as unknown
+  const client = new QueryClient()
+  client.setQueryData(["catalog"], readDocument(JSON.stringify([read("documents/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
+  const id = "SCAN-INV-0042"
+  client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "m", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} /></QueryClientProvider>)
+  // The total the law read, then what it holds it against: the line objects it summed.
+  expect(html).toContain("720.00")
+  expect(html).toContain("72.00 = 30.00 + 40.00 + 2.00")
+  expect(html).toContain("sum of lines")
+  expect(html.indexOf("720.00")).toBeLessThan(html.indexOf("72.00 ="))
+})
