@@ -26,12 +26,45 @@ export type Evaluation =
   /** Not answered: no host on this stage, signed out, the route not there yet, or no answer. */
   | { readonly kind: "unavailable"; readonly status: number; readonly reason?: "no-cell" }
 
+/**
+ * The cell's analytics engine takes one call at a time and refuses a second while one runs (500 "an
+ * analytics engine call is pending"); it does not queue them yet. So Studio sends its analytics reads
+ * (questions answered, traced and profiled) one at a time, in the order they were asked, and a
+ * "pending" refusal waits and is asked again rather than shown as an error.
+ */
+let lane: Promise<unknown> = Promise.resolve()
+export function inAnalyticsLane<T>(run: () => Promise<T>): Promise<T> {
+  const next = lane.then(run, run)
+  lane = next.catch(() => undefined)
+  return next
+}
+
+/** Whether an answer is the engine's "a call is pending" refusal: the engine is busy, not wrong. */
+export const enginePending = (status: number, text: string): boolean => (status === 500 || status === 503) && /analytics engine call is pending/i.test(text)
+
+/** Waits between asks while the engine is busy: about a minute in all before the refusal is shown as it came. */
+export const PENDING_WAITS_MS: readonly number[] = [250, 500, 1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000, 8000]
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Ask once more each time the engine answers "pending". */
+export async function untilNotPending<T>(ask: () => Promise<T>, pending: (result: T) => boolean): Promise<T> {
+  let result = await ask()
+  for (const wait of PENDING_WAITS_MS) {
+    if (!pending(result)) return result
+    await sleep(wait)
+    result = await ask()
+  }
+  return result
+}
+
 type PostResult = { readonly status: number; readonly text: string } | { readonly noCell: true } | { readonly scopeStatus: number } | undefined
 async function post(path: string, body: unknown, fetcher: Fetch): Promise<PostResult> {
   try {
     const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
-    const response = await scoped(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
-    return { status: response.status, text: await response.text() }
+    return await inAnalyticsLane(() => untilNotPending(async () => {
+      const response = await scoped(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
+      return { status: response.status, text: await response.text() }
+    }, ({ status, text }) => enginePending(status, text)))
   } catch (error) {
     if (error instanceof StudioScopeError && error.message === NO_DATA_CELL) return { noCell: true }
     return error instanceof CellUnavailable ? { scopeStatus: error.status } : undefined
