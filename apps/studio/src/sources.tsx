@@ -288,14 +288,14 @@ export function SourcesPage() {
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
-    <section className="space-y-8">
+    <section className="space-y-5">
       <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         description="Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered." />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
-        {read.data?.origin === "live" && <SourceConnections />}
         <Systems catalog={catalog} />
+        {read.data?.origin === "live" && <SourceConnections />}
         <Panel icon={Shapes} label="The business model">
           <Tabs defaultValue="cards" className="p-1">
           <TabsList className="mx-3 mt-2"><TabsTrigger value="cards">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>

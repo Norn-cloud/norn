@@ -59,7 +59,9 @@ test("the page bar holds search, shortcuts and notifications (the view and langu
   expect(html).toContain("Language and view")
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
-  expect(html).toContain("Jewelry")
+  // Before the mode is decided the switcher says it is connecting; it names the recording only once Studio knows there is no cell.
+  expect(html).toContain("Connecting…")
+  expect(html).not.toContain("Recorded · synthetic gold-scrap data")
   expect(html).toContain("Ada Lovelace")
 })
 

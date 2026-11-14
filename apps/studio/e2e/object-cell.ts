@@ -120,7 +120,7 @@ export interface ObjectCell {
   readonly requests: URL[]
   /** A commit lands: every older cursor now answers 409 `object.snapshot_moved`. */
   commit(): void
-  /** The next read fails as a cell outage (500, no refusal document). */
+  /** The next page read fails as a cell outage (500, no refusal document). */
   failNext(): void
   /** The population, which the action stand-in writes to. */
   readonly rows: Holding[]
@@ -135,7 +135,8 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
   await page.route("**/api/host/v1/objects/**", async (route: Route) => {
     const url = new URL(route.request().url())
     requests.push(url)
-    if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
+    // The outage hits the next page read; a facets read in flight (a refresh after a commit) does not take it.
+    if (fail && !url.pathname.endsWith(":facets")) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
     if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } })
     // HOST-READ-7: exact value counts of the categorical properties over the rows the filter keeps.
     if (url.pathname.endsWith("/v1/objects/canon.Holding:facets")) {
